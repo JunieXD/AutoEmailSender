@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT material_id AS \"material_id!\" FROM email_attachment\n           WHERE email_id = ? AND material_id IS NOT NULL ORDER BY file_name",
+  "describe": {
+    "columns": [
+      {
+        "name": "material_id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "material_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "4d8acf7d37e0e8a80d65b58df52099e8da3df061fe65c8ee373e5927eb48d335"
+}

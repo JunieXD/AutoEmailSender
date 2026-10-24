@@ -6,8 +6,8 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use lettre::Message;
-use lettre::message::MultiPart;
 use lettre::message::header::ContentType;
+use lettre::message::{Attachment, MultiPart};
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::transport::smtp::client::{AsyncSmtpConnection, AsyncTokioStream};
 use lettre::transport::smtp::commands::{Data, Mail, Rcpt};
@@ -65,18 +65,37 @@ pub struct Letter<'a> {
     pub subject: &'a str,
     pub html: &'a str,
     pub text: &'a str,
+    pub attachments: &'a [File],
+}
+
+/// A file sent with a letter, under the name the mentor sees.
+pub struct File {
+    pub name: String,
+    pub data: Vec<u8>,
 }
 
 /// An email ready to hand to the server.
 pub struct Outgoing(Message);
 
 /// Puts an email from the mailbox together, with the letter as HTML and as plain text for mail apps
-/// that show no HTML.
+/// that show no HTML, and its files after.
 pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError> {
     let to = letter
         .to
         .parse()
         .map_err(|_| MailError::Recipient(letter.to.to_owned()))?;
+    let mut body =
+        MultiPart::alternative_plain_html(letter.text.to_owned(), letter.html.to_owned());
+    if !letter.attachments.is_empty() {
+        let mut mixed = MultiPart::mixed().multipart(body);
+        for file in letter.attachments {
+            mixed = mixed.singlepart(
+                Attachment::new(file.name.clone())
+                    .body(file.data.clone(), content_type(&file.name)?),
+            );
+        }
+        body = mixed;
+    }
     Message::builder()
         .message_id(Some(letter.message_id.to_owned()))
         .from(lettre::message::Mailbox::new(
@@ -88,12 +107,23 @@ pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError
             to,
         ))
         .subject(letter.subject)
-        .multipart(MultiPart::alternative_plain_html(
-            letter.text.to_owned(),
-            letter.html.to_owned(),
-        ))
+        .multipart(body)
         .map(Outgoing)
         .map_err(|e| MailError::Broken(e.to_string()))
+}
+
+/// By the extension of a material's file: PDF, DOCX or DOC.
+fn content_type(file_name: &str) -> Result<ContentType, MailError> {
+    let extension = file_name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase());
+    let mime = match extension.as_deref() {
+        Some("pdf") => "application/pdf",
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("doc") => "application/msword",
+        _ => "application/octet-stream",
+    };
+    ContentType::parse(mime).map_err(|e| MailError::Broken(e.to_string()))
 }
 
 /// Why an email may not have gone out.
@@ -177,8 +207,9 @@ impl Smtp {
             return Err(SendError::NotSent(e));
         }
         // From here on, a server that got the whole email may have taken it, whatever happens next.
-        let sent = connect::within(&server, async {
-            conn.message(&email.0.formatted()).await.map_err(refused)
+        let message = email.0.formatted();
+        let sent = connect::uploading(&server, message.len(), async {
+            conn.message(&message).await.map_err(refused)
         })
         .await;
         match sent {

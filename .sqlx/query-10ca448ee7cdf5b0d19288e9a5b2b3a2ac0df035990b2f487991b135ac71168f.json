@@ -1,11 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT subject, body_md FROM email\n         WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'",
+  "query": "SELECT id, subject, body_md FROM email\n         WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'",
   "describe": {
     "columns": [
       {
-        "name": "subject",
+        "name": "id",
         "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -16,7 +27,7 @@
       },
       {
         "name": "body_md",
-        "ordinal": 1,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -30,9 +41,10 @@
       "Right": 1
     },
     "nullable": [
+      false,
       true,
       true
     ]
   },
-  "hash": "c51c724818b18b33858dc0a7c6c6130dc36cdf83217e3628d3050b904722309a"
+  "hash": "10ca448ee7cdf5b0d19288e9a5b2b3a2ac0df035990b2f487991b135ac71168f"
 }

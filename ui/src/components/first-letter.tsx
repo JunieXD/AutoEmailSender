@@ -8,10 +8,19 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { FileText, Send, TriangleAlert } from "lucide-react";
+import { FileText, Paperclip, Send, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { FirstDraft, FirstDraftEdit, FirstEmail, MentorDetail, Problem, TemplateSummary } from "@/api/types";
+import type {
+  FirstDraft,
+  FirstDraftEdit,
+  FirstEmail,
+  Material,
+  MentorDetail,
+  Problem,
+  TemplateSummary,
+} from "@/api/types";
+import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { dropDrafts } from "@/components/mentor";
@@ -19,6 +28,7 @@ import { usePlaceholders } from "@/components/template-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { fileSize } from "@/format";
 import { letterHtml, letterText } from "@/letter";
 
 /** Writing the first email to a mentor on their page (docs/ui.md#交互). */
@@ -29,11 +39,21 @@ export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
     queryFn: () => call("getFirstDraft", { id: mentorId }),
   });
   const placeholders = usePlaceholders();
-  const error = draft.error ?? placeholders.error;
+  const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
+  const error = draft.error ?? placeholders.error ?? materials.error;
   if (error) return <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(error)}</p>;
   return (
     draft.isSuccess &&
-    placeholders.data && <Composer key={mentorId} mentor={mentor} draft={draft.data} placeholders={placeholders.data} />
+    placeholders.data &&
+    materials.data && (
+      <Composer
+        key={mentorId}
+        mentor={mentor}
+        draft={draft.data}
+        placeholders={placeholders.data}
+        materials={materials.data}
+      />
+    )
   );
 }
 
@@ -45,10 +65,12 @@ function Composer({
   mentor,
   draft,
   placeholders,
+  materials,
 }: {
   mentor: MentorDetail;
   draft: FirstDraft | null;
   placeholders: string[];
+  materials: Material[];
 }) {
   const mentorId = mentor.id;
   const queryClient = useQueryClient();
@@ -69,11 +91,19 @@ function Composer({
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  const [letter, setLetter] = useState<FirstDraftEdit>(() =>
+  const [letterState, setLetter] = useState<FirstDraftEdit>(() =>
     last?.status !== "success" && last?.variables
       ? last.variables
-      : { mentorId, subject: draft?.subject ?? "", bodyMd: draft?.bodyMd ?? "" },
+      : {
+          mentorId,
+          subject: draft?.subject ?? "",
+          bodyMd: draft?.bodyMd ?? "",
+          attachments: draft?.attachments ?? attachedByDefault(materials),
+        },
   );
+  // A material deleted since the draft was read is attached no more.
+  const attached = materials.filter((m) => letterState.attachments.includes(m.id));
+  const letter = { ...letterState, attachments: attached.map((m) => m.id) };
   // The editor reads its text when mounted, so a template applied or a fix mounts a new one.
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
@@ -170,6 +200,12 @@ function Composer({
         disabled={sending}
         onChange={(bodyMd) => edit({ ...letter, bodyMd })}
       />
+      <Attachments
+        files={attached}
+        onRemove={
+          sending ? undefined : (m) => edit({ ...letter, attachments: letter.attachments.filter((id) => id !== m.id) })
+        }
+      />
       {problems.length > 0 && (
         <ul className="flex flex-col gap-2 text-sm text-warning">
           {problems.map((p) => (
@@ -197,7 +233,13 @@ function Composer({
           mentorId={mentorId}
           disabled={sending}
           written={letter.subject.trim() !== "" || letter.bodyMd.trim() !== ""}
-          onApply={(filled) => rewrite({ mentorId, ...filled })}
+          onApply={(filled) => rewrite({ ...letter, ...filled })}
+        />
+        <AttachMenu
+          materials={materials}
+          attached={attached}
+          disabled={sending}
+          onAttach={(m) => edit({ ...letter, attachments: [...letter.attachments, m.id] })}
         />
         {last?.status === "error" && (
           <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>
@@ -222,6 +264,66 @@ function Composer({
         </p>
       )}
     </div>
+  );
+}
+
+/** The materials the user attaches by default, one of each name as an email takes. */
+function attachedByDefault(materials: Material[]): number[] {
+  const chosen = materials.filter((m) => m.attachByDefault);
+  return chosen.filter((m, i) => chosen.findIndex((c) => c.fileName === m.fileName) === i).map((m) => m.id);
+}
+
+/** Lists the materials to attach; it stays open, so that several can be attached in turn. */
+function AttachMenu({
+  materials,
+  attached,
+  disabled,
+  onAttach,
+}: {
+  materials: Material[];
+  attached: Material[];
+  disabled: boolean;
+  onAttach: (m: Material) => void;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger render={<Button type="button" variant="ghost" className="px-2.5" disabled={disabled} />}>
+        <Paperclip strokeWidth={1.8} />
+        添加附件
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-72 flex-col p-1.5">
+        {materials.length === 0 ? (
+          <p className="p-1.5 text-sm text-muted-foreground">
+            尚未添加材料，可在
+            <Link to="/settings/materials" className="text-brand-text">
+              设置 › 个人 › 材料
+            </Link>
+            里添加。
+          </p>
+        ) : (
+          materials.map((m) => {
+            // Two files of one name would reach the mentor as one.
+            const taken = attached.find((a) => a.fileName === m.fileName);
+            return (
+              <button
+                key={m.id}
+                type="button"
+                disabled={taken !== undefined}
+                className="flex flex-col rounded-md px-3 py-2 text-left enabled:hover:bg-muted disabled:opacity-40"
+                onClick={() => onAttach(m)}
+              >
+                <span className="truncate" title={m.fileName}>
+                  {m.fileName}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {taken === m ? "已附上" : taken ? "已附上同名文件" : fileSize(m.size)}
+                </span>
+              </button>
+            );
+          })
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -322,5 +424,6 @@ function TemplateMenu({
 function problemText(p: Problem): string {
   if (p.kind === "placeholder") return `“{${p.name}}”没有替换，请改成具体内容或删掉。`;
   if (p.kind === "no_salutation") return "正文里没有称呼导师。";
+  if (p.kind === "no_attachment") return "正文提到了附件，但还没有添加附件。";
   return `查不到 ${p.domain} 的收信服务器，请核对导师的邮箱地址。`;
 }

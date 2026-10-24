@@ -18,20 +18,32 @@ async fn add_mentor(db: &SqlitePool) -> i64 {
     mentor::create(db, &form.check().unwrap(), 0).await.unwrap()
 }
 
+/// A material, without the file that only sending reads.
+async fn add_material(db: &SqlitePool, file_name: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at)
+         VALUES (?, 1000, 0, 0, 0, 0) RETURNING id",
+    )
+    .bind(file_name)
+    .fetch_one(db)
+    .await
+    .unwrap()
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_mentor_has_one_first_draft_until_it_is_cleared(db: SqlitePool) {
     let mentor = add_mentor(&db).await;
-    email::save_first_draft(&db, mentor, "申请", "", 1)
+    email::save_first_draft(&db, mentor, "申请", "", &[], 1)
         .await
         .unwrap();
-    email::save_first_draft(&db, mentor, " 申请硕士 ", "　　王老师：", 2)
+    email::save_first_draft(&db, mentor, " 申请硕士 ", "　　王老师：", &[], 2)
         .await
         .unwrap();
     let draft = email::first_draft(&db, mentor).await.unwrap().unwrap();
     assert_eq!(draft.subject.as_deref(), Some("申请硕士"));
     assert_eq!(draft.body_md.as_deref(), Some("　　王老师："));
 
-    let saved = email::save_first_draft(&db, mentor, " ", "\n", 3)
+    let saved = email::save_first_draft(&db, mentor, " ", "\n", &[], 3)
         .await
         .unwrap();
     assert!(saved.is_none());
@@ -41,12 +53,12 @@ async fn a_mentor_has_one_first_draft_until_it_is_cleared(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_draft_saved_after_the_mentor_is_trashed_is_dropped(db: SqlitePool) {
     let mentor = add_mentor(&db).await;
-    email::save_first_draft(&db, mentor, "申请", "", 1)
+    email::save_first_draft(&db, mentor, "申请", "", &[], 1)
         .await
         .unwrap();
     mentor::trash::trash(&db, &[mentor], 2).await.unwrap();
 
-    let saved = email::save_first_draft(&db, mentor, "申请硕士", "", 3)
+    let saved = email::save_first_draft(&db, mentor, "申请硕士", "", &[], 3)
         .await
         .unwrap();
     assert!(saved.is_none());
@@ -57,7 +69,7 @@ async fn a_draft_saved_after_the_mentor_is_trashed_is_dropped(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
     let mentor = add_mentor(&db).await;
-    email::save_first_draft(&db, mentor, "申请", "王老师：", 1)
+    email::save_first_draft(&db, mentor, "申请", "王老师：", &[], 1)
         .await
         .unwrap();
     let approval = email::Approval {
@@ -65,17 +77,20 @@ async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
         body_md: "王老师：",
         html: "<p>王老师：</p>",
         text: "王老师：",
+        attachments: &[],
     };
-    assert!(
+    assert_eq!(
         email::approve_first(&db, mentor, &approval, 2)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::Yes
     );
     // Clicking again finds no draft, so the email is not sent twice.
-    assert!(
-        !email::approve_first(&db, mentor, &approval, 3)
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 3)
             .await
-            .unwrap()
+            .unwrap(),
+        email::Approved::NoDraft
     );
     assert!(email::first_draft(&db, mentor).await.unwrap().is_none());
     let emails = email::list(&db, mentor).await.unwrap();
@@ -86,4 +101,64 @@ async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
     assert!(email::list(&db, mentor).await.unwrap().is_empty());
     let draft = email::first_draft(&db, mentor).await.unwrap().unwrap();
     assert_eq!(draft.body_md.as_deref(), Some("王老师："));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePool) {
+    let mentor = add_mentor(&db).await;
+    let resume = add_material(&db, "简历.pdf").await;
+    let transcript = add_material(&db, "成绩单.pdf").await;
+    let other_resume = add_material(&db, "简历.pdf").await;
+    // Two files of one name would reach the mentor as one, so the first is kept.
+    let saved = email::save_first_draft(
+        &db,
+        mentor,
+        "申请",
+        "",
+        &[resume, transcript, other_resume],
+        1,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(saved.attachments, [transcript, resume]);
+    let draft = email::first_draft(&db, mentor).await.unwrap().unwrap();
+    assert_eq!(draft.attachments, [transcript, resume]);
+
+    // Deleted after the user picked it: the email does not go without it.
+    sqlx::query("DELETE FROM material WHERE id = ?")
+        .bind(transcript)
+        .execute(&db)
+        .await
+        .unwrap();
+    let picked = [transcript, other_resume];
+    let mut approval = email::Approval {
+        subject: "申请",
+        body_md: "王老师：",
+        html: "<p>王老师：</p>",
+        text: "王老师：",
+        attachments: &picked,
+    };
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 2)
+            .await
+            .unwrap(),
+        email::Approved::MaterialGone
+    );
+    assert!(email::first_draft(&db, mentor).await.unwrap().is_some());
+
+    approval.attachments = &picked[1..];
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval, 2)
+            .await
+            .unwrap(),
+        email::Approved::Yes
+    );
+    let emails = email::list(&db, mentor).await.unwrap();
+    let attached: Vec<_> = emails[0]
+        .attachments
+        .iter()
+        .map(|a| (a.file_name.as_str(), a.size))
+        .collect();
+    assert_eq!(attached, [("简历.pdf", 1000)]);
 }

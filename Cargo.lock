@@ -3010,6 +3010,8 @@ name = "material"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "email",
+ "mentor",
  "office_oxide",
  "pdf_oxide",
  "serde",
@@ -4526,14 +4528,17 @@ dependencies = [
 name = "send"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "base64 0.22.1",
  "db",
  "email",
  "fakemail",
  "mailbox",
+ "material",
  "mentor",
  "net",
  "profile",
  "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
 ]

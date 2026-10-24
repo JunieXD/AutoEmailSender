@@ -113,13 +113,19 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         .await
         .map_err(StartupError::Database)?;
     let net = net::Net::new(Vec::new()).map_err(StartupError::Net)?;
+    let materials = dir.join("materials");
     let sender = send::Sender::default();
-    tauri::async_runtime::spawn(send::run(db.clone(), net.clone(), sender.clone()));
+    tauri::async_runtime::spawn(send::run(
+        db.clone(),
+        net.clone(),
+        materials.clone(),
+        sender.clone(),
+    ));
     Ok(api::Context {
         db,
         net,
         sender,
-        materials: dir.join("materials"),
+        materials,
     })
 }
 

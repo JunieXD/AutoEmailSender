@@ -1,5 +1,6 @@
 //! Sending approved emails from the user's mailboxes, one at a time (docs/design.md#桌面端).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,14 +28,15 @@ impl Sender {
     }
 }
 
-/// Sends emails as they come due, for as long as the app runs.
-pub async fn run(db: SqlitePool, net: Net, sender: Sender) {
+/// Sends emails as they come due, for as long as the app runs, with the files of the materials
+/// attached from `materials`.
+pub async fn run(db: SqlitePool, net: Net, materials: PathBuf, sender: Sender) {
     while let Err(e) = recover(&db, now()).await {
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
     loop {
-        let wait = match step(&db, &net, now).await {
+        let wait = match step(&db, &net, &materials, now).await {
             Ok(Next::Now) => continue,
             Ok(Next::At(at)) => Some(at - now()),
             Ok(Next::Idle) => None,
@@ -80,7 +82,12 @@ pub enum Next {
 
 /// Sends the first approved email that can go now, if any. `now` tells the time in UTC
 /// milliseconds; sending takes a while.
-pub async fn step(db: &SqlitePool, net: &Net, now: impl Fn() -> i64) -> Result<Next, sqlx::Error> {
+pub async fn step(
+    db: &SqlitePool,
+    net: &Net,
+    materials: &Path,
+    now: impl Fn() -> i64,
+) -> Result<Next, sqlx::Error> {
     let at = now();
     let due = sqlx::query!(
         "SELECT e.id, m.mailbox_id AS own FROM email e JOIN mentor m ON m.id = e.mentor_id
@@ -101,7 +108,7 @@ pub async fn step(db: &SqlitePool, net: &Net, now: impl Fn() -> i64) -> Result<N
     for e in due {
         match choose(rotation, e.own, &mailboxes, at) {
             Some((mailbox, ready)) if ready <= at => {
-                send(db, net, e.id, mailbox, &now).await?;
+                send(db, net, materials, e.id, mailbox, &now).await?;
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
@@ -192,6 +199,7 @@ fn choose(
 async fn send(
     db: &SqlitePool,
     net: &Net,
+    materials: &Path,
     id: i64,
     mailbox_id: i64,
     now: &impl Fn() -> i64,
@@ -211,21 +219,21 @@ async fn send(
         smtp.quit();
         return Ok(());
     };
-    let outgoing = match &m.to {
-        Some(to) => mailbox::compose(
-            &account,
-            &Letter {
-                message_id: &m.handover.message_id,
-                to_name: &m.to_name,
-                to,
-                subject: &m.handover.subject,
-                html: &m.handover.html,
-                text: &m.handover.text,
-            },
-        )
-        .map_err(|e| e.message()),
-        None => Err(NO_ADDRESS.to_owned()),
-    };
+    let outgoing = async {
+        let to = m.to.as_deref().ok_or(NO_ADDRESS)?;
+        let attachments = files(materials, &m.handover.attachments).await?;
+        let letter = Letter {
+            message_id: &m.handover.message_id,
+            to_name: &m.to_name,
+            to,
+            subject: &m.handover.subject,
+            html: &m.handover.html,
+            text: &m.handover.text,
+            attachments: &attachments,
+        };
+        mailbox::compose(&account, &letter).map_err(|e| e.message())
+    }
+    .await;
     let outcome = match outgoing {
         Ok(outgoing) => match smtp.send(&outgoing).await {
             Ok(()) => {
@@ -252,6 +260,25 @@ async fn send(
         tokio::time::sleep(RETRY).await;
     }
     Ok(())
+}
+
+/// The files to attach, read now: a material may be attached to emails for days before they go.
+async fn files(dir: &Path, attachments: &[email::Attached]) -> Result<Vec<mailbox::File>, String> {
+    let mut files = Vec::with_capacity(attachments.len());
+    for a in attachments {
+        let data = tokio::fs::read(material::file(dir, a.material_id)).await.map_err(|e| {
+            tracing::warn!("reading attachment {}: {e}", a.file_name);
+            format!(
+                "附件“{}”的文件读不到了。在“设置 › 个人 › 材料”里重新添加它，改回草稿换上新的附件后再发送。",
+                a.file_name
+            )
+        })?;
+        files.push(mailbox::File {
+            name: a.file_name.clone(),
+            data,
+        });
+    }
+    Ok(files)
 }
 
 /// What goes out, read as the email is marked as being handed over.

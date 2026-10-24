@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email_attachment (email_id, material_id, file_name, size)\n         SELECT ?1, m.id, m.file_name, m.size FROM json_each(?2) j JOIN material m ON m.id = j.value\n         WHERE true ORDER BY j.key\n         ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "89798d14bb5ba6c6be8cafa7f43a5db9bc21ea19878c772191b6fcf3bde77b2d"
+}

@@ -1,7 +1,8 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { cn } from "cn";
 
-// docs/ui.md#尺寸 and #动效: a 16px-cornered panel that fades in.
+// docs/ui.md#尺寸 and #动效: a 16px-cornered panel that fades in, scrolling when longer than the
+// room on its side.
 
 const Popover = PopoverPrimitive.Root;
 
@@ -20,7 +21,7 @@ function PopoverContent({
         <PopoverPrimitive.Popup
           data-slot="popover-content"
           className={cn(
-            "w-64 rounded-lg bg-background p-1.5 text-sm shadow-pop transition-opacity duration-150 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0",
+            "max-h-(--available-height) w-64 overflow-y-auto rounded-lg bg-background p-1.5 text-sm shadow-pop transition-opacity duration-150 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0",
             className,
           )}
           {...props}

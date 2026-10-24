@@ -707,6 +707,9 @@ impl From<material::Error> for CallError {
                     "未能读取文件：文件可能已损坏、设有密码，或格式与扩展名不符。".into(),
                 )
             }
+            material::Error::InUse => CallError::invalid(
+                "这份材料是待发邮件的附件，邮件发出或改回草稿去掉附件后才能删除。".into(),
+            ),
             material::Error::Db(e) => e.into(),
             material::Error::File(e) => CallError::internal(format!("material file: {e}")),
         }
@@ -857,6 +860,8 @@ pub struct FirstDraftEdit {
     pub mentor_id: i64,
     pub subject: String,
     pub body_md: String,
+    /// Materials, by id.
+    pub attachments: Vec<i64>,
 }
 
 async fn save_first_draft(
@@ -868,6 +873,7 @@ async fn save_first_draft(
         input.mentor_id,
         &input.subject,
         &input.body_md,
+        &input.attachments,
         now(),
     )
     .await?)
@@ -881,7 +887,12 @@ async fn check_first_draft(
     let m = mentor::get(&ctx.db, input.mentor_id)
         .await?
         .ok_or_else(|| CallError::not_found(NO_MENTOR))?;
-    Ok(check::letter(&m.name, &input.subject, &input.body_md))
+    Ok(check::letter(
+        &m.name,
+        &input.subject,
+        &input.body_md,
+        !input.attachments.is_empty(),
+    ))
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -914,6 +925,8 @@ pub struct FirstEmail {
     pub body_md: String,
     pub html: String,
     pub text: String,
+    /// Materials, by id.
+    pub attachments: Vec<i64>,
 }
 
 async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), CallError> {
@@ -939,14 +952,20 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
         body_md: &input.body_md,
         html: &input.html,
         text: &input.text,
+        attachments: &input.attachments,
     };
-    if !email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await? {
-        return Err(CallError::not_found(
+    match email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await? {
+        email::Approved::Yes => {
+            ctx.sender.wake();
+            Ok(())
+        }
+        email::Approved::NoDraft => Err(CallError::not_found(
             "草稿已不存在：可能已经发送，或导师已移入回收站。",
-        ));
+        )),
+        email::Approved::MaterialGone => Err(CallError::invalid(
+            "有附件的材料已被删除。重新选择附件后再发送。".into(),
+        )),
     }
-    ctx.sender.wake();
-    Ok(())
 }
 
 async fn list_emails(ctx: &Context, input: MentorId) -> Result<Vec<email::Email>, CallError> {

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject, body_md)\n         SELECT id, 'first', 'review', ?2, ?2, ?3, ?4 FROM mentor WHERE id = ?1 AND trashed_at IS NULL\n         ON CONFLICT (mentor_id) WHERE kind = 'first' AND task_id IS NULL AND state = 'review'\n         DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2\n         RETURNING id AS \"id!\", subject, body_md",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "body_md"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "73a49bc75a341596bddf26d0903beb4cc79db049cc9b93e06dee7bd3a7d20225"
+}
