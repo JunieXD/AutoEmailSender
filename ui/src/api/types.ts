@@ -18,7 +18,11 @@ export type Email = { id: number, subject: string, bodyMd: string, attachments: 
 /**
  * The bounced email this one sends again.
  */
-resendOf: number | null, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
+resendOf: number | null, 
+/**
+ * Whether this bounced email has been sent again, as an email in any state.
+ */
+resent: boolean, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
 
 export type EmailId = { id: number, };
 

@@ -23,17 +23,20 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
     queries: ids.map((id) => ({ queryKey: ["getFirstDraft", id], queryFn: () => call("getFirstDraft", { id }) })),
   });
   const merge = useMutation({
-    mutationFn: () => call("mergeMentors", { keep, other }),
-    onSuccess: async () => {
-      queryClient.removeQueries({ queryKey: ["getMentor", other] });
-      dropDrafts(queryClient, [other]);
+    mutationFn: (pair: { keep: number; other: number }) => call("mergeMentors", pair),
+    onSuccess: async (_, pair) => {
+      queryClient.removeQueries({ queryKey: ["getMentor", pair.other] });
+      // The kept mentor's composer must start from the draft it may have taken over.
+      dropDrafts(queryClient, [pair.keep, pair.other]);
       refreshMentors(queryClient);
       onClose();
-      await navigate({ to: "/mentors/$mentorId", params: { mentorId: keep } });
+      await navigate({ to: "/mentors/$mentorId", params: { mentorId: pair.keep } });
     },
   });
   const [a, b] = mentors.map((q) => q.data);
-  const failed = mentors.find((q) => q.error)?.error;
+  const failed = [...mentors, ...drafts].find((q) => q.error)?.error;
+  // Which draft goes must be known before anything is merged.
+  const ready = a && b && drafts.every((q) => q.isSuccess);
   const byId = (id: number) => (a?.id === id ? a : b);
   const kept = byId(keep);
   const gone = byId(other);
@@ -42,13 +45,19 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
       <DialogContent>
         <DialogHeader>合并导师</DialogHeader>
         <DialogBody>
-          {failed && <p className="text-sm text-destructive">导师资料未能加载：{errorMessage(failed)}</p>}
-          {a && b && kept && gone && (
+          {failed && <p className="text-sm text-destructive">未能加载：{errorMessage(failed)}</p>}
+          {ready && kept && gone && (
             <div className="flex flex-col gap-4">
               <p className="text-sm text-muted-foreground">选择保留哪一位，另一位的资料、邮件和往来都并进来。</p>
               <div role="radiogroup" aria-label="保留的导师" className="grid grid-cols-2 gap-3 phone:grid-cols-1">
                 {[a, b].map((m) => (
-                  <Choice key={m.id} mentor={m} chosen={m.id === keep} onChoose={() => setKeep(m.id)} />
+                  <Choice
+                    key={m.id}
+                    mentor={m}
+                    chosen={m.id === keep}
+                    disabled={merge.isPending}
+                    onChoose={() => setKeep(m.id)}
+                  />
                 ))}
               </div>
               <ul className="list-disc pl-5 text-sm leading-relaxed">
@@ -64,7 +73,7 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
             {merge.isError && errorMessage(merge.error)}
           </p>
           <DialogClose render={<Button variant="ghost" />}>取消</DialogClose>
-          <Button disabled={!a || !b || merge.isPending} onClick={() => merge.mutate()}>
+          <Button disabled={!ready || merge.isPending} onClick={() => merge.mutate({ keep, other })}>
             合并
           </Button>
         </DialogFooter>
@@ -73,13 +82,24 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
   );
 }
 
-function Choice({ mentor: m, chosen, onChoose }: { mentor: MentorDetail; chosen: boolean; onChoose: () => void }) {
+function Choice({
+  mentor: m,
+  chosen,
+  disabled,
+  onChoose,
+}: {
+  mentor: MentorDetail;
+  chosen: boolean;
+  disabled: boolean;
+  onChoose: () => void;
+}) {
   const place = m.affiliations.at(0);
   return (
     <button
       type="button"
       role="radio"
       aria-checked={chosen}
+      disabled={disabled}
       onClick={onChoose}
       className="flex min-w-0 flex-col items-start gap-1 rounded-xl border border-border px-4 py-3 text-left text-sm aria-checked:border-brand aria-checked:bg-selected"
     >

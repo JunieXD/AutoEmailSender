@@ -438,6 +438,8 @@ async fn a_bounced_email_goes_again_once_as_another_letter(db: SqlitePool) {
     for outcome in [email::Approved::Yes, email::Approved::Refused] {
         assert_eq!(email::resend(&db, bounced, T).await.unwrap(), outcome);
     }
+    let again = email::list(&db, wang).await.unwrap()[1].id;
+    assert!(!email::withdraw(&db, again, T).await.unwrap());
     send::step(&db, &net, dir.path(), || T + 10 * MINUTE)
         .await
         .unwrap();
@@ -450,6 +452,7 @@ async fn a_bounced_email_goes_again_once_as_another_letter(db: SqlitePool) {
         &emails[1].delivery,
         Delivery::Sent { to_address, .. } if to_address == "wangwei@gmail.com"
     ));
+    assert!(emails[0].resent && !emails[1].resent);
     assert_eq!(emails[1].attachments[0].file_name, "简历.pdf");
     let mails = inbox.lock().unwrap().clone();
     // Under a Message-ID of its own, which no mailbox drops as a repeat of the first.

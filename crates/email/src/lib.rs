@@ -221,6 +221,8 @@ pub struct Email {
     pub attachments: Vec<Attachment>,
     /// The bounced email this one sends again.
     pub resend_of: Option<i64>,
+    /// Whether this bounced email has been sent again, as an email in any state.
+    pub resent: bool,
     #[serde(flatten)]
     pub delivery: Delivery,
 }
@@ -295,7 +297,8 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
     }
     sqlx::query!(
         r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS "body_md!",
-             resend_of, from_address, to_address, sent_at, error
+             resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id) AS "resent!: bool",
+             from_address, to_address, sent_at, error
            FROM email
            WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
            ORDER BY id"#,
@@ -343,13 +346,15 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
             body_md: r.body_md,
             attachments: attachments.remove(&r.id).unwrap_or_default(),
             resend_of: r.resend_of,
+            resent: r.resent,
             delivery,
         })
     })
     .collect()
 }
 
-/// Takes an email that has not gone out back to a draft. False when it is on its way out by now.
+/// Takes an email that has not gone out back to a draft. False when it is on its way out by now,
+/// or sends a bounced one again: that is the letter as it went, not a draft.
 /// Approved again, it is another letter, with a Message-ID of its own: mailboxes drop a second
 /// email under the same one (docs/design.md#桌面端), and a copy of an earlier try is no proof the
 /// new text went out.
@@ -358,7 +363,7 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
         "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
            to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
            html = NULL, text = NULL, updated_at = ?
-         WHERE id = ? AND state IN ('approved', 'failed')",
+         WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL",
         now,
         id,
     )

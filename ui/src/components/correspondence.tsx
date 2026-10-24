@@ -37,7 +37,6 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(entries.error)}</p>;
   }
   if (!entries.data) return null;
-  const resent = new Set(entries.data.map((e) => "email" in e && e.email.resendOf));
   if (entries.data.length === 0) {
     return (
       <>
@@ -58,7 +57,6 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
             mentorId={mentor.id}
             actions={!mentor.trashed}
             emails={mentor.emails}
-            resent={resent.has(e.email.id)}
           />
         ) : (
           <Seen
@@ -113,15 +111,12 @@ function Sent({
   mentorId,
   actions,
   emails,
-  resent,
 }: {
   email: Email;
   mentorId: number;
   actions: boolean;
   /** The mentor's addresses, the first of which an email sent again goes to. */
   emails: string[];
-  /** Whether a bounced email has been sent again. */
-  resent: boolean;
 }) {
   const queryClient = useQueryClient();
   const act = useMutation({
@@ -173,7 +168,7 @@ function Sent({
               onConfirm={() => act.mutate("retryEmail")}
             />
           )}
-          {e.state === "bounced" && !resent && sendTo && (
+          {e.state === "bounced" && !e.resent && sendTo && (
             <Confirm
               trigger={
                 <Button variant="ghost" disabled={act.isPending}>
@@ -190,7 +185,7 @@ function Sent({
               onConfirm={() => act.mutate("resendEmail")}
             />
           )}
-          {(e.state === "approved" || e.state === "failed") && (
+          {(e.state === "approved" || e.state === "failed") && e.resendOf === null && (
             <Button variant="ghost" disabled={act.isPending} onClick={() => act.mutate("withdrawEmail")}>
               <Undo2 strokeWidth={1.6} />
               改回草稿
@@ -231,7 +226,11 @@ function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorD
   const queryClient = useQueryClient();
   const add = useMutation({
     mutationFn: () => call("addMentorEmail", { id: mentor.id, address: m.fromAddress }),
-    onSuccess: (detail) => queryClient.setQueryData(["getMentor", mentor.id], detail),
+    onSuccess: async (detail) => {
+      // A load still under way may have read the mentor before the address was added.
+      await queryClient.cancelQueries({ queryKey: ["getMentor", mentor.id] });
+      queryClient.setQueryData(["getMentor", mentor.id], detail);
+    },
   });
   const mine = m.kind === "sent";
   if (m.kind === "auto_reply" && !opened) {
