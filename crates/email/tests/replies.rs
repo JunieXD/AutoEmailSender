@@ -217,6 +217,36 @@ async fn only_this_mentors_nonautomatic_reply_can_be_selected(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn default_reply_target_skips_messages_without_a_message_id(db: SqlitePool) {
+    let mentor = setup(&db).await;
+    sqlx::query("INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address, truncated)
+      VALUES (1, 'INBOX', 1, 2, 'reply', 1792821700000, 'wang@pku.edu.cn', 0)").execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 2)")
+        .bind(mentor)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        email::reply_target(&db, mentor, None)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        1
+    );
+    sqlx::query("UPDATE message SET message_id = NULL WHERE id = 1")
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(
+        email::reply_target(&db, mentor, None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn approval_rejects_a_target_changed_after_the_user_reviewed_it(db: SqlitePool) {
     let mentor = setup(&db).await;
     let original = draft(&db, mentor).await;

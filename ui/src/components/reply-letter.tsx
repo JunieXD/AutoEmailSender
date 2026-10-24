@@ -37,6 +37,13 @@ export function ReplyLetter({
   const placeholders = usePlaceholders();
   const error = draft.error ?? latest.error ?? materials.error ?? placeholders.error;
   if (error) return <p className="px-5 py-4 text-sm text-destructive">回复草稿未能加载：{errorMessage(error)}</p>;
+  if (draft.isSuccess && latest.isSuccess && !draft.data && !latest.data) {
+    return (
+      <p className="mt-auto border-t border-border px-5 py-3 text-sm text-muted-foreground phone:px-3">
+        这些信缺少邮件编号，无法在原线程里回复，请到邮箱里回复
+      </p>
+    );
+  }
   return (
     draft.isSuccess &&
     latest.isSuccess &&
@@ -82,10 +89,6 @@ function Composer({
   // Saved content comes from the query; only an unfinished save overrides it.
   const [editing, setEditing] = useState(restored);
   const [choice, setChoice] = useState<ReplyTarget | null>(null);
-  if (editing && last?.status === "success" && last.variables === editing) {
-    setEditing(undefined);
-    if (last.data) setChoice(null);
-  }
   const shownTarget = editing ? editing.target : (choice ?? (draft ? draft.target : latest));
   const letter: ReplyDraftEdit = editing?.letter ?? {
     mentorId,
@@ -94,8 +97,15 @@ function Composer({
     attachments: draft?.attachments ?? [],
   };
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
-  // A server change (approval, withdrawal or reload) replaces the editor, while typing keeps it.
-  if (body.markdown !== letter.bodyMd) setBody({ version: body.version + 1, markdown: letter.bodyMd });
+  if (editing && last?.status === "success" && last.variables === editing) {
+    setEditing(undefined);
+    if (last.data) setChoice(null);
+    // Saving may normalize whitespace; it must not replace the editor the user is typing in.
+    setBody({ ...body, markdown: last.data?.bodyMd ?? "" });
+  } else if (body.markdown !== letter.bodyMd) {
+    // Approval, withdrawal or a reload replaces the content rather than acknowledging a save.
+    setBody({ version: body.version + 1, markdown: letter.bodyMd });
+  }
   const approveKey = ["approveReply", mentorId];
   const approvals = useMutationState<MutationState<void, Error, ReplyDraftEdit>>({
     filters: { mutationKey: approveKey },

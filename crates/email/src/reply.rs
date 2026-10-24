@@ -39,6 +39,7 @@ async fn target(
            FROM message_mentor mm JOIN message m ON m.id = mm.message_id
            WHERE mm.mentor_id = ?1 AND m.kind = 'reply'
              AND (?2 IS NULL OR m.id = ?2) AND (?3 IS NULL OR m.message_id = ?3)
+             AND (?2 IS NOT NULL OR m.message_id IS NOT NULL)
            ORDER BY m.sent_at DESC, m.id DESC LIMIT 1"#,
         mentor_id,
         id,
@@ -48,7 +49,7 @@ async fn target(
     .await
 }
 
-/// A selected reply from this mentor, or their latest non-automatic reply.
+/// A selected reply from this mentor, or their latest non-automatic reply with a Message-ID.
 pub async fn reply_target(
     db: &SqlitePool,
     mentor_id: i64,
