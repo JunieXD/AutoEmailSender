@@ -653,8 +653,8 @@ pub async fn copied(
 
 /// Marks the email that went out with this Message-ID, or whose copy had it, as bounced for this
 /// reason, unless the bounce names `recipients` without the address it last went to: then it is of
-/// an earlier try, to an address since changed. False when it was marked already, or the app sent
-/// no such email.
+/// an earlier try, to an address since changed; one being sent to no address cannot bounce. False
+/// when it was marked already, or the app sent no such email.
 pub async fn bounced(
     conn: &mut SqliteConnection,
     message_id: &str,
@@ -668,6 +668,7 @@ pub async fn bounced(
         "UPDATE email SET state = 'bounced', error = ?1, updated_at = ?2
          WHERE (message_id = ?3 OR copy_message_id = ?3)
            AND state IN ('sending', 'maybe_sent', 'sent')
+           AND to_address IS NOT NULL
            AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))",
         reason,
         now,

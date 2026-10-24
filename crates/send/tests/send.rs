@@ -307,6 +307,12 @@ async fn an_email_left_sending_to_no_address_failed(db: SqlitePool) {
         .await
         .unwrap()
         .unwrap();
+    // A late bounce naming no one, of a try before the address was taken out, leaves it be.
+    assert!(
+        !email::bounced(&mut conn, "<x@example.com>", &[], "邮件被退回", T)
+            .await
+            .unwrap()
+    );
     drop(conn);
 
     send::recover(&db, T + 1).await.unwrap();
