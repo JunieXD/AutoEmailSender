@@ -1,4 +1,11 @@
-import { keepPreviousData, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useIsMutating,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronLeft, RefreshCw, UserRound } from "lucide-react";
@@ -55,8 +62,13 @@ export function ConversationsPage() {
       }
     },
   });
-  // From the cache, so that receiving still under way shows after leaving the page and coming back.
+  // From the cache, so that receiving still under way, or how it ended, shows after leaving the
+  // page and coming back.
   const receiving = useIsMutating({ mutationKey: ["receiveNow"] }) > 0;
+  const receiveError = useMutationState({
+    filters: { mutationKey: ["receiveNow"] },
+    select: (m) => m.state.error,
+  }).at(-1);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -102,9 +114,9 @@ export function ConversationsPage() {
               )}
             </div>
           </div>
-          {(receive.error || status.error || mailboxes.error) && (
+          {(receiveError || status.error || mailboxes.error) && (
             <p className="mt-2 text-sm text-destructive">
-              {errorMessage(receive.error ?? status.error ?? mailboxes.error)}
+              {errorMessage(receiveError ?? status.error ?? mailboxes.error)}
             </p>
           )}
           {mailboxes.data
