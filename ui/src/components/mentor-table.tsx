@@ -129,7 +129,9 @@ export function MentorTable({
             {m.research ?? <Missing>未填写研究方向</Missing>}
           </div>
           <div role="cell" className="cards:justify-self-end cards:[grid-area:match]">
-            <Match state={m.matchState} />
+            <Link to="/mentors/$mentorId" params={{ mentorId: m.id }} className="relative z-10 block">
+              <Match state={m.matchState} />
+            </Link>
           </div>
           <div role="cell" className="min-w-0 text-sm cards:max-w-[45cqw] cards:text-right cards:[grid-area:contact]">
             <ContactLabel contact={m.contact} className="cards:justify-end" />
@@ -150,7 +152,7 @@ export function MentorTable({
 
 function Match({ state: { result, state } }: { state: MatchSummary }) {
   return (
-    <div className="relative z-10 flex flex-col gap-0.5 text-sm">
+    <div className="flex flex-col gap-0.5 text-sm">
       {result && (
         <div className="flex items-center gap-1.5">
           <span className="font-medium tabular-nums">{result.score}</span>

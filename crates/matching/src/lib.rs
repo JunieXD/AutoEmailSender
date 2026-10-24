@@ -193,18 +193,26 @@ pub struct MatchFinished {
 enum Outcome {
     Done(queue::MatchAnswer, String, i64),
     Failed(String),
-    Pause(String),
+    Pause(String, Option<(i64, String)>),
     RateLimit(Duration),
     Gone,
 }
 
-async fn analyze(db: &SqlitePool, net: &net::Net, id: i64) -> Result<Outcome, sqlx::Error> {
+async fn analyze(
+    db: &SqlitePool,
+    net: &net::Net,
+    claim: queue::Claim,
+) -> Result<Outcome, sqlx::Error> {
+    let id = claim.id;
     let started_at = now();
     let Some(chosen) = model::chosen(db).await? else {
-        return Ok(Outcome::Pause(NO_MODEL.into()));
+        return Ok(Outcome::Pause(NO_MODEL.into(), None));
     };
     if !chosen.agreed {
-        return Ok(Outcome::Pause(NOT_AGREED.into()));
+        return Ok(Outcome::Pause(
+            NOT_AGREED.into(),
+            Some((chosen.id, chosen.model)),
+        ));
     }
     let Some(mentor) = mentor::get(db, id).await? else {
         return Ok(Outcome::Gone);
@@ -220,23 +228,26 @@ async fn analyze(db: &SqlitePool, net: &net::Net, id: i64) -> Result<Outcome, sq
     let me = profile::get(db).await?;
     let references = material::for_matching(db).await?;
     if me.research_interests.is_none() && references.is_empty() {
-        return Ok(Outcome::Pause(NO_BASIS.into()));
+        return Ok(Outcome::Pause(NO_BASIS.into(), None));
     }
     let message = message(&me, &references, &mentor);
     let mut system = SYSTEM.to_owned();
     for attempt in 0..2 {
         let answer = match model::ask(net, &chosen.access, &chosen.model, &system, &message).await {
             Ok(a) => a,
-            Err(e) => return Ok(classify(e)),
+            Err(e) => return Ok(classify(e, &chosen)),
         };
         tracing::info!(mentor_id = id, model = chosen.model, usage = ?answer.usage, finish_reason = answer.finish_reason, "match model answered");
         if let Some(usage) = answer.usage {
             record_usage(db, &chosen, usage).await;
         }
         if answer.text.trim().is_empty() {
-            return Ok(classify(ModelError::NoAnswer {
-                finish_reason: answer.finish_reason,
-            }));
+            return Ok(classify(
+                ModelError::NoAnswer {
+                    finish_reason: answer.finish_reason,
+                },
+                &chosen,
+            ));
         }
         if answer.finish_reason.as_deref() == Some("length") {
             return Ok(Outcome::Failed(
@@ -246,6 +257,9 @@ async fn analyze(db: &SqlitePool, net: &net::Net, id: i64) -> Result<Outcome, sq
         match parse(&answer.text) {
             Ok(answer) => return Ok(Outcome::Done(answer, chosen.model, started_at)),
             Err(error) if attempt == 0 => {
+                if !queue::running(db, claim).await? {
+                    return Ok(Outcome::Gone);
+                }
                 system = format!(
                     "{SYSTEM}\n上一次回答的校验错误：{error}。请按字段要求重新输出一个完整的 JSON 对象。"
                 )
@@ -266,11 +280,12 @@ async fn record_usage(db: &SqlitePool, chosen: &Chosen, usage: model::usage::Usa
     }
 }
 
-fn classify(error: ModelError) -> Outcome {
+fn classify(error: ModelError, chosen: &Chosen) -> Outcome {
     let message = error.message();
+    let config = Some((chosen.id, chosen.model.clone()));
     let (status, reply, retry_after) = match error {
         ModelError::Unreachable { .. } | ModelError::TimedOut { .. } => {
-            return Outcome::Pause(message);
+            return Outcome::Pause(message, config);
         }
         ModelError::Refused {
             status,
@@ -322,13 +337,17 @@ fn classify(error: ModelError) -> Outcome {
     .iter()
     .any(|s| reply.contains(s));
     if exhausted {
-        Outcome::Pause("模型服务商的账户余额或额度不足。到服务商网站充值或补充额度后继续。".into())
+        Outcome::Pause(
+            "模型服务商的账户余额或额度不足。到服务商网站充值或补充额度后继续。".into(),
+            config,
+        )
     } else if missing {
         Outcome::Pause(
             "服务商找不到这个模型。请在“设置 › AI › 模型”里检查模型名或更换模型后继续。".into(),
+            config,
         )
     } else if status.is_some_and(|s| matches!(s, 401..=404)) {
-        Outcome::Pause(message)
+        Outcome::Pause(message, config)
     } else if status == Some(429) {
         Outcome::RateLimit(retry_after.unwrap_or(Duration::from_secs(30)))
     } else {
@@ -376,10 +395,11 @@ pub async fn run(
         let cooling = retry_at.is_some_and(|at| at > Instant::now());
         if progress.pause.is_none() && !cooling && workers.len() < CONCURRENCY {
             match queue::next(&db).await {
-                Ok(Some(id)) => {
+                Ok(Some(claim)) => {
                     let (db, net) = (db.clone(), net.clone());
-                    let task = workers.spawn(async move { (id, analyze(&db, &net, id).await) });
-                    claims.insert(task.id(), id);
+                    let task =
+                        workers.spawn(async move { (claim, analyze(&db, &net, claim).await) });
+                    claims.insert(task.id(), claim);
                     changed();
                     continue;
                 }
@@ -394,34 +414,41 @@ pub async fn run(
         tokio::select! {
             Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
                 match joined {
-                    Ok((task_id, (id, result))) => {
+                    Ok((task_id, (claim, result))) => {
                         claims.remove(&task_id);
+                        let id = claim.id;
                         let outcome = match result {
                             Ok(o) => o,
-                            Err(e) => { tracing::error!(mentor_id = id, "match database: {e}"); Outcome::Pause("匹配分析的数据暂时无法读取，请重试；仍然出错时，导出日志发给开发者。".into()) }
+                            Err(e) => { tracing::error!(mentor_id = id, "match database: {e}"); Outcome::Pause("匹配分析的数据暂时无法读取，请重试；仍然出错时，导出日志发给开发者。".into(), None) }
                         };
                         let completed_at = now();
-                        loop {
+                        let applied = loop {
                             let saved = match &outcome {
-                                Outcome::Done(answer, model, started_at) => queue::complete(&db, id, answer, model, *started_at).await,
-                                Outcome::Failed(reason) => queue::fail(&db, id, reason).await,
-                                Outcome::Pause(reason) => queue::requeue(&db, id, Some((completed_at, reason))).await.map(|()| false),
-                                Outcome::RateLimit(_) => queue::requeue(&db, id, None).await.map(|()| false),
+                                Outcome::Done(answer, model, started_at) => queue::complete(&db, claim, answer, model, *started_at).await,
+                                Outcome::Failed(reason) => queue::fail(&db, claim, reason).await,
+                                Outcome::Pause(reason, model) => queue::requeue(&db, claim, Some((completed_at, reason)), model.as_ref().map(|(id, name)| (*id, name.as_str()))).await,
+                                Outcome::RateLimit(_) => queue::requeue(&db, claim, None, None).await,
                                 Outcome::Gone => Ok(false),
                             };
                             match saved {
-                                Ok(applied) => { if applied { total.analyzed += 1; total.failed += i64::from(matches!(outcome, Outcome::Failed(_))); } break; },
+                                Ok(applied) => break applied,
                                 Err(e) => { tracing::error!(mentor_id = id, "save match: {e}"); tokio::time::sleep(RETRY).await; }
                             }
+                        };
+                        if applied {
+                            if matches!(outcome, Outcome::Done(..) | Outcome::Failed(_)) {
+                                total.analyzed += 1;
+                                total.failed += i64::from(matches!(outcome, Outcome::Failed(_)));
+                            }
+                            if let Outcome::RateLimit(wait) = outcome { let at = Instant::now() + wait; retry_at = Some(retry_at.map_or(at, |old| old.max(at))); }
                         }
-                        if let Outcome::RateLimit(wait) = outcome { let at = Instant::now() + wait; retry_at = Some(retry_at.map_or(at, |old| old.max(at))); }
                         changed();
                     }
                     Err(e) => {
                         tracing::error!("match worker: {e}");
-                        if let Some(id) = claims.remove(&e.id()) {
-                            while let Err(e) = queue::requeue(&db, id, Some((now(), "匹配分析意外中断，请继续或重启应用；仍然出错时，导出日志发给开发者。"))).await {
-                                tracing::error!(mentor_id = id, "recover worker: {e}");
+                        if let Some(claim) = claims.remove(&e.id()) {
+                            while let Err(e) = queue::requeue(&db, claim, Some((now(), "匹配分析意外中断，请继续或重启应用；仍然出错时，导出日志发给开发者。")), None).await {
+                                tracing::error!(mentor_id = claim.id, "recover worker: {e}");
                                 tokio::time::sleep(RETRY).await;
                             }
                         }

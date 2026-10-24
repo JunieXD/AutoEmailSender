@@ -104,6 +104,7 @@ CREATE TABLE mentor (
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   trashed_at INTEGER,
   match_state TEXT CHECK (match_state IN ('queued', 'running', 'failed')),
+  match_claim INTEGER NOT NULL DEFAULT 0,
   match_score INTEGER CHECK (match_score BETWEEN 0 AND 100),
   matched_at INTEGER,
   match_model TEXT,

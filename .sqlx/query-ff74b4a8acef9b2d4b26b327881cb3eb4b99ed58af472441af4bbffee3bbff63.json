@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET match_state = 'queued', match_error = NULL,\n        match_queued_at = ?, match_priority = 0, match_claim = match_claim + 1 WHERE match_state = 'failed' AND trashed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ff74b4a8acef9b2d4b26b327881cb3eb4b99ed58af472441af4bbffee3bbff63"
+}

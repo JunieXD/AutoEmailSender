@@ -58,16 +58,21 @@ pub async fn enqueue(
     redo: bool,
     now: i64,
 ) -> Result<u64, sqlx::Error> {
+    let mut tx = db.begin().await?;
     let row = sqlx::query!(
         "UPDATE mentor SET match_state = 'queued', match_error = NULL,
-           match_queued_at = ?1, match_priority = ?2
+           match_queued_at = ?1, match_priority = ?2, match_claim = match_claim + 1
          WHERE id IN (SELECT value FROM json_each(?3)) AND trashed_at IS NULL
            AND (match_state IS NULL OR match_state = 'failed')
            AND id IN (SELECT mentor_id FROM mentor_detail
                       WHERE research IS NOT NULL OR coalesce(json_array_length(papers), 0) > 0)
            AND (?4 OR match_score IS NULL OR matched_at < (SELECT match_basis_changed_at FROM profile))",
         now, single, Json(ids), redo || single,
-    ).execute(db).await?;
+    ).execute(&mut *tx).await?;
+    sqlx::query!("UPDATE profile SET match_paused_at = NULL, match_pause_reason = NULL")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(row.rows_affected())
 }
 
@@ -123,7 +128,7 @@ pub async fn resume(db: &SqlitePool) -> Result<(), sqlx::Error> {
 /// Clears waiting work; the few already being analyzed finish normally.
 pub async fn cancel(db: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
-    sqlx::query!("UPDATE mentor SET match_state = NULL, match_queued_at = NULL, match_priority = NULL WHERE match_state = 'queued'")
+    sqlx::query!("UPDATE mentor SET match_state = NULL, match_queued_at = NULL, match_priority = NULL WHERE match_state IN ('queued', 'running')")
         .execute(&mut *tx).await?;
     sqlx::query!("UPDATE profile SET match_paused_at = NULL, match_pause_reason = NULL")
         .execute(&mut *tx)
@@ -133,18 +138,26 @@ pub async fn cancel(db: &SqlitePool) -> Result<(), sqlx::Error> {
 
 pub async fn retry(db: &SqlitePool, now: i64) -> Result<u64, sqlx::Error> {
     let r = sqlx::query!("UPDATE mentor SET match_state = 'queued', match_error = NULL,
-        match_queued_at = ?, match_priority = 0 WHERE match_state = 'failed' AND trashed_at IS NULL", now)
+        match_queued_at = ?, match_priority = 0, match_claim = match_claim + 1 WHERE match_state = 'failed' AND trashed_at IS NULL", now)
         .execute(db).await?;
     Ok(r.rows_affected())
 }
 
+/// The mentor and the counter identifying this particular execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Claim {
+    pub id: i64,
+    pub claim: i64,
+}
+
 /// Claims in priority then FIFO order, only while the queue is not paused.
-pub async fn next(db: &SqlitePool) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar!(
-        r#"UPDATE mentor SET match_state = 'running' WHERE id = (
+pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
+    sqlx::query_as!(
+        Claim,
+        r#"UPDATE mentor SET match_state = 'running', match_claim = match_claim + 1 WHERE id = (
            SELECT id FROM mentor WHERE match_state = 'queued' AND trashed_at IS NULL
            ORDER BY match_priority DESC, match_queued_at, id LIMIT 1)
-         AND (SELECT match_paused_at FROM profile) IS NULL RETURNING id AS "id!""#
+         AND (SELECT match_paused_at FROM profile) IS NULL RETURNING id AS "id!", match_claim AS "claim!""#
     )
     .fetch_optional(db)
     .await
@@ -157,20 +170,43 @@ pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Whether a format retry still belongs to active work.
+pub async fn running(db: &SqlitePool, claim: Claim) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM mentor
+        WHERE id = ? AND match_claim = ? AND match_state = 'running' AND trashed_at IS NULL) AS "running!: bool""#, claim.id, claim.claim)
+        .fetch_one(db).await
+}
+
 /// Requeues a provider-wide failure without making it a failure of this mentor.
 pub async fn requeue(
     db: &SqlitePool,
-    id: i64,
+    claim: Claim,
     pause: Option<(i64, &str)>,
-) -> Result<(), sqlx::Error> {
+    model: Option<(i64, &str)>,
+) -> Result<bool, sqlx::Error> {
     let mut tx = db.begin().await?;
-    sqlx::query!("UPDATE mentor SET match_state = 'queued' WHERE id = ? AND match_state = 'running' AND trashed_at IS NULL", id)
+    let row = sqlx::query!("UPDATE mentor SET match_state = 'queued' WHERE id = ? AND match_claim = ? AND match_state = 'running' AND trashed_at IS NULL", claim.id, claim.claim)
         .execute(&mut *tx).await?;
-    if let Some((now, reason)) = pause {
-        sqlx::query!("UPDATE profile SET match_paused_at = ?1, match_pause_reason = ?2 WHERE match_paused_at IS NULL", now, reason)
-            .execute(&mut *tx).await?;
+    if row.rows_affected() == 0 {
+        return Ok(false);
     }
-    tx.commit().await
+    if let Some((now, reason)) = pause {
+        let (config_id, name) = model.unzip();
+        sqlx::query!(
+            "UPDATE profile SET match_paused_at = ?1, match_pause_reason = ?2
+            WHERE match_paused_at IS NULL AND (?3 IS NULL OR EXISTS (
+                SELECT 1 FROM model_config WHERE id = coalesce(profile.default_model_config_id,
+                    (SELECT min(id) FROM model_config)) AND id = ?3 AND model = ?4))",
+            now,
+            reason,
+            config_id,
+            name
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// The validated model output, before it is stored with its time and model.
@@ -186,7 +222,7 @@ pub struct MatchAnswer {
 /// Late results of a deleted or trashed mentor are discarded.
 pub async fn complete(
     db: &SqlitePool,
-    id: i64,
+    claim: Claim,
     answer: &MatchAnswer,
     model: &str,
     now: i64,
@@ -194,21 +230,21 @@ pub async fn complete(
     let mut tx = db.begin().await?;
     let r = sqlx::query!("UPDATE mentor SET match_state = NULL, match_error = NULL,
         match_queued_at = NULL, match_priority = NULL, match_score = ?, matched_at = ?, match_model = ?
-        WHERE id = ? AND match_state = 'running' AND trashed_at IS NULL", answer.score, now, model, id)
+        WHERE id = ? AND match_claim = ? AND (match_state = 'running' OR match_state IS NULL) AND trashed_at IS NULL", answer.score, now, model, claim.id, claim.claim)
         .execute(&mut *tx).await?;
     if r.rows_affected() == 0 {
         return Ok(false);
     }
     sqlx::query!("UPDATE mentor_detail SET match_reason = ?, match_directions = ?, match_highlights = ?, match_risks = ? WHERE mentor_id = ?",
-        answer.reason, Json(&answer.directions), Json(&answer.highlights), Json(&answer.risks), id)
+        answer.reason, Json(&answer.directions), Json(&answer.highlights), Json(&answer.risks), claim.id)
         .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(true)
 }
 
-pub async fn fail(db: &SqlitePool, id: i64, reason: &str) -> Result<bool, sqlx::Error> {
+pub async fn fail(db: &SqlitePool, claim: Claim, reason: &str) -> Result<bool, sqlx::Error> {
     let r = sqlx::query!("UPDATE mentor SET match_state = 'failed', match_error = ?,
-        match_queued_at = NULL, match_priority = NULL WHERE id = ? AND match_state = 'running' AND trashed_at IS NULL", reason, id)
+        match_queued_at = NULL, match_priority = NULL WHERE id = ? AND match_claim = ? AND match_state = 'running' AND trashed_at IS NULL", reason, claim.id, claim.claim)
         .execute(db).await?;
     Ok(r.rows_affected() > 0)
 }

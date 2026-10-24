@@ -913,7 +913,8 @@ async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, C
     let data = BASE64_STANDARD
         .decode(&input.data)
         .map_err(CallError::bad_input)?;
-    let id = material::add(&ctx.db, &ctx.materials, input.file_name.trim(), data, now()).await?;
+    let extracted = material::extract(input.file_name.trim(), data).await?;
+    let id = material::add(&ctx.db, &ctx.materials, extracted, now()).await?;
     Ok(MaterialId { id })
 }
 

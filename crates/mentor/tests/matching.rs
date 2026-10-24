@@ -27,8 +27,9 @@ fn answer() -> MatchAnswer {
 }
 async fn result(db: &SqlitePool, id: i64, at: i64) {
     enqueue(db, &[id], true, true, 1).await.unwrap();
-    assert_eq!(next(db).await.unwrap(), Some(id));
-    assert!(complete(db, id, &answer(), "m", at).await.unwrap());
+    let claim = next(db).await.unwrap().unwrap();
+    assert_eq!(claim.id, id);
+    assert!(complete(db, claim, &answer(), "m", at).await.unwrap());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -62,10 +63,10 @@ async fn queue_skips_ineligible_and_current_results_but_redoes_changed(db: Sqlit
     assert_eq!((p.analyze, p.queued, p.insufficient), (0, 3, 1));
     let single = add(&db, Some("视觉")).await;
     enqueue(&db, &[single], true, true, 50).await.unwrap();
-    assert_eq!(next(&db).await.unwrap(), Some(single));
-    assert_eq!(next(&db).await.unwrap(), Some(old));
-    assert_eq!(next(&db).await.unwrap(), Some(papers));
-    assert_eq!(next(&db).await.unwrap(), Some(fresh));
+    assert_eq!(next(&db).await.unwrap().map(|c| c.id), Some(single));
+    assert_eq!(next(&db).await.unwrap().map(|c| c.id), Some(old));
+    assert_eq!(next(&db).await.unwrap().map(|c| c.id), Some(papers));
+    assert_eq!(next(&db).await.unwrap().map(|c| c.id), Some(fresh));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -89,6 +90,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
         page: NonZeroU32::MIN,
     };
     enqueue(&db, &[id], false, false, 30).await.unwrap();
+    let mut claim = None;
     for expected in [
         MatchState::Queued,
         MatchState::Running,
@@ -106,10 +108,10 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
         assert!(detail.analysis.result.unwrap().basis_changed);
         match expected {
             MatchState::Queued => {
-                next(&db).await.unwrap();
+                claim = next(&db).await.unwrap();
             }
             MatchState::Running => {
-                fail(&db, id, "回答不完整").await.unwrap();
+                fail(&db, claim.unwrap(), "回答不完整").await.unwrap();
             }
             _ => {}
         }
@@ -117,8 +119,12 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     assert_eq!(retry(&db, 40).await.unwrap(), 1);
     assert_eq!(retry(&db, 41).await.unwrap(), 0);
     cancel(&db).await.unwrap();
-    assert!(!complete(&db, id, &answer(), "late", 50).await.unwrap());
-    assert!(!fail(&db, id, "late").await.unwrap());
+    assert!(
+        !complete(&db, claim.unwrap(), &answer(), "late", 50)
+            .await
+            .unwrap()
+    );
+    assert!(!fail(&db, claim.unwrap(), "late").await.unwrap());
     assert_eq!(
         mentor::get(&db, id)
             .await
@@ -131,18 +137,22 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
         "m"
     );
     enqueue(&db, &[id], true, true, 60).await.unwrap();
-    next(&db).await.unwrap();
+    claim = next(&db).await.unwrap();
     cancel(&db).await.unwrap();
     assert!(
-        complete(&db, id, &answer(), "after cancel", 70)
+        complete(&db, claim.unwrap(), &answer(), "after cancel", 70)
             .await
             .unwrap()
     );
     enqueue(&db, &[id], true, true, 80).await.unwrap();
-    next(&db).await.unwrap();
+    claim = next(&db).await.unwrap();
     mentor::trash::trash(&db, &[id], 81).await.unwrap();
     mentor::trash::restore(&db, &[id], 82).await.unwrap();
-    assert!(!complete(&db, id, &answer(), "late", 90).await.unwrap());
+    assert!(
+        !complete(&db, claim.unwrap(), &answer(), "late", 90)
+            .await
+            .unwrap()
+    );
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -175,4 +185,122 @@ async fn unchanged_interests_do_not_invalidate_a_result(db: SqlitePool) {
             .unwrap()
             .basis_changed
     );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn starting_single_or_batch_analysis_resumes_a_paused_queue(db: SqlitePool) {
+    let id = add(&db, Some("视觉")).await;
+    for single in [false, true] {
+        for reason in [None, Some("API Key 不正确")] {
+            pause(&db, 2, reason).await.unwrap();
+            assert_eq!(enqueue(&db, &[id], single, true, 3).await.unwrap(), 1);
+            assert!(progress(&db).await.unwrap().pause.is_none());
+            assert!(next(&db).await.unwrap().is_some());
+            cancel(&db).await.unwrap();
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn older_interest_updates_cannot_move_the_basis_time_back(db: SqlitePool) {
+    let form = |interests: &str| profile::ProfileForm {
+        name: "".into(),
+        research_interests: interests.into(),
+        rewrite_preference: "".into(),
+    };
+    profile::update(&db, &form("视觉"), 200).await.unwrap();
+    let id = add(&db, Some("视觉")).await;
+    result(&db, id, 150).await;
+    profile::update(&db, &form("语言"), 100).await.unwrap();
+    assert!(
+        mentor::get(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .unwrap()
+            .basis_changed
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn stale_claim_cannot_complete_fail_requeue_or_pause_new_work(db: SqlitePool) {
+    let id = add(&db, Some("视觉")).await;
+    enqueue(&db, &[id], true, true, 1).await.unwrap();
+    let old = next(&db).await.unwrap().unwrap();
+    mentor::trash::trash(&db, &[id], 2).await.unwrap();
+    mentor::trash::restore(&db, &[id], 3).await.unwrap();
+    enqueue(&db, &[id], true, true, 4).await.unwrap();
+    let new = next(&db).await.unwrap().unwrap();
+    assert_ne!(old, new);
+    assert!(!fail(&db, old, "旧错误").await.unwrap());
+    assert!(!requeue(&db, old, Some((5, "旧暂停")), None).await.unwrap());
+    assert!(!complete(&db, old, &answer(), "old", 5).await.unwrap());
+    assert!(progress(&db).await.unwrap().pause.is_none());
+    assert_eq!(
+        mentor::get(&db, id).await.unwrap().unwrap().analysis.state,
+        Some(MatchState::Running)
+    );
+    assert!(complete(&db, new, &answer(), "new", 6).await.unwrap());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancelling_and_restarting_invalidates_the_original_claim_even_before_claiming_again(
+    db: SqlitePool,
+) {
+    let id = add(&db, Some("视觉")).await;
+    enqueue(&db, &[id], true, true, 1).await.unwrap();
+    let old = next(&db).await.unwrap().unwrap();
+    cancel(&db).await.unwrap();
+    recover(&db).await.unwrap();
+    assert_eq!(progress(&db).await.unwrap().remaining, 0);
+    assert!(!fail(&db, old, "旧错误").await.unwrap());
+    assert!(!requeue(&db, old, Some((2, "旧暂停")), None).await.unwrap());
+    enqueue(&db, &[id], true, true, 3).await.unwrap();
+    assert!(!complete(&db, old, &answer(), "old", 4).await.unwrap());
+    cancel(&db).await.unwrap();
+    assert!(!complete(&db, old, &answer(), "old", 5).await.unwrap());
+    assert!(
+        mentor::get(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .is_none()
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deleted_and_merged_away_claims_cannot_affect_the_surviving_mentor(db: SqlitePool) {
+    let keep = add(&db, Some("视觉")).await;
+    for merged in [false, true] {
+        let id = add(&db, Some("视觉")).await;
+        enqueue(&db, &[id], true, true, 1).await.unwrap();
+        let claim = next(&db).await.unwrap().unwrap();
+        if merged {
+            mentor::merge::merge(&db, keep, id, 2).await.unwrap();
+        } else {
+            mentor::trash::trash(&db, &[id], 2).await.unwrap();
+            mentor::trash::delete(&db, &[id]).await.unwrap();
+        }
+        assert!(!complete(&db, claim, &answer(), "old", 3).await.unwrap());
+        assert!(!fail(&db, claim, "旧错误").await.unwrap());
+        assert!(
+            !requeue(&db, claim, Some((3, "旧暂停")), None)
+                .await
+                .unwrap()
+        );
+        assert!(progress(&db).await.unwrap().pause.is_none());
+        assert!(
+            mentor::get(&db, keep)
+                .await
+                .unwrap()
+                .unwrap()
+                .analysis
+                .result
+                .is_none()
+        );
+    }
 }

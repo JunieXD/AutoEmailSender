@@ -125,16 +125,14 @@ pub async fn text(db: &SqlitePool, id: i64) -> Result<Option<Option<String>>, sq
         .await
 }
 
-/// Stores the file in `dir` as the new material's id, once its text is taken out. A new material
-/// is used for matching and writing when it has text, and attached only when the user says so,
-/// as an attachment changes what the mentor gets.
-pub async fn add(
-    db: &SqlitePool,
-    dir: &Path,
-    file_name: &str,
+/// A checked and extracted file, not yet available as a material.
+pub struct Extracted {
+    file_name: String,
     data: Vec<u8>,
-    now: i64,
-) -> Result<i64, Error> {
+    text: Option<String>,
+}
+
+pub async fn extract(file_name: &str, data: Vec<u8>) -> Result<Extracted, Error> {
     let pdf = match file_name
         .rsplit_once('.')
         .map(|(_, e)| e.to_ascii_lowercase())
@@ -147,10 +145,29 @@ pub async fn add(
         return Err(Error::TooLarge);
     }
     // Parsing is slow work, and a library may panic on a damaged file.
-    let (text, data) = tokio::task::spawn_blocking(move || (extract(pdf, &data), data))
+    let (text, data) = tokio::task::spawn_blocking(move || (extract_text(pdf, &data), data))
         .await
         .map_err(|e| Error::Unreadable(e.to_string()))?;
-    let text = text.map_err(Error::Unreadable)?;
+    Ok(Extracted {
+        file_name: file_name.into(),
+        data,
+        text: text.map_err(Error::Unreadable)?,
+    })
+}
+
+/// Stores the file before committing its row. Take `now` after extraction so the basis time
+/// reflects when the material becomes available, rather than when parsing started.
+pub async fn add(
+    db: &SqlitePool,
+    dir: &Path,
+    extracted: Extracted,
+    now: i64,
+) -> Result<i64, Error> {
+    let Extracted {
+        file_name,
+        data,
+        text,
+    } = extracted;
     let size = data.len() as i64;
     let has_text = text.is_some();
     let mut tx = db.begin().await?;
@@ -176,7 +193,7 @@ pub async fn add(
     out.sync_all().await?;
     tokio::fs::rename(&temp, file(dir, id)).await?;
     if has_text {
-        sqlx::query!("UPDATE profile SET match_basis_changed_at = ?", now)
+        sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)
             .execute(&mut *tx)
             .await?;
     }
@@ -185,7 +202,7 @@ pub async fn add(
 }
 
 /// The text of a PDF or Word file, or None when it has none, such as a scan.
-fn extract(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
+fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
     let text = if pdf {
         pdf_oxide::PdfDocument::from_bytes(data.to_vec())
             .and_then(|d| d.extract_all_text())
@@ -259,7 +276,7 @@ pub async fn set_purpose(
         }
     };
     if matches!(purpose, Purpose::Matching) && row.rows_affected() > 0 {
-        sqlx::query!("UPDATE profile SET match_basis_changed_at = ?", now)
+        sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)
             .execute(&mut *tx)
             .await?;
     }
@@ -296,7 +313,7 @@ pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bo
         };
     }
     if row.is_some_and(|r| r.for_matching != 0) {
-        sqlx::query!("UPDATE profile SET match_basis_changed_at = ?", now)
+        sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)
             .execute(&mut *tx)
             .await?;
     }

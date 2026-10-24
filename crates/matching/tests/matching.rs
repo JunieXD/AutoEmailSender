@@ -425,3 +425,221 @@ async fn research_removed_while_waiting_is_not_sent_to_the_model(db: SqlitePool)
         .state;
     assert!(matches!(state, Some(MatchState::Failed { error }) if error.contains("资料不足")));
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restored_mentor_discards_the_old_request_after_a_new_claim(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let ids = setup(&db, &p.address, 1).await;
+    let id = ids[0];
+    let mut runner = Runner::start(&db);
+    let old = request(&mut p).await;
+    mentor::trash::trash(&db, &ids, 3).await.unwrap();
+    mentor::trash::restore(&db, &ids, 4).await.unwrap();
+    queue::enqueue(&db, &ids, true, true, 5).await.unwrap();
+    runner.matcher.wake();
+    let new = request(&mut p).await;
+    while runner.changes.try_recv().is_ok() {}
+    old.respond
+        .send(Response::answer(&VALID.replace("88", "12")))
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    let m = mentor::get(&db, id).await.unwrap().unwrap();
+    assert!(m.analysis.result.is_none());
+    assert_eq!(m.analysis.state, Some(MatchState::Running));
+    new.respond.send(Response::answer(VALID)).ok().unwrap();
+    assert_eq!(runner.finished().await.analyzed, 1);
+    assert_eq!(
+        mentor::get(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .unwrap()
+            .score,
+        88
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn removed_claim_cannot_pause_an_empty_queue(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let ids = setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    let old = request(&mut p).await;
+    mentor::trash::trash(&db, &ids, 3).await.unwrap();
+    while runner.changes.try_recv().is_ok() {}
+    old.respond
+        .send(Response::Refused {
+            status: 401,
+            message: "bad key".into(),
+            retry_after: None,
+        })
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    let p = queue::progress(&db).await.unwrap();
+    assert_eq!((p.remaining, p.failed), (0, 0));
+    assert!(p.pause.is_none());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn old_configuration_error_requeues_without_pausing_the_new_default(db: SqlitePool) {
+    let mut old_provider = Provider::start().await;
+    let ids = setup(&db, &old_provider.address, 1).await;
+    let mut runner = Runner::start(&db);
+    let old = request(&mut old_provider).await;
+    let mut new_provider = Provider::start().await;
+    setup(&db, &new_provider.address, 0).await;
+    let configs = model::list(&db).await.unwrap();
+    profile::set_default_model(&db, configs[1].id)
+        .await
+        .unwrap();
+    while runner.changes.try_recv().is_ok() {}
+    old.respond
+        .send(Response::Refused {
+            status: 401,
+            message: "bad key".into(),
+            retry_after: None,
+        })
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+    request(&mut new_provider)
+        .await
+        .respond
+        .send(Response::answer(VALID))
+        .ok()
+        .unwrap();
+    assert_eq!(runner.finished().await.analyzed, 1);
+    assert_eq!(
+        mentor::get(&db, ids[0])
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .unwrap()
+            .score,
+        88
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn old_model_name_error_does_not_pause_the_updated_configuration(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    let old = request(&mut p).await;
+    let config = model::list(&db).await.unwrap().remove(0);
+    let fields = model::ModelForm {
+        name: "".into(),
+        provider: "custom".into(),
+        base_url: p.address.clone(),
+        model: "new-default".into(),
+        input_price: None,
+        output_price: None,
+    }
+    .check()
+    .unwrap();
+    model::update(&db, config.id, &fields, "").await.unwrap();
+    while runner.changes.try_recv().is_ok() {}
+    old.respond
+        .send(Response::Refused {
+            status: 404,
+            message: "model_not_found".into(),
+            retry_after: None,
+        })
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+    let req = request(&mut p).await;
+    assert_eq!(req.body["model"], "new-default");
+    req.respond.send(Response::answer(VALID)).ok().unwrap();
+    assert_eq!(runner.finished().await.analyzed, 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancelled_inflight_errors_do_not_retry_or_fail(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let ids = setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    for status in [429, 401, 500] {
+        queue::enqueue(&db, &ids, true, true, 3).await.unwrap();
+        runner.matcher.wake();
+        let req = request(&mut p).await;
+        queue::cancel(&db).await.unwrap();
+        while runner.changes.try_recv().is_ok() {}
+        req.respond
+            .send(Response::Refused {
+                status,
+                message: "error".into(),
+                retry_after: Some(0),
+            })
+            .ok()
+            .unwrap();
+        runner.changes.recv().await.unwrap();
+        let progress = queue::progress(&db).await.unwrap();
+        assert_eq!(
+            (progress.remaining, progress.failed),
+            (0, 0),
+            "status {status}"
+        );
+        assert!(progress.pause.is_none());
+        assert!(
+            mentor::get(&db, ids[0])
+                .await
+                .unwrap()
+                .unwrap()
+                .analysis
+                .state
+                .is_none()
+        );
+        assert!(p.requests.try_recv().is_err());
+    }
+    queue::enqueue(&db, &ids, true, true, 4).await.unwrap();
+    runner.matcher.wake();
+    let req = request(&mut p).await;
+    queue::cancel(&db).await.unwrap();
+    req.respond.send(Response::answer(VALID)).ok().unwrap();
+    assert_eq!(runner.finished().await.analyzed, 1);
+    assert_eq!(
+        mentor::get(&db, ids[0])
+            .await
+            .unwrap()
+            .unwrap()
+            .analysis
+            .result
+            .unwrap()
+            .score,
+        88
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancelled_invalid_answer_does_not_start_a_format_retry(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    let req = request(&mut p).await;
+    queue::cancel(&db).await.unwrap();
+    while runner.changes.try_recv().is_ok() {}
+    req.respond
+        .send(Response::answer("不是 JSON"))
+        .ok()
+        .unwrap();
+    timeout(Duration::from_secs(10), async {
+        tokio::select! {
+            change = runner.changes.recv() => { change.unwrap(); }
+            _ = p.requests.recv() => panic!("cancelled analysis called the model again"),
+        }
+    })
+    .await
+    .unwrap();
+    let progress = queue::progress(&db).await.unwrap();
+    assert_eq!((progress.remaining, progress.failed), (0, 0));
+    assert!(progress.pause.is_none());
+}

@@ -47,7 +47,7 @@ pub async fn trash(db: &SqlitePool, ids: &[i64], now: i64) -> Result<(), sqlx::E
     let mut tx = db.begin().await?;
     sqlx::query!(
         "UPDATE mentor SET trashed_at = ?1, updated_at = ?1, match_state = NULL, match_error = NULL,
-           match_queued_at = NULL, match_priority = NULL
+           match_queued_at = NULL, match_priority = NULL, match_claim = match_claim + 1
          WHERE id IN (SELECT value FROM json_each(?2)) AND trashed_at IS NULL",
         now,
         ids,
