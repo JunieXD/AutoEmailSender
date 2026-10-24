@@ -115,6 +115,8 @@ operations! {
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
     "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
+    "addMentorEmail" => add_mentor_email(MentorAddress) -> mentor::MentorDetail;
+    "mergeMentors" => merge_mentors(MentorMerge) -> ();
     "listTrash" => list_trash(mentor::trash::TrashQuery) -> mentor::MentorPage;
     "trashMentors" => trash_mentors(MentorIds) -> ();
     "restoreMentors" => restore_mentors(MentorIds) -> ();
@@ -162,6 +164,7 @@ operations! {
     "markRead" => mark_read(MentorId) -> ();
     "withdrawEmail" => withdraw_email(EmailId) -> ();
     "retryEmail" => retry_email(EmailId) -> ();
+    "resendEmail" => resend_email(EmailId) -> ();
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
     "addModelConfig" => add_model_config(NewModelConfig) -> ModelConfigId;
@@ -194,6 +197,19 @@ pub struct MentorEdit {
     pub id: i64,
     #[serde(flatten)]
     pub form: mentor::MentorForm,
+}
+
+#[derive(Debug, Deserialize, TS)]
+pub struct MentorAddress {
+    pub id: i64,
+    pub address: String,
+}
+
+/// Two mentors listed twice: `other` goes into `keep`.
+#[derive(Debug, Deserialize, TS)]
+pub struct MentorMerge {
+    pub keep: i64,
+    pub other: i64,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -271,6 +287,25 @@ async fn update_mentor(
     }
     look_up(ctx, input.id).await?;
     get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+async fn add_mentor_email(
+    ctx: &Context,
+    input: MentorAddress,
+) -> Result<mentor::MentorDetail, CallError> {
+    let address = input.address.trim();
+    if !mentor::is_email(address) {
+        return Err(CallError::invalid(format!("邮箱地址“{address}”格式不正确")));
+    }
+    if !mentor::add_email(&ctx.db, input.id, address, now()).await? {
+        return Err(CallError::not_found(NO_MENTOR));
+    }
+    look_up(ctx, input.id).await?;
+    get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+async fn merge_mentors(ctx: &Context, input: MentorMerge) -> Result<(), CallError> {
+    Ok(mentor::merge::merge(&ctx.db, input.keep, input.other, now()).await?)
 }
 
 /// Looks up the earlier mail at a mentor's new addresses without waiting for the next round.
@@ -404,6 +439,20 @@ impl From<mentor::SaveError> for CallError {
                 format!("邮箱“{address}”已用于导师{name}")
             }),
             mentor::SaveError::Db(e) => e.into(),
+        }
+    }
+}
+
+impl From<mentor::merge::MergeError> for CallError {
+    fn from(e: mentor::merge::MergeError) -> Self {
+        match e {
+            mentor::merge::MergeError::Gone => {
+                CallError::not_found("有一位导师已被永久删除或移入回收站。")
+            }
+            mentor::merge::MergeError::Busy { name, count } => CallError::invalid(format!(
+                "{name}老师还有 {count} 封邮件会发出（待发送、发送中或发送失败）。等它们发出，或改回草稿后再合并。"
+            )),
+            mentor::merge::MergeError::Db(e) => e.into(),
         }
     }
 }
@@ -1164,6 +1213,21 @@ async fn retry_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
     }
     ctx.sender.wake();
     Ok(())
+}
+
+async fn resend_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
+    match email::resend(&ctx.db, input.id, now()).await? {
+        email::Approved::Yes => {
+            ctx.sender.wake();
+            Ok(())
+        }
+        email::Approved::Refused => Err(CallError::not_found(
+            "这封邮件已经重新发送过，或导师已移入回收站。",
+        )),
+        email::Approved::MaterialGone => Err(CallError::invalid(
+            "有附件的材料已被删除，没法按原样重新发送。".into(),
+        )),
+    }
 }
 
 /// UTC milliseconds.

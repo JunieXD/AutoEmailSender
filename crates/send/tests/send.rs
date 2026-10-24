@@ -413,3 +413,65 @@ async fn attachments_are_read_from_their_files_as_the_email_goes(db: SqlitePool)
     );
     assert!(inbox.lock().unwrap().is_empty());
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_bounced_email_goes_again_once_as_another_letter(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let dir = tempfile::tempdir().unwrap();
+    let resume = material(&db, dir.path(), "简历.pdf", b"%PDF-1.7").await;
+    let wang = approve(&db, "wang@example.edu.cn", &[resume], T).await;
+    send::step(&db, &net, dir.path(), || T).await.unwrap();
+    let bounced = first_email(&db, wang).await.id;
+    sqlx::query("UPDATE email SET state = 'bounced', error = '收件地址不存在' WHERE id = ?")
+        .bind(bounced)
+        .execute(&db)
+        .await
+        .unwrap();
+    let fields = MentorFields {
+        name: "王伟".into(),
+        emails: vec!["wangwei@gmail.com".into()],
+        ..MentorFields::default()
+    };
+    assert!(mentor::update(&db, wang, &fields, T).await.unwrap());
+
+    // A second click sends nothing more.
+    for outcome in [email::Approved::Yes, email::Approved::Refused] {
+        assert_eq!(email::resend(&db, bounced, T).await.unwrap(), outcome);
+    }
+    send::step(&db, &net, dir.path(), || T + 10 * MINUTE)
+        .await
+        .unwrap();
+    let emails = email::list(&db, wang).await.unwrap();
+    assert!(matches!(
+        &emails[0].delivery,
+        Delivery::Bounced { to_address, .. } if to_address == "wang@example.edu.cn"
+    ));
+    assert!(matches!(
+        &emails[1].delivery,
+        Delivery::Sent { to_address, .. } if to_address == "wangwei@gmail.com"
+    ));
+    assert_eq!(emails[1].attachments[0].file_name, "简历.pdf");
+    let mails = inbox.lock().unwrap().clone();
+    // Under a Message-ID of its own, which no mailbox drops as a repeat of the first.
+    assert_ne!(
+        header(&mails[0], "Message-ID: "),
+        header(&mails[1], "Message-ID: ")
+    );
+
+    // With a file deleted since, it cannot go as it went.
+    sqlx::query("DELETE FROM material WHERE id = ?")
+        .bind(resume)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE email SET state = 'bounced', error = '收件地址不存在' WHERE id = ?")
+        .bind(emails[1].id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        email::resend(&db, emails[1].id, T).await.unwrap(),
+        email::Approved::MaterialGone
+    );
+    assert_eq!(email::list(&db, wang).await.unwrap().len(), 2);
+}

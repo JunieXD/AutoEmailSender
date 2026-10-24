@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor SET source_url = coalesce(mentor.source_url, o.source_url),\n           mailbox_id = coalesce(mentor.mailbox_id, o.mailbox_id)\n         FROM mentor o WHERE mentor.id = ? AND o.id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "033f8f4eca2d1b060608e41b302bca4fc63003e182ce6557eb2ef1028d060373"
+}

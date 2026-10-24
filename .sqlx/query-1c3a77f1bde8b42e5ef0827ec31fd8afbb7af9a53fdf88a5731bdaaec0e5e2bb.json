@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM email\n         WHERE mentor_id = ?2 AND state = 'review' AND task_id IS NULL AND kind IN ('first', 'reply')\n           AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.state = 'review'\n                         AND k.task_id IS NULL AND k.kind = email.kind)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1c3a77f1bde8b42e5ef0827ec31fd8afbb7af9a53fdf88a5731bdaaec0e5e2bb"
+}

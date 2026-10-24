@@ -224,6 +224,7 @@ CREATE TABLE email (
   task_id INTEGER REFERENCES task(id) ON DELETE SET NULL,
   kind TEXT NOT NULL CHECK (kind IN ('first', 'follow_up', 'reply')),
   reply_to TEXT,               -- Message-ID this email replies to
+  resend_of INTEGER UNIQUE REFERENCES email(id) ON DELETE SET NULL, -- the bounced email it sends again
   state TEXT NOT NULL CHECK (state IN ('generating', 'generation_failed', 'review', 'approved',
     'cloud', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed', 'canceled')),
   planned_at INTEGER,

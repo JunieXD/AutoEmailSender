@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS \"body_md!\",\n             from_address, to_address, sent_at, error\n           FROM email\n           WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
+  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS \"body_md!\",\n             resend_of, from_address, to_address, sent_at, error\n           FROM email\n           WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -48,8 +48,19 @@
         }
       },
       {
-        "name": "from_address",
+        "name": "resend_of",
         "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "resend_of"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "to_address",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "sent_at",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -82,7 +93,7 @@
       },
       {
         "name": "error",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -103,8 +114,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "44f72c99fc01c69097d54d1d225167b387b80887c9684ce87c630ed512fcb578"
+  "hash": "1d398158e85baa6ab496199a6f9c8de0c0ba35b63f0457ffbbf22122827490a0"
 }

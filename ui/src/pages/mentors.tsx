@@ -1,11 +1,12 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Merge, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { ContactStatus } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
+import { MergeDialog } from "@/components/merge-dialog";
 import { dropDrafts, refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton, useAddTag } from "@/components/tags";
@@ -43,6 +44,8 @@ export function MentorsPage() {
   const [adding, setAdding] = useState(false);
   // Ticks belong to one filter: changing it, including by going back, starts over.
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  const [merging, setMerging] = useState<[number, number] | null>(null);
+  const [first, second] = selected;
   const [filter, setFilter] = useState({ status: search.status, q: search.q });
   if (filter.status !== search.status || filter.q !== search.q) {
     setFilter({ status: search.status, q: search.q });
@@ -142,6 +145,12 @@ export function MentorsPage() {
           }}
         >
           <AddTagButton mentorIds={[...selected]} add={addTag} />
+          {selected.size === 2 && first !== undefined && second !== undefined && (
+            <Button variant="ghost" onClick={() => setMerging([first, second])}>
+              <Merge strokeWidth={1.6} />
+              合并
+            </Button>
+          )}
           <Confirm
             trigger={
               <Button variant="ghost" disabled={trash.isPending}>
@@ -154,6 +163,7 @@ export function MentorsPage() {
             onConfirm={() => trash.mutate([...selected])}
           />
         </BatchBar>
+        {merging && <MergeDialog ids={merging} onClose={() => setMerging(null)} />}
       </div>
 
       <footer className="flex items-center justify-between gap-2 px-7 py-3 text-sm text-muted-foreground phone:px-4">
