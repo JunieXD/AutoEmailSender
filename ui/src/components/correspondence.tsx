@@ -32,7 +32,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     if (wasOut.current !== undefined && out !== wasOut.current) refreshMentors(queryClient);
     wasOut.current = out;
   }, [out, queryClient]);
-  useMarkRead(mentor.id, entries.data);
+  const fresh = useMarkRead(mentor.id, entries.data);
   if (entries.error) {
     return <p className="px-5 py-4 text-sm text-destructive">往来未能加载：{errorMessage(entries.error)}</p>;
   }
@@ -53,7 +53,12 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
         "email" in e ? (
           <Sent key={`email ${e.email.id}`} email={e.email} mentorId={mentor.id} actions={!mentor.trashed} />
         ) : (
-          <Seen key={`message ${e.message.id}`} message={e.message} mentor={mentor} />
+          <Seen
+            key={`message ${e.message.id}`}
+            message={e.message}
+            mentor={mentor}
+            fresh={fresh.includes(e.message.id)}
+          />
         ),
       )}
     </div>
@@ -62,13 +67,19 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
 
 /**
  * Opening the correspondence reads the mentor's new replies: their red dot goes from the list, and
- * stays beside them here until the page is opened again.
+ * stays beside them here until the page is opened again. Returns those replies.
  */
-function useMarkRead(mentorId: number, entries: Entry[] | undefined) {
+function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
   const queryClient = useQueryClient();
-  const unread = (entries ?? [])
-    .flatMap((e) => ("message" in e && e.message.kind === "reply" && e.message.unread ? [e.message.id] : []))
-    .join();
+  const unreadIds = (entries ?? []).flatMap((e) =>
+    "message" in e && e.message.kind === "reply" && e.message.unread ? [e.message.id] : [],
+  );
+  const unread = unreadIds.join();
+  // Replies are marked read as soon as they are seen, so which were new is kept here.
+  const [seen, setSeen] = useState<{ mentorId: number; ids: number[] }>({ mentorId, ids: [] });
+  const fresh = seen.mentorId === mentorId ? seen.ids : [];
+  const added = unreadIds.filter((id) => !fresh.includes(id));
+  if (seen.mentorId !== mentorId || added.length > 0) setSeen({ mentorId, ids: [...fresh, ...added] });
   const markRead = useMutation({
     mutationFn: () => call("markRead", { id: mentorId }),
     onSuccess: () => {
@@ -81,6 +92,7 @@ function useMarkRead(mentorId: number, entries: Entry[] | undefined) {
   useEffect(() => {
     if (unread) read();
   }, [unread]);
+  return [...fresh, ...added];
 }
 
 function onTheWay(e: Email): boolean {
@@ -167,7 +179,7 @@ function status(e: Email): [string, string] {
 }
 
 /** Mail seen in the mailbox: the mentor's on the left like their messages in a chat, the user's own from elsewhere on the right. */
-function Seen({ message: m, mentor }: { message: Message; mentor: MentorDetail }) {
+function Seen({ message: m, mentor, fresh }: { message: Message; mentor: MentorDetail; fresh: boolean }) {
   const [quoted, setQuoted] = useState(false);
   const [opened, setOpened] = useState(false);
   const mine = m.kind === "sent";
@@ -210,9 +222,7 @@ function Seen({ message: m, mentor }: { message: Message; mentor: MentorDetail }
         )}
       </div>
       <p className={`flex max-w-[min(42rem,88%)] items-center gap-1.5 text-sm ${mine ? "text-right" : ""}`}>
-        {m.kind === "reply" && m.unread && (
-          <span className="size-2 shrink-0 rounded-full bg-unread" aria-label="新回信" />
-        )}
+        {fresh && <span className="size-2 shrink-0 rounded-full bg-unread" aria-label="新回信" />}
         <span className="text-muted-foreground">
           {day(m.sentAt)} {time(m.sentAt)}
           {mine ? " 在别处发出" : from}

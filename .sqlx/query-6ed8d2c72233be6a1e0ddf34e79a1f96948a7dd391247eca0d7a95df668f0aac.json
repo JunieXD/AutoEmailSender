@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM email WHERE message_id = ?1)\n                     OR EXISTS (SELECT 1 FROM message WHERE message_id = ?1 AND kind = 'sent')\n                   AS \"sent!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "sent!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6ed8d2c72233be6a1e0ddf34e79a1f96948a7dd391247eca0d7a95df668f0aac"
+}

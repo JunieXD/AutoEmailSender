@@ -41,6 +41,8 @@ pub(crate) struct Headers {
     pub automatic: bool,
     /// From a mail system, or a delivery status report: perhaps a bounce.
     pub report: bool,
+    /// A read receipt.
+    pub receipt: bool,
 }
 
 impl Headers {
@@ -96,13 +98,15 @@ pub(crate) fn headers(raw: &[u8]) -> Headers {
         let local = a.split('@').next().unwrap_or_default();
         local == "mailer-daemon" || local == "postmaster"
     });
-    let delivery_report = message.content_type().is_some_and(|t| {
-        t.ctype().eq_ignore_ascii_case("multipart")
-            && t.subtype()
-                .is_some_and(|s| s.eq_ignore_ascii_case("report"))
-            && t.attribute("report-type")
-                .is_some_and(|r| r.eq_ignore_ascii_case("delivery-status"))
-    });
+    let report_type = message
+        .content_type()
+        .filter(|t| {
+            t.ctype().eq_ignore_ascii_case("multipart")
+                && t.subtype()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("report"))
+        })
+        .and_then(|t| t.attribute("report-type"))
+        .map(str::to_ascii_lowercase);
     let references: Vec<String> = message
         .references()
         .iter()
@@ -125,7 +129,8 @@ pub(crate) fn headers(raw: &[u8]) -> Headers {
         subject: subject.filter(|s| !s.is_empty()),
         date: message.date().map(|d| d.to_timestamp() * 1000),
         automatic,
-        report: system || delivery_report,
+        report: system || report_type.as_deref() == Some("delivery-status"),
+        receipt: report_type.as_deref() == Some("disposition-notification"),
     }
 }
 
@@ -139,15 +144,19 @@ fn bracketed(id: &str) -> String {
     format!("<{}>", id.trim_matches(['<', '>']))
 }
 
-/// The message's text: its plain-text part, or else its HTML part as text.
+/// The message's text: its plain-text parts, or else its HTML parts as text, in order, as when an
+/// image is put between two paragraphs.
 pub(crate) fn text(raw: &[u8]) -> Option<String> {
     let message = MessageParser::new().parse(raw)?;
-    let part = message.text_body().next()?;
-    let text = part.text()?;
-    match part.kind() {
-        PartKind::Html => html_text(&text),
-        _ => Some(text.replace("\r\n", "\n")),
-    }
+    let parts: Vec<String> = message
+        .text_body()
+        .filter_map(|part| match part.kind() {
+            PartKind::Text => Some(part.text()?.replace("\r\n", "\n")),
+            PartKind::Html => html_text(&part.text()?),
+            _ => None,
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
 /// HTML as text: paragraphs and line breaks kept, quotes marked with `>`, and the address of a link
@@ -156,8 +165,7 @@ fn html_text(html: &str) -> Option<String> {
     let lines = html2text::config::rich()
         .raw_mode(true)
         .no_link_wrapping()
-        // Wide enough that no line wraps.
-        .lines_from_read(html.as_bytes(), usize::MAX / 2)
+        .lines_from_read(html.as_bytes(), WIDTH)
         .ok()?;
     let mut text = String::new();
     for line in lines {
@@ -179,6 +187,10 @@ fn html_text(html: &str) -> Option<String> {
     Some(text.trim_end().to_owned())
 }
 
+/// Wide enough that a paragraph is seldom wrapped, and small enough that the widths of a table's
+/// columns add up without overflowing.
+const WIDTH: usize = 10_000;
+
 /// Writes where a link goes after its words, unless they already say it.
 fn end_link(text: &mut String, link: Option<String>) {
     if let Some(url) = link {
@@ -189,28 +201,79 @@ fn end_link(text: &mut String, link: Option<String>) {
     }
 }
 
-/// Mail that came back: the Message-IDs it mentions, the bounced one among them, and why.
+/// Mail that came back: the Message-IDs it mentions, the bounced one among them, who it did not
+/// reach and why.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Bounce {
     pub originals: Vec<String>,
+    /// In lowercase; empty when the bounce does not say.
+    pub recipients: Vec<String>,
     pub reason: String,
+}
+
+/// What a delivery status report says about a recipient.
+#[derive(Default)]
+struct Status<'a> {
+    recipients: Vec<String>,
+    action: Option<&'a str>,
+    status: Option<&'a str>,
+    diagnostic: Option<&'a str>,
+}
+
+/// The delivery status fields, recipient by recipient. They are plain text, wherever the report
+/// puts them; a recipient's start at its Original-Recipient or Final-Recipient.
+fn statuses(text: &str) -> Vec<Status<'_>> {
+    let mut statuses: Vec<Status> = Vec::new();
+    let mut original = None;
+    for line in text.lines() {
+        let Some((name, value)) = line.trim_start().split_once(':') else {
+            continue;
+        };
+        let value = value.trim();
+        let name = name.to_ascii_lowercase();
+        // rfc822; li@pku.edu.cn
+        let address = || {
+            let a = value.split_once(';').map_or(value, |(_, a)| a);
+            a.trim().trim_matches(['<', '>']).to_lowercase()
+        };
+        match name.as_str() {
+            "original-recipient" => original = Some(address()),
+            "final-recipient" => statuses.push(Status {
+                recipients: original.take().into_iter().chain([address()]).collect(),
+                ..Status::default()
+            }),
+            "action" | "status" | "diagnostic-code" => {
+                if statuses.is_empty() {
+                    statuses.push(Status::default());
+                }
+                let Some(last) = statuses.last_mut() else {
+                    continue;
+                };
+                let field = match name.as_str() {
+                    "action" => &mut last.action,
+                    "status" => &mut last.status,
+                    _ => &mut last.diagnostic,
+                };
+                field.get_or_insert(value);
+            }
+            _ => {}
+        }
+    }
+    statuses
 }
 
 /// What the start of a possible bounce says: None when it only reports a delay, or delivery.
 pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
     let message = MessageParser::new().parse(raw)?;
     let whole = String::from_utf8_lossy(raw);
-    // Delivery status fields are plain text, wherever the report puts them.
-    let fields = |name: &'static str| {
-        whole.lines().filter_map(move |line| {
-            let line = line.trim_start();
-            line.get(..name.len())
-                .filter(|start| start.eq_ignore_ascii_case(name))
-                .map(|_| line[name.len()..].trim())
-        })
-    };
-    let actions: Vec<&str> = fields("Action:").collect();
-    if !actions.is_empty() && !actions.iter().any(|a| a.eq_ignore_ascii_case("failed")) {
+    let statuses = statuses(&whole);
+    // A report without actions, as some providers write, is taken to say the mail failed.
+    let reported = statuses.iter().any(|s| s.action.is_some());
+    let failed: Vec<&Status> = statuses
+        .iter()
+        .filter(|s| !reported || s.action.is_some_and(|a| a.eq_ignore_ascii_case("failed")))
+        .collect();
+    if reported && failed.is_empty() {
         return None;
     }
     let own = message.message_id().map(bracketed);
@@ -218,9 +281,11 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
         .messages()
         .skip(1)
         .filter_map(|m| m.message_id().map(bracketed));
-    let quoted = fields("Message-ID:").filter_map(|v| {
-        let id = v.split_whitespace().next()?;
-        Some(bracketed(id))
+    let quoted = whole.lines().filter_map(|line| {
+        let (name, value) = line.trim_start().split_once(':')?;
+        let id = value.split_whitespace().next()?;
+        name.eq_ignore_ascii_case("message-id")
+            .then(|| bracketed(id))
     });
     let thread = message
         .in_reply_to()
@@ -234,7 +299,8 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
             originals.push(id);
         }
     }
-    let diagnostic = fields("Diagnostic-Code:").next().map(|d| {
+    let first = failed.first();
+    let diagnostic = first.and_then(|s| s.diagnostic).map(|d| {
         let d = d.split_once(';').map_or(d, |(kind, rest)| {
             if kind.trim().eq_ignore_ascii_case("smtp") {
                 rest
@@ -242,14 +308,14 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
                 d
             }
         });
-        d.trim().to_owned()
+        d.trim()
     });
-    let status = fields("Status:").next().map(str::to_owned);
+    let status = first.and_then(|s| s.status);
     let body = message.body_text(0).unwrap_or(Cow::Borrowed(""));
     let said = format!(
         "{} {} {} {body}",
-        diagnostic.as_deref().unwrap_or_default(),
-        status.as_deref().unwrap_or_default(),
+        diagnostic.unwrap_or_default(),
+        status.unwrap_or_default(),
         message.subject().unwrap_or_default(),
     )
     .to_lowercase();
@@ -262,6 +328,7 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
         .map(|d| d.chars().take(150).collect::<String>());
     Some(Bounce {
         originals,
+        recipients: failed.iter().flat_map(|s| s.recipients.clone()).collect(),
         reason: match detail {
             Some(d) => format!("{category}（{d}）"),
             None => category.to_owned(),
@@ -332,12 +399,22 @@ mod tests {
 
     #[test]
     fn html_reads_as_lines_with_where_links_go() {
-        let raw = "Content-Type: text/html; charset=utf-8\r\n\r\n<html><head><style>p{color:red}</style></head><body><div>林晓同学：</div><div>请&nbsp;<a href=\"https://lab.example.com/join\">填写<b>报名表</b></a>，或写信到 <a href=\"mailto:li@pku.edu.cn\">li@pku.edu.cn</a>。</div><blockquote>李老师：您好！</blockquote></body></html>";
+        let raw = "Content-Type: text/html; charset=utf-8\r\n\r\n<html><head><style>p{color:red}</style></head><body><div>林晓同学：</div><div>请&nbsp;<a href=\"https://lab.example.com/join\">填写<b>报名表</b></a>，或写信到 <a href=\"mailto:li@pku.edu.cn\">li@pku.edu.cn</a>。</div><table><tr><td>时间</td><td>周五下午</td></tr></table><blockquote>李老师：您好！</blockquote></body></html>";
         assert_eq!(
             text(raw.as_bytes()).as_deref(),
             Some(
-                "林晓同学：\n请 填写报名表 (https://lab.example.com/join)，或写信到 li@pku.edu.cn。\n\n> 李老师：您好！"
+                "林晓同学：\n请 填写报名表 (https://lab.example.com/join)，或写信到 li@pku.edu.cn。\n\n时间\n周五下午\n\n> 李老师：您好！"
             )
+        );
+    }
+
+    /// As Apple Mail writes a picture put between two paragraphs.
+    #[test]
+    fn text_around_a_picture_is_all_read() {
+        let raw = "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n请看海报。\r\n--m\r\nContent-Type: image/png\r\nContent-Disposition: inline; filename=a.png\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--m\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n请周五前报名。\r\n--m--\r\n";
+        assert_eq!(
+            text(raw.as_bytes()).as_deref(),
+            Some("请看海报。\n请周五前报名。")
         );
     }
 }

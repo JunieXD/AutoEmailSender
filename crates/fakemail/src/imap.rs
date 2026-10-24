@@ -17,6 +17,10 @@ struct State {
     folders: Vec<Folder>,
     /// Every command received, without its tag.
     commands: Vec<String>,
+    /// The start of the next command to refuse, as a server limiting how much is asked of it.
+    refuse: Option<String>,
+    /// A message left out of the answers to fetches of several, as some servers do.
+    left_out: Option<u32>,
 }
 
 struct Folder {
@@ -74,6 +78,16 @@ impl Store {
         folder.next_uid = u32::try_from(folder.mail.len()).unwrap() + 1;
     }
 
+    /// Refuses the next command that starts with these words.
+    pub fn refuse(&self, command: &str) {
+        self.0.lock().unwrap().refuse = Some(command.into());
+    }
+
+    /// Leaves the message with this UID out of the answers to fetches of several.
+    pub fn leave_out(&self, uid: u32) {
+        self.0.lock().unwrap().left_out = Some(uid);
+    }
+
     /// The commands received so far, without tags, and forgets them.
     pub fn commands(&self) -> Vec<String> {
         std::mem::take(&mut self.0.lock().unwrap().commands)
@@ -85,6 +99,8 @@ pub async fn imap(pki: &Pki, starttls: bool) -> (u16, Store) {
     let store = Store(Arc::new(Mutex::new(State {
         folders: Vec::new(),
         commands: Vec::new(),
+        refuse: None,
+        left_out: None,
     })));
     store.create("INBOX", false);
     let tls = pki.tls.clone();
@@ -112,9 +128,23 @@ async fn session(
         }
         let line = line.trim_end();
         let (tag, command) = line.split_once(' ').unwrap_or((line, ""));
-        store.0.lock().unwrap().commands.push(command.into());
+        let refused = {
+            let mut state = store.0.lock().unwrap();
+            state.commands.push(command.into());
+            let refused = state
+                .refuse
+                .as_ref()
+                .is_some_and(|r| command.starts_with(r.as_str()));
+            if refused {
+                state.refuse = None;
+            }
+            refused
+        };
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
         let reply: Vec<u8> = match verb.to_ascii_uppercase().as_str() {
+            _ if refused => {
+                format!("{tag} NO [LIMIT] too many commands, try again later\r\n").into()
+            }
             "CAPABILITY" => {
                 format!("* CAPABILITY IMAP4rev1 ID STARTTLS\r\n{tag} OK done\r\n").into()
             }
@@ -189,9 +219,10 @@ async fn session(
                     }
                     "FETCH" => {
                         let (set, items) = rest.split_once(' ').unwrap();
+                        let several = set.contains(',');
                         let mut reply = Vec::new();
                         for (i, m) in folder.mail.iter().enumerate() {
-                            if in_set(set, m.uid) {
+                            if in_set(set, m.uid) && !(several && state.left_out == Some(m.uid)) {
                                 reply.extend(fetched(i + 1, m, items));
                             }
                         }

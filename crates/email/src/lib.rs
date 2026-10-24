@@ -511,51 +511,99 @@ pub enum SentCopy {
     /// Not an email the app sent.
     Foreign,
     Own,
-    /// An email only maybe sent, which the copy proves went out.
+    /// An email not yet known to have gone out, which the copy proves did.
     Confirmed,
 }
 
-/// Looks up the email the app sent with this Message-ID, and marks it sent if it was only maybe
-/// sent.
+/// A copy of mail in a mailbox's sent folder.
+pub struct Copy<'a> {
+    pub mailbox_id: i64,
+    pub message_id: Option<&'a str>,
+    /// In lowercase.
+    pub recipients: &'a [String],
+    pub subject: Option<&'a str>,
+    /// When the server got it, in UTC milliseconds.
+    pub at: i64,
+}
+
+/// How far apart an email and a copy with another Message-ID may have gone out.
+const COPY_WINDOW: i64 = 60 * 60 * 1000;
+
+/// Looks up the email the app sent that this is a copy of, and marks it sent if it was not known
+/// to be. A copy has the email's Message-ID, or else, as some providers (QQ) give the copy their
+/// own, it went from the same mailbox to the email's mentor with the same subject about the same
+/// time, and no copy of the email turned up before: the copy's Message-ID is then the one replies
+/// and bounces refer to, and becomes the email's.
 pub async fn sent_copy(
     conn: &mut SqliteConnection,
-    message_id: &str,
+    copy: &Copy<'_>,
     now: i64,
 ) -> Result<SentCopy, sqlx::Error> {
-    let maybe_sent = sqlx::query_scalar!(
-        r#"SELECT state = 'maybe_sent' AS "maybe_sent!: bool" FROM email WHERE message_id = ?"#,
-        message_id
+    let same = sqlx::query!(
+        r#"SELECT id AS "id!", state IN ('sending', 'maybe_sent') AS "unconfirmed!: bool"
+           FROM email WHERE message_id = ?"#,
+        copy.message_id
     )
     .fetch_optional(&mut *conn)
     .await?;
-    match maybe_sent {
-        None => Ok(SentCopy::Foreign),
-        Some(false) => Ok(SentCopy::Own),
-        Some(true) => {
-            sqlx::query!(
-                "UPDATE email SET state = 'sent', error = NULL, updated_at = ?
-                 WHERE message_id = ? AND state = 'maybe_sent'",
-                now,
-                message_id,
-            )
-            .execute(conn)
-            .await?;
-            Ok(SentCopy::Confirmed)
-        }
+    let found = match same {
+        Some(e) => Some((e.id, e.unconfirmed, None)),
+        None => sqlx::query!(
+            r#"SELECT e.id AS "id!", e.state IN ('sending', 'maybe_sent') AS "unconfirmed!: bool"
+               FROM email e JOIN mentor m ON m.id = e.mentor_id
+               WHERE e.mailbox_id = ?1 AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
+                 AND e.sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND e.copied_at IS NULL
+                 AND e.subject = ?4 AND m.email IN (SELECT value FROM json_each(?5))
+               ORDER BY abs(e.sent_at - ?2) LIMIT 1"#,
+            copy.mailbox_id,
+            copy.at,
+            COPY_WINDOW,
+            copy.subject,
+            Json(copy.recipients),
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .map(|e| (e.id, e.unconfirmed, copy.message_id)),
+    };
+    let Some((id, unconfirmed, renamed)) = found else {
+        return Ok(SentCopy::Foreign);
+    };
+    sqlx::query!(
+        "UPDATE email SET message_id = coalesce(?, message_id), copied_at = coalesce(copied_at, ?)
+         WHERE id = ?",
+        renamed,
+        now,
+        id,
+    )
+    .execute(&mut *conn)
+    .await?;
+    if !unconfirmed {
+        return Ok(SentCopy::Own);
     }
+    // Sending too: the copy settles it before SMTP answers, and the answer then changes nothing.
+    sqlx::query!(
+        "UPDATE email SET state = 'sent', error = NULL, updated_at = ?
+         WHERE id = ? AND state IN ('sending', 'maybe_sent')",
+        now,
+        id,
+    )
+    .execute(conn)
+    .await?;
+    Ok(SentCopy::Confirmed)
 }
 
-/// Marks the email that went out with this Message-ID as bounced, for this reason. False when the
-/// app sent no such email.
+/// Marks the email that went out with this Message-ID as bounced, for this reason. False when it
+/// was marked already, or the app sent no such email.
 pub async fn bounced(
     conn: &mut SqliteConnection,
     message_id: &str,
     reason: &str,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
+    // Sending too, as for a copy in the sent folder.
     let done = sqlx::query!(
         "UPDATE email SET state = 'bounced', error = ?, updated_at = ?
-         WHERE message_id = ? AND state IN ('maybe_sent', 'sent')",
+         WHERE message_id = ? AND state IN ('sending', 'maybe_sent', 'sent')",
         reason,
         now,
         message_id,

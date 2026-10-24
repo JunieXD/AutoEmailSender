@@ -141,7 +141,9 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
     sent_email(&db, li, "sent", "<e1@example.com>").await;
     round(&db, &net, T).await;
 
-    store.deliver("INBOX", T + MINUTE, REPLY);
+    let reply = store.deliver("INBOX", T + MINUTE, REPLY);
+    // Left out of the answers for several messages, and given alone.
+    store.leave_out(reply);
     // The mentor's secretary, answering in the thread.
     store.deliver(
         "INBOX",
@@ -157,6 +159,11 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
         "INBOX",
         T + 4 * MINUTE,
         "From: wang@thu.edu.cn\nSubject: Automatic reply: 申请读博\nAuto-Submitted: auto-replied\nMessage-ID: <a1@thu.edu.cn>\n\n我正在休假，1月20日回来。",
+    );
+    store.deliver(
+        "INBOX",
+        T + 4 * MINUTE,
+        "From: wang@thu.edu.cn\nSubject: 已读: 申请读博\nMessage-ID: <m1@thu.edu.cn>\nContent-Type: multipart/report; report-type=disposition-notification; boundary=r\n\n--r\nContent-Type: text/plain\n\n您的邮件已被阅读。\n--r\nContent-Type: message/disposition-notification\n\nFinal-Recipient: rfc822; wang@thu.edu.cn\nOriginal-Message-ID: <s1@example.com>\nDisposition: manual-action/MDN-sent-manually; displayed\n--r--\n",
     );
     // The user copying themselves.
     store.deliver(
@@ -452,5 +459,195 @@ async fn a_refused_login_waits_unless_the_mailbox_changes(db: SqlitePool) {
         .await
         .unwrap();
     round(&db, &net, T + 11 * MINUTE).await;
+    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    sent_email(&db, li, "maybe_sent", "<e1@example.com>").await;
+    sent_email(&db, wang, "sending", "<e2@example.com>").await;
+    round(&db, &net, T).await;
+
+    // As QQ keeps it, under a Message-ID of its own.
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        "From: me@example.com\nTo: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <tencent_1@qq.com>\n\n老师您好",
+    );
+    // The same letter sent again from the website.
+    store.deliver(
+        SENT,
+        T - DAY + 2 * MINUTE,
+        "From: me@example.com\nTo: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <tencent_2@qq.com>\n\n老师您好",
+    );
+    // Kept before SMTP has answered.
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        "From: me@example.com\nTo: wang@thu.edu.cn\nSubject: 申请读博\nMessage-ID: <e2@example.com>\n\n老师您好",
+    );
+    store.deliver(
+        "INBOX",
+        T,
+        "From: secretary@pku.edu.cn\nSubject: Re: 申请读博\nMessage-ID: <r1@pku.edu.cn>\nIn-Reply-To: <tencent_1@qq.com>\n\n李老师请你周五来面谈。",
+    );
+    round(&db, &net, T + 10 * MINUTE).await;
+
+    assert!(matches!(
+        email::list(&db, li).await.unwrap()[0].delivery,
+        Delivery::Sent { .. }
+    ));
+    let li_mail = messages(&db, li).await;
+    assert_eq!(
+        li_mail
+            .iter()
+            .map(|m| (m.from_address.as_str(), &m.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("me@example.com", &MessageKind::Sent { bounce: None }),
+            ("secretary@pku.edu.cn", &MessageKind::Reply { unread: true }),
+        ]
+    );
+
+    let id: i64 = sqlx::query_scalar("SELECT id FROM email WHERE mentor_id = ?")
+        .bind(wang)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let mut conn = db.acquire().await.unwrap();
+    email::maybe_sent(&mut conn, id, "发送途中断开。", T + 11 * MINUTE)
+        .await
+        .unwrap();
+    assert!(matches!(
+        email::list(&db, wang).await.unwrap()[0].delivery,
+        Delivery::Sent { .. }
+    ));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_bounce_marks_only_the_mail_and_mentors_it_names(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    let zhang = mentor(&db, "张华", "zhang@fudan.edu.cn").await;
+    sent_email(&db, zhang, "sent", "<e1@example.com>").await;
+    sent_email(&db, zhang, "sent", "<e2@example.com>").await;
+    round(&db, &net, T).await;
+
+    store.deliver(
+        SENT,
+        T + MINUTE,
+        "From: me@example.com\nTo: li@pku.edu.cn, wang@thu.edu.cn\nSubject: 申请读博\nMessage-ID: <s1@example.com>\n\n两位老师好！",
+    );
+    // Delivered to one of the two.
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: MAILER-DAEMON@mx.example.com
+Subject: Delivery Status Notification
+Message-ID: <b1@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mx.example.com
+
+Final-Recipient: rfc822; wang@thu.edu.cn
+Action: delivered
+Status: 2.0.0
+
+Final-Recipient: rfc822; li@pku.edu.cn
+Action: failed
+Status: 5.2.2
+Diagnostic-Code: smtp; 552 5.2.2 Mailbox full
+--r
+Content-Type: text/rfc822-headers
+
+From: me@example.com
+Message-ID: <s1@example.com>
+--r--
+",
+    );
+    // The bounced email carries an earlier one, forwarded; the same bounce comes twice.
+    let bounce = "From: MAILER-DAEMON@mx.example.com
+Subject: Undelivered Mail Returned to Sender
+Message-ID: <b2@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; zhang@fudan.edu.cn
+Action: failed
+Status: 5.1.1
+--r
+Content-Type: message/rfc822
+
+From: me@example.com
+Message-ID: <e2@example.com>
+Content-Type: multipart/mixed; boundary=f
+
+--f
+Content-Type: text/plain
+
+张老师您好
+--f
+Content-Type: message/rfc822
+
+From: me@example.com
+Message-ID: <e1@example.com>
+
+张老师您好
+--f--
+--r--
+";
+    store.deliver("INBOX", T + 3 * MINUTE, bounce);
+    store.deliver("INBOX", T + 4 * MINUTE, bounce);
+    round(&db, &net, T + 10 * MINUTE).await;
+
+    assert_eq!(
+        messages(&db, li).await[0].kind,
+        MessageKind::Sent {
+            bounce: Some("对方邮箱已满（552 5.2.2 Mailbox full）".into())
+        }
+    );
+    assert!(matches!(contact(&db, li).await, Contact::Bounced { .. }));
+    assert_eq!(
+        messages(&db, wang).await[0].kind,
+        MessageKind::Sent { bounce: None }
+    );
+    assert!(matches!(
+        contact(&db, wang).await,
+        Contact::Contacted { .. }
+    ));
+    let states: Vec<String> =
+        sqlx::query_scalar("SELECT state FROM email WHERE mentor_id = ? ORDER BY message_id")
+            .bind(zhang)
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(states, ["sent", "bounced"]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_refused_search_is_tried_again(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    store.deliver(
+        "INBOX",
+        T - DAY,
+        "From: li@pku.edu.cn\nSubject: Re: 申请读博\nMessage-ID: <r1@pku.edu.cn>\n\n欢迎报考。",
+    );
+    store.refuse("UID SEARCH SINCE");
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    round(&db, &net, T).await;
+    assert!(messages(&db, li).await.is_empty());
+    assert!(mailbox::list(&db).await.unwrap()[0].receive_error.is_some());
+
+    round(&db, &net, T + 61 * MINUTE).await;
+    assert_eq!(messages(&db, li).await.len(), 1);
     assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
 }

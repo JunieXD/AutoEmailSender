@@ -30,6 +30,8 @@ fn quote_start(lines: &[(usize, &str)], i: usize) -> Option<usize> {
             .map(|(_, l)| l.trim())
             .filter(|l| !l.is_empty())
     };
+    // Lines that all quote, with no answers written between them.
+    let quoted_to_end = || following().next().is_some() && following().all(|l| l.starts_with('>'));
     // ------------------ 原始邮件 ------------------, -----Original Message-----
     if line.starts_with('-') && SEPARATORS.iter().any(|s| line.to_lowercase().contains(s)) {
         return Some(i);
@@ -41,9 +43,7 @@ fn quote_start(lines: &[(usize, &str)], i: usize) -> Option<usize> {
     }
     // 在 2026年10月20日 10:00，张三 写道：  On Mon, 20 Oct 2026 at 10:00, Zhang wrote:
     // followed by the quoted lines; the English one may be wrapped over two lines.
-    if ATTRIBUTIONS.iter().any(|a| line.ends_with(a))
-        && following().next().is_some_and(|l| l.starts_with('>'))
-    {
+    if ATTRIBUTIONS.iter().any(|a| line.ends_with(a)) && quoted_to_end() {
         let wrapped = i > 0 && lines[i - 1].1.trim().starts_with("On ") && !line.starts_with("On ");
         return Some(if wrapped { i - 1 } else { i });
     }
@@ -134,6 +134,7 @@ mod tests {
         let cases = [
             // Answers between quoted lines.
             "> 能否参加夏令营？\n可以。\n> 需要推荐信吗？\n需要两封。",
+            "我的答复如下：\nOn Mon, Oct 20, 2026, Zhang wrote:\n> 可以报考吗？\n欢迎报考。\n> 需要提交成绩单吗？\n请寄给秘书。",
             // Saying what someone wrote, with nothing quoted after it.
             "你在信中写道：\n希望读博。我们组今年有名额。",
             // A header-like line on its own.

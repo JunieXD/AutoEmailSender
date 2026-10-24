@@ -465,7 +465,10 @@ async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, Call
 async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
     let secret = entered_or_saved_secret(ctx, &input.secret, Some(input.id), &fields).await?;
-    if mailbox::update(&ctx.db, input.id, &fields, &secret).await? {
+    let held = ctx.receiver.hold().await;
+    let updated = mailbox::update(&ctx.db, input.id, &fields, &secret).await?;
+    drop(held);
+    if updated {
         // A higher limit or a shorter interval may let a waiting email go, and receiving that
         // failed may work now.
         ctx.sender.wake();
@@ -477,6 +480,7 @@ async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallErr
 }
 
 async fn delete_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
+    let _held = ctx.receiver.hold().await;
     Ok(mailbox::delete(&ctx.db, input.id).await?)
 }
 

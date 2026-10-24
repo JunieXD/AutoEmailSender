@@ -21,9 +21,13 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
   const queryClient = useQueryClient();
-  // New mail may change any mentor's correspondence and contact status.
+  // New mail may change any mentor's correspondence and contact status, and a mailbox may have
+  // failed to receive or recovered.
   useEffect(() => {
-    const stop = listen("received", () => refreshMentors(queryClient));
+    const stop = listen("received", () => {
+      refreshMentors(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["listMailboxes"] });
+    });
     return () => void stop.then((unlisten) => unlisten());
   }, [queryClient]);
   if (failure.isPending) return null;

@@ -11,7 +11,7 @@ use mailbox::{Imap, MailError};
 use net::Net;
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, MutexGuard, Notify};
 use ts_rs::TS;
 
 mod mail;
@@ -36,36 +36,67 @@ const CHUNK: usize = 50;
 /// How much of a message is fetched: its text, without large attachments.
 const START: u32 = 256 * 1024;
 
-/// Wakes the receiver, so that a new mailbox or mentor is looked at without waiting.
+/// Wakes the receiver, so that a new mailbox or mentor is looked at without waiting, and holds it
+/// off while a mailbox changes.
 #[derive(Clone, Default)]
-pub struct Receiver(Arc<Notify>);
+pub struct Receiver(Arc<Shared>);
+
+#[derive(Default)]
+struct Shared {
+    wake: Notify,
+    stop: Notify,
+    /// Held by a round, and by a mailbox changing.
+    busy: Mutex<()>,
+}
 
 impl Receiver {
     pub fn wake(&self) {
-        self.0.notify_one();
+        self.0.wake.notify_one();
+    }
+
+    /// Stops the round under way and keeps the next from starting until the guard is dropped, so
+    /// that no round goes on with a mailbox's old settings, or with one deleted.
+    pub async fn hold(&self) -> MutexGuard<'_, ()> {
+        self.0.stop.notify_waiters();
+        self.0.busy.lock().await
     }
 }
 
 /// Receives from every mailbox now and then, for as long as the app runs; `changed` is called
-/// after mail has been stored or emails' states changed.
+/// after a round changed what the UI shows.
 pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn()) {
+    let shared = &receiver.0;
     loop {
-        let wait = match round(&db, &net, now()).await {
-            Ok(r) => {
+        // Before taking the lock, so that a hold asked for meanwhile still stops the round.
+        let stop = shared.stop.notified();
+        let busy = shared.busy.lock().await;
+        let done = tokio::select! {
+            done = round(&db, &net, now()) => Some(done),
+            () = stop => None,
+        };
+        drop(busy);
+        let wait = match done {
+            Some(Ok(r)) => {
                 if r.changed {
                     changed();
                 }
                 if r.more { SOON } else { ROUND }
             }
             // Nobody to tell but the log; the database is likely to work again in a while.
-            Err(e) => {
+            Some(Err(e)) => {
                 tracing::error!("receive: {e}");
                 ROUND
+            }
+            // Stopped for a mailbox to change, perhaps after storing mail. Every write is safe to
+            // stop at, and the next round starts once the change is made.
+            None => {
+                changed();
+                continue;
             }
         };
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
-            () = receiver.0.notified() => {}
+            () = shared.wake.notified() => {}
         }
     }
 }
@@ -73,7 +104,7 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
 /// What a round of receiving did.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Round {
-    /// Mail was stored, or emails' states changed.
+    /// Mail was stored, emails' states changed, or a mailbox's receiving failed or recovered.
     pub changed: bool,
     /// Mentors are still to be looked up.
     pub more: bool,
@@ -85,12 +116,13 @@ pub async fn round(db: &SqlitePool, net: &Net, now: i64) -> Result<Round, sqlx::
     let mut round = Round::default();
     for id in mailbox::receivable(db, now).await? {
         match receive(db, net, id, now, &mut round).await {
-            Ok(()) => mailbox::received(db, id).await?,
+            Ok(()) => round.changed |= mailbox::received(db, id).await?,
             Err(Error::Mail(e)) => {
                 tracing::warn!(mailbox = id, "receive: {e}");
                 let refused = matches!(e, MailError::Login(_) | MailError::Refused(_));
                 mailbox::receive_failed(db, id, &e.message(), refused.then_some(now + REFUSED))
                     .await?;
+                round.changed = true;
             }
             Err(Error::Db(e)) => return Err(e),
         }
@@ -229,8 +261,8 @@ impl Session<'_> {
             .execute(&mut *tx)
             .await?;
             sqlx::query!(
-                "INSERT OR IGNORE INTO mentor_scan (mailbox_id, mentor_id)
-                 SELECT ?, id FROM mentor WHERE email IS NOT NULL",
+                "INSERT OR IGNORE INTO mentor_scan (mailbox_id, mentor_id, email)
+                 SELECT ?, id, email FROM mentor WHERE email IS NOT NULL",
                 self.mailbox_id
             )
             .execute(&mut *tx)
@@ -270,8 +302,8 @@ impl Session<'_> {
     /// to a search.
     async fn look_up(&mut self, folders: &[(Role, String)]) -> Result<(), Error> {
         let pending = sqlx::query!(
-            "SELECT s.mentor_id, m.email FROM mentor_scan s JOIN mentor m ON m.id = s.mentor_id
-             WHERE s.mailbox_id = ? ORDER BY s.mentor_id DESC LIMIT ?",
+            "SELECT mentor_id, email FROM mentor_scan WHERE mailbox_id = ?
+             ORDER BY mentor_id DESC LIMIT ?",
             self.mailbox_id,
             SCANS + 1
         )
@@ -285,40 +317,35 @@ impl Session<'_> {
         // Searches are in ASCII; an address with other characters can only be matched as it comes.
         let addresses: Vec<&str> = pending
             .iter()
-            .filter_map(|p| p.email.as_deref())
+            .map(|p| p.email.as_str())
             .filter(|a| a.is_ascii())
             .collect();
         let since = self.now - HISTORY;
         for (role, folder) in folders {
             let opened = self.imap.examine(folder).await?;
             for batch in addresses.chunks(BATCH) {
-                let found = match role {
-                    Role::Sent => self.imap.sent_to(batch, since).await,
-                    Role::Inbox => self.imap.sent_by(batch, since).await,
-                };
-                let uids = match found {
-                    Ok(uids) => uids,
-                    // Asking again would be refused again.
-                    Err(MailError::Refused(reply)) => {
-                        tracing::warn!(mailbox = self.mailbox_id, "search refused: {reply}");
-                        continue;
-                    }
-                    Err(e) => return Err(e.into()),
+                let uids = match role {
+                    Role::Sent => self.imap.sent_to(batch, since).await?,
+                    Role::Inbox => self.imap.sent_by(batch, since).await?,
                 };
                 for chunk in uids.chunks(CHUNK) {
                     self.take(*role, folder, opened.uidvalidity, chunk).await?;
                 }
             }
         }
-        let ids = serde_json::to_string(&pending.iter().map(|p| p.mentor_id).collect::<Vec<_>>())
-            .map_err(|e| sqlx::Error::Encode(e.into()))?;
-        sqlx::query!(
-            "DELETE FROM mentor_scan WHERE mailbox_id = ? AND mentor_id IN (SELECT value FROM json_each(?))",
-            self.mailbox_id,
-            ids
-        )
-        .execute(self.db)
-        .await?;
+        // At the address looked up: a mentor whose address changed meanwhile waits for the new one.
+        let mut tx = self.db.begin().await?;
+        for p in pending {
+            sqlx::query!(
+                "DELETE FROM mentor_scan WHERE mailbox_id = ? AND mentor_id = ? AND email = ?",
+                self.mailbox_id,
+                p.mentor_id,
+                p.email
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -337,27 +364,28 @@ impl Session<'_> {
         let mut threads: HashMap<String, Vec<i64>> = HashMap::new();
         for head in heads {
             let headers = mail::headers(&head.header);
-            let at = Location {
+            let place = Location {
                 folder,
                 uidvalidity,
                 uid: head.uid,
             };
-            let plan = self.plan(role, &headers, &threads).await?;
+            let sent_at = head.received_at.or(headers.date).unwrap_or(self.now);
+            let plan = self.plan(role, &headers, sent_at, &threads).await?;
             if let (Plan::Keep { mentors, .. }, Some(id)) = (&plan, &headers.message_id) {
                 threads.insert(id.clone(), mentors.clone());
             }
             match plan {
                 Plan::Skip => {}
-                Plan::Bounce => wanted.push((head, headers, None)),
+                Plan::Bounce => wanted.push((place, sent_at, headers, None)),
                 Plan::Keep { kind, mentors } => {
                     let mut conn = self.db.acquire().await?;
-                    match existing(&mut conn, self.mailbox_id, &headers, &at).await? {
+                    match existing(&mut conn, self.mailbox_id, &headers, &place).await? {
                         Some(id) => {
                             let mut tx = self.db.begin().await?;
                             self.link(&mut tx, id, &mentors).await?;
                             tx.commit().await?;
                         }
-                        None => wanted.push((head, headers, Some((kind, mentors)))),
+                        None => wanted.push((place, sent_at, headers, Some((kind, mentors)))),
                     }
                 }
             }
@@ -365,24 +393,18 @@ impl Session<'_> {
         if wanted.is_empty() {
             return Ok(());
         }
-        let uids: Vec<u32> = wanted.iter().map(|(head, ..)| head.uid).collect();
+        let uids: Vec<u32> = wanted.iter().map(|(place, ..)| place.uid).collect();
         let starts: HashMap<u32, Vec<u8>> =
             self.imap.starts(&uids, START).await?.into_iter().collect();
-        for (head, headers, keep) in wanted {
+        for (place, sent_at, headers, keep) in wanted {
             // Gone from the folder since its headers were read.
-            let Some(raw) = starts.get(&head.uid) else {
+            let Some(raw) = starts.get(&place.uid) else {
                 continue;
-            };
-            let at = Location {
-                folder,
-                uidvalidity,
-                uid: head.uid,
             };
             match keep {
                 None => self.bounced(raw).await?,
                 Some((kind, mentors)) => {
-                    let sent_at = head.received_at.or(headers.date).unwrap_or(self.now);
-                    self.store(&at, kind, &headers, sent_at, raw, &mentors)
+                    self.store(&place, kind, &headers, sent_at, raw, &mentors)
                         .await?;
                 }
             }
@@ -394,21 +416,31 @@ impl Session<'_> {
         &mut self,
         role: Role,
         headers: &mail::Headers,
+        sent_at: i64,
         threads: &HashMap<String, Vec<i64>>,
     ) -> Result<Plan, Error> {
         let Some(from) = &headers.from else {
             return Ok(Plan::Skip);
         };
+        // A read receipt is neither a reply nor a bounce.
+        if headers.receipt {
+            return Ok(Plan::Skip);
+        }
         if role == Role::Sent {
-            if let Some(id) = &headers.message_id {
-                let mut conn = self.db.acquire().await?;
-                match email::sent_copy(&mut conn, id, self.now).await? {
-                    SentCopy::Foreign => {}
-                    SentCopy::Own => return Ok(Plan::Skip),
-                    SentCopy::Confirmed => {
-                        self.round.changed = true;
-                        return Ok(Plan::Skip);
-                    }
+            let copy = email::Copy {
+                mailbox_id: self.mailbox_id,
+                message_id: headers.message_id.as_deref(),
+                recipients: &headers.recipients,
+                subject: headers.subject.as_deref(),
+                at: sent_at,
+            };
+            let mut conn = self.db.acquire().await?;
+            match email::sent_copy(&mut conn, &copy, self.now).await? {
+                SentCopy::Foreign => {}
+                SentCopy::Own => return Ok(Plan::Skip),
+                SentCopy::Confirmed => {
+                    self.round.changed = true;
+                    return Ok(Plan::Skip);
                 }
             }
             let mentors = self.mentors_at(&headers.recipients).await?;
@@ -543,29 +575,52 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// Marks the mail a bounce is about, whether the app sent it or it was sent elsewhere.
+    /// Marks the mail a bounce is about, whether the app sent it or it was sent elsewhere: the first
+    /// it names that the user sent, as the others are mail that one quotes or carries.
     async fn bounced(&mut self, raw: &[u8]) -> Result<(), Error> {
         let Some(bounce) = mail::bounce(raw) else {
             return Ok(());
         };
-        let mut tx = self.db.begin().await?;
+        let mut original = None;
         for id in &bounce.originals {
-            let elsewhere = || {
-                sqlx::query!(
-                    "UPDATE message SET bounce_reason = ?
-                     WHERE message_id = ? AND kind = 'sent' AND bounce_reason IS NULL",
-                    bounce.reason,
-                    id
-                )
-            };
-            if email::bounced(&mut tx, id, &bounce.reason, self.now).await?
-                || elsewhere().execute(&mut *tx).await?.rows_affected() == 1
-            {
-                self.round.changed = true;
+            let sent = sqlx::query_scalar!(
+                r#"SELECT EXISTS (SELECT 1 FROM email WHERE message_id = ?1)
+                     OR EXISTS (SELECT 1 FROM message WHERE message_id = ?1 AND kind = 'sent')
+                   AS "sent!: bool""#,
+                id
+            )
+            .fetch_one(self.db)
+            .await?;
+            if sent {
+                original = Some(id);
                 break;
             }
         }
+        let Some(original) = original else {
+            return Ok(());
+        };
+        let recipients = json(&bounce.recipients)?;
+        let mut tx = self.db.begin().await?;
+        let own = email::bounced(&mut tx, original, &bounce.reason, self.now).await?;
+        // Mail to several mentors bounces for those the bounce names, or for all when it names none
+        // of them.
+        let elsewhere = sqlx::query!(
+            "UPDATE message_mentor SET bounce_reason = ?1
+             WHERE bounce_reason IS NULL
+               AND message_id = (SELECT id FROM message WHERE message_id = ?2 AND kind = 'sent')
+               AND (mentor_id IN (SELECT id FROM mentor WHERE email IN (SELECT value FROM json_each(?3)))
+                 OR NOT EXISTS (
+                   SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
+                   WHERE mm.message_id = message_mentor.message_id
+                     AND m.email IN (SELECT value FROM json_each(?3))))",
+            bounce.reason,
+            original,
+            recipients
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
+        self.round.changed |= own || elsewhere.rows_affected() > 0;
         Ok(())
     }
 }
@@ -640,7 +695,7 @@ pub enum MessageKind {
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at, m.read_at,
-             m.bounce_reason, m.body_text
+             mm.bounce_reason, m.body_text
            FROM message m JOIN message_mentor mm ON mm.message_id = m.id
            WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id"#,
         mentor_id

@@ -347,16 +347,16 @@ pub async fn receivable(db: &SqlitePool, now: i64) -> Result<Vec<i64>, sqlx::Err
     .await
 }
 
-/// Records a round of receiving that went through.
-pub async fn received(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+/// Records a round of receiving that went through; true when it failed before.
+pub async fn received(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    let cleared = sqlx::query!(
         "UPDATE mailbox SET receive_error = NULL, receive_retry_at = NULL
          WHERE id = ? AND receive_error IS NOT NULL",
         id
     )
     .execute(db)
     .await?;
-    Ok(())
+    Ok(cleared.rows_affected() == 1)
 }
 
 /// Records why a round of receiving failed, and when to try again if not at the next round.

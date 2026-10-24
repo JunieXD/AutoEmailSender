@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             m.bounce_reason, m.body_text\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
+  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             mm.bounce_reason, m.body_text\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
   "describe": {
     "columns": [
       {
@@ -75,7 +75,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "message",
+            "table": "message_mentor",
             "name": "bounce_reason"
           }
         }
@@ -106,5 +106,5 @@
       true
     ]
   },
-  "hash": "5f3f8f673517c06c5d9424d6ac1417df84677e2b50272701e6af43495fc9c4a8"
+  "hash": "9d3b10fb056a0b5f57addc0ef6a432a546a6a185d78c6757cbfdf92d2b1a047d"
 }

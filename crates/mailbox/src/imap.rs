@@ -4,9 +4,9 @@
 
 use std::time::Duration;
 
+use async_imap::imap_proto::{AttributeValue, MailboxDatum, Response, Status};
 use async_imap::types::NameAttribute;
 use async_imap::{Client, Session};
-use futures_util::{Stream, StreamExt};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 
@@ -23,7 +23,7 @@ pub async fn check_receiving(net: &Net, account: &Account) -> Result<(), MailErr
     Ok(())
 }
 
-/// How long the server may stay silent while it is answering a command.
+/// How long the server may take to answer a command, and to send each message of the answer.
 const PATIENCE: Duration = Duration::from_secs(60);
 
 /// Names a sent folder may have when the server does not mark it `\Sent`, in modified UTF-7.
@@ -74,18 +74,26 @@ impl Imap {
     /// The folder sent mail is kept in: the one the server marks `\Sent`, or else the first with a
     /// usual name.
     pub async fn sent_folder(&mut self) -> Result<Option<String>, MailError> {
-        let server = self.server.clone();
-        let stream = patient(&server, self.session.list(Some(""), Some("*"))).await?;
-        let names = gather(&server, stream).await?;
-        let marked = names
-            .iter()
-            .find(|n| n.attributes().contains(&NameAttribute::Sent));
+        let mut folders: Vec<(String, bool)> = Vec::new();
+        self.command("LIST \"\" *", |response| {
+            if let Response::MailboxData(MailboxDatum::List {
+                name_attributes,
+                name,
+                ..
+            }) = response
+            {
+                let sent = name_attributes.contains(&NameAttribute::Sent);
+                folders.push((name.to_string(), sent));
+            }
+        })
+        .await?;
+        let marked = folders.iter().find(|(_, sent)| *sent);
         let named = || {
             SENT_NAMES
                 .iter()
-                .find_map(|usual| names.iter().find(|n| n.name() == *usual))
+                .find_map(|usual| folders.iter().find(|(name, _)| name == usual))
         };
-        Ok(marked.or_else(named).map(|n| n.name().to_owned()))
+        Ok(marked.or_else(named).map(|(name, _)| name.clone()))
     }
 
     /// Opens a folder read-only.
@@ -95,18 +103,20 @@ impl Imap {
         let uidvalidity = mailbox
             .uid_validity
             .ok_or_else(|| MailError::Broken(format!("{folder} has no UIDVALIDITY")))?;
-        let last_uid = if mailbox.exists == 0 {
-            0
-        } else {
-            let stream = patient(&server, self.session.fetch("*", "UID")).await?;
-            gather(&server, stream)
-                .await?
-                .first()
-                .and_then(|f| f.uid)
-                .ok_or_else(|| {
-                    MailError::Broken(format!("{folder}: no UID for the last message"))
-                })?
-        };
+        let mut last_uid = 0;
+        if mailbox.exists > 0 {
+            self.command("FETCH * UID", |response| {
+                if let Response::Fetch(_, attributes) = response {
+                    last_uid = uid(attributes).unwrap_or(last_uid);
+                }
+            })
+            .await?;
+            if last_uid == 0 {
+                return Err(MailError::Broken(format!(
+                    "{folder}: no UID for the last message"
+                )));
+            }
+        }
         Ok(Opened {
             uidvalidity,
             last_uid,
@@ -143,10 +153,13 @@ impl Imap {
     }
 
     async fn search(&mut self, criteria: &str) -> Result<Vec<u32>, MailError> {
-        let mut uids: Vec<u32> = patient(&self.server.clone(), self.session.uid_search(criteria))
-            .await?
-            .into_iter()
-            .collect();
+        let mut uids = Vec::new();
+        self.command(&format!("UID SEARCH {criteria}"), |response| {
+            if let Response::MailboxData(MailboxDatum::Search(found)) = response {
+                uids.extend(found);
+            }
+        })
+        .await?;
         uids.sort_unstable();
         Ok(uids)
     }
@@ -159,12 +172,12 @@ impl Imap {
         );
         let fetches = self.fetch(uids, &query).await?;
         Ok(fetches
-            .iter()
+            .into_iter()
             .filter_map(|f| {
                 Some(Head {
-                    uid: f.uid?,
-                    received_at: f.internal_date().map(|d| d.timestamp_millis()),
-                    header: f.header()?.to_vec(),
+                    uid: f.uid,
+                    received_at: f.received_at,
+                    header: f.data?,
                 })
             })
             .collect())
@@ -180,20 +193,103 @@ impl Imap {
             .fetch(uids, &format!("(UID BODY.PEEK[]<0.{limit}>)"))
             .await?;
         Ok(fetches
-            .iter()
-            .filter_map(|f| Some((f.uid?, f.body()?.to_vec())))
+            .into_iter()
+            .filter_map(|f| Some((f.uid, f.data?)))
             .collect())
     }
 
-    async fn fetch(
-        &mut self,
-        uids: &[u32],
-        query: &str,
-    ) -> Result<Vec<async_imap::types::Fetch>, MailError> {
+    /// Some servers leave messages out of the answer for many that they give for each alone; one
+    /// left out of that too is taken to be deleted meanwhile.
+    async fn fetch(&mut self, uids: &[u32], query: &str) -> Result<Vec<Fetched>, MailError> {
+        let mut fetches = self.fetch_set(uids, query).await?;
+        if uids.len() > 1 {
+            let missing: Vec<u32> = uids
+                .iter()
+                .filter(|&&uid| !fetches.iter().any(|f| f.uid == uid && f.data.is_some()))
+                .copied()
+                .collect();
+            for uid in missing {
+                fetches.extend(self.fetch_set(&[uid], query).await?);
+            }
+            fetches.sort_by_key(|f| f.uid);
+        }
+        Ok(fetches)
+    }
+
+    /// A fetch asking for one section of each message.
+    async fn fetch_set(&mut self, uids: &[u32], query: &str) -> Result<Vec<Fetched>, MailError> {
         let set: Vec<String> = uids.iter().map(u32::to_string).collect();
+        let mut fetches = Vec::new();
+        self.command(
+            &format!("UID FETCH {} {query}", set.join(",")),
+            |response| {
+                let Response::Fetch(_, attributes) = response else {
+                    return;
+                };
+                // Without a UID it tells of changed flags, unasked.
+                let Some(uid) = uid(attributes) else {
+                    return;
+                };
+                let mut fetched = Fetched {
+                    uid,
+                    received_at: None,
+                    data: None,
+                };
+                for attribute in attributes {
+                    match attribute {
+                        AttributeValue::InternalDate(date) => {
+                            fetched.received_at = chrono::DateTime::parse_from_str(
+                                date.trim(),
+                                "%d-%b-%Y %H:%M:%S %z",
+                            )
+                            .ok()
+                            .map(|d| d.timestamp_millis());
+                        }
+                        AttributeValue::BodySection { data, .. } => {
+                            fetched.data = data.as_deref().map(<[u8]>::to_vec);
+                        }
+                        _ => {}
+                    }
+                }
+                fetches.push(fetched);
+            },
+        )
+        .await?;
+        Ok(fetches)
+    }
+
+    /// Runs a command, handing the server's untagged responses to `each`. async-imap's own commands
+    /// for these, unlike EXAMINE, take the server refusing for an empty answer.
+    async fn command(
+        &mut self,
+        command: &str,
+        mut each: impl FnMut(&Response<'_>),
+    ) -> Result<(), MailError> {
         let server = self.server.clone();
-        let stream = patient(&server, self.session.uid_fetch(set.join(","), query)).await?;
-        gather(&server, stream).await
+        let tag = patient(&server, self.session.run_command(command)).await?;
+        loop {
+            let response = tokio::time::timeout(PATIENCE, self.session.read_response())
+                .await
+                .map_err(|_| timed_out(&server))?
+                .map_err(|e| MailError::Broken(e.to_string()))?
+                .ok_or_else(|| MailError::Broken("the server closed the connection".into()))?;
+            match response.parsed() {
+                Response::Done {
+                    tag: done,
+                    status,
+                    information,
+                    ..
+                } if *done == tag => {
+                    return match status {
+                        Status::Ok => Ok(()),
+                        _ => Err(MailError::Refused(
+                            information.as_deref().unwrap_or_default().to_owned(),
+                        )),
+                    };
+                }
+                response => each(response),
+            }
+        }
     }
 
     /// Logs out in the background.
@@ -268,19 +364,19 @@ async fn patient<T>(
         .map_err(refused)
 }
 
-/// Reads a streamed answer to the end, giving up when the server says nothing for `PATIENCE`.
-async fn gather<T>(
-    server: &Server,
-    mut stream: impl Stream<Item = async_imap::error::Result<T>> + Unpin,
-) -> Result<Vec<T>, MailError> {
-    let mut items = Vec::new();
-    while let Some(item) = tokio::time::timeout(PATIENCE, stream.next())
-        .await
-        .map_err(|_| timed_out(server))?
-    {
-        items.push(item.map_err(refused)?);
-    }
-    Ok(items)
+/// What the server gave of a message.
+struct Fetched {
+    uid: u32,
+    /// UTC milliseconds.
+    received_at: Option<i64>,
+    data: Option<Vec<u8>>,
+}
+
+fn uid(attributes: &[AttributeValue<'_>]) -> Option<u32> {
+    attributes.iter().find_map(|a| match a {
+        AttributeValue::Uid(uid) => Some(*uid),
+        _ => None,
+    })
 }
 
 fn timed_out(server: &Server) -> MailError {
