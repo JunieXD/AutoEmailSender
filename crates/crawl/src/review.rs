@@ -1,5 +1,5 @@
 //! Candidate review uses the very same intake calculation and writes as table imports.
-use crate::{extract::Person, queue};
+use crate::{PageUrl, extract::Person, queue, store::PageKind};
 use mentor::{
     MentorFields,
     export::Profile,
@@ -257,7 +257,7 @@ pub(crate) async fn save(
     conn: &mut SqliteConnection,
     crawl: i64,
     page: i64,
-    kind: &str,
+    kind: PageKind,
     url: &str,
     person: Person,
 ) -> Result<(), sqlx::Error> {
@@ -266,7 +266,7 @@ pub(crate) async fn save(
     // The runner checks redirected names before allowing the destination as an identity.
     let identities: Vec<_> = profile
         .into_iter()
-        .chain((kind == "profile").then_some(url))
+        .chain((kind == PageKind::Profile).then_some(url))
         .collect();
     let ids=sqlx::query_scalar!(r#"SELECT id FROM candidate WHERE crawl_id = ?1 AND (id IN (SELECT candidate_id FROM candidate_profile WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2))) OR (name = ?3 AND EXISTS(SELECT 1 FROM json_each(emails) a JOIN json_each(?4) b ON a.value = b.value COLLATE NOCASE))) ORDER BY id"#,crawl,Json(&identities),f.name,Json(&f.emails)).fetch_all(&mut *conn).await?;
     let mut old = read(conn, &ids).await?;
@@ -303,7 +303,7 @@ pub(crate) async fn save(
         .iter()
         .flatten()
         .map(|Json(f)| f)
-        .chain((kind == "profile").then_some(f))
+        .chain((kind == PageKind::Profile).then_some(f))
     {
         if let Some(fields) = &mut profile_fields {
             intake::add_candidate(fields, &mut vec![], incoming, &[]);
@@ -353,10 +353,10 @@ pub(crate) async fn save(
                 .execute(&mut *conn)
                 .await?;
         }
-        let canonical = sqlx::query_scalar!("UPDATE candidate SET review=?,name=?,aliases=?,emails=?,affiliations=?,homepages=?,research=?,papers=?,evidence=?,profile_url=coalesce(profile_url,?),list_page_id=coalesce(list_page_id,?),profile_page_id=coalesce(?,profile_page_id),profile_fields=?,match_names=?,match_schools=? WHERE id=? RETURNING profile_url",review,fields.name,Json(&fields.aliases),Json(&fields.emails),Json(&fields.affiliations),Json(&fields.homepages),fields.research,Json(&papers),Json(&sources),profile,if kind=="list"{Some(page)}else{None},if kind=="profile"{Some(page)}else{None},profile_fields,names,schools,id).fetch_one(&mut *conn).await?;
+        let canonical = sqlx::query_scalar!("UPDATE candidate SET review=?,name=?,aliases=?,emails=?,affiliations=?,homepages=?,research=?,papers=?,evidence=?,profile_url=coalesce(profile_url,?),list_page_id=coalesce(list_page_id,?),profile_page_id=coalesce(?,profile_page_id),profile_fields=?,match_names=?,match_schools=? WHERE id=? RETURNING profile_url",review,fields.name,Json(&fields.aliases),Json(&fields.emails),Json(&fields.affiliations),Json(&fields.homepages),fields.research,Json(&papers),Json(&sources),profile,if kind==PageKind::List{Some(page)}else{None},if kind==PageKind::Profile{Some(page)}else{None},profile_fields,names,schools,id).fetch_one(&mut *conn).await?;
         (id, canonical)
     } else {
-        let id = sqlx::query_scalar!("INSERT INTO candidate (crawl_id,list_page_id,profile_page_id,profile_url,review,enrich,name,aliases,emails,affiliations,homepages,research,papers,source_url,evidence,profile_fields,match_names,match_schools) VALUES (?,?,?,?,'pending','none',?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",crawl,if kind=="list"{Some(page)}else{None},if kind=="profile"{Some(page)}else{None},profile,fields.name,Json(&fields.aliases),Json(&fields.emails),Json(&fields.affiliations),Json(&fields.homepages),fields.research,Json(&papers),url,Json(&sources),profile_fields,names,schools).fetch_one(&mut *conn).await?;
+        let id = sqlx::query_scalar!("INSERT INTO candidate (crawl_id,list_page_id,profile_page_id,profile_url,review,enrich,name,aliases,emails,affiliations,homepages,research,papers,source_url,evidence,profile_fields,match_names,match_schools) VALUES (?,?,?,?,'pending','none',?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",crawl,if kind==PageKind::List{Some(page)}else{None},if kind==PageKind::Profile{Some(page)}else{None},profile,fields.name,Json(&fields.aliases),Json(&fields.emails),Json(&fields.affiliations),Json(&fields.homepages),fields.research,Json(&papers),url,Json(&sources),profile_fields,names,schools).fetch_one(&mut *conn).await?;
         (id, profile.map(str::to_owned))
     };
     for url in known_profiles.iter().map(String::as_str).chain(identities) {
@@ -371,17 +371,17 @@ pub(crate) async fn save(
     }
     sqlx::query!("DELETE FROM crawl_page WHERE crawl_id = ?1 AND kind = 'profile' AND work_state = 'queued' AND fetched_at IS NULL AND url IN (SELECT url FROM candidate_profile WHERE candidate_id = ?2) AND url IS NOT ?3",crawl,id,canonical_profile).execute(&mut *conn).await?;
     // Profile work is scheduled only once, directly from the validated list link.
-    if kind == "list"
+    if kind == PageKind::List
         && let Some(target) = person.profile
         && canonical_profile.as_deref() == Some(target.as_str())
     {
-        let scope = sqlx::query_scalar!("SELECT scope_url FROM crawl_page WHERE id = ?", page)
-            .fetch_one(&mut *conn)
-            .await?
-            .ok_or_else(|| sqlx::Error::Protocol("list page scope missing".into()))?;
-        let scope =
-            crate::PageUrl::parse(&scope).map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
-        queue::enqueue(conn, crawl, &target, &scope, 0, "profile").await?;
+        let scope = sqlx::query_scalar!(
+            r#"SELECT scope_url AS "scope!: PageUrl" FROM crawl_page WHERE id = ?"#,
+            page
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        queue::enqueue(conn, crawl, &target, &scope, 0, PageKind::Profile).await?;
     }
     Ok(())
 }

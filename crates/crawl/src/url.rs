@@ -1,5 +1,11 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use sqlx::{
+    Decode, Encode, Sqlite, Type,
+    encode::IsNull,
+    error::BoxDynError,
+    sqlite::{SqliteArgumentsBuffer, SqliteTypeInfo, SqliteValueRef},
+};
 use url::{Host, Url};
 
 use crate::{CrawlError, Material};
@@ -7,6 +13,24 @@ use crate::{CrawlError, Material};
 /// A normalized, public HTTP URL. No DNS lookups: proxies may use fake IPs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageUrl(Url);
+
+impl Type<Sqlite> for PageUrl {
+    fn type_info() -> SqliteTypeInfo {
+        <str as Type<Sqlite>>::type_info()
+    }
+}
+
+impl<'r> Decode<'r, Sqlite> for PageUrl {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, BoxDynError> {
+        Ok(Self::parse(<&str as Decode<Sqlite>>::decode(value)?)?)
+    }
+}
+
+impl Encode<'_, Sqlite> for PageUrl {
+    fn encode_by_ref(&self, args: &mut SqliteArgumentsBuffer) -> Result<IsNull, BoxDynError> {
+        <&str as Encode<Sqlite>>::encode(self.as_str(), args)
+    }
+}
 
 impl PageUrl {
     pub fn parse(value: &str) -> Result<Self, CrawlError> {

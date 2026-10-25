@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT scope_url FROM crawl_page WHERE id = ?",
+  "query": "SELECT scope_url AS \"scope!: PageUrl\" FROM crawl_page WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "scope_url",
+        "name": "scope!: PageUrl",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "fbb35cba3216d01623507e1abff76c4ea9ab9edf057bc083aac0713ee55e3e2b"
+  "hash": "6aefc8ac9227183626dcd84cff87668b4743ec712837dba842e57dfc64e4afb0"
 }

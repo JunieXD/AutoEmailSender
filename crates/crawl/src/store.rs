@@ -1,9 +1,11 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, types::Json};
+use ts_rs::TS;
 
 use crate::PageUrl;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]
 pub enum PageKind {
     Entry,
@@ -39,7 +41,8 @@ pub enum PageResult {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]
 pub enum PageStatus {
     Success,

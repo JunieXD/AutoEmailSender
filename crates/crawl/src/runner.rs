@@ -6,6 +6,7 @@ use crate::{
     now,
     queue::{self, Claim},
     review,
+    store::{PageKind, PageStatus},
 };
 use model::{
     Chosen,
@@ -37,7 +38,7 @@ pub struct CrawlFinished {
 }
 struct Page {
     material: Material,
-    kind: &'static str,
+    kind: PageKind,
     people: Vec<Person>,
     next: Vec<PageUrl>,
 }
@@ -220,15 +221,13 @@ async fn read(
     chosen: &Chosen,
     cooldown: &Cooldown,
 ) -> Result<Page, ReadError> {
-    let url = PageUrl::parse(&c.url).map_err(|e| ReadError::Failed(e.message()))?;
-    let start = PageUrl::parse(&c.scope).map_err(|e| ReadError::Failed(e.message()))?;
-    let scope = Scope::new(&start);
+    let scope = Scope::new(&c.scope);
     // External targets can only have been persisted from Scope::linked_profile.
-    let target = if c.kind == "profile" {
-        PageTarget { url }
+    let target = if c.kind == PageKind::Profile {
+        PageTarget { url: c.url.clone() }
     } else {
         scope
-            .page(url)
+            .page(c.url.clone())
             .map_err(|e| ReadError::Failed(e.message()))?
     };
     let m = fetcher
@@ -239,9 +238,9 @@ async fn read(
     let text = m.text();
     let reason = m.needs_browser.as_ref().map(browser);
     let status = if reason.is_some() {
-        "needs_browser"
+        PageStatus::NeedsBrowser
     } else {
-        "success"
+        PageStatus::Success
     };
     let saved=sqlx::query!("UPDATE crawl_page SET text = ?,status = ?,error = ?,fetched_at = ? WHERE id = ? AND claim = ? AND work_state = 'running' AND EXISTS(SELECT 1 FROM crawl WHERE id = crawl_page.crawl_id AND state = 'running')",text,status,reason,now(),c.id,c.generation).execute(db).await.map_err(|e|{tracing::error!("save fetched page: {e}");ReadError::Pause("网页资料暂时无法保存，请继续或重启应用。".into())})?;
     if saved.rows_affected() == 0 {
@@ -263,16 +262,16 @@ async fn read(
     {
         return Ok(Page {
             material: m,
-            kind: if c.kind == "profile" {
-                "profile"
+            kind: if c.kind == PageKind::Profile {
+                PageKind::Profile
             } else {
-                "entry"
+                PageKind::Entry
             },
             people: vec![],
             next: vec![],
         });
     }
-    let route = if c.kind == "profile" {
+    let route = if c.kind == PageKind::Profile {
         extract::Route {
             kind: Kind::Profile,
             next: vec![],
@@ -284,11 +283,11 @@ async fn read(
     };
     let mut next: Vec<PageUrl> = Vec::new();
     let kind = match route.kind {
-        Kind::Profile => "profile",
-        Kind::List => "list",
-        _ => "entry",
+        Kind::Profile => PageKind::Profile,
+        Kind::List => PageKind::List,
+        Kind::Entry | Kind::Other => PageKind::Entry,
     };
-    if kind != "profile" {
+    if kind != PageKind::Profile {
         let links = extract::links(&m);
         for id in route.next {
             if let Some((_, url)) = id.checked_sub(1).and_then(|n| links.get(n))
@@ -318,7 +317,7 @@ async fn read(
                 .ask::<extract::Profile>(extract::PROFILE, extract::data(&m, 0..m.units.len()))
                 .await?;
             let mut p = extract::profile(&m, p).map_err(ReadError::Failed)?;
-            p.profile = Some(PageUrl::parse(&c.url).map_err(|e| ReadError::Failed(e.message()))?);
+            p.profile = Some(c.url.clone());
             vec![p]
         }
         _ => vec![],
@@ -345,10 +344,8 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     }
     let redirect_failure;
     let outcome = if let Outcome::Done(p) = outcome
-        && c.kind == "profile"
-        && !p.material.url.is_normalization_of(
-            &PageUrl::parse(&c.url).map_err(|e| sqlx::Error::Protocol(e.to_string()))?,
-        )
+        && c.kind == PageKind::Profile
+        && !p.material.url.is_normalization_of(&c.url)
         && let Some(person) = p.people.first()
     {
         let names = Json(
@@ -394,16 +391,22 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             let text = p.material.text();
             let reason = p.material.needs_browser.as_ref().map(browser);
             let status = if reason.is_some() {
-                "needs_browser"
+                PageStatus::NeedsBrowser
             } else {
-                "success"
+                PageStatus::Success
             };
             sqlx::query!("UPDATE crawl_page SET work_state = 'done',kind = ?,status = ?,error = ?,text = ?,fetched_at = ? WHERE id = ?",p.kind,status,reason,text,now(),c.id).execute(&mut *tx).await?;
-            let scope =
-                PageUrl::parse(&c.scope).map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
             for url in &p.next {
                 if c.depth < 2 {
-                    queue::enqueue(&mut tx, c.crawl, url, &scope, c.depth + 1, "entry").await?;
+                    queue::enqueue(
+                        &mut tx,
+                        c.crawl,
+                        url,
+                        &c.scope,
+                        c.depth + 1,
+                        PageKind::Entry,
+                    )
+                    .await?;
                 } else {
                     let target = url.as_str();
                     if !sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND url = ?) AS "found!: bool""#,c.crawl,target).fetch_one(&mut *tx).await? {
@@ -411,10 +414,11 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     }
                 }
             }
-            if p.kind == "list" {
+            if p.kind == PageKind::List {
                 for url in &p.material.pagination.urls {
-                    if Scope::new(&scope).page(url.clone()).is_ok() {
-                        queue::enqueue(&mut tx, c.crawl, url, &scope, c.depth, "list").await?;
+                    if Scope::new(&c.scope).page(url.clone()).is_ok() {
+                        queue::enqueue(&mut tx, c.crawl, url, &c.scope, c.depth, PageKind::List)
+                            .await?;
                     }
                 }
             }

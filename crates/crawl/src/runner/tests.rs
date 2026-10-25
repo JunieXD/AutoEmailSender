@@ -314,7 +314,12 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
             .any(|p| p == "/news" || p == "/must-not-visit" || p == "/alternate-alice")
     );
     let detail = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
-    assert!(detail.pages.iter().any(|p| p.status == "needs_browser"));
+    assert!(
+        detail
+            .pages
+            .iter()
+            .any(|p| p.status == PageStatus::NeedsBrowser)
+    );
     site.page(
         "/missing",
         "<title>教师名单二</title><p>王五 c@school.example.edu</p>",
@@ -331,7 +336,7 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
     let detail = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
     assert_eq!(
         detail.pages.iter().find(|p| p.id == failed).unwrap().status,
-        "success"
+        PageStatus::Success
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM candidate WHERE crawl_id=?")
@@ -422,7 +427,10 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
         .ok();
     let result = process.await.unwrap();
     save(&db, &c, &result).await.unwrap();
-    assert_eq!(queue::list(&db, 1).await.unwrap()[0].state, "paused");
+    assert_eq!(
+        queue::list(&db, 1).await.unwrap()[0].state,
+        queue::CrawlState::Paused
+    );
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for n in 0..70 {
         queue::enqueue(
@@ -431,7 +439,7 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
             &site.url(&format!("/category/{n}")),
             &site.url("/"),
             1,
-            "entry",
+            PageKind::Entry,
         )
         .await
         .unwrap();
@@ -523,7 +531,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
             &mut tx,
             crawl,
             claim.id,
-            "profile",
+            PageKind::Profile,
             url.as_str(),
             Person {
                 fields: MentorFields {
@@ -586,7 +594,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
             &mut tx,
             crawl,
             claim.id,
-            "profile",
+            PageKind::Profile,
             site.url(&format!("/limit/{n}")).as_str(),
             Person {
                 fields: MentorFields {
@@ -952,7 +960,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
             &mut tx,
             crawl,
             page.id,
-            "profile",
+            PageKind::Profile,
             site.url(&format!("/people/{name}")).as_str(),
             Person {
                 fields: MentorFields {
@@ -1016,7 +1024,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
             &mut tx,
             crawl,
             page.id,
-            "profile",
+            PageKind::Profile,
             site.url(&format!("/same/{n}")).as_str(),
             Person {
                 fields: MentorFields {
@@ -1076,7 +1084,10 @@ async fn a_run_with_only_failed_pages_can_retry_without_losing_its_page(db: Sqli
         .await
         .unwrap();
     assert_eq!(finish(&db).await.unwrap()[0].failed, 1);
-    assert_eq!(queue::list(&db, 1).await.unwrap()[0].state, "failed");
+    assert_eq!(
+        queue::list(&db, 1).await.unwrap()[0].state,
+        queue::CrawlState::Failed
+    );
     assert_eq!(queue::retry(&db, id, None, 2).await.unwrap(), 1);
     let retried = queue::next(&db).await.unwrap().unwrap();
     assert_eq!(claim.id, retried.id);
@@ -1105,7 +1116,7 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
         &mut tx,
         crawl,
         page.id,
-        "profile",
+        PageKind::Profile,
         url.as_str(),
         person(vec![]),
     )
@@ -1144,7 +1155,7 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
         &mut tx,
         crawl,
         page.id,
-        "profile",
+        PageKind::Profile,
         url.as_str(),
         person(vec!["新补到的论文".into()]),
     )
@@ -1197,7 +1208,7 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
             &mut tx,
             crawl,
             page.id,
-            "profile",
+            PageKind::Profile,
             u.as_str(),
             person(u.clone(), vec![]),
         )
@@ -1238,7 +1249,7 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
             &mut tx,
             crawl,
             page.id,
-            "profile",
+            PageKind::Profile,
             u.as_str(),
             person(u.clone(), vec!["zhang@example.edu".into()]),
         )
@@ -1303,11 +1314,11 @@ async fn observation(
     c: &Claim,
     site: &Site,
     path: &str,
-    kind: &str,
+    kind: PageKind,
     fields: MentorFields,
 ) {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    if kind == "profile" {
+    if kind == PageKind::Profile {
         sqlx::query("UPDATE crawl_page SET work_state='done' WHERE crawl_id=? AND url=?")
             .bind(c.crawl)
             .bind(site.url(path).as_str())
@@ -1411,7 +1422,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
             &root,
             &site,
             path,
-            "list",
+            PageKind::List,
             observed(name, &[email], None),
         )
         .await;
@@ -1430,7 +1441,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
     );
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
-    assert_eq!(page.status, "failed");
+    assert_eq!(page.status, PageStatus::Failed);
     assert_eq!(
         page.error.as_deref(),
         Some(
@@ -1449,7 +1460,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
             .unwrap();
     assert_eq!(identities, vec![site.url("/old-zhang").as_str()]);
     let li = queue::next(&db).await.unwrap().unwrap();
-    assert_eq!(li.url, site.url("/li").as_str());
+    assert_eq!(li.url, site.url("/li"));
     process_claim(&db, &site, &li).await;
     assert_eq!(
         review::accept(
@@ -1498,7 +1509,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
             .find(|p| p.id == claim.id)
             .unwrap()
             .status,
-        "success"
+        PageStatus::Success
     );
     server.abort();
 }
@@ -1521,7 +1532,7 @@ async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {
             &root,
             &site,
             path,
-            "list",
+            PageKind::List,
             observed(name, &[email], None),
         )
         .await;
@@ -1554,7 +1565,7 @@ async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {
     assert_eq!(identities, vec![site.url("/old-li").as_str()]);
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == second.id).unwrap();
-    assert_eq!(page.status, "failed");
+    assert_eq!(page.status, PageStatus::Failed);
     assert_eq!(
         page.error.as_deref(),
         Some(
@@ -1586,7 +1597,7 @@ async fn b3_same_request_changed_destination_must_not_merge(db: SqlitePool) {
             &root,
             &site,
             path,
-            "list",
+            PageKind::List,
             observed(name, &[email], None),
         )
         .await;
@@ -1628,7 +1639,7 @@ async fn b3_same_request_changed_destination_must_not_merge(db: SqlitePool) {
     );
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == retry.id).unwrap();
-    assert_eq!(page.status, "failed");
+    assert_eq!(page.status, PageStatus::Failed);
     assert_eq!(
         page.error.as_deref(),
         Some(
@@ -1650,7 +1661,15 @@ async fn b3_five_hop_same_person(db: SqlitePool) {
     site.page("/hop5", "<title>张三</title><p>张三</p>");
     let (root, server) = profile_fixture(&db, &site).await;
     for path in ["/hop0", "/hop5"] {
-        observation(&db, &root, &site, path, "list", observed("张三", &[], None)).await;
+        observation(
+            &db,
+            &root,
+            &site,
+            path,
+            PageKind::List,
+            observed("张三", &[], None),
+        )
+        .await;
     }
     let claim = queue::next(&db).await.unwrap().unwrap();
     process_claim(&db, &site, &claim).await;
@@ -1694,7 +1713,7 @@ async fn b3_redirect_external_is_rejected(db: SqlitePool) {
         &root,
         &site,
         "/old",
-        "list",
+        PageKind::List,
         observed("张三", &[], None),
     )
     .await;
@@ -1748,7 +1767,7 @@ async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
             &mut tx,
             root.crawl,
             root.id,
-            "list",
+            PageKind::List,
             material.url.as_str(),
             person,
         )
@@ -1757,7 +1776,7 @@ async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
     }
     tx.commit().await.unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
-    assert_eq!(claim.url, old.as_str());
+    assert_eq!(claim.url, old);
     process_claim(&db, &site, &claim).await;
     assert_eq!(candidate_ids(&db).await.len(), 1);
     let identities: Vec<String> =
@@ -1777,7 +1796,7 @@ async fn redirected_profile_matches_normalized_candidate_alias(db: SqlitePool) {
     let (root, server) = profile_fixture(&db, &site).await;
     let mut fields = observed("张三", &[], None);
     fields.aliases = vec![" Ｚｈａｎｇ　 Ｓａｎ ".into()];
-    observation(&db, &root, &site, "/old", "list", fields).await;
+    observation(&db, &root, &site, "/old", PageKind::List, fields).await;
     let claim = queue::next(&db).await.unwrap().unwrap();
     process_claim(&db, &site, &claim).await;
     let ids = candidate_ids(&db).await;
@@ -1813,7 +1832,7 @@ async fn non_redirected_profile_keeps_queue_candidate_when_name_changes(db: Sqli
         &root,
         &site,
         "/profile",
-        "list",
+        PageKind::List,
         observed("张三", &[], None),
     )
     .await;
@@ -1839,7 +1858,7 @@ async fn non_redirected_profile_keeps_queue_candidate_when_name_changes(db: Sqli
             .find(|p| p.id == claim.id)
             .unwrap()
             .status,
-        "success"
+        PageStatus::Success
     );
     server.abort();
 }
@@ -1893,7 +1912,7 @@ async fn expect_completed_profile(
 ) {
     let crawl = queue::detail(db, claim.crawl, 1).await.unwrap().unwrap();
     let page = crawl.pages.iter().find(|p| p.id == claim.id).unwrap();
-    assert_eq!(page.status, "success", "{:?}", page.error);
+    assert_eq!(page.status, PageStatus::Success, "{:?}", page.error);
     let ids = candidate_ids(db).await;
     assert_eq!(ids.len(), 1);
     let detail = review::detail(db, ids[0]).await.unwrap().unwrap();
@@ -2047,7 +2066,7 @@ async fn b4_changed_path_english_without_alias_still_fails(db: SqlitePool) {
     );
     let detail = queue::detail(&db, claim.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
-    assert_eq!(page.status, "failed");
+    assert_eq!(page.status, PageStatus::Failed);
     assert_eq!(
         page.error.as_deref(),
         Some(
@@ -2081,7 +2100,15 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
         .await
         .unwrap();
     for path in paths {
-        observation(db, &root, &site, path, "list", observed("张三", &[], None)).await;
+        observation(
+            db,
+            &root,
+            &site,
+            path,
+            PageKind::List,
+            observed("张三", &[], None),
+        )
+        .await;
     }
     assert_eq!(candidate_ids(db).await.len(), 2);
     let server = tokio::spawn(async move {
@@ -2145,7 +2172,15 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
         expected
     );
     for path in ["/old", "/canonical"] {
-        observation(db, &root, &site, path, "list", observed("张三", &[], None)).await;
+        observation(
+            db,
+            &root,
+            &site,
+            path,
+            PageKind::List,
+            observed("张三", &[], None),
+        )
+        .await;
     }
     assert_eq!(candidate_ids(db).await.len(), 1);
     assert!(queue::next(db).await.unwrap().is_none());
@@ -2167,7 +2202,15 @@ async fn redirected_profile_in_flight_result_uses_retained_identity(db: SqlitePo
 async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool) {
     let (site, c) = review_fixture(&db).await;
     for path in ["/old", "/canonical"] {
-        observation(&db, &c, &site, path, "list", observed("张三", &[], None)).await;
+        observation(
+            &db,
+            &c,
+            &site,
+            path,
+            PageKind::List,
+            observed("张三", &[], None),
+        )
+        .await;
         review::accept(
             &db,
             &ReviewInput {
@@ -2192,7 +2235,7 @@ async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool)
         &mut tx,
         c.crawl,
         c.id,
-        "profile",
+        PageKind::Profile,
         site.url("/canonical").as_str(),
         Person {
             fields: observed("张三", &[], None),
@@ -2258,7 +2301,15 @@ async fn crawl_options_include_all_runs_in_start_time_order(db: SqlitePool) {
 async fn regression_distinct_confirmed_targets_survive_new_shared_email(db: SqlitePool) {
     let (site, c) = review_fixture(&db).await;
     for path in ["/one", "/two"] {
-        observation(&db, &c, &site, path, "list", observed("张三", &[], None)).await;
+        observation(
+            &db,
+            &c,
+            &site,
+            path,
+            PageKind::List,
+            observed("张三", &[], None),
+        )
+        .await;
         let id = *candidate_ids(&db).await.last().unwrap();
         review::accept(
             &db,
@@ -2287,7 +2338,7 @@ async fn regression_distinct_confirmed_targets_survive_new_shared_email(db: Sqli
             &c,
             &site,
             path,
-            "profile",
+            PageKind::Profile,
             observed("张三", &["z@example.edu"], None),
         )
         .await;
@@ -2319,13 +2370,21 @@ async fn regression_merged_profile_identity_routes_late_results_and_removes_queu
     db: SqlitePool,
 ) {
     let (site, c) = review_fixture(&db).await;
-    observation(&db, &c, &site, "/one", "list", observed("张三", &[], None)).await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/one",
+        PageKind::List,
+        observed("张三", &[], None),
+    )
+    .await;
     observation(
         &db,
         &c,
         &site,
         "/two",
-        "list",
+        PageKind::List,
         observed("张三", &["z@example.edu"], None),
     )
     .await;
@@ -2334,7 +2393,7 @@ async fn regression_merged_profile_identity_routes_late_results_and_removes_queu
         &c,
         &site,
         "/one",
-        "profile",
+        PageKind::Profile,
         observed("张三", &["z@example.edu"], None),
     )
     .await;
@@ -2354,7 +2413,7 @@ async fn regression_merged_profile_identity_routes_late_results_and_removes_queu
         &c,
         &site,
         "/two",
-        "profile",
+        PageKind::Profile,
         observed("San Zhang", &[], None),
     )
     .await;
@@ -2390,7 +2449,15 @@ async fn regression_profile_scalars_replace_list_snippets_and_reopen_accepted_re
         }],
         ..observed("张三", &["z@example.edu"], Some(research))
     };
-    observation(&db, &c, &site, "/one", "list", fields("机器学习", "讲师")).await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/one",
+        PageKind::List,
+        fields("机器学习", "讲师"),
+    )
+    .await;
     let id = candidate_ids(&db).await[0];
     review::accept(
         &db,
@@ -2403,13 +2470,21 @@ async fn regression_profile_scalars_replace_list_snippets_and_reopen_accepted_re
     .await
     .unwrap();
     let full = "机器学习、隐私计算与大模型安全，主持可信人工智能项目";
-    observation(&db, &c, &site, "/one", "profile", fields(full, "教授")).await;
     observation(
         &db,
         &c,
         &site,
         "/one",
-        "list",
+        PageKind::Profile,
+        fields(full, "教授"),
+    )
+    .await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/one",
+        PageKind::List,
         fields("后到的名单片段", "副教授"),
     )
     .await;
@@ -2418,7 +2493,7 @@ async fn regression_profile_scalars_replace_list_snippets_and_reopen_accepted_re
         &c,
         &site,
         "/one",
-        "profile",
+        PageKind::Profile,
         fields("同级后到的方向", "研究员"),
     )
     .await;
@@ -2504,7 +2579,11 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
         let detail = queue::detail(&db, id, 1).await.unwrap().unwrap();
         assert_eq!(
             detail.pages[0].status,
-            if correct { "success" } else { "failed" }
+            if correct {
+                PageStatus::Success
+            } else {
+                PageStatus::Failed
+            }
         );
         server.abort();
         // A fresh fixture isolates the second run from the first server's lifetime.
@@ -2655,7 +2734,7 @@ async fn regression_supplement_preview_names_target_and_added_content(db: Sqlite
             ..Default::default()
         },
     ];
-    observation(&db, &c, &site, "/one", "profile", fields).await;
+    observation(&db, &c, &site, "/one", PageKind::Profile, fields).await;
     let preview = review::preview(
         &db,
         &ReviewInput {
@@ -2817,7 +2896,7 @@ async fn regression_background_includes_old_running_paused_and_failed_crawls(db:
     let work = queue::work(&db, 100, 200).await.unwrap();
     assert_eq!(
         work.iter()
-            .filter(|c| c.state == "done")
+            .filter(|c| c.state == queue::CrawlState::Done)
             .map(|c| c.id)
             .collect::<Vec<_>>(),
         vec![today]
@@ -2850,7 +2929,7 @@ async fn candidate_classification_pages_follow_normalized_names_schools_and_ment
             &c,
             &site,
             &format!("/person/{n}"),
-            "profile",
+            PageKind::Profile,
             MentorFields {
                 name: "A B".into(),
                 affiliations: vec![affiliation("AB   大学")],
@@ -2896,7 +2975,7 @@ async fn candidate_categories_do_not_depend_on_other_rows_on_the_page(db: Sqlite
             &c,
             &site,
             path,
-            "profile",
+            PageKind::Profile,
             observed(name, &["shared@example.edu"], None),
         )
         .await;

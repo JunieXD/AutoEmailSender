@@ -50,7 +50,7 @@ export type CrawlId = { id: number, };
 
 export type CrawlOption = { id: number, url: string | null, createdAt: number, };
 
-export type CrawlPage = { id: number, url: string, kind: string, state: string, status: string, error: string | null, };
+export type CrawlPage = { id: number, url: string, kind: PageKind, state: PageState, status: PageStatus, error: string | null, };
 
 export type CrawlQuery = { page: number, };
 
@@ -58,9 +58,13 @@ export type CrawlRetry = { id: number, page: number | null, };
 
 export type CrawlRun = { appVersion: string, startedAt: number, endedAt: number | null, };
 
+export type CrawlStage = "lists" | "profiles" | "paused" | "done" | "failed" | "canceled";
+
 export type CrawlStart = { urls: string, modelId: number, };
 
-export type CrawlSummary = { id: number, url: string | null, modelConfigId: number | null, state: string, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, profiles: number, candidates: number, failed: number, tokens: number | null, stage: string, };
+export type CrawlState = "running" | "paused" | "done" | "failed" | "canceled";
+
+export type CrawlSummary = { id: number, url: string | null, modelConfigId: number | null, state: CrawlState, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, profiles: number, candidates: number, failed: number, tokens: number | null, stage: CrawlStage, };
 
 export type CrawlUrls = { urls: string, };
 
@@ -392,6 +396,12 @@ export type NewTask = { name: string, ids: Array<number>, writer: Writer, templa
 export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
+
+export type PageKind = "entry" | "list" | "profile";
+
+export type PageState = "queued" | "running" | "done";
+
+export type PageStatus = "success" | "failed" | "needs_browser";
 
 export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Column>, issue: string | null, created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, additions: Array<Addition>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
 
