@@ -35,6 +35,7 @@ pub enum Waiting {
 #[serde(rename_all = "camelCase")]
 pub struct PlanEmail {
     pub id: i64,
+    pub kind: email::DraftKind,
     pub mentor_id: i64,
     pub name: String,
     pub subject: Option<String>,
@@ -145,7 +146,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
         }
     };
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state
+        r#"SELECT e.id, e.kind AS "kind: email::DraftKind", e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state
              AS "state: DraftState", e.planned_at, e.latest_at, e.sent_at, e.from_address,
              e.error, e.cancel_reason, e.resend_of, t.state AS task_state, t.generation_paused_at,
              CASE WHEN e.kind IN ('reply', 'follow_up') THEN coalesce(m.mailbox_id,
@@ -208,6 +209,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
             };
             PlanEmail {
                 id: r.id,
+                kind: r.kind,
                 mentor_id: r.mentor_id,
                 name: r.name,
                 subject: r.subject,

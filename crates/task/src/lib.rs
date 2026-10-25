@@ -264,7 +264,9 @@ pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
                     &attached,
                     &m,
                     current.as_ref(),
-                    previous.as_deref(),
+                    previous
+                        .as_deref()
+                        .map_or(writing::Kind::First, writing::Kind::FollowUp),
                 );
                 input_tokens += i;
                 output_tokens += o;

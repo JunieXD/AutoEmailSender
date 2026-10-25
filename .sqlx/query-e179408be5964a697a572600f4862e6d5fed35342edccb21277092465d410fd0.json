@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ?1 AND m.kind = 'reply' AND m.message_id IS NOT NULL\n             AND m.message_id = coalesce(\n               (SELECT reply_to FROM email\n                WHERE mentor_id = ?1 AND kind = 'reply' AND state = 'review'), ?2)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e179408be5964a697a572600f4862e6d5fed35342edccb21277092465d410fd0"
+}

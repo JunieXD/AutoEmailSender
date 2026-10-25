@@ -3,7 +3,7 @@
 
 /// The new part of a message's text and the quote that follows it, which may be empty. A message
 /// that is all quote is left whole.
-pub(crate) fn split(text: &str) -> (&str, &str) {
+pub fn split(text: &str) -> (&str, &str) {
     let lines: Vec<(usize, &str)> = text
         .split_inclusive('\n')
         .scan(0, |at, line| {

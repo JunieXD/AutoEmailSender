@@ -1525,7 +1525,7 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
         task_id: task,
         id: ds[0].id,
         subject: "致导师2".into(),
-        body_md: "导师1老师：您好".into(),
+        body_md: "导师1老师：您好。【请补充：时间】".into(),
         attachments: vec![],
     };
     save(&db, &edit, T).await.unwrap();
@@ -1533,6 +1533,11 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
     assert!(
         p.iter()
             .any(|p| matches!(p,check::Problem::OtherMentor{name} if name=="导师2"))
+    );
+    assert!(
+        p.iter().any(
+            |p| matches!(p, check::Problem::Placeholder { name } if name == "【请补充：时间】")
+        )
     );
     let page = drafts(
         &db,

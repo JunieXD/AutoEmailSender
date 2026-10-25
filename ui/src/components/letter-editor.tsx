@@ -30,8 +30,8 @@ export const letterParsing = { preserveWhitespace: true } as const;
  * Highlights the placeholders the app fills in, such as `{导师姓名}`, so a mistyped one stands out by
  * staying plain.
  */
-function highlightPlaceholders(names: string[], className: string) {
-  const pattern = new RegExp(`\\{(?:${names.join("|")})\\}`, "g");
+function highlightPlaceholders(names: string[], className: string, unfilled: boolean) {
+  const pattern = new RegExp(`\\{(?:${names.join("|")})\\}${unfilled ? "|【请\\s*补\\s*充[^】]*】" : ""}`, "g");
   return Extension.create({
     name: "highlightPlaceholders",
     addProseMirrorPlugins() {
@@ -41,13 +41,17 @@ function highlightPlaceholders(names: string[], className: string) {
             decorations(state) {
               const found: Decoration[] = [];
               state.doc.descendants((node, pos) => {
-                for (const m of node.text?.matchAll(pattern) ?? []) {
+                if (!node.isTextblock) return true;
+                // Marks do not occupy positions; each hard break occupies one, like its newline.
+                const text = node.textBetween(0, node.content.size, "", "\n");
+                for (const m of text.matchAll(pattern)) {
                   found.push(
-                    Decoration.inline(pos + m.index, pos + m.index + m[0].length, {
+                    Decoration.inline(pos + 1 + m.index, pos + 1 + m.index + m[0].length, {
                       class: className,
                     }),
                   );
                 }
+                return false;
               });
               return DecorationSet.create(state.doc, found);
             },
@@ -93,6 +97,7 @@ export function LetterEditor({
       highlightPlaceholders(
         placeholders,
         unfilled ? "rounded-sm bg-warning-soft text-warning" : "rounded-sm bg-selected text-brand-text",
+        unfilled,
       ),
     ],
     content: toHtml(markdown),

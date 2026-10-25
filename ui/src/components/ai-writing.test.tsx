@@ -3,14 +3,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import type { ModelConfig } from "@/api/types";
-import { ModelAction } from "./ai-writing";
+import type { Letter, ModelConfig, ReplyTarget } from "@/api/types";
+import { ModelAction, useReplyWritingTarget, useWriting } from "./ai-writing";
 
-const remote = vi.hoisted((): { models: ModelConfig[] } => ({ models: [] }));
+const remote = vi.hoisted(
+  (): {
+    models: ModelConfig[];
+    write?: (input: Record<string, unknown>) => Promise<Letter>;
+  } => ({ models: [] }),
+);
 vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: ReactNode }) => <span>{children}</span> }));
 vi.mock("@/api/call", () => ({
   errorMessage: (error: Error) => error.message,
-  call: async (op: string, input: { id: number }) => {
+  call: async (op: string, input: Record<string, unknown>) => {
+    if (op === "writeReply" && remote.write) return remote.write(input);
     if (op === "listModelConfigs") return structuredClone(remote.models);
     if (op === "listModelProviders") return [];
     if (op === "agreeModel") {
@@ -76,5 +82,82 @@ it("requires consent to both providers before resuming mixed crawl and enrichmen
     await act(async () => root.unmount());
     client.clear();
     container.remove();
+  }
+});
+
+function WritingComposer({ fallback }: { fallback: ReplyTarget }) {
+  const current = useReplyWritingTarget(7) ?? fallback;
+  const writing = useWriting(7, undefined, undefined, current.messageId ?? "");
+  return (
+    <>
+      <p>{current.subject}</p>
+      <p>{writing.latest?.status}</p>
+      <p>{writing.latest?.data?.bodyMd}</p>
+      <button
+        onClick={() => writing.start({ mentorId: 7, subject: "", bodyMd: "", attachments: [], replyTarget: current })}
+      >
+        起草
+      </button>
+      <button onClick={writing.forget}>取消</button>
+    </>
+  );
+}
+
+it("keeps an empty reply's AI target and result on return, and discards canceled late results", async () => {
+  const target: ReplyTarget = {
+    id: 1,
+    messageId: "<selected@example.edu>",
+    fromAddress: "mentor@example.edu",
+    fromName: "王伟",
+    subject: "面谈",
+    sentAt: 1,
+  };
+  let complete: ((letter: Letter) => void) | undefined;
+  remote.write = async (input) => {
+    expect(input.replyTo).toBe(target.messageId);
+    expect(input).not.toHaveProperty("replyTarget");
+    return new Promise((resolve) => {
+      complete = resolve;
+    });
+  };
+  const client = new QueryClient();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const render = (fallback: ReplyTarget | null) =>
+    act(async () =>
+      root.render(
+        <QueryClientProvider client={client}>
+          {fallback && <WritingComposer fallback={fallback} />}
+        </QueryClientProvider>,
+      ),
+    );
+  try {
+    await render(target);
+    await act(async () => button("起草").click());
+    await vi.waitFor(() => expect(complete).toBeDefined());
+    await render(null);
+    await render({ ...target, id: 2, messageId: "<new@example.edu>", subject: "新来信" });
+    await vi.waitFor(() => expect(container.textContent).toContain("pending"));
+    expect(container.textContent).toContain("面谈");
+    await act(async () => complete?.({ subject: "", bodyMd: "【请补充：时间】" }));
+    await vi.waitFor(() => expect(container.textContent).toContain("【请补充：时间】"));
+    await render(null);
+    await render(target);
+    expect(container.textContent).toContain("【请补充：时间】");
+    complete = undefined;
+    await act(async () => button("起草").click());
+    await vi.waitFor(() => expect(complete).toBeDefined());
+    await act(async () => button("取消").click());
+    await act(async () => complete?.({ subject: "", bodyMd: "迟到结果" }));
+    await render(null);
+    await render(target);
+    expect(container.textContent).not.toContain("迟到结果");
+    expect(container.textContent).not.toContain("pending");
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    container.remove();
+    remote.write = undefined;
   }
 });

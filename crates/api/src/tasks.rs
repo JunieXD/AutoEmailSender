@@ -116,7 +116,9 @@ pub async fn write_task_draft(
         writing::Basis {
             chosen: &chosen,
             references: &refs,
-            previous: previous.as_deref(),
+            kind: previous
+                .as_deref()
+                .map_or(writing::Kind::First, writing::Kind::FollowUp),
         },
     )
     .await?;

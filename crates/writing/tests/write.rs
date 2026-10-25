@@ -114,7 +114,7 @@ async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePo
         writing::Basis {
             chosen: &chosen,
             references: &references,
-            previous: Some(&previous),
+            kind: writing::Kind::FollowUp(&previous),
         },
     )
     .await
@@ -141,7 +141,7 @@ async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePo
         &[],
         &mentor::get(&db, id).await.unwrap().unwrap(),
         None,
-        Some(&previous),
+        writing::Kind::FollowUp(&previous),
     );
     assert_eq!(
         estimate,
@@ -188,7 +188,14 @@ async fn a_blank_letter_is_drafted_from_the_user_and_the_mentor(db: SqlitePool) 
     let references = material::for_writing(&db).await.unwrap();
     let mentor = mentor::get(&db, mentor).await.unwrap().unwrap();
     assert_eq!(
-        writing::estimate(&me, &references, &["简历.pdf".into()], &mentor, None, None),
+        writing::estimate(
+            &me,
+            &references,
+            &["简历.pdf".into()],
+            &mentor,
+            None,
+            writing::Kind::First
+        ),
         (
             model::background::tokens(&system) + model::background::tokens(&message),
             1200
@@ -350,8 +357,259 @@ async fn current_write(
         writing::Basis {
             chosen: &chosen,
             references: &references,
-            previous: None,
+            kind: writing::Kind::First,
         },
     )
     .await
+}
+
+async fn received_message(
+    db: &SqlitePool,
+    mentor: i64,
+    kind: &str,
+    at: i64,
+    subject: &str,
+    body: &str,
+) -> i64 {
+    let id = sqlx::query(
+        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, sent_at,
+           from_address, subject, body_text, truncated)
+         VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'wangwei@example.edu.cn', ?, ?, 0)",
+    )
+    .bind(at)
+    .bind(kind)
+    .bind(format!("<{at}@example.edu>"))
+    .bind(at)
+    .bind(subject)
+    .bind(body)
+    .execute(db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, ?)")
+        .bind(mentor)
+        .bind(id)
+        .execute(db)
+        .await
+        .unwrap();
+    id
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purposes(db: SqlitePool) {
+    let (mentor, resume) = setup(&db).await;
+    test_fixtures::mail::mailbox(&mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    received_message(
+        &db,
+        mentor,
+        "reply",
+        1,
+        "面谈",
+        "下周方便面谈吗？\n\n> 引用 wangwei@example.edu.cn",
+    )
+    .await;
+    received_message(
+        &db,
+        mentor,
+        "reply",
+        4,
+        "新来信",
+        "请发成绩单。\n-----原始邮件-----\n引用不发送",
+    )
+    .await;
+    received_message(&db, mentor, "sent", 3, "在别处发出", "已提交申请。").await;
+    let out = test_fixtures::mail::first_email(&db, mentor, "sent", 2)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE email SET body_md = '应用发出的原文' WHERE id = ?")
+        .bind(out)
+        .execute(&db)
+        .await
+        .unwrap();
+    // A saved draft keeps its original target, even when the caller supplies a newer one.
+    sqlx::query(
+        "INSERT INTO email (mentor_id, kind, reply_to, state, body_md, created_at, updated_at)
+      VALUES (?, 'reply', '<1@example.edu>', 'review', '尚未完成', 0, 0)",
+    )
+    .bind(mentor)
+    .execute(&db)
+    .await
+    .unwrap();
+    let previous = writing::reply::history(&db, mentor, "<4@example.edu>")
+        .await
+        .unwrap();
+    let (address, received) = provider(vec![
+        ("<body>王伟老师：谢谢您的邀请。面谈时间为【请补充：方便面谈的时间】。</body>", "stop"),
+        ("<think>润色</think><body>王伟老师：感谢邀请。2026年11月2日有 2 场课，时间为【请补充：方便面谈的时间】，资料见 https://example.com/cv 。</body>", "stop"),
+    ]).await;
+    model(&db, &address, true).await;
+    let chosen = model::chosen(&db).await.unwrap().unwrap();
+    let references = material::for_writing(&db).await.unwrap();
+    let net = Net::new(Vec::new()).unwrap();
+    let current = Letter { subject: String::new(), body_md: "王伟老师：2026年11月2日有 2 场课，时间为【请补充：方便面谈的时间】，https://example.com/cv".into() };
+    for letter in [&blank(), &current] {
+        let answer = writing::write(
+            &db,
+            &net,
+            mentor,
+            letter,
+            &[resume],
+            T,
+            writing::Basis {
+                chosen: &chosen,
+                references: &references,
+                kind: writing::Kind::Reply(&previous),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(answer.subject.is_empty());
+        assert!(answer.body_md.contains("【请补充：方便面谈的时间】"));
+    }
+    assert_eq!(
+        usage(&db)
+            .await
+            .into_iter()
+            .map(|u| u.0)
+            .collect::<Vec<_>>(),
+        ["draft", "rewrite"]
+    );
+    let calls = received.lock().unwrap();
+    let data: Value = serde_json::from_str(&calls[0].1).unwrap();
+    assert_eq!(
+        data["之前的信"],
+        serde_json::json!([
+            {"发信人":"导师", "主题":"面谈", "正文":"下周方便面谈吗？"},
+            {"发信人":"导师", "主题":"新来信", "正文":"请发成绩单。"},
+            {"发信人":"学生", "主题":"在别处发出", "正文":"已提交申请。"},
+            {"发信人":"学生", "主题":"申请", "正文":"应用发出的原文"},
+        ])
+    );
+    assert!(data["现在的信"].is_null());
+    assert!(
+        data["材料"][0]["文字"]
+            .as_str()
+            .unwrap()
+            .contains("ACL 2025")
+    );
+    assert_eq!(data["附件"], serde_json::json!(["简历.pdf"]));
+    for (system, message) in calls.iter() {
+        assert!(system.contains("不替学生决定") && system.contains("保留意思"));
+        assert!(system.contains("语气再正式一些"));
+        assert!(!message.contains("wangwei@") && !message.contains("师兄说回信很慢"));
+        assert!(!message.contains("引用不发送"));
+    }
+    let rewritten: Value = serde_json::from_str(&calls[1].1).unwrap();
+    assert_eq!(
+        rewritten["现在的信"],
+        serde_json::json!({"正文":current.body_md})
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn reply_context_stops_at_twenty_letters_and_ten_thousand_characters(db: SqlitePool) {
+    let (mentor, _) = setup(&db).await;
+    test_fixtures::mail::mailbox(&mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    for at in 1..=23 {
+        received_message(&db, mentor, "reply", at, &format!("主题{at}"), "正文").await;
+    }
+    let (address, received) = provider(vec![("<body>王老师您好</body>", "stop"); 2]).await;
+    model(&db, &address, true).await;
+    let chosen = model::chosen(&db).await.unwrap().unwrap();
+    let net = Net::new(Vec::new()).unwrap();
+    for long in [false, true] {
+        if long {
+            sqlx::query("UPDATE message SET body_text = ? WHERE message_id = '<23@example.edu>'")
+                .bind("字🦀".repeat(6000) + "不能发送的尾部")
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        let previous = writing::reply::history(&db, mentor, "<1@example.edu>")
+            .await
+            .unwrap();
+        writing::write(
+            &db,
+            &net,
+            mentor,
+            &blank(),
+            &[],
+            T,
+            writing::Basis {
+                chosen: &chosen,
+                references: &[],
+                kind: writing::Kind::Reply(&previous),
+            },
+        )
+        .await
+        .unwrap();
+    }
+    let calls = received.lock().unwrap();
+    let short: Value = serde_json::from_str(&calls[0].1).unwrap();
+    let letters = short["之前的信"].as_array().unwrap();
+    assert_eq!(letters.len(), 20);
+    assert_eq!(letters[0]["主题"], "主题1");
+    assert_eq!(letters[1]["主题"], "主题23");
+    assert_eq!(letters[19]["主题"], "主题5");
+    let long: Value = serde_json::from_str(&calls[1].1).unwrap();
+    let letters = long["之前的信"].as_array().unwrap();
+    assert_eq!(letters.len(), 2);
+    assert_eq!(
+        letters
+            .iter()
+            .map(|l| l["主题"].as_str().unwrap().chars().count()
+                + l["正文"].as_str().unwrap().chars().count())
+            .sum::<usize>(),
+        10_000
+    );
+    assert!(!calls[1].1.contains("不能发送的尾部"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn reply_target_must_still_exist_and_have_a_message_id(db: SqlitePool) {
+    let (mentor, _) = setup(&db).await;
+    test_fixtures::mail::mailbox(&mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let id = received_message(&db, mentor, "reply", 1, "面谈", "方便吗？").await;
+    assert!(
+        writing::reply::history(&db, mentor, "<1@example.edu>")
+            .await
+            .is_ok()
+    );
+    assert!(matches!(
+        writing::reply::history(&db, mentor, "").await,
+        Err(writing::reply::Error::NoTarget)
+    ));
+    sqlx::query(
+        "INSERT INTO email (mentor_id, kind, reply_to, state, created_at, updated_at)
+      VALUES (?, 'reply', '<1@example.edu>', 'review', 0, 0)",
+    )
+    .bind(mentor)
+    .execute(&db)
+    .await
+    .unwrap();
+    received_message(&db, mentor, "reply", 2, "仍可回复", "你好").await;
+    sqlx::query("UPDATE message SET message_id = NULL WHERE id = ?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(matches!(
+        writing::reply::history(&db, mentor, "<2@example.edu>").await,
+        Err(writing::reply::Error::NoTarget)
+    ));
+    sqlx::query("DELETE FROM message WHERE id = ?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(matches!(
+        writing::reply::history(&db, mentor, "<2@example.edu>").await,
+        Err(writing::reply::Error::NoTarget)
+    ));
 }
