@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET onboarded = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "be48a4c95a3eab78823b1b4fe993d8f9415a763d66832eee60527884b9e48fb5"
+}

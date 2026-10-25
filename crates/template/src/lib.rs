@@ -2,7 +2,7 @@
 //! mentor (docs/design.md#邮件格式).
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
 /// What may stand in braces in a subject or body, such as `{导师姓名}`.
@@ -27,6 +27,17 @@ pub struct Fill<'a> {
     pub research: Option<&'a str>,
     pub my_name: Option<&'a str>,
 }
+
+/// The mentor used to preview a letter before sending it to the user's own mailbox.
+pub const EXAMPLE_MENTOR: Fill<'static> = Fill {
+    mentor_name: "张明",
+    mentor_title: Some("教授"),
+    university: Some("示例大学"),
+    school: Some("计算机学院"),
+    department: Some(""),
+    research: Some("机器学习"),
+    my_name: None,
+};
 
 impl Fill<'_> {
     /// Each placeholder's value, in the order of `PLACEHOLDERS`.
@@ -192,6 +203,19 @@ pub async fn default(db: &SqlitePool) -> Result<Option<Template>, sqlx::Error> {
          FROM template t JOIN profile p ON p.default_template_id = t.id"
     )
     .fetch_optional(db)
+    .await
+}
+
+/// The template used for a test letter, falling back to the oldest one.
+pub async fn default_or_first(
+    conn: &mut SqliteConnection,
+) -> Result<Option<Template>, sqlx::Error> {
+    sqlx::query_as!(
+        Template,
+        "SELECT id, name, subject, body_md FROM template
+         ORDER BY id IS (SELECT default_template_id FROM profile) DESC, id LIMIT 1"
+    )
+    .fetch_optional(conn)
     .await
 }
 

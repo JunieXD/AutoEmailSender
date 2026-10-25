@@ -35,4 +35,5 @@ crawl.workspace = true
 db.workspace = true
 
 [dev-dependencies]
+fakemail.workspace = true
 tempfile = "3.27.0"

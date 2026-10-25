@@ -227,6 +227,9 @@ operations! {
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
     "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "finishOnboarding" => finish_onboarding(Nothing) -> ();
+    "testLetter" => test_letter(Nothing) -> Option<TestLetter>;
+    "sendTestLetter" => send_test_letter(SendTestLetter) -> ();
     "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
     "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
     "listMaterials" => list_materials(Nothing) -> Vec<material::Material>;
@@ -749,6 +752,76 @@ async fn send_test_mail(ctx: &Context, input: MailboxId) -> Result<(), CallError
     Ok(mailbox::send_test(&ctx.net, &account).await?)
 }
 
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SendTestLetter {
+    pub mailbox_id: i64,
+    pub subject: String,
+    pub html: String,
+    pub text: String,
+    pub attachments: Vec<i64>,
+}
+
+async fn send_test_letter(ctx: &Context, input: SendTestLetter) -> Result<(), CallError> {
+    let account = mailbox::account(&ctx.db, input.mailbox_id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MAILBOX))?;
+    let ids = sqlx::types::Json(&input.attachments);
+    let rows = sqlx::query!(
+        r#"SELECT m.id AS "id?", m.file_name FROM json_each(?) j
+           LEFT JOIN material m ON m.id = j.value ORDER BY j.key"#,
+        ids,
+    )
+    .fetch_all(&ctx.db)
+    .await?;
+    let mut attached: Vec<email::Attached> = Vec::new();
+    for row in rows {
+        let (Some(material_id), Some(file_name)) = (row.id, row.file_name) else {
+            return Err(CallError::invalid(
+                "附件材料已被删除。请重新选择附件后再发送。".into(),
+            ));
+        };
+        // As with an approved letter, the first selected file with each name is kept.
+        if !attached.iter().any(|a| a.file_name == file_name) {
+            attached.push(email::Attached {
+                material_id,
+                file_name,
+            });
+        }
+    }
+    let files = send::files(&ctx.materials, &attached)
+        .await
+        .map_err(CallError::invalid)?;
+    let message_id = mailbox::message_id(&account);
+    let outgoing = mailbox::compose(
+        &account,
+        &mailbox::Letter {
+            message_id: &message_id,
+            in_reply_to: None,
+            references: None,
+            to_name: &account.sender_name,
+            to: account.address.as_ref(),
+            subject: &input.subject,
+            html: &input.html,
+            text: &input.text,
+            attachments: &files,
+        },
+    )?;
+    mailbox::login(&ctx.net, &account)
+        .await?
+        .send(&outgoing, || false)
+        .await
+        .map_err(|e| {
+            tracing::warn!("test letter from mailbox {}: {e}", input.mailbox_id);
+            CallError {
+                code: ErrorCode::External,
+                message: e.message(),
+            }
+        })?;
+    tracing::info!("test letter sent from mailbox {}", input.mailbox_id);
+    Ok(())
+}
+
 impl From<mailbox::SaveError> for CallError {
     fn from(e: mailbox::SaveError) -> Self {
         match e {
@@ -932,6 +1005,44 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
 
 async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
     Ok(profile::update(&ctx.db, &form, now()).await?)
+}
+
+async fn finish_onboarding(ctx: &Context, _: Nothing) -> Result<(), CallError> {
+    Ok(profile::finish_onboarding(&ctx.db).await?)
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TestLetter {
+    pub template_name: String,
+    pub subject: String,
+    pub body_md: String,
+    pub attachments: Vec<i64>,
+}
+
+async fn test_letter(ctx: &Context, _: Nothing) -> Result<Option<TestLetter>, CallError> {
+    let mut tx = ctx.db.begin().await?;
+    let Some(t) = template::default_or_first(&mut tx).await? else {
+        return Ok(None);
+    };
+    let name = sqlx::query_scalar!("SELECT name FROM profile")
+        .fetch_one(&mut *tx)
+        .await?;
+    let attachments =
+        sqlx::query_scalar!("SELECT id FROM material WHERE attach_by_default = 1 ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    let fill = template::Fill {
+        my_name: name.as_deref(),
+        ..template::EXAMPLE_MENTOR
+    };
+    Ok(Some(TestLetter {
+        template_name: t.name,
+        subject: fill.subject(&t.subject),
+        body_md: fill.body(&t.body_md),
+        attachments,
+    }))
 }
 
 async fn get_letter_style(ctx: &Context, _: Nothing) -> Result<profile::LetterStyle, CallError> {
