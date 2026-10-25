@@ -1,5 +1,6 @@
 //! AI drafts and rewrites for first letters, follow-ups and replies (docs/design.md#联系).
 
+pub mod fact_check;
 pub mod reply;
 
 use mentor::MentorDetail;

@@ -3,6 +3,8 @@
 
 pub mod backup;
 mod crawling;
+mod fact_check;
+use fact_check::*;
 pub mod startup;
 mod statistics;
 mod tasks;
@@ -193,6 +195,9 @@ operations! {
     "receiveStatus" => receive_status(Nothing) -> ReceiveStatus;
     "getBackgroundNotifications" => get_background_notifications(Nothing) -> bool;
     "setBackgroundNotifications" => set_background_notifications(NotificationSetting) -> ();
+    "getAiFactCheck" => get_ai_fact_check(Nothing) -> bool;
+    "setAiFactCheck" => set_ai_fact_check(NotificationSetting) -> ();
+    "factCheckEmail" => fact_check_email(EmailId) -> Option<email::fact_check::FactCheck>;
     "getReplyNotifications" => get_reply_notifications(Nothing) -> bool;
     "setReplyNotifications" => set_reply_notifications(NotificationSetting) -> ();
     "planMatching" => plan_matching(MatchBatch) -> matching::MatchEstimate;
@@ -265,6 +270,7 @@ operations! {
     "getReplyDraft" => get_reply_draft(MentorId) -> Option<email::ReplyDraft>;
     "getReplyTarget" => get_reply_target(ReplyTargetQuery) -> Option<email::ReplyTarget>;
     "saveReplyDraft" => save_reply_draft(ReplyDraftEdit) -> Option<email::ReplyDraft>;
+    "checkFollowUpDraft" => check_follow_up_draft(ReplyDraftEdit) -> Vec<check::Problem>;
     "checkReplyDraft" => check_reply_draft(ReplyDraftEdit) -> Vec<check::Problem>;
     "approveReply" => approve_reply(ReplyEmail) -> ();
     "writeReply" => write_reply(ReplyDraftEdit) -> writing::Letter;
@@ -1342,6 +1348,13 @@ async fn check_first_draft(
         } => (count, last_out_at),
     };
     problems.extend(check::recent(count, last, now()));
+    if let Some(draft) = email::first_draft(&ctx.db, id).await? {
+        problems.extend(check::fact_check(
+            draft.fact_check.as_ref(),
+            &input.subject,
+            &input.body_md,
+        ));
+    }
     Ok(problems)
 }
 
@@ -1566,13 +1579,27 @@ async fn check_reply_draft(
     .await?;
     // The subject belongs to the received message, not to the user's writing. Its placeholders
     // cannot be fixed here; checks apply only to the new body, never to the appended quote.
-    Ok(check::letter(
+    let mut problems = check::letter(
         &m.name,
         &m.aliases,
         "",
         &input.body_md,
         !input.attachments.is_empty(),
-    ))
+    );
+    if let Some(draft) = email::reply_draft(&ctx.db, input.mentor_id).await? {
+        let subject = draft
+            .target
+            .as_ref()
+            .and_then(|t| t.subject.as_deref())
+            .map(email::reply_subject)
+            .unwrap_or_default();
+        problems.extend(check::fact_check(
+            draft.fact_check.as_ref(),
+            &subject,
+            &input.body_md,
+        ));
+    }
+    Ok(problems)
 }
 
 #[derive(Debug, Deserialize, TS)]

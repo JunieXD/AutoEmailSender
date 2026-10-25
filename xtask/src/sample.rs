@@ -699,3 +699,33 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
     sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,subject,body_md,cancel_reason,created_at,updated_at) VALUES(?,?,'first','canceled','研究方向交流','老师您好，我是林晓。','任务停止',?,?)").bind(m).bind(t).bind(now).bind(now).execute(db).await?;
     Ok(())
 }
+
+/// Show both unresolved findings and checks that can be retried.
+pub async fn fact_checks(db: &SqlitePool) -> Result {
+    let ids: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM email WHERE state = 'review' ORDER BY id LIMIT 2")
+            .fetch_all(db)
+            .await?;
+    for (i, id) in ids.into_iter().enumerate() {
+        let result = if i == 0 {
+            sqlx::query(
+                "UPDATE email SET body_md = body_md || '\n\n我曾发表 3 篇论文。' WHERE id = ?",
+            )
+            .bind(id)
+            .execute(db)
+            .await?;
+            serde_json::json!({"state": "completed", "findings": [
+                {"quote": "发表 3 篇论文", "reason": "参考材料中没有对应的发表记录。"},
+                {"quote": "获得国家奖学金", "reason": "参考材料中未说明获奖情况。"},
+            ]})
+        } else {
+            serde_json::json!({"state": "failed", "reason": "模型服务暂时无法连接，请重试。"})
+        };
+        sqlx::query("UPDATE email SET fact_check = ? WHERE id = ?")
+            .bind(sqlx::types::Json(result))
+            .bind(id)
+            .execute(db)
+            .await?;
+    }
+    Ok(())
+}

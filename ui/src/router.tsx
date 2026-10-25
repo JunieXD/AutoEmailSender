@@ -14,7 +14,7 @@ import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
-import { AboutSection, NotificationsSection, SettingsPage } from "./pages/settings";
+import { AboutSection, ChecksSection, NotificationsSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 import { BackupSection } from "./pages/backup";
 import { WelcomePage } from "./pages/welcome";
@@ -141,6 +141,12 @@ const mailboxesRoute = createRoute({
   component: MailboxesSection,
 });
 
+const checksRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "checks",
+  component: ChecksSection,
+});
+
 const modelsRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "models",
@@ -186,6 +192,7 @@ export const router = createRouter({
       templatesRoute,
       letterStyleRoute,
       mailboxesRoute,
+      checksRoute,
       modelsRoute,
       notificationsRoute,
       backupRoute,

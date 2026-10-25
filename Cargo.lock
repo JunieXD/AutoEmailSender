@@ -838,6 +838,7 @@ dependencies = [
 name = "check"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "email",
  "hickory-resolver",
  "serde",
  "template",
@@ -7623,6 +7624,7 @@ name = "writing"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "email",
  "material",
  "mentor",
  "model",

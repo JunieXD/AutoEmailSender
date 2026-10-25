@@ -6,6 +6,7 @@ import { expect, it, vi } from "vitest";
 import type {
   Email,
   Entry,
+  FactCheck,
   Letter,
   MentorDetail,
   PlanEmail,
@@ -32,6 +33,7 @@ const remote = vi.hoisted(
     approved: { draftId: number; replyTo: string; bodyMd: string } | null;
     saves: ReplyDraftEdit[];
     write?: (input: ReplyDraftEdit) => Promise<Letter>;
+    check?: (draft: ReplyDraft) => Promise<FactCheck>;
   } => ({
     target: {
       id: 1,
@@ -65,8 +67,19 @@ vi.mock("@/api/call", () => ({
     if (op === "writeReply" && remote.write) return remote.write(input);
     if (op === "saveReplyDraft") {
       remote.saves.push(input);
-      remote.draft = { ...input, id: 5, target: remote.target };
+      remote.draft = { ...input, id: 5, target: remote.target, factCheck: remote.draft?.factCheck ?? null };
       return remote.draft;
+    }
+    if (op === "getAiFactCheck") return remote.check !== undefined;
+    const draft = remote.draft;
+    if (op === "factCheckEmail" && remote.check && draft && draft.id === input.id) {
+      draft.factCheck = await remote.check(draft);
+      return draft.factCheck;
+    }
+    if (op === "checkReplyDraft" && remote.draft?.factCheck?.state === "completed") {
+      return remote.draft.factCheck.findings
+        .filter((f) => input.bodyMd.includes(f.quote))
+        .map((f) => ({ kind: "unsupported_claim", ...f }));
     }
     if (op === "listCorrespondence") return remote.entries;
     if (op === "getFirstDraft" || op === "getFollowUpDraft" || op === "getFollowUpEntry") return null;
@@ -94,7 +107,13 @@ vi.mock("@/api/call", () => ({
       remote.draft = null;
       return null;
     }
-    if (op === "listMaterials" || op === "listPlaceholders" || op === "checkReplyDraft" || op === "listModelProviders")
+    if (
+      op === "listMaterials" ||
+      op === "listPlaceholders" ||
+      op === "checkReplyDraft" ||
+      op === "checkFollowUpDraft" ||
+      op === "listModelProviders"
+    )
       return [];
     if (op === "checkMailDomain") return null;
     if (op === "getLetterStyle")
@@ -182,6 +201,7 @@ function setup(correspondence = false) {
       client.clear();
       container.remove();
       remote.write = undefined;
+      remote.check = undefined;
       remote.draft = null;
       remote.entries = [];
       remote.plan = null;
@@ -216,6 +236,7 @@ it.each([
       waiting: null,
     };
     remote.draft = {
+      factCheck: null,
       id: 5,
       replyTo: remote.target.messageId ?? "",
       bodyMd: "王老师，原回复",
@@ -274,6 +295,7 @@ it.each(["correspondence", "sending plan"])(
       waiting: null,
     };
     remote.withdrawnDraft = {
+      factCheck: null,
       id: email.id,
       replyTo: original.messageId ?? "",
       bodyMd: email.bodyMd,
@@ -328,6 +350,7 @@ it("discards the kept mentor's hidden reply AI when merging, so approving the ad
   const original = remote.target;
   const adoptedTarget = { ...original, id: 2, messageId: "<adopted@example.edu>", subject: "合并来的来信" };
   remote.mergedDraft = {
+    factCheck: null,
     id: 6,
     replyTo: adoptedTarget.messageId,
     bodyMd: "王老师，合并来的回复",
@@ -423,6 +446,31 @@ it("keeps a failed empty reply's error and original target after new mail and le
     expect(remote.draft).toBeNull();
   } finally {
     remote.target = original;
+    await view.close();
+  }
+});
+
+it("checks a reply AI drafted once it is saved, and marks what the materials do not support", async () => {
+  const body = "王老师您好：我获得了国家奖学金。";
+  remote.write = async () => ({ subject: "", bodyMd: body });
+  const checked: (string | null)[] = [];
+  remote.check = async (draft) => {
+    checked.push(draft.bodyMd);
+    return { state: "completed", findings: [{ quote: "获得了国家奖学金", reason: "材料里没有提到获奖。" }] };
+  };
+  const view = setup();
+  try {
+    await view.render();
+    await vi.waitFor(() => expect(view.button("AI 起草").disabled).toBe(false));
+    await act(async () => view.button("AI 起草").click());
+    await vi.waitFor(() =>
+      expect(view.container.textContent).toContain("材料里找不到依据：“获得了国家奖学金”材料里没有提到获奖。"),
+    );
+    await vi.waitFor(() =>
+      expect(view.container.querySelector(".tiptap .bg-warning-soft")?.textContent).toBe("获得了国家奖学金"),
+    );
+    expect(checked).toEqual([body]);
+  } finally {
     await view.close();
   }
 });

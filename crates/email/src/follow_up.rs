@@ -1,6 +1,8 @@
 //! Standalone follow-ups use the same admission rules as tasks and freeze the selected thread.
+use super::fact_check::FactCheck;
 use super::{Approval, Approved, attach, attached, snapshot, thread};
 use serde::Serialize;
+use sqlx::types::Json;
 use sqlx::{SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
@@ -110,6 +112,7 @@ impl From<thread::ThreadMessage> for FollowUpTarget {
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowUpDraft {
+    pub fact_check: Option<FactCheck>,
     pub id: i64,
     pub reply_to: String,
     pub body_md: Option<String>,
@@ -141,7 +144,7 @@ async fn draft_on(
     mentor: i64,
 ) -> Result<Option<FollowUpDraft>, sqlx::Error> {
     let Some(r) = sqlx::query!(
-        r#"SELECT id, reply_to AS "reply_to!", body_md FROM email
+        r#"SELECT id, reply_to AS "reply_to!", body_md, fact_check AS "fact_check: Json<FactCheck>" FROM email
            WHERE mentor_id = ? AND kind = 'follow_up' AND task_id IS NULL AND state = 'review'"#,
         mentor
     )
@@ -151,6 +154,7 @@ async fn draft_on(
         return Ok(None);
     };
     Ok(Some(FollowUpDraft {
+        fact_check: r.fact_check.map(|v| v.0),
         id: r.id,
         target: thread::previous(conn, mentor, Some(&r.reply_to), false)
             .await?
