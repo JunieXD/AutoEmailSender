@@ -15,6 +15,7 @@ import { refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
+import { useResume } from "@/pages/mailboxes";
 
 const NAV = [
   { to: "/mentors", label: "导师", icon: Users },
@@ -187,10 +188,16 @@ function useBackground() {
     queryFn: () => call("scheduledWork", {}),
     refetchInterval: 3000,
   });
+  const mailboxes = useQuery({
+    queryKey: ["listMailboxes"],
+    queryFn: () => call("listMailboxes", {}),
+    refetchInterval: 3000,
+  });
   const today = new Date(crawls.dataUpdatedAt).toDateString();
   const work = {
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
     emails: scheduled.data?.pending ?? 0,
+    mailboxes: mailboxes.data?.flatMap(({ id, address, pause }) => (pause ? [{ id, address, pause }] : [])) ?? [],
     paused: tasks.data?.filter((t) => t.state === "paused") ?? [],
     crawlsPending: crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [],
     crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
@@ -200,12 +207,12 @@ function useBackground() {
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
     next: scheduled.data?.nextAt ?? null,
     nextToday: scheduled.data?.today ?? 0,
-    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error,
+    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? mailboxes.error,
   };
   return {
     ...work,
     running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0),
-    waiting: (work.emails > 0 ? 1 : 0) + work.paused.length + work.crawlsPending.length,
+    waiting: (work.emails > 0 ? 1 : 0) + work.mailboxes.length + work.paused.length + work.crawlsPending.length,
   };
 }
 
@@ -226,7 +233,8 @@ function Background({ className }: { className?: string }) {
     mutationFn: (id: number) => call("pauseCrawl", { id }),
     onSuccess: () => refreshCrawls(queryClient),
   });
-  const error = work.error ?? pauseCrawl.error;
+  const resume = useResume();
+  const error = work.error ?? pauseCrawl.error ?? resume.error;
   return (
     <Popover>
       <PopoverTrigger
@@ -258,6 +266,16 @@ function Background({ className }: { className?: string }) {
                 <Entry title={`${work.emails} 封邮件待处理`} detail="去发送计划里处理" />
               </Link>
             )}
+            {work.mailboxes.map((m) => (
+              <div key={m.id} className="flex items-center gap-2">
+                <Link to="/settings/mailboxes" className={ITEM}>
+                  <Entry title={m.address} detail={`发信暂停到 ${scheduledAt(m.pause.until)}：${m.pause.reason}`} />
+                </Link>
+                <Button variant="quiet" size="sm" disabled={resume.isPending} onClick={() => resume.mutate(m.id)}>
+                  恢复
+                </Button>
+              </div>
+            ))}
             {work.paused.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
                 <Entry title={t.name} detail={t.pauseReason ?? "已暂停"} />

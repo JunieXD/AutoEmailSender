@@ -709,7 +709,7 @@ impl Session<'_> {
                 .await?;
                 if let Some(mailbox) = mailbox {
                     let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(self.now)?;
-                    pause.reason = format!("退信说明邮箱被限流。{}", pause.reason);
+                    pause.reason = format!("退信说明{}", pause.reason);
                     mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
                 }
             }

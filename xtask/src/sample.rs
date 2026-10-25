@@ -186,7 +186,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
          rotation_order, paused_until, pause_reason, created_at)
          VALUES ('linxiao-backup@example.com', '林晓', 'custom', 'smtp.example.com', 465, 'tls',
          'imap.example.com', 993, 'tls', 'password', 'sample', 50, 60, 2, ?,
-         '邮箱服务商暂时限流，暂停 1 小时后自动重试。请降低发信频率，也可以稍后立即恢复。', ?)",
+         '被邮箱服务商限流了。可以降低发信频率。', ?)",
     )
     .bind(now + 3_600_000)
     .bind(now)
