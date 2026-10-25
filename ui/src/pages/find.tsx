@@ -1,13 +1,23 @@
 import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { ChevronDown } from "lucide-react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { CandidateFilter, CandidateRow, CrawlSummary, Decisions, EnrichField, EnrichPlan } from "@/api/types";
+import type {
+  CandidateFilter,
+  CandidateRow,
+  CrawlStage,
+  CrawlSummary,
+  Decisions,
+  EnrichField,
+  EnrichPlan,
+} from "@/api/types";
 import { ModelAction, AiIcon } from "@/components/ai-writing";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { IntakeChoices, ProfileDetails } from "@/components/intake-choices";
 import { refreshMentors, placeOf } from "@/components/mentor";
+import { Pager } from "@/components/mentor-table";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,16 +33,24 @@ const FILTERS = {
   missing_email: "缺邮箱",
 } as const;
 const EMPTY: Decisions = { take: [], matches: [], restore: [] };
-const STATES: Record<string, string> = {
-  running: "抓取中",
+const STAGES: Record<CrawlStage, string> = {
+  lists: "正在找名单",
+  profiles: "正在读个人页",
+  enrich: "正在补全信息",
   paused: "已暂停",
   done: "已完成",
+  failed: "没能完成",
   canceled: "已取消",
-  failed: "失败",
-  lists: "寻找名单",
-  profiles: "读取个人页",
-  enrich: "信息补全",
 };
+/** A crawl by where it started, short enough for a menu or a line. */
+export function crawlName({ url }: { url: string | null }): string {
+  return url
+    ? url
+        .replace(/^https?:\/\//, "")
+        .replace(/\/$/, "")
+        .slice(0, 48)
+    : "Agent 提交";
+}
 export function findSearch(s: Record<string, unknown>) {
   const filter: CandidateFilter =
     s.filter === "new" || s.filter === "supplement" || s.filter === "maybe" || s.filter === "missing_email"
@@ -168,17 +186,17 @@ function Crawls() {
       {s.detail && <OpenedCrawl key={s.detail} id={s.detail} />}
       <h2 className="mb-3 text-lg font-medium">抓取记录</h2>
       <ErrorText error={records.error} />
-      {records.data?.length === 0 && <p className="text-muted-foreground">尚无抓取记录，从上方填写网址开始</p>}
+      {records.data?.total === 0 && <p className="text-muted-foreground">尚无抓取记录，从上方填写网址开始</p>}
       <div className="space-y-3">
-        {records.data
-          ?.filter((c) => c.id !== s.detail)
+        {records.data?.crawls
+          .filter((c) => c.id !== s.detail)
           .map((c) => (
             <CrawlRecord key={c.id} crawl={c} expanded={false} />
           ))}
       </div>
-      <Pager
+      <Pages
         page={s.page}
-        more={records.data?.length === 50}
+        total={records.data?.total ?? 0}
         onPage={(page) => void navigate({ search: (old) => ({ ...old, page }) })}
       />
     </div>
@@ -200,39 +218,47 @@ function OpenedCrawl({ id }: { id: number }) {
 function CrawlRecord({ crawl: c, expanded }: { crawl: CrawlSummary; expanded: boolean }) {
   const navigate = useNavigate({ from: "/find" });
   return (
-    <section className="rounded-lg border border-border p-4">
-      <div className="flex flex-wrap items-center gap-3">
+    <section className="rounded-lg bg-muted p-4">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <button
-          className="mr-auto min-h-10 min-w-0 text-left"
+          className="min-h-10 min-w-0 flex-1 text-left"
           onClick={() => void navigate({ search: (s) => ({ ...s, detail: expanded ? undefined : c.id }) })}
           aria-expanded={expanded}
         >
-          <strong className="break-all">{c.url ?? `抓取 #${c.id}`}</strong>
-          <span className="ml-3 text-sm text-muted-foreground">
-            {c.state === "running" && c.stage === "enrich" ? "补全中" : STATES[c.state]}
-          </span>
+          <strong className="break-all">{c.url ?? "Agent 提交"}</strong>
+          <ChevronDown
+            className={`ml-1 inline size-4 text-faint transition-transform ${expanded ? "rotate-180" : ""}`}
+          />
           <span className="mt-1 block text-sm text-muted-foreground">
-            {STATES[c.stage]} · 已处理 {c.pages} 页 · 已读 {c.profiles} 个个人页 · {c.candidates} 位候选
-            {c.remaining > 0 && ` · 待处理 ${c.remaining} 页`}
-            {c.enrichRemaining > 0 && ` · 信息补全还剩 ${c.enrichRemaining} 位`}
+            {[
+              STAGES[c.stage],
+              `找到 ${c.candidates} 位导师`,
+              `读完 ${c.profiles} 位的个人页`,
+              c.remaining > 0 && `还有 ${c.remaining} 页没读`,
+              c.enrichRemaining > 0 && `补全还剩 ${c.enrichRemaining} 位`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+          <span className="mt-1 block text-xs text-faint">
+            {day(c.createdAt)} {time(c.createdAt)}
+            {c.tokens !== null && ` · 已用 ${c.tokens.toLocaleString()} Token`}
           </span>
         </button>
-        <CrawlControls crawl={c} />
-        <Button
-          variant="ghost"
-          onClick={() =>
-            void navigate({ search: (s) => ({ ...s, tab: "candidates", crawl: c.id, page: 1, processed: false }) })
-          }
-        >
-          查看候选
-        </Button>
+        <div className="flex flex-wrap items-center gap-1">
+          <CrawlControls crawl={c} />
+          <Button
+            variant="ghost"
+            onClick={() =>
+              void navigate({ search: (s) => ({ ...s, tab: "candidates", crawl: c.id, page: 1, processed: false }) })
+            }
+          >
+            查看候选
+          </Button>
+        </div>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        {day(c.createdAt)} {time(c.createdAt)} ·{" "}
-        {c.tokens === null ? "服务商尚未报告用量" : `已用 ${c.tokens.toLocaleString()} Token`}
-      </p>
       {c.error && <p className="mt-2 text-sm text-warning">{c.error}</p>}
-      {c.failed > 0 && <p className="mt-2 text-sm text-warning">名单可能不完整：{c.failed} 个页面未打开或需要浏览器</p>}
+      {c.failed > 0 && <p className="mt-2 text-sm text-warning">{c.failed} 个页面没能打开，名单可能不完整</p>}
       {expanded && <CrawlDetails id={c.id} modelId={c.modelConfigId} modelIds={c.modelIds} />}
     </section>
   );
@@ -245,7 +271,7 @@ function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
     onError: () => client.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
   return (
-    <div className="flex flex-wrap gap-1">
+    <>
       {c.state === "running" && (
         <Button variant="quiet" disabled={mutation.isPending} onClick={() => mutation.mutate("pauseCrawl")}>
           暂停
@@ -260,16 +286,16 @@ function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
         <Confirm
           trigger={
             <Button variant="ghost" disabled={mutation.isPending}>
-              取消工作
+              取消
             </Button>
           }
-          message="取消后保留已找到的候选和已补到的资料，仍可审核"
-          action="取消工作"
+          message="取消这次抓取？已找到的候选和补到的资料会保留，仍可审核。"
+          action="取消抓取"
           onConfirm={() => mutation.mutate("cancelCrawl")}
         />
       )}
       <ErrorText error={mutation.error} />
-    </div>
+    </>
   );
 }
 function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number | null; modelIds: number[] }) {
@@ -332,7 +358,7 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
               )}
             </div>
           ))}
-          <Pager page={page} more={page * 50 < detail.data.pageTotal} onPage={setPage} />
+          <Pages page={page} total={detail.data.pageTotal} onPage={setPage} />
           <details>
             <summary className="cursor-pointer text-muted-foreground">运行记录</summary>
             {detail.data.runs.map((r, n) => (
@@ -392,13 +418,7 @@ function Candidates() {
             <option value="">全部抓取</option>
             {crawls.data?.map((c) => (
               <option key={c.id} value={c.id}>
-                {day(c.createdAt)} {time(c.createdAt)} ·{" "}
-                {c.url
-                  ? c.url
-                      .replace(/^https?:\/\//, "")
-                      .replace(/\/$/, "")
-                      .slice(0, 48)
-                  : "Agent 提交"}
+                {day(c.createdAt)} {time(c.createdAt)} · {crawlName(c)}
               </option>
             ))}
           </NativeSelect>
@@ -452,21 +472,21 @@ function Candidates() {
         )}
         <div className="space-y-2">
           {items.map((c) => (
-            <section key={c.id} className="rounded-lg bg-muted p-4">
-              <div className="flex flex-wrap items-start gap-3">
-                {!s.processed && (
-                  <label className="flex min-h-10 min-w-10 cursor-pointer items-center justify-center">
-                    <Checkbox
-                      aria-label={`选择${c.name}`}
-                      checked={selected.includes(c.id)}
-                      onCheckedChange={(checked) =>
-                        setSelected((ids) => (checked ? [...ids, c.id] : ids.filter((id) => id !== c.id)))
-                      }
-                    />
-                  </label>
-                )}
+            <section key={c.id} className="flex items-start gap-3 rounded-lg bg-muted p-4 phone:flex-wrap">
+              {!s.processed && (
+                <label className="flex min-h-10 min-w-10 cursor-pointer items-center justify-center">
+                  <Checkbox
+                    aria-label={`选择${c.name}`}
+                    checked={selected.includes(c.id)}
+                    onCheckedChange={(checked) =>
+                      setSelected((ids) => (checked ? [...ids, c.id] : ids.filter((id) => id !== c.id)))
+                    }
+                  />
+                </label>
+              )}
+              <div className="min-w-0 flex-1">
                 <button
-                  className="min-h-10 min-w-0 flex-1 text-left"
+                  className="min-h-10 w-full text-left"
                   onClick={() => setExpanded(expanded === c.id ? null : c.id)}
                   aria-expanded={expanded === c.id}
                 >
@@ -474,63 +494,66 @@ function Candidates() {
                   <span className="ml-2 text-xs text-muted-foreground">
                     {s.processed ? (c.review === "rejected" ? "已拒绝" : "已接受") : FILTERS[c.category]}
                   </span>
+                  <ChevronDown
+                    className={`ml-1 inline size-4 text-faint transition-transform ${expanded === c.id ? "rotate-180" : ""}`}
+                  />
                   <span className="mt-1 block text-sm text-muted-foreground">
                     {c.affiliation && [placeOf(c.affiliation), c.affiliation.title].filter(Boolean).join(" · ")}
                   </span>
                   <span className="mt-1 block text-sm break-all text-muted-foreground">
-                    {c.emails.join("、") || "缺邮箱 · 仍可接受，发信前请补充"}
+                    {c.emails.length > 0 ? c.emails.join("、") : <span className="text-warning">缺邮箱</span>}
                   </span>
                   {c.research && (
                     <span className="mt-1 block line-clamp-2 text-sm text-muted-foreground">{c.research}</span>
                   )}
                 </button>
-                {!s.processed && (
-                  <div className="flex gap-1 phone:w-full phone:justify-end">
-                    <Button size="sm" disabled={!!c.issue} onClick={() => setReview([c.id])}>
-                      {c.category === "supplement" ? "补充" : "接受"}
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={reject.isPending} onClick={() => reject.mutate([c.id])}>
-                      拒绝
-                    </Button>
-                  </div>
+                {(c.enrich === "queued" || c.enrich === "running") && (
+                  <p role="status" className="mt-2 text-sm text-muted-foreground">
+                    补全中
+                  </p>
                 )}
-                {s.processed && c.mentorId && (
-                  <Link to="/mentors/$mentorId" params={{ mentorId: c.mentorId }} className="text-sm text-brand-text">
-                    查看导师
-                  </Link>
+                {c.enrichChanges.length > 0 && (
+                  <p className="mt-2 text-sm text-brand-text">
+                    补到了{[...new Set(c.enrichChanges.map((v) => ENRICH_FIELDS[v.field]))].join("、")}
+                  </p>
+                )}
+                {c.enrichError && <p className="mt-2 text-sm text-warning">{c.enrichError}</p>}
+                {c.sourceUrl && <SourceLink url={c.sourceUrl} />}
+                {c.issue && <p className="mt-2 text-sm text-warning">{c.issue}</p>}
+                {expanded === c.id && (
+                  <CandidateDetails
+                    candidate={c}
+                    decisions={choices[c.id] ?? EMPTY}
+                    onChange={(next) =>
+                      setChoices((previous) => ({
+                        ...previous,
+                        [c.id]: typeof next === "function" ? next(previous[c.id] ?? EMPTY) : next,
+                      }))
+                    }
+                  />
                 )}
               </div>
-              {(c.enrich === "queued" || c.enrich === "running") && (
-                <p role="status" className="mt-2 text-sm text-brand-text">
-                  补全中
-                </p>
+              {!s.processed && (
+                <div className="flex gap-1 phone:w-full phone:justify-end">
+                  <Button size="sm" disabled={!!c.issue} onClick={() => setReview([c.id])}>
+                    {c.category === "supplement" ? "补充" : "接受"}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={reject.isPending} onClick={() => reject.mutate([c.id])}>
+                    拒绝
+                  </Button>
+                </div>
               )}
-              {c.enrichChanges.length > 0 && (
-                <p className="mt-2 text-sm text-brand-text">
-                  补到了{[...new Set(c.enrichChanges.map((v) => ENRICH_FIELDS[v.field]))].join("、")}
-                </p>
-              )}
-              {c.enrichError && <p className="mt-2 text-sm text-warning">{c.enrichError}</p>}
-              {c.sourceUrl && <SourceLink url={c.sourceUrl} />}
-              {c.issue && <p className="mt-2 text-sm text-warning">{c.issue}</p>}
-              {expanded === c.id && (
-                <CandidateDetails
-                  candidate={c}
-                  decisions={choices[c.id] ?? EMPTY}
-                  onChange={(next) =>
-                    setChoices((previous) => ({
-                      ...previous,
-                      [c.id]: typeof next === "function" ? next(previous[c.id] ?? EMPTY) : next,
-                    }))
-                  }
-                />
+              {s.processed && c.mentorId && (
+                <Link to="/mentors/$mentorId" params={{ mentorId: c.mentorId }} className="text-sm text-brand-text">
+                  查看导师
+                </Link>
               )}
             </section>
           ))}
         </div>
-        <Pager
+        <Pages
           page={s.page}
-          more={s.page * 50 < (list.data?.total ?? 0)}
+          total={list.data?.total ?? 0}
           onPage={(page) => void navigate({ search: (old) => ({ ...old, page }) })}
         />
       </div>
@@ -822,16 +845,12 @@ function SourceLink({ url }: { url: string }) {
     </a>
   );
 }
-function Pager({ page, more, onPage }: { page: number; more: boolean; onPage: (page: number) => void }) {
+/** Pages of 50, shown once there is more than one or the list shrank under the page being shown. */
+function Pages(props: { page: number; total: number; onPage: (page: number) => void }) {
+  if (props.page === 1 && props.total <= 50) return null;
   return (
-    <div className="mt-4 flex items-center justify-center gap-3 text-sm">
-      <Button variant="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-        上一页
-      </Button>
-      <span className="text-muted-foreground">第 {page} 页</span>
-      <Button variant="ghost" disabled={!more} onClick={() => onPage(page + 1)}>
-        下一页
-      </Button>
+    <div className="mt-3 flex justify-end text-sm text-muted-foreground">
+      <Pager {...props} />
     </div>
   );
 }

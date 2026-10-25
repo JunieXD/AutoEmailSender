@@ -12,6 +12,7 @@ import { call, errorMessage } from "@/api/call";
 import type { DraftEdit, Material, MentorDetail, TaskDraft, TaskSummary } from "@/api/types";
 import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
 import { Attachments } from "@/components/attachments";
+import { LetterBody } from "@/components/correspondence";
 import {
   AttachMenu,
   LetterProblems,
@@ -160,31 +161,38 @@ export function TaskLetter({
   return (
     <div className="flex flex-col gap-3 px-5 py-4 phone:px-3">
       {review && !readOnly && <Rewrite {...review} />}
-      <div className={review && !readOnly ? "hidden" : "flex flex-col gap-2"}>
-        {task.kind === "follow_up" ? (
-          <div className="min-w-0">
-            <p className="break-words text-sm font-medium">{letter.subject || "（无主题）"}</p>
-            <p className="text-xs text-muted-foreground">主题自动沿用上一封</p>
-          </div>
-        ) : (
-          <Input
-            aria-label="主题"
-            placeholder="主题"
-            value={letter.subject}
+      {readOnly ? (
+        <article className="min-w-0">
+          <h3 className="mb-3 font-semibold break-words">{letter.subject || "（无主题）"}</h3>
+          <LetterBody markdown={letter.bodyMd} />
+        </article>
+      ) : (
+        <div className={review ? "hidden" : "flex flex-col gap-2"}>
+          {task.kind === "follow_up" ? (
+            <div className="min-w-0">
+              <p className="break-words text-sm font-medium">{letter.subject || "（无主题）"}</p>
+              <p className="text-xs text-muted-foreground">主题自动沿用上一封</p>
+            </div>
+          ) : (
+            <Input
+              aria-label="主题"
+              placeholder="主题"
+              value={letter.subject}
+              disabled={locked}
+              onChange={(e) => edit({ ...letter, subject: e.target.value })}
+            />
+          )}
+          <LazyLetterEditor
+            key={body.version}
+            id={`task-letter-${draft.id}`}
+            markdown={body.markdown}
+            placeholders={placeholders}
+            unfilled
             disabled={locked}
-            onChange={(e) => edit({ ...letter, subject: e.target.value })}
+            onChange={(bodyMd) => edit({ ...letter, bodyMd })}
           />
-        )}
-        <LazyLetterEditor
-          key={body.version}
-          id={`task-letter-${draft.id}`}
-          markdown={body.markdown}
-          placeholders={placeholders}
-          unfilled
-          disabled={locked}
-          onChange={(bodyMd) => edit({ ...letter, bodyMd })}
-        />
-      </div>
+        </div>
+      )}
       {draft.previous && (
         <details className="rounded-lg bg-muted p-3 text-sm">
           <summary className="cursor-pointer">

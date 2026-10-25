@@ -112,7 +112,7 @@ export function MentorsPage() {
             <Link
               to="/find"
               search={findSearch({ tab: "crawl" })}
-              className="block rounded-md px-3 py-2 text-sm hover:bg-muted"
+              className={buttonVariants({ variant: "ghost", className: "w-full justify-start" })}
             >
               智能抓取
             </Link>
