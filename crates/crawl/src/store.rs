@@ -11,6 +11,8 @@ pub enum PageKind {
     Entry,
     List,
     Profile,
+    EnrichProfile,
+    EnrichChild,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
@@ -91,7 +93,7 @@ pub async fn save_page(
     sqlx::query_scalar!(
         r#"INSERT INTO crawl_page (crawl_id, url, kind, steps, mode, status, error, fetched_at, text)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (crawl_id, url, steps) DO UPDATE SET
+           ON CONFLICT (crawl_id, url, steps) WHERE candidate_id IS NULL DO UPDATE SET
              kind = excluded.kind, mode = excluded.mode, status = excluded.status,
              error = excluded.error, fetched_at = excluded.fetched_at, text = excluded.text
            RETURNING id"#,
@@ -112,7 +114,7 @@ pub async fn visited_page(
         PageVisit,
         r#"SELECT id, kind AS "kind: PageKind", mode AS "method: PageMethod",
              status AS "status: PageStatus", error, fetched_at AS "fetched_at!"
-           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND fetched_at IS NOT NULL"#,
+           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL AND fetched_at IS NOT NULL"#,
         crawl_id,
         url,
         steps

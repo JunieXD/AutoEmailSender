@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate SET enrich='done',enrich_error=CASE WHEN json_array_length(enrich_changes)>0 THEN NULL ELSE coalesce((SELECT CASE WHEN status='needs_browser' THEN '需要浏览器：' || error ELSE '页面读取失败：' || error END FROM crawl_page WHERE candidate_id=?1 AND status!='success' ORDER BY status='needs_browser' DESC,kind='enrich_profile' DESC,id LIMIT 1),'页面上没有可补充的资料') END WHERE id=?1 AND review='pending' AND enrich IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE candidate_id=?1 AND work_state!='done')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b24d8e1c7dd7d48a5223156712c05a17cae804d4a65a37a6f76f7832d15e9a47"
+}

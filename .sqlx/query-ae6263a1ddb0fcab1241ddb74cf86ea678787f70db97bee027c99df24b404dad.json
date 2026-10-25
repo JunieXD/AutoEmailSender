@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page SET work_state='done',claim=claim+1,error=CASE WHEN status='success' THEN NULL ELSE '候选已处理，停止补全' END WHERE work_state!='done' AND candidate_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ae6263a1ddb0fcab1241ddb74cf86ea678787f70db97bee027c99df24b404dad"
+}

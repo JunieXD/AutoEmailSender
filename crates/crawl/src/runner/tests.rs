@@ -686,6 +686,12 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     }
     let urls: Vec<_> = (0..3).map(|n| site.url(&format!("/p{n}"))).collect();
     queue::start(&db, &urls, config, 1).await.unwrap();
+    let mut enriched = Vec::new();
+    for n in 0..3 {
+        let (_, id) = enrichment::candidate(&db, &site, &format!("/p{n}")).await;
+        enriched.push(id);
+    }
+    crate::enrich::start(&db, &enriched, 1).await.unwrap();
     let mut ids = Vec::new();
     for n in 0..6 {
         ids.push(
@@ -765,7 +771,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     );
     tokio::time::resume();
     let (mut matches, mut drafts, mut routes, mut profiles) = (0, 0, 0, 0);
-    for _ in 0..18 {
+    for _ in 0..21 {
         // A route's next call needs its response first; do not hold that response while
         // waiting for a replacement call after the other two queues have drained.
         let r = if active.is_empty() {
@@ -783,6 +789,11 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         } else if system.starts_with("你整理一位") {
             profiles += 1;
             person("张三", "a@school.example.edu").to_string()
+        } else if system.starts_with("你补全指定") {
+            let mut answer = person("张三", "a@school.example.edu");
+            answer["names"] = json!(["张三"]);
+            answer["next"] = json!([]);
+            answer.to_string()
         } else if system.contains("分数不是录取") {
             matches += 1;
             r#"{"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]}"#.into()
@@ -793,6 +804,22 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         r.respond.send(Response::answer(&answer)).ok().unwrap();
     }
     assert_eq!((matches, drafts, routes, profiles), (6, 6, 3, 3));
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let completed = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM candidate WHERE enrich='done' AND emails!='[]'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            if completed == 3 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     crawl.abort();
     matching.abort();
     writing.abort();
@@ -2997,3 +3024,5 @@ async fn candidate_categories_do_not_depend_on_other_rows_on_the_page(db: Sqlite
         assert_eq!(page.candidates[0].category, filter);
     }
 }
+
+mod enrichment;

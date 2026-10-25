@@ -414,8 +414,9 @@ CREATE TABLE crawl_page (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   crawl_id INTEGER NOT NULL REFERENCES crawl(id) ON DELETE CASCADE,
   url TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('entry', 'list', 'profile')),
+  kind TEXT NOT NULL CHECK (kind IN ('entry', 'list', 'profile', 'enrich_profile', 'enrich_child')),
   steps TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(steps) AND json_type(steps) = 'array'),
+  candidate_id INTEGER REFERENCES candidate(id) ON DELETE CASCADE,
   scope_url TEXT,
   depth INTEGER NOT NULL DEFAULT 0 CHECK (depth BETWEEN 0 AND 2),
   work_state TEXT NOT NULL DEFAULT 'done' CHECK (work_state IN ('queued', 'running', 'done')),
@@ -427,9 +428,13 @@ CREATE TABLE crawl_page (
   text TEXT,
   CHECK ((status = 'success') = (error IS NULL)),
   CHECK (status != 'success' OR text IS NOT NULL),
-  UNIQUE (crawl_id, url, steps)
+  CHECK ((candidate_id IS NOT NULL) = (kind IN ('enrich_profile', 'enrich_child')))
 ) STRICT;
 
+CREATE UNIQUE INDEX crawl_page_url ON crawl_page (crawl_id, url, steps) WHERE candidate_id IS NULL;
+CREATE UNIQUE INDEX crawl_page_candidate_url ON crawl_page (candidate_id, url, steps) WHERE candidate_id IS NOT NULL;
+CREATE INDEX crawl_page_models ON crawl_page (crawl_id, candidate_id) WHERE work_state != 'done' OR status != 'success';
+CREATE INDEX crawl_page_kind_progress ON crawl_page (crawl_id, kind, work_state, status);
 CREATE INDEX crawl_page_queue ON crawl_page (work_state, crawl_id, id);
 CREATE INDEX crawl_page_progress ON crawl_page (crawl_id, work_state, status);
 

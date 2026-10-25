@@ -1,6 +1,6 @@
 //! Background HTTP/model work. Page results and newly discovered work commit together.
 use crate::{
-    Material, PageTarget, PageUrl, Scope,
+    Material, PageTarget, PageUrl, Scope, enrich,
     extract::{self, Kind, Person},
     fetch::Fetcher,
     now,
@@ -115,7 +115,7 @@ impl Reader<'_> {
                 })? {
                     return Err(ReadError::Gone);
                 }
-                let current = model::selected(&mut *conn, Some(self.chosen.id))
+                let current = model::selected(&mut *conn, self.claim.model_id)
                     .await
                     .map_err(|_| ReadError::Pause("模型配置暂时无法读取，请重试。".into()))?;
                 if !current.as_ref().is_some_and(|m| {
@@ -262,13 +262,78 @@ async fn read(
     {
         return Ok(Page {
             material: m,
-            kind: if c.kind == PageKind::Profile {
+            kind: if c.candidate_id.is_some() {
+                c.kind
+            } else if c.kind == PageKind::Profile {
                 PageKind::Profile
             } else {
                 PageKind::Entry
             },
             people: vec![],
             next: vec![],
+        });
+    }
+    if let Some(id) = c.candidate_id {
+        let mut conn = db
+            .acquire()
+            .await
+            .map_err(|_| ReadError::Pause("候选资料暂时无法读取，请继续或重启应用。".into()))?;
+        let candidate = review::read(&mut conn, &[id])
+            .await
+            .map_err(|_| ReadError::Pause("候选资料暂时无法读取，请继续或重启应用。".into()))?
+            .pop()
+            .ok_or(ReadError::Gone)?;
+        if candidate.review != "pending" {
+            return Err(ReadError::Gone);
+        }
+        drop(conn);
+        let mut data = extract::data(&m, 0..m.units.len());
+        data["target"] =
+            serde_json::json!({"name": candidate.fields.name,"aliases":candidate.fields.aliases});
+        data["child"] = serde_json::json!(c.kind == PageKind::EnrichChild);
+        let result = reader
+            .ask::<extract::Enriched>(extract::ENRICH, data)
+            .await?;
+        let mut next = Vec::new();
+        if c.kind == PageKind::EnrichProfile {
+            let links = extract::links(&m);
+            for id in result.next {
+                if let Some((_, url)) = id.checked_sub(1).and_then(|n| links.get(n))
+                    && scope.page((*url).clone()).is_ok()
+                    && !url.is_normalization_of(&c.url)
+                    && !url.is_normalization_of(&m.url)
+                    && !next.contains(*url)
+                {
+                    next.push((*url).clone());
+                    if next.len() == 3 {
+                        break;
+                    }
+                }
+            }
+        }
+        let mut person = extract::profile(&m, result.profile).map_err(ReadError::Failed)?;
+        if c.kind == PageKind::EnrichChild {
+            let target_names: Vec<_> = std::iter::once(candidate.fields.name.as_str())
+                .chain(candidate.fields.aliases.iter().map(String::as_str))
+                .collect();
+            let names: Vec<_> = result
+                .names
+                .iter()
+                .map(String::as_str)
+                .chain(target_names.iter().copied())
+                .collect();
+            person.fields.emails.retain(|email| {
+                target_names
+                    .iter()
+                    .any(|name| crate::owns_email(&m, &names, name, email))
+            });
+            person.fields.homepages.retain(|url| url != m.url.as_str());
+        }
+        return Ok(Page {
+            material: m,
+            kind: c.kind,
+            people: vec![person],
+            next,
         });
     }
     let route = if c.kind == PageKind::Profile {
@@ -342,6 +407,30 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     if !queue::valid(&mut tx, c).await? {
         return Ok(false);
     }
+    let enrich_redirect_failure;
+    let outcome = if let Some(id) = c.candidate_id
+        && let Outcome::Done(p) = outcome
+        && !p.material.url.is_normalization_of(&c.url)
+        && let Some(person) = p.people.first()
+    {
+        let candidate = review::read(&mut tx, &[id])
+            .await?
+            .pop()
+            .ok_or(sqlx::Error::RowNotFound)?;
+        if enrich::matches(&candidate.fields, &person.fields, &p.material) {
+            outcome
+        } else {
+            enrich_redirect_failure = Outcome::Failed(format!(
+                "页面跳到了 {}，读到的姓名是「{}」，和候选「{}」对不上，没有补入",
+                p.material.url.as_str(),
+                person.fields.name,
+                candidate.fields.name
+            ));
+            &enrich_redirect_failure
+        }
+    } else {
+        outcome
+    };
     let redirect_failure;
     let outcome = if let Outcome::Done(p) = outcome
         && c.kind == PageKind::Profile
@@ -396,47 +485,64 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                 PageStatus::Success
             };
             sqlx::query!("UPDATE crawl_page SET work_state = 'done',kind = ?,status = ?,error = ?,text = ?,fetched_at = ? WHERE id = ?",p.kind,status,reason,text,now(),c.id).execute(&mut *tx).await?;
-            for url in &p.next {
-                if c.depth < 2 {
-                    queue::enqueue(
-                        &mut tx,
-                        c.crawl,
-                        url,
-                        &c.scope,
-                        c.depth + 1,
-                        PageKind::Entry,
-                    )
-                    .await?;
-                } else {
-                    let target = url.as_str();
-                    if !sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND url = ?) AS "found!: bool""#,c.crawl,target).fetch_one(&mut *tx).await? {
+            if let Some(id) = c.candidate_id {
+                for url in &p.next {
+                    enrich::enqueue(&mut tx, c.crawl, id, url, &c.scope, PageKind::EnrichChild)
+                        .await?;
+                }
+                for person in &p.people {
+                    enrich::apply(&mut tx, id, p.material.url.as_str(), person).await?;
+                }
+            } else {
+                for url in &p.next {
+                    if c.depth < 2 {
+                        queue::enqueue(
+                            &mut tx,
+                            c.crawl,
+                            url,
+                            &c.scope,
+                            c.depth + 1,
+                            PageKind::Entry,
+                        )
+                        .await?;
+                    } else {
+                        let target = url.as_str();
+                        if !sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND url = ?) AS "found!: bool""#,c.crawl,target).fetch_one(&mut *tx).await? {
                         queue::limit(&mut tx, c.crawl, "寻找名单已达到两层链接范围").await?;
                     }
-                }
-            }
-            if p.kind == PageKind::List {
-                for url in &p.material.pagination.urls {
-                    if Scope::new(&c.scope).page(url.clone()).is_ok() {
-                        queue::enqueue(&mut tx, c.crawl, url, &c.scope, c.depth, PageKind::List)
-                            .await?;
                     }
                 }
-            }
-            // The transaction serializes duplicate detection with all candidate writes.
-            for person in &p.people {
-                review::save(
-                    &mut tx,
-                    c.crawl,
-                    c.id,
-                    p.kind,
-                    p.material.url.as_str(),
-                    Person {
-                        fields: person.fields.clone(),
-                        papers: person.papers.clone(),
-                        profile: person.profile.clone(),
-                    },
-                )
-                .await?;
+                if p.kind == PageKind::List {
+                    for url in &p.material.pagination.urls {
+                        if Scope::new(&c.scope).page(url.clone()).is_ok() {
+                            queue::enqueue(
+                                &mut tx,
+                                c.crawl,
+                                url,
+                                &c.scope,
+                                c.depth,
+                                PageKind::List,
+                            )
+                            .await?;
+                        }
+                    }
+                }
+                // The transaction serializes duplicate detection with all candidate writes.
+                for person in &p.people {
+                    review::save(
+                        &mut tx,
+                        c.crawl,
+                        c.id,
+                        p.kind,
+                        p.material.url.as_str(),
+                        Person {
+                            fields: person.fields.clone(),
+                            papers: person.papers.clone(),
+                            profile: person.profile.clone(),
+                        },
+                    )
+                    .await?;
+                }
             }
         }
         Outcome::Failed(reason) => {
@@ -474,6 +580,9 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             .execute(&mut *tx)
             .await?;
         }
+    }
+    if let Some(id) = c.candidate_id {
+        enrich::complete(&mut tx, id).await?;
     }
     tx.commit().await?;
     Ok(true)
