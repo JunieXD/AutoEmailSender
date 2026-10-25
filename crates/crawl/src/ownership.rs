@@ -115,7 +115,6 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                     return offset >= found.start
                         && !occurrences.iter().any(|other| {
                             other.unit == unit
-                                && other.leading
                                 && other.name != name
                                 && other.start >= found.start
                                 && other.start <= offset
@@ -133,7 +132,7 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                     && first_text == Some(found.unit)
                     && !occurrences.iter().any(|other| {
                         let path = &material.units[other.unit].path;
-                        if !other.leading || other.name == name || !path.starts_with(ancestor) {
+                        if other.name == name || !path.starts_with(ancestor) {
                             return false;
                         }
                         let item = item_start(material, other.unit, common);

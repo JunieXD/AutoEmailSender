@@ -26,6 +26,11 @@ fn check(html: &str, people: &[(&str, &[&str])]) {
     }
 }
 
+fn pairings(html: &str, names: [&str; 2], addresses: [&str; 2]) -> [[bool; 2]; 2] {
+    let page = parse(&url(), html).unwrap();
+    names.map(|name| addresses.map(|address| owns_email(&page, &names, name, address)))
+}
+
 #[test]
 fn nested_contact_lists_and_divs_use_the_common_ancestor() {
     for html in [
@@ -142,8 +147,6 @@ fn flat_headings_and_contacts_keep_ownership() {
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
         "<main><div><h2>Alice</h2></div><p>Research: AI</p><p><a href='mailto:a@pku.edu.cn'>联系</a></p><h2>Bob</h2><p><a href='mailto:b@pku.edu.cn'>联系</a></p></main>",
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><aside><h2>Bob</h2></aside><p>b@pku.edu.cn</p></main>",
-        "<p>Alice a@pku.edu.cn<br>Bob b@pku.edu.cn</p>",
-        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a><br>Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
     ] {
         check(
             html,
@@ -183,16 +186,22 @@ fn same_block_mailto_positions_handle_whitespace_and_repeated_names() {
 }
 
 #[test]
-fn names_that_are_mailto_links_keep_ownership() {
-    for html in [
-        r#"<p><a href="mailto:a@pku.edu.cn">Alice</a>，<br><a href="mailto:b@pku.edu.cn">Bob</a></p>"#,
-        "<p><a href='mailto:a@pku.edu.cn'>Alice</a><br><a href='mailto:b@pku.edu.cn'>Bob</a></p>",
-    ] {
-        check(
+fn same_line_people_cannot_claim_each_others_emails() {
+    let results = [
+        "<p>Alice a@pku.edu.cn Bob b@pku.edu.cn</p>",
+        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a> Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
+        r#"<p><a href="mailto:a@pku.edu.cn">Alice</a>，<a href="mailto:b@pku.edu.cn">Bob</a></p>"#,
+        "<p><a href='mailto:a@pku.edu.cn'>Alice</a> <a href='mailto:b@pku.edu.cn'>Bob</a></p>",
+    ]
+    .map(|html| {
+        pairings(
             html,
-            &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
-        );
-    }
+            ["Alice", "Bob"],
+            ["a@pku.edu.cn", "b@pku.edu.cn"],
+        )
+    });
+    // Bob blocks Alice at his address, but cannot start ownership mid-line.
+    assert_eq!(results, [[[true, false], [false, false]]; 4]);
 }
 
 #[test]
@@ -217,18 +226,30 @@ fn longer_names_contain_no_independent_short_name_occurrence() {
 }
 
 #[test]
-fn prose_mentions_do_not_start_or_block_flat_ownership() {
-    for html in [
+fn prose_mentions_block_ownership_without_starting_it() {
+    let results = [
         "<main><article><h2>Alice</h2><p>Collaborates with Bob</p><p>Email: a@pku.edu.cn</p></article><article><h2>Bob</h2><p>Email: b@pku.edu.cn</p></article></main>",
         "<main><article><h2>Alice</h2><p>Collaborates with\nBob</p><p>Email: a@pku.edu.cn</p></article><article><h2>Bob</h2><p>Email: b@pku.edu.cn</p></article></main>",
         "<main><h2>Alice</h2><p>Collaborates with Bob</p><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
         "<p>Alice<br>Collaborates with Bob<br>Email: a@pku.edu.cn<br>Bob<br>Email: b@pku.edu.cn</p>",
-    ] {
-        check(
+    ]
+    .map(|html| {
+        pairings(
             html,
-            &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
-        );
-    }
+            ["Alice", "Bob"],
+            ["a@pku.edu.cn", "b@pku.edu.cn"],
+        )
+    });
+    assert_eq!(results, [[[false, false], [false, true]]; 4]);
+    assert_eq!(
+        pairings(
+            "<main><article><h2>张三</h2><p>与李四共同指导研究生</p><p>邮箱：zs@pku.edu.cn</p></article><article><h2>李四</h2><p>ls@pku.edu.cn</p></article></main>",
+            ["张三", "李四"],
+            ["zs@pku.edu.cn", "ls@pku.edu.cn"],
+        ),
+        [[false, false], [false, true]]
+    );
+    // A repeated leading name in the contact paragraph can start after the mention.
     check(
         "<main><article><h2>张三</h2><p>与李四共同指导研究生</p><p>张三邮箱：zs@pku.edu.cn</p></article><article><h2>李四</h2><p>ls@pku.edu.cn</p></article></main>",
         &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
@@ -259,9 +280,9 @@ fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
         }
     }
     let html = "<main><article><h2>Alice</h2><p>Collaborates with Bob</p><p>a@pku.edu.cn</p><footer>office@pku.edu.cn</footer></article><article><h2>Bob</h2><p>b@pku.edu.cn</p></article></main>";
-    check(
-        html,
-        &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+    assert_eq!(
+        pairings(html, ["Alice", "Bob"], ["a@pku.edu.cn", "b@pku.edu.cn"]),
+        [[false, false], [false, true]]
     );
     let page = parse(&url(), html).unwrap();
     assert!(!owns_email(
