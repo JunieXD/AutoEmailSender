@@ -215,6 +215,7 @@ async fn a_refused_email_fails_and_a_cut_off_one_may_have_gone_out(db: SqlitePoo
         matches!(refused, Delivery::Failed { ref error } if error.contains("550")),
         "{refused:?}"
     );
+    assert!(mailbox::list(&db, T).await.unwrap()[0].pause.is_none());
     // Never contacted, so a retry may still go from any mailbox.
     assert_eq!(own_mailbox(&db, unknown).await, None);
 
@@ -224,6 +225,11 @@ async fn a_refused_email_fails_and_a_cut_off_one_may_have_gone_out(db: SqlitePoo
         .unwrap();
     let cut_off = first_email(&db, hangup).await;
     assert!(matches!(cut_off.delivery, Delivery::MaybeSent { .. }));
+    assert!(
+        mailbox::list(&db, T + MINUTE).await.unwrap()[0]
+            .pause
+            .is_none()
+    );
     // Not sent again unless the user says so.
     assert_eq!(
         send::step(&db, &net, nowhere(), || T + DAY).await.unwrap(),
@@ -274,7 +280,7 @@ async fn an_email_taken_back_and_changed_is_another_letter(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_refused_login_fails_the_email(db: SqlitePool) {
+async fn a_refused_login_pauses_the_mailbox(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, "wrong").await;
     let wang = approve(&db, "wang@example.edu.cn", &[], T).await;
 
@@ -282,8 +288,322 @@ async fn a_refused_login_fails_the_email(db: SqlitePool) {
         send::step(&db, &net, nowhere(), || T).await.unwrap(),
         Next::Now
     );
+    assert!(matches!(
+        first_email(&db, wang).await.delivery,
+        Delivery::Approved
+    ));
+    assert_eq!(
+        mailbox::list(&db, T).await.unwrap()[0]
+            .pause
+            .as_ref()
+            .unwrap()
+            .until,
+        T + 60 * MINUTE
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+    // The provider accepts login again; no manual resume is needed once the pause expires.
+    sqlx::query("UPDATE mailbox SET secret = ?")
+        .bind(SECRET)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + 60 * MINUTE - 1)
+            .await
+            .unwrap(),
+        Next::At(T + 60 * MINUTE)
+    );
+    send::step(&db, &net, nowhere(), || T + 60 * MINUTE)
+        .await
+        .unwrap();
+    assert!(matches!(
+        first_email(&db, wang).await.delivery,
+        Delivery::Sent { .. }
+    ));
     assert!(
-        matches!(first_email(&db, wang).await.delivery, Delivery::Failed { error } if error.contains("登录被拒绝"))
+        mailbox::list(&db, T + 60 * MINUTE).await.unwrap()[0]
+            .pause
+            .is_none()
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+async fn backup_mailbox(db: &SqlitePool) -> i64 {
+    let primary = mailbox::list(db, T).await.unwrap().remove(0);
+    let fields = MailboxForm {
+        address: fakemail::BACKUP_ADDRESS.into(),
+        sender_name: primary.sender_name,
+        provider: primary.provider,
+        smtp: primary.smtp,
+        imap: primary.imap,
+        daily_limit: 50,
+        min_interval_s: 0,
+    }
+    .check()
+    .unwrap();
+    mailbox::create(db, &fields, SECRET, T).await.unwrap()
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn paused_mailboxes_fail_over_but_owned_mail_and_follow_ups_wait(db: SqlitePool) {
+    // A rejection before upload and one after the body both prove this attempt was not sent.
+    for (offset, (secret, recipient)) in [
+        (SECRET, "throttled"),
+        (SECRET, "throttled-data"),
+        ("wrong", "login"),
+        ("throttled", "login-throttled"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = T + offset as i64 * 2 * DAY;
+        // Reuse the primary's address after removing the previous scenario's mailboxes.
+        for mailbox in mailbox::list(&db, at).await.unwrap() {
+            mailbox::delete(&db, mailbox.id).await.unwrap();
+        }
+        let (net, inbox) = mailbox(&db, secret).await;
+        let primary = mailbox::list(&db, at).await.unwrap()[0].id;
+        let backup = backup_mailbox(&db).await;
+        let blocked = approve(&db, &format!("{recipient}@case{offset}.edu.cn"), &[], at).await;
+        let free = approve(&db, &format!("free@case{offset}.edu.cn"), &[], at).await;
+        let owned = approve(&db, &format!("owned@case{offset}.edu.cn"), &[], at).await;
+        mentor::assign_mailbox(&mut db.acquire().await.unwrap(), owned, primary)
+            .await
+            .unwrap();
+        let follow_up = approve(&db, &format!("follow@case{offset}.edu.cn"), &[], at).await;
+        let follow_id = first_email(&db, follow_up).await.id;
+        // A follow-up's original email owns the sender even if the mentor has no assignment.
+        sqlx::query(
+            "INSERT INTO email (mentor_id, kind, state, planned_at, mailbox_id, from_address,
+            to_address, message_id, sent_at, created_at, updated_at, subject, body_md, html, text)
+            VALUES (?, 'first', 'sent', ?, ?, ?, ?, ?, ?, ?, ?, '申请', '老师您好', '<p>老师您好</p>', '老师您好')",
+        )
+        .bind(follow_up)
+        .bind(at - DAY)
+        .bind(primary)
+        .bind(ADDRESS)
+        .bind(format!("follow@case{offset}.edu.cn"))
+        .bind(format!("<parent{offset}@example.com>"))
+        .bind(at - DAY)
+        .bind(at - DAY)
+        .bind(at - DAY)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE email SET kind = 'follow_up', reply_to = ? WHERE id = ?")
+            .bind(format!("<parent{offset}@example.com>"))
+            .bind(follow_id)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        send::step(&db, &net, nowhere(), || at).await.unwrap();
+        assert_eq!(first_email(&db, blocked).await.delivery, Delivery::Approved);
+        assert_eq!(own_mailbox(&db, blocked).await, None);
+        let pause = mailbox::list(&db, at)
+            .await
+            .unwrap()
+            .remove(0)
+            .pause
+            .unwrap();
+        assert_eq!(pause.until, at + 60 * MINUTE);
+        assert!(!pause.reason.contains(SECRET));
+        // This rejection has no prior delivery evidence and must not acquire any.
+        assert_eq!(sqlx::query_as::<_, (Option<i64>, Option<String>, Option<i64>)>(
+            "SELECT mailbox_id, message_id, sent_at FROM email WHERE mentor_id = ? AND kind = 'first'")
+            .bind(blocked).fetch_one(&db).await.unwrap(), (None, None, None));
+        // Both this first letter and the next one can now use the backup.
+        send::step(&db, &net, nowhere(), || at).await.unwrap();
+        assert!(matches!(
+            first_email(&db, blocked).await.delivery,
+            Delivery::Sent { .. }
+        ));
+        assert_eq!(own_mailbox(&db, blocked).await, Some(backup));
+        send::step(&db, &net, nowhere(), || at).await.unwrap();
+        assert!(matches!(
+            first_email(&db, free).await.delivery,
+            Delivery::Sent { .. }
+        ));
+        assert_eq!(own_mailbox(&db, free).await, Some(backup));
+        assert_eq!(first_email(&db, owned).await.delivery, Delivery::Approved);
+        assert!(matches!(
+            email::list(&db, follow_up)
+                .await
+                .unwrap()
+                .iter()
+                .find(|e| e.id == follow_id)
+                .unwrap()
+                .delivery,
+            Delivery::Approved
+        ));
+        assert_eq!(
+            send::step(&db, &net, nowhere(), || at).await.unwrap(),
+            Next::At(at + 60 * MINUTE)
+        );
+        let page = send::plan::list(
+            &db,
+            &send::plan::PlanQuery {
+                column: send::plan::PlanColumn::Upcoming,
+                page: 1.try_into().unwrap(),
+            },
+            at,
+        )
+        .await
+        .unwrap();
+        for id in [first_email(&db, owned).await.id, follow_id] {
+            assert!(matches!(
+                page.emails.iter().find(|e| e.id == id).unwrap().waiting,
+                Some(send::plan::Waiting::MailboxPaused)
+            ));
+        }
+        assert_eq!(inbox.lock().unwrap().len(), 2);
+        // Cancel the remaining approvals before starting the next scenario.
+        sqlx::query("UPDATE email SET state = 'canceled', cancel_reason = '测试结束', planned_at = NULL, latest_at = NULL WHERE state = 'approved'").execute(&db).await.unwrap();
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_unreachable_server_pauses_for_one_minute_and_resume_or_edit_retries(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let wang = approve(&db, "wang@example.edu.cn", &[], T).await;
+    let primary = mailbox::list(&db, T).await.unwrap().remove(0);
+    let fields = MailboxForm {
+        address: primary.address,
+        sender_name: primary.sender_name,
+        provider: primary.provider,
+        smtp: primary.smtp,
+        imap: primary.imap,
+        daily_limit: 2,
+        min_interval_s: 60,
+    }
+    .check()
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let unused = listener.local_addr().unwrap().port();
+    drop(listener);
+    sqlx::query("UPDATE mailbox SET smtp_port = ? WHERE id = ?")
+        .bind(unused)
+        .bind(primary.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    assert_eq!(first_email(&db, wang).await.delivery, Delivery::Approved);
+    assert_eq!(
+        mailbox::list(&db, T).await.unwrap()[0]
+            .pause
+            .as_ref()
+            .unwrap()
+            .until,
+        T + MINUTE
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T).await.unwrap(),
+        Next::At(T + MINUTE)
+    );
+    assert!(mailbox::resume(&db, primary.id).await.unwrap());
+    assert!(mailbox::list(&db, T).await.unwrap()[0].pause.is_none());
+    send::step(&db, &net, nowhere(), || T + 1).await.unwrap();
+    assert_eq!(
+        mailbox::list(&db, T).await.unwrap()[0]
+            .pause
+            .as_ref()
+            .unwrap()
+            .until,
+        T + 1 + MINUTE
+    );
+    assert!(
+        mailbox::update(&db, primary.id, &fields, SECRET)
+            .await
+            .unwrap()
+    );
+    assert!(mailbox::list(&db, T).await.unwrap()[0].pause.is_none());
+    send::step(&db, &net, nowhere(), || T + 2).await.unwrap();
+    assert!(matches!(
+        first_email(&db, wang).await.delivery,
+        Delivery::Sent { .. }
+    ));
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn throttling_restores_prior_evidence_and_respects_cancellation(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    assert!(email::retry(&db, id, T + MINUTE).await.unwrap());
+    let evidence = || async {
+        sqlx::query_as::<_, (Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>)>(
+            "SELECT mailbox_id, from_address, to_address, message_id, sent_at FROM email WHERE id = ?")
+            .bind(id).fetch_one(&db).await.unwrap()
+    };
+    let before = evidence().await;
+    sqlx::query("UPDATE mentor_email SET address = 'throttled@example.edu.cn' WHERE mentor_id = ?")
+        .bind(mentor)
+        .execute(&db)
+        .await
+        .unwrap();
+    send::step(&db, &net, nowhere(), || T + MINUTE)
+        .await
+        .unwrap();
+    assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
+    assert_eq!(evidence().await, before);
+    mailbox::resume(&db, 1).await.unwrap();
+    change_during_commit(
+        &db,
+        &net,
+        id,
+        T + 2 * MINUTE,
+        T + 2 * MINUTE,
+        move |db| async move {
+            mentor::trash::trash(&db, &[mentor], T + 2 * MINUTE)
+                .await
+                .unwrap();
+        },
+    )
+    .await;
+    assert_eq!(evidence().await, before);
+    assert_eq!(
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT state, cancel_reason FROM email WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        ("canceled".into(), Some(mentor::trash::CANCELED.into()))
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn daily_throttling_uses_the_controlled_local_midnight(db: SqlitePool) {
+    use chrono::TimeZone;
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let zone = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+    let at = zone
+        .with_ymd_and_hms(2026, 10, 26, 23, 59, 0)
+        .unwrap()
+        .timestamp_millis();
+    let mentor = approve(&db, "daily@example.edu.cn", &[], at).await;
+    send::step_in_zone(&db, &net, nowhere(), || at, &zone, &mut |_| 0)
+        .await
+        .unwrap();
+    assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
+    assert_eq!(
+        mailbox::list(&db, at).await.unwrap()[0]
+            .pause
+            .as_ref()
+            .unwrap()
+            .until,
+        at + MINUTE
+    );
+    assert_eq!(
+        send::step_in_zone(&db, &net, nowhere(), || at, &zone, &mut |_| 0)
+            .await
+            .unwrap(),
+        Next::At(at + MINUTE)
     );
     assert!(inbox.lock().unwrap().is_empty());
 }
@@ -2028,7 +2348,7 @@ async fn cancel_task_retry(db: &SqlitePool, net: &Net, task: i64, id: i64, at: i
 async fn bounce_mailbox(db: &SqlitePool) -> (Net, fakemail::Store) {
     let pki = fakemail::pki();
     let (port, store) = fakemail::imap(&pki, false).await;
-    let mailbox = mailbox::list(db).await.unwrap().remove(0);
+    let mailbox = mailbox::list(db, T).await.unwrap().remove(0);
     let form = MailboxForm {
         address: mailbox.address,
         sender_name: mailbox.sender_name,
@@ -2092,7 +2412,7 @@ async fn late_bounce_after_cleanup(
         ),
     );
     assert!(receive::round(db, net, at + DAY).await.unwrap().changed);
-    assert_eq!(mailbox::list(db).await.unwrap()[0].receive_error, None);
+    assert_eq!(mailbox::list(db, T).await.unwrap()[0].receive_error, None);
     assert!(matches!(
         email::list(db, mentor)
             .await
@@ -2193,7 +2513,7 @@ async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
             inbox[0].clone()
         };
         let message_id = header(&original, "Message-ID: ");
-        let previous = mailbox::list(&db).await.unwrap().remove(0);
+        let previous = mailbox::list(&db, T).await.unwrap().remove(0);
         mailbox::delete(&db, previous.id).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, Option<i64>>("SELECT mailbox_id FROM email WHERE id = ?")
@@ -2229,7 +2549,7 @@ async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
             .replace("\r\n", "\n");
         store.deliver("Sent", at, &copy);
         let received = receive::round(&db, &receiving, at + DAY).await.unwrap();
-        assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+        assert_eq!(mailbox::list(&db, T).await.unwrap()[0].receive_error, None);
         if state != "sent" {
             assert!(received.changed, "the {state} email must become sent");
         }

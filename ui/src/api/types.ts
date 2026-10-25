@@ -208,7 +208,7 @@ minIntervalS: number,
 /**
  * Why the last round of receiving failed.
  */
-receiveError: string | null, };
+receiveError: string | null, pause: Pause | null, };
 
 export type MailboxEdit = { id: number,
 /**
@@ -430,6 +430,8 @@ export type PageKind = "entry" | "list" | "profile" | "enrich_profile" | "enrich
 export type PageState = "queued" | "running" | "done";
 
 export type PageStatus = "success" | "failed" | "needs_browser";
+
+export type Pause = { until: number, reason: string, };
 
 export type PlanColumn = "pending" | "upcoming" | "history";
 
@@ -678,6 +680,7 @@ export interface Operations {
   listMailboxes: { input: Nothing; output: Array<Mailbox> };
   addMailbox: { input: NewMailbox; output: MailboxId };
   updateMailbox: { input: MailboxEdit; output: null };
+  resumeMailbox: { input: MailboxId; output: null };
   deleteMailbox: { input: MailboxId; output: null };
   testSending: { input: MailboxTest; output: null };
   testReceiving: { input: MailboxTest; output: null };

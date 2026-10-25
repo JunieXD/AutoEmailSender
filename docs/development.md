@@ -11,7 +11,7 @@
 | `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站、表格导入导出 |
 | `crates/sheet` | CSV、XLSX、XLS 表格的读写 |
 | `crates/crawl` | 抓取基础：网址边界、HTTP、页面材料、邮箱证据和归属核对、翻页和页面存取 |
-| `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试 |
+| `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试、限流与暂停分类 |
 | `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
 | `crates/profile` | 个人资料和信件样式 |
 | `crates/material` | 材料：存文件、提取文字 |
@@ -149,7 +149,7 @@
   - 解析模型输出和抓取结果。
   - 数据迁移，备份和恢复；联系汇总表在各种操作后和现算视图一致。
   - 修过的 bug。
-- 测试数据：保存下来的网页、固定的模型响应、本地的假邮件服务器（`crates/fakemail`）。假 SMTP 服务器拒收名为 `unknown` 的收件人，收下给 `hangup` 的邮件后不回复就断开；假 IMAP 服务器的文件夹和邮件由测试放进去，可以给文件夹换 UIDVALIDITY，记下收到的命令，测试据此检查没有下载不该下载的邮件。
+- 测试数据：保存下来的网页、固定的模型响应、本地的假邮件服务器（`crates/fakemail`）。假 SMTP 服务器接受 `me@example.com` 和 `backup@example.com`，拒收名为 `unknown` 的收件人；对 `throttled`、`daily` 分别回复频率和每日额度限流，对 `throttled-data` 在正文上传后回复限流；用 `throttled` 授权码登录时回复登录限流，其他错误授权码回复登录拒绝；收下给 `hangup` 的邮件后不回复就断开；假 IMAP 服务器的文件夹和邮件由测试放进去，可以给文件夹换 UIDVALIDITY，记下收到的命令，测试据此检查没有下载不该下载的邮件。
 
 ## 手动检查
 

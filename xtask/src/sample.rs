@@ -180,6 +180,18 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     .bind(now)
     .execute(&mut *tx)
     .await?;
+    sqlx::query(
+        "INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port, smtp_security,
+         imap_host, imap_port, imap_security, auth, secret, daily_limit, min_interval_s,
+         rotation_order, paused_until, pause_reason, created_at)
+         VALUES ('linxiao-backup@example.com', '林晓', 'custom', 'smtp.example.com', 465, 'tls',
+         'imap.example.com', 993, 'tls', 'password', 'sample', 50, 60, 2, ?,
+         '邮箱服务商暂时限流，暂停 1 小时后自动重试。请降低发信频率，也可以稍后立即恢复。', ?)",
+    )
+    .bind(now + 3_600_000)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     for (i, (name, color)) in TAGS.iter().enumerate() {
         sqlx::query("INSERT INTO tag (name, color, position) VALUES (?, ?, ?)")
             .bind(name)

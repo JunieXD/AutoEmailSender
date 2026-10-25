@@ -699,7 +699,21 @@ impl Session<'_> {
         // says why it came back.
         for failure in &bounce.failures {
             let (to, reason) = (&failure.recipients, &failure.reason);
-            marked |= email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?;
+            let bounced = email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?;
+            if bounced && let Some(throttle) = failure.throttle {
+                let mailbox = sqlx::query_scalar!(
+                    "SELECT mailbox_id FROM email WHERE message_id = ?1 OR copy_message_id = ?1",
+                    bounce.original,
+                )
+                .fetch_one(&mut *tx)
+                .await?;
+                if let Some(mailbox) = mailbox {
+                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(self.now)?;
+                    pause.reason = format!("退信说明邮箱被限流。{}", pause.reason);
+                    mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
+                }
+            }
+            marked |= bounced;
         }
         for failure in &bounce.failures {
             // Mail sent elsewhere to several mentors bounces for those the bounce names, or for
