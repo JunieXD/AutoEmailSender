@@ -28,7 +28,7 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`. `changed` runs after each email sent or failed.
+/// attached from `materials`. `changed` runs once emails have been sent or failed, before waiting.
 pub async fn run(
     db: SqlitePool,
     net: Net,
@@ -40,10 +40,11 @@ pub async fn run(
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
+    let mut dealt = false;
     loop {
         let wait = match step(&db, &net, &materials, now).await {
             Ok(Next::Now) => {
-                changed();
+                dealt = true;
                 continue;
             }
             Ok(Next::At(at)) => Some(at - now()),
@@ -54,6 +55,11 @@ pub async fn run(
                 Some(MINUTE)
             }
         };
+        // Once for a run of emails dealt with back to back, such as many failing at once: each
+        // change makes the window read its lists and statistics again.
+        if std::mem::take(&mut dealt) {
+            changed();
+        }
         match wait {
             // Looks again within a minute: the timer stands still while the computer sleeps.
             Some(ms) => tokio::select! {
