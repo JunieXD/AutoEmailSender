@@ -710,6 +710,114 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn address_edit_with_only_old_letter(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let port = mailbox::list(&db).await.unwrap()[0].imap.port;
+    let mut old = form(port);
+    old.address = "old-alias@example.com".into();
+    assert!(
+        mailbox::update(&db, 1, &old.check().unwrap(), SECRET)
+            .await
+            .unwrap()
+    );
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    let id = sent_email(&db, li, "maybe_sent", "<old-alias@aes>").await;
+    sqlx::query("UPDATE email SET from_address = 'Old-Alias@Example.COM' WHERE id = ?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(
+        mailbox::update(&db, 1, &form(port).check().unwrap(), SECRET)
+            .await
+            .unwrap()
+    );
+    round(&db, &net, T).await;
+    store.deliver(
+        SENT,
+        T - DAY,
+        "From: OLD-ALIAS@example.com\nTo: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <provider-old-alias@fake>\n\n老师您好",
+    );
+    round(&db, &net, T + MINUTE).await;
+
+    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+    assert_eq!(
+        sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT state, message_id, copy_message_id FROM email WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        (
+            "sent".into(),
+            "<old-alias@aes>".into(),
+            Some("<provider-old-alias@fake>".into())
+        )
+    );
+    assert!(messages(&db, li).await.is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn address_edit_does_not_confirm_another_letter(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let port = mailbox::list(&db).await.unwrap()[0].imap.port;
+    let mut old = form(port);
+    old.address = "old-alias@example.com".into();
+    assert!(
+        mailbox::update(&db, 1, &old.check().unwrap(), SECRET)
+            .await
+            .unwrap()
+    );
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    let old_id = sent_email(&db, li, "maybe_sent", "<old-alias@aes>").await;
+    sqlx::query("UPDATE email SET from_address = 'old-alias@example.com' WHERE id = ?")
+        .bind(old_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(
+        mailbox::update(&db, 1, &form(port).check().unwrap(), SECRET)
+            .await
+            .unwrap()
+    );
+    let new_id = sent_email(&db, li, "maybe_sent", "<new-alias@aes>").await;
+    sqlx::query("UPDATE email SET sent_at = ? WHERE id = ?")
+        .bind(T - DAY + 10 * MINUTE)
+        .bind(new_id)
+        .execute(&db)
+        .await
+        .unwrap();
+    round(&db, &net, T).await;
+    store.deliver(
+        SENT,
+        T - DAY,
+        "From: old-alias@example.com\nTo: li@pku.edu.cn\nSubject: 申请读博\nMessage-ID: <provider-old-alias@fake>\n\n老师您好",
+    );
+    round(&db, &net, T + MINUTE).await;
+
+    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+    assert_eq!(
+        sqlx::query_as::<_, (i64, String, String, Option<String>)>(
+            "SELECT id, state, message_id, copy_message_id FROM email ORDER BY id"
+        )
+        .fetch_all(&db)
+        .await
+        .unwrap(),
+        [
+            (
+                old_id,
+                "sent".into(),
+                "<old-alias@aes>".into(),
+                Some("<provider-old-alias@fake>".into())
+            ),
+            (new_id, "maybe_sent".into(), "<new-alias@aes>".into(), None),
+        ]
+    );
+    assert!(messages(&db, li).await.is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_bounce_marks_only_the_mail_and_mentors_it_names(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
     let li = mentor(&db, "李明", "li@pku.edu.cn").await;

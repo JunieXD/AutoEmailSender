@@ -1861,7 +1861,7 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
                 let candidates = email::copy_candidates(
                     &mut conn,
                     &email::Copy {
-                        mailbox_id: 1,
+                        from_address: ADDRESS,
                         recipient: &recipients[0],
                         subject: "申请硕士",
                         at,
@@ -2399,7 +2399,7 @@ async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: Sq
         let candidates = email::copy_candidates(
             &mut conn,
             &email::Copy {
-                mailbox_id: 1,
+                from_address: ADDRESS,
                 recipient: &address,
                 subject: "申请硕士",
                 at,

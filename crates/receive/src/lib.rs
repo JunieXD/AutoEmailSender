@@ -560,7 +560,8 @@ impl Session<'_> {
         raw: &[u8],
         truncated: bool,
     ) -> Result<bool, Error> {
-        let ([recipient], Some(message_id), Some(subject)) = (
+        let (Some(from_address), [recipient], Some(message_id), Some(subject)) = (
+            &headers.from,
             headers.recipients.as_slice(),
             &headers.message_id,
             &headers.subject,
@@ -568,7 +569,7 @@ impl Session<'_> {
             return Ok(false);
         };
         let copy = email::Copy {
-            mailbox_id: self.mailbox_id,
+            from_address,
             recipient,
             subject,
             at: sent_at,

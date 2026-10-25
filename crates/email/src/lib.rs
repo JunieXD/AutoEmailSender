@@ -778,7 +778,7 @@ pub async fn sent_copy(
 
 /// A copy, in a mailbox's sent folder, under a Message-ID the app did not give.
 pub struct Copy<'a> {
-    pub mailbox_id: i64,
+    pub from_address: &'a str,
     /// Its one recipient, in lowercase: the app sends each email to one mentor.
     pub recipient: &'a str,
     pub subject: &'a str,
@@ -810,13 +810,13 @@ pub async fn copy_candidates(
              (SELECT json_group_array(json_array(file_name, size)) FROM email_attachment
               WHERE email_id = email.id) AS "attachments!: Json<Vec<(String, i64)>>"
            FROM email
-           WHERE from_address = (SELECT address FROM mailbox WHERE id = ?1) COLLATE NOCASE
+           WHERE from_address = ?1 COLLATE NOCASE
              AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
                OR (state = 'canceled' AND sent_at IS NOT NULL))
              AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL
              AND subject = ?4 AND to_address = ?5
            ORDER BY abs(sent_at - ?2)"#,
-        copy.mailbox_id,
+        copy.from_address,
         copy.at,
         COPY_WINDOW,
         copy.subject,
