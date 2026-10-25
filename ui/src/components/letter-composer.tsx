@@ -145,7 +145,10 @@ export function LetterSend({
 }
 
 function problemText(p: Problem): string {
-  if (p.kind === "placeholder") return `“{${p.name}}”没有替换，请改成具体内容或删掉。`;
+  if (p.kind === "placeholder") {
+    const marker = p.name.startsWith("【请") ? p.name : `{${p.name}}`;
+    return `“${marker}”没有替换，请改成具体内容或删掉。`;
+  }
   if (p.kind === "no_salutation") return "正文里没有称呼导师。";
   if (p.kind === "other_mentor") return `草稿里出现了任务中另一位导师的姓名“${p.name}”，请核对。`;
   if (p.kind === "recently_contacted") return "最近 7 天内已经联系过这位导师，请核对是否需要再次联系。";

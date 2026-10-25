@@ -261,6 +261,7 @@ operations! {
     "saveReplyDraft" => save_reply_draft(ReplyDraftEdit) -> Option<email::ReplyDraft>;
     "checkReplyDraft" => check_reply_draft(ReplyDraftEdit) -> Vec<check::Problem>;
     "approveReply" => approve_reply(ReplyEmail) -> ();
+    "writeReply" => write_reply(ReplyDraftEdit) -> writing::Letter;
     "attachDraftMaterial" => attach_draft_material(DraftMaterial) -> bool;
     "getFirstDraft" => get_first_draft(MentorId) -> Option<email::FirstDraft>;
     "saveFirstDraft" => save_first_draft(FirstDraftEdit) -> Option<email::FirstDraft>;
@@ -1240,7 +1241,7 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         writing::Basis {
             chosen: &chosen,
             references: &references,
-            previous: None,
+            kind: writing::Kind::First,
         },
     )
     .await?)
@@ -1591,7 +1592,44 @@ async fn write_follow_up(
         writing::Basis {
             chosen: &chosen,
             references: &references,
-            previous: Some(&previous),
+            kind: writing::Kind::FollowUp(&previous),
+        },
+    )
+    .await?)
+}
+
+impl From<writing::reply::Error> for CallError {
+    fn from(error: writing::reply::Error) -> Self {
+        match error {
+            writing::reply::Error::NoTarget => CallError::not_found(
+                "回的那封信已删除或缺少邮件编号，无法在原线程里回复。请点另一封回信旁的“回复”；缺少编号的请到邮箱里回复。",
+            ),
+            writing::reply::Error::Db(error) => error.into(),
+        }
+    }
+}
+
+async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Letter, CallError> {
+    let chosen = model::chosen(&ctx.db)
+        .await?
+        .ok_or(writing::Error::NoModel)?;
+    let references = material::for_writing(&ctx.db).await?;
+    let _permit = ctx.model_limit.acquire().await;
+    let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        input.mentor_id,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        &input.attachments,
+        now(),
+        writing::Basis {
+            chosen: &chosen,
+            references: &references,
+            kind: writing::Kind::Reply(&previous),
         },
     )
     .await?)
@@ -1912,5 +1950,54 @@ mod table_tests {
             vec!["王明".into(), "长".repeat(32767)],
         ];
         assert!(write_table(rows, TableFormat::Xlsx).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod writing_tests {
+    use super::*;
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn first_follow_up_and_reply_checks_report_student_decisions(db: SqlitePool) {
+        let mentor = mentor::create(
+            &db,
+            &mentor::MentorFields {
+                name: "王伟".into(),
+                ..Default::default()
+            },
+            now(),
+        )
+        .await
+        .unwrap();
+        let ctx = Context {
+            db,
+            net: net::Net::new(vec![]).unwrap(),
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            crawler: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+            materials: Default::default(),
+        };
+        // Follow-ups share checkReplyDraft with replies; all entry points reach check::letter.
+        for op in ["checkFirstDraft", "checkReplyDraft"] {
+            let problems = call(
+                &ctx,
+                op,
+                serde_json::json!({
+                    "mentorId": mentor, "subject": "申请", "replyTo": "<target@example.edu>",
+                    "bodyMd": "王老师：时间为【请补充：时间】。", "attachments": []
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                problems,
+                serde_json::json!([{
+                    "kind": "placeholder", "name": "【请补充：时间】"
+                }])
+            );
+        }
     }
 }

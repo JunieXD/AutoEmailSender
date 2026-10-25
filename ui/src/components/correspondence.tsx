@@ -249,7 +249,7 @@ function Sent({
       refreshSchedule(queryClient);
       // Read again when the composer comes back, as the draft it shows is this email.
       if (op === "withdrawEmail") {
-        dropDrafts(queryClient, [mentorId]);
+        dropDrafts(queryClient, [mentorId], e.kind);
         onWithdraw();
       }
     },
