@@ -3,7 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { CandidateFilter, CandidateRow, CrawlSummary, Decisions, EnrichPlan } from "@/api/types";
+import type { CandidateFilter, CandidateRow, CrawlSummary, Decisions, EnrichField, EnrichPlan } from "@/api/types";
 import { ModelAction, AiIcon } from "@/components/ai-writing";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { IntakeChoices, ProfileDetails } from "@/components/intake-choices";
@@ -507,7 +507,7 @@ function Candidates() {
               )}
               {c.enrichChanges.length > 0 && (
                 <p className="mt-2 text-sm text-brand-text">
-                  补到了{[...new Set(c.enrichChanges.map((v) => v.field))].join("、")}
+                  补到了{[...new Set(c.enrichChanges.map((v) => ENRICH_FIELDS[v.field]))].join("、")}
                 </p>
               )}
               {c.enrichError && <p className="mt-2 text-sm text-warning">{c.enrichError}</p>}
@@ -575,6 +575,18 @@ function Candidates() {
     </>
   );
 }
+const ENRICH_FIELDS: Record<EnrichField, string> = {
+  email: "邮箱",
+  alias: "别名",
+  homepage: "主页",
+  paper: "代表论文",
+  research: "研究方向",
+  affiliation: "单位",
+  university: "学校",
+  school: "学院",
+  department: "系所",
+  title: "职称",
+};
 const ENRICH_SKIP = {
   missing_profile: "没有个人页",
   deleted_crawl: "原抓取已删除",

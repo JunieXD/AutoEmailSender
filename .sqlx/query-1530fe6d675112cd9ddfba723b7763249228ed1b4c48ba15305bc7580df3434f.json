@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.candidate_id,c.enrich AS \"enrich?: enrich::EnrichState\",\n            coalesce(json_array_length(c.enrich_changes),0)>0 AS \"changed!: bool\"\n            FROM crawl_page p LEFT JOIN candidate c ON c.id=p.candidate_id\n            WHERE p.crawl_id=?1 GROUP BY p.candidate_id\n            HAVING max(p.fetched_at)>=(SELECT started_at FROM crawl_run WHERE crawl_id=?1 ORDER BY id DESC LIMIT 1)",
+  "describe": {
+    "columns": [
+      {
+        "name": "candidate_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "candidate_id"
+          }
+        }
+      },
+      {
+        "name": "enrich?: enrich::EnrichState",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich"
+          }
+        }
+      },
+      {
+        "name": "changed!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "1530fe6d675112cd9ddfba723b7763249228ed1b4c48ba15305bc7580df3434f"
+}

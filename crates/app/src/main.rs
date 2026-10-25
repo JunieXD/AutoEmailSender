@@ -271,6 +271,22 @@ async fn finish_crawl(
     db: &sqlx::SqlitePool,
     result: crawl::runner::CrawlFinished,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut messages = Vec::new();
+    if result.crawled {
+        messages.push(format!(
+            "抓取完成：找到 {} 位候选，{} 个页面未打开",
+            result.candidates, result.failed
+        ));
+    }
+    if result.enriched + result.unenriched > 0 {
+        messages.push(format!(
+            "信息补全完成：补到 {} 位，没补到 {} 位",
+            result.enriched, result.unenriched
+        ));
+    }
+    if messages.is_empty() {
+        return Ok(());
+    }
     if let Some(window) = app.get_webview_window("main")
         && window.is_focused()?
     {
@@ -278,10 +294,7 @@ async fn finish_crawl(
     } else if profile::background_notifications(db).await? {
         app.notification()
             .builder()
-            .title(format!(
-                "抓取完成：找到 {} 位候选，{} 个页面未打开",
-                result.candidates, result.failed
-            ))
+            .title(messages.join("；"))
             .show()?;
     }
     Ok(())

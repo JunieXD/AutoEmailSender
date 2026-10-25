@@ -16,9 +16,23 @@ pub enum EnrichState {
     Done,
     Failed,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum EnrichField {
+    Email,
+    Alias,
+    Homepage,
+    Paper,
+    Research,
+    Affiliation,
+    University,
+    School,
+    Department,
+    Title,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct EnrichChange {
-    pub field: String,
+    pub field: EnrichField,
     #[ts(type = "unknown")]
     pub value: Value,
 }
@@ -184,11 +198,11 @@ fn compatible(a: &Affiliation, b: &Affiliation, single: bool) -> bool {
 
 fn change(
     changes: &mut Vec<EnrichChange>,
-    field: &str,
+    field: EnrichField,
     value: impl Serialize,
 ) -> Result<(), sqlx::Error> {
     changes.push(EnrichChange {
-        field: field.into(),
+        field,
         value: serde_json::to_value(value).map_err(|e| sqlx::Error::Encode(e.into()))?,
     });
     Ok(())
@@ -221,16 +235,20 @@ pub(crate) async fn apply(
             }
         };
     }
-    fill_list!(f.emails, incoming.emails, "邮箱");
-    fill_list!(f.aliases, incoming.aliases, "别名");
-    fill_list!(f.homepages, incoming.homepages, "主页");
-    fill_list!(old.papers, person.papers, "代表论文");
+    fill_list!(f.emails, incoming.emails, EnrichField::Email);
+    fill_list!(f.aliases, incoming.aliases, EnrichField::Alias);
+    fill_list!(f.homepages, incoming.homepages, EnrichField::Homepage);
+    fill_list!(old.papers, person.papers, EnrichField::Paper);
     if f.research.as_deref().is_none_or(|s| s.trim().is_empty()) && incoming.research.is_some() {
         f.research = incoming.research.clone();
-        change(changes, "研究方向", &f.research)?;
+        change(changes, EnrichField::Research, &f.research)?;
     }
     if f.affiliations.is_empty() {
-        fill_list!(f.affiliations, incoming.affiliations, "单位");
+        fill_list!(
+            f.affiliations,
+            incoming.affiliations,
+            EnrichField::Affiliation
+        );
     } else {
         let single = f.affiliations.len() == 1 && incoming.affiliations.len() == 1;
         let pairs: Vec<Vec<usize>> = f
@@ -252,10 +270,10 @@ pub(crate) async fn apply(
             {
                 let b = &incoming.affiliations[*matched];
                 for (target, value, label) in [
-                    (&mut a.university, &b.university, "学校"),
-                    (&mut a.school, &b.school, "学院"),
-                    (&mut a.department, &b.department, "系所"),
-                    (&mut a.title, &b.title, "职称"),
+                    (&mut a.university, &b.university, EnrichField::University),
+                    (&mut a.school, &b.school, EnrichField::School),
+                    (&mut a.department, &b.department, EnrichField::Department),
+                    (&mut a.title, &b.title, EnrichField::Title),
                 ] {
                     if target.is_none() && value.is_some() {
                         *target = value.clone();

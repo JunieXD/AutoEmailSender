@@ -35,6 +35,9 @@ pub struct CrawlFinished {
     pub id: i64,
     pub candidates: i64,
     pub failed: i64,
+    pub crawled: bool,
+    pub enriched: i64,
+    pub unenriched: i64,
 }
 struct Page {
     material: Material,
@@ -629,10 +632,32 @@ async fn finish(db: &SqlitePool) -> Result<Vec<CrawlFinished>, sqlx::Error> {
         if candidates == 0 && failed > 0 {
             sqlx::query!("UPDATE crawl SET state = 'failed',error = '本次抓取未能处理任何页面，请查看页面原因后重试' WHERE id = ? AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND status = 'success')",id,id).execute(&mut *tx).await?;
         }
+        let activity = sqlx::query!(
+            r#"SELECT p.candidate_id,c.enrich AS "enrich?: enrich::EnrichState",
+            coalesce(json_array_length(c.enrich_changes),0)>0 AS "changed!: bool"
+            FROM crawl_page p LEFT JOIN candidate c ON c.id=p.candidate_id
+            WHERE p.crawl_id=?1 GROUP BY p.candidate_id
+            HAVING max(p.fetched_at)>=(SELECT started_at FROM crawl_run WHERE crawl_id=?1 ORDER BY id DESC LIMIT 1)"#,
+            id
+        ).fetch_all(&mut *tx).await?;
+        let mut enriched = 0;
+        let mut unenriched = 0;
+        for page in &activity {
+            if page.enrich == Some(enrich::EnrichState::Done) {
+                if page.changed {
+                    enriched += 1;
+                } else {
+                    unenriched += 1;
+                }
+            }
+        }
         result.push(CrawlFinished {
             id,
             candidates,
             failed,
+            crawled: activity.iter().any(|p| p.candidate_id.is_none()),
+            enriched,
+            unenriched,
         });
     }
     tx.commit().await?;

@@ -1,5 +1,5 @@
 use super::*;
-use crate::enrich::{self, EnrichSkipReason, EnrichState};
+use crate::enrich::{self, EnrichField, EnrichSkipReason, EnrichState};
 
 pub(super) async fn candidate(db: &SqlitePool, site: &Site, path: &str) -> (i64, i64) {
     let crawl = sqlx::query_scalar::<_,i64>("INSERT INTO crawl(kind,start_urls,state,created_at,finished_at) VALUES('site','[]','done',1,1) RETURNING id").fetch_one(db).await.unwrap();
@@ -85,7 +85,7 @@ async fn enrichment_personal_page_fills_only_empty_fields(db: SqlitePool) {
             .enrichment
             .enrich_changes
             .iter()
-            .any(|c| c.field == "邮箱" && c.value == json!(["a@example.edu"]))
+            .any(|c| c.field == EnrichField::Email && c.value == json!(["a@example.edu"]))
     );
     finish(&db).await.unwrap();
     // Re-enrichment is allowed for a missing direction, but cannot replace existing email.
@@ -1175,4 +1175,103 @@ async fn enrichment_cancel_discards_fetched_but_unfinished_page(db: SqlitePool) 
     assert_eq!(d.summary.failed, 0);
     assert!(d.pages.is_empty());
     assert_eq!(queue::retry(&db, crawl, None, 4).await.unwrap(), 0);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_completion_counts_current_run_and_distinguishes_crawling(db: SqlitePool) {
+    let site = Site::new().await;
+    for crawling in [false, true] {
+        let (crawl, old) = candidate(&db, &site, "/old").await;
+        sqlx::query("UPDATE crawl SET state='running',finished_at=NULL WHERE id=?")
+            .bind(crawl)
+            .execute(&db)
+            .await
+            .unwrap();
+        queue::open_run(&mut db.acquire().await.unwrap(), crawl, 100)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE candidate SET enrich='done',enrich_changes='[{\"field\":\"email\",\"value\":[\"old@example.edu\"]}]' WHERE id=?").bind(old).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,kind,mode,status,text,work_state,fetched_at) VALUES(?,?,'https://example.edu/old','enrich_profile','http','success','张三','done',50)").bind(crawl).bind(old).execute(&db).await.unwrap();
+        for (path, changes, status) in [
+            (
+                "/filled",
+                json!([{"field":"research","value":"机器学习"}]),
+                "success",
+            ),
+            ("/empty", json!([]), "failed"),
+        ] {
+            let id: i64 = sqlx::query_scalar("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,enrich_changes) VALUES(?,?,'pending','done','张三',?) RETURNING id").bind(crawl).bind(site.url(path).as_str()).bind(Json(changes)).fetch_one(&db).await.unwrap();
+            for kind in ["enrich_profile", "enrich_child"] {
+                sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,kind,mode,status,text,error,work_state,fetched_at) VALUES(?,?,?,?, 'http',?,'张三',?,'done',110)").bind(crawl).bind(id).bind(format!("https://example.edu{path}/{kind}")).bind(kind).bind(status).bind(if status=="success" {None} else {Some("页面读取失败")}).execute(&db).await.unwrap();
+            }
+        }
+        sqlx::query("INSERT INTO crawl_page(crawl_id,url,kind,mode,status,text,work_state,fetched_at) VALUES(?,'https://example.edu/list','list','http','success','张三','done',?)").bind(crawl).bind(if crawling {110} else {50}).execute(&db).await.unwrap();
+        let results = finish(&db).await.unwrap();
+        let result = serde_json::to_value(&results[0]).unwrap();
+        assert_eq!(result["crawled"], json!(crawling));
+        assert_eq!(result["enriched"], json!(1));
+        assert_eq!(result["unenriched"], json!(1));
+        // A later crawl-only run must not report those enrichment results again.
+        sqlx::query("UPDATE crawl SET state='running',finished_at=NULL WHERE id=?")
+            .bind(crawl)
+            .execute(&db)
+            .await
+            .unwrap();
+        queue::open_run(&mut db.acquire().await.unwrap(), crawl, 200)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE crawl_page SET fetched_at=210 WHERE crawl_id=? AND kind='list'")
+            .bind(crawl)
+            .execute(&db)
+            .await
+            .unwrap();
+        let results = finish(&db).await.unwrap();
+        let result = serde_json::to_value(&results[0]).unwrap();
+        assert_eq!(result["crawled"], json!(true));
+        assert_eq!(result["enriched"], json!(0));
+        assert_eq!(result["unenriched"], json!(0));
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_model_receives_existing_affiliations(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三 a@example.edu</p>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let (_, id) = candidate(&db, &site, "/p").await;
+    let affiliations =
+        json!([{"university":"甲大学","school":"计算机学院","department":"研究系","title":null}]);
+    sqlx::query("UPDATE candidate SET affiliations=? WHERE id=?")
+        .bind(Json(&affiliations))
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let fetcher = Fetcher::local(site.port);
+    let limit = Limit::default();
+    let cooldown = Cooldown::default();
+    let read = process(&db, &net, &fetcher, &limit, &c, &cooldown);
+    let respond = async {
+        let request = provider.requests.recv().await.unwrap();
+        let data: Value =
+            serde_json::from_str(request.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(data["target"]["affiliations"], affiliations);
+        request
+            .respond
+            .send(Response::answer(
+                &answer("a@example.edu", json!([])).to_string(),
+            ))
+            .ok()
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(read, respond);
+    save(&db, &c, &result.unwrap()).await.unwrap();
+    assert_eq!(
+        detail(&db, id).await.candidate.fields.emails,
+        vec!["a@example.edu"]
+    );
 }

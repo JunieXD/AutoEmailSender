@@ -48,7 +48,7 @@ export type CrawlDetail = { summary: CrawlSummary, urls: Array<string>, limits: 
 
 export type CrawlDetailQuery = { id: number, page: number, };
 
-export type CrawlFinished = { id: number, candidates: number, failed: number, };
+export type CrawlFinished = { id: number, candidates: number, failed: number, crawled: boolean, enriched: number, unenriched: number, };
 
 export type CrawlId = { id: number, };
 
@@ -112,7 +112,9 @@ resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReas
 
 export type EmailId = { id: number, };
 
-export type EnrichChange = { field: string, value: unknown, };
+export type EnrichChange = { field: EnrichField, value: unknown, };
+
+export type EnrichField = "email" | "alias" | "homepage" | "paper" | "research" | "affiliation" | "university" | "school" | "department" | "title";
 
 export type EnrichPlan = { ids: Array<number>, skipped: Array<EnrichSkip>, };
 

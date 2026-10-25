@@ -471,7 +471,7 @@ pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
         (
             "补全完成的导师",
             "done",
-            serde_json::json!([{"field":"邮箱","value":["enriched@example.edu.cn"]},{"field":"研究方向","value":"计算机视觉"}]),
+            serde_json::json!([{"field":"email","value":["enriched@example.edu.cn"]},{"field":"research","value":"计算机视觉"}]),
             None,
         ),
         (
