@@ -26,9 +26,11 @@ const remote = vi.hoisted(
     entries: Entry[];
     plan: PlanEmail | null;
     withdrawn: boolean;
+    withdrawnDraft: ReplyDraft | null;
     mergedDraft: ReplyDraft | null;
     merged: boolean;
     approved: { draftId: number; replyTo: string; bodyMd: string } | null;
+    saves: ReplyDraftEdit[];
     write?: (input: ReplyDraftEdit) => Promise<Letter>;
   } => ({
     target: {
@@ -43,9 +45,11 @@ const remote = vi.hoisted(
     entries: [],
     plan: null,
     withdrawn: false,
+    withdrawnDraft: null,
     mergedDraft: null,
     merged: false,
     approved: null,
+    saves: [],
   }),
 );
 vi.mock("@tanstack/react-router", () => ({
@@ -60,6 +64,7 @@ vi.mock("@/api/call", () => ({
     if (op === "getReplyTarget") return remote.target;
     if (op === "writeReply" && remote.write) return remote.write(input);
     if (op === "saveReplyDraft") {
+      remote.saves.push(input);
       remote.draft = { ...input, id: 5, target: remote.target };
       return remote.draft;
     }
@@ -71,6 +76,7 @@ vi.mock("@/api/call", () => ({
     }
     if (op === "withdrawEmail") {
       remote.withdrawn = true;
+      if (remote.withdrawnDraft) remote.draft = remote.withdrawnDraft;
       remote.entries = remote.entries.filter((entry) => !("email" in entry));
       return null;
     }
@@ -116,6 +122,35 @@ const mentor: MentorDetail = {
   trashed: false,
 };
 
+const firstEmail: Email = {
+  id: 9,
+  kind: "first",
+  state: "failed",
+  subject: "首封",
+  bodyMd: "首封正文",
+  attachments: [],
+  plannedAt: null,
+  latestAt: null,
+  resendOf: null,
+  resent: false,
+  error: "发送失败",
+};
+
+const received: Entry = {
+  message: {
+    id: 1,
+    kind: "reply",
+    fromAddress: "mentor@example.edu",
+    subject: "面谈",
+    sentAt: 1,
+    text: "来信",
+    quote: null,
+    truncated: false,
+    unread: false,
+    canReply: true,
+  },
+};
+
 function button(name: string) {
   const node = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === name);
   if (!node) throw new Error(`missing button: ${name}`);
@@ -151,9 +186,11 @@ function setup(correspondence = false) {
       remote.entries = [];
       remote.plan = null;
       remote.withdrawn = false;
+      remote.withdrawnDraft = null;
       remote.mergedDraft = null;
       remote.merged = false;
       remote.approved = null;
+      remote.saves = [];
     },
   };
 }
@@ -166,39 +203,9 @@ it.each([
 ])(
   "keeps unrelated reply AI when withdrawing a first email from $source (answered: $answered)",
   async ({ source, answered }) => {
-    const email: Email = {
-      id: 9,
-      kind: "first",
-      replyTo: null,
-      state: "failed",
-      subject: "首封",
-      bodyMd: "首封正文",
-      attachments: [],
-      plannedAt: null,
-      latestAt: null,
-      resendOf: null,
-      resent: false,
-      error: "发送失败",
-    };
-    remote.entries = [
-      { email },
-      {
-        message: {
-          id: 1,
-          kind: "reply",
-          fromAddress: "mentor@example.edu",
-          subject: "面谈",
-          sentAt: 1,
-          text: "来信",
-          quote: null,
-          truncated: false,
-          unread: false,
-          canReply: true,
-        },
-      },
-    ];
+    remote.entries = [{ email: firstEmail }, received];
     remote.plan = {
-      ...email,
+      ...firstEmail,
       mentorId: mentor.id,
       name: mentor.name,
       taskId: null,
@@ -244,6 +251,74 @@ it.each([
       await vi.waitFor(() => expect(remote.draft?.bodyMd).toBe("王老师，改写后的回复"));
       await vi.waitFor(() => expect(view.container.querySelector(".tiptap")?.textContent).toBe("王老师，改写后的回复"));
     } finally {
+      await view.close();
+    }
+  },
+);
+
+it.each(["correspondence", "sending plan"])(
+  "discards reply B's late AI when withdrawing reply A from %s, without creating a draft after approving A",
+  async (source) => {
+    const original = remote.target;
+    const email: Email = { ...firstEmail, kind: "reply", bodyMd: "王老师，回复 A" };
+    remote.entries = [{ email }, received];
+    remote.plan = {
+      ...email,
+      mentorId: mentor.id,
+      name: mentor.name,
+      taskId: null,
+      taskName: null,
+      sentAt: null,
+      fromAddress: null,
+      cancelReason: null,
+      waiting: null,
+    };
+    remote.withdrawnDraft = {
+      id: email.id,
+      replyTo: original.messageId ?? "",
+      bodyMd: email.bodyMd,
+      attachments: [],
+      target: original,
+    };
+    remote.target = { ...original, id: 2, messageId: "<b@example.edu>", subject: "来信 B", sentAt: 2 };
+    let complete: ((letter: Letter) => void) | undefined;
+    remote.write = () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      });
+    const view = setup(source === "correspondence");
+    try {
+      await view.render();
+      await vi.waitFor(() => expect(view.button("AI 起草").disabled).toBe(false));
+      await act(async () => view.button("AI 起草").click());
+      await vi.waitFor(() => expect(complete).toBeDefined());
+      expect(view.container.textContent).toContain("回复 王伟：来信 B");
+      if (source === "sending plan") await view.render(false, <SendingPlan />);
+      await vi.waitFor(() => expect(view.button("改回草稿").disabled).toBe(false));
+      await act(async () => view.button("改回草稿").click());
+      await vi.waitFor(() => expect(remote.withdrawn).toBe(true));
+      if (source === "sending plan") await view.render();
+      await vi.waitFor(() => expect(view.container.querySelector(".tiptap")?.textContent).toBe(email.bodyMd));
+      expect(view.container.textContent).toContain("回复 王伟：面谈");
+      await act(async () => complete?.({ subject: "", bodyMd: "不应复活的回复 B" }));
+      expect(view.container.textContent).not.toContain("不应复活的回复 B");
+      await vi.waitFor(() => expect(view.button("发送").disabled).toBe(false));
+      await act(async () => view.button("发送").click());
+      await vi.waitFor(() =>
+        expect(remote.approved).toEqual({ draftId: email.id, replyTo: original.messageId, bodyMd: email.bodyMd }),
+      );
+      await vi.waitFor(() => expect(view.button("AI 起草").disabled).toBe(false));
+      await vi.waitFor(() => expect(view.container.querySelector(".tiptap")?.textContent).toBe(""));
+      expect(remote.draft).toBeNull();
+      expect(remote.saves).toEqual([]);
+      expect(view.container.textContent).not.toContain("不应复活的回复 B");
+      await view.render(false);
+      await view.render();
+      await vi.waitFor(() => expect(view.container.querySelector(".tiptap")?.textContent).toBe(""));
+      expect(remote.draft).toBeNull();
+      expect(remote.saves).toEqual([]);
+    } finally {
+      remote.target = original;
       await view.close();
     }
   },

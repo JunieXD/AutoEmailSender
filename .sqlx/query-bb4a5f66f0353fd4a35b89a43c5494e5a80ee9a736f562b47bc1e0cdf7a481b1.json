@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: DraftKind\", reply_to, state AS \"state: DeliveryColumn\", coalesce(subject, '') AS \"subject!: String\",\n             coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)\n             AS \"resent!: bool\", planned_at, latest_at, from_address, to_address, sent_at,\n             error, cancel_reason\n           FROM email\n           WHERE mentor_id = ?\n             AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n               OR (state='canceled' AND kind='follow_up' AND task_id IS NULL))\n           ORDER BY id",
+  "query": "SELECT id, kind AS \"kind: DraftKind\", state AS \"state: DeliveryColumn\", coalesce(subject, '') AS \"subject!: String\",\n             coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)\n             AS \"resent!: bool\", planned_at, latest_at, from_address, to_address, sent_at,\n             error, cancel_reason\n           FROM email\n           WHERE mentor_id = ?\n             AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n               OR (state='canceled' AND kind='follow_up' AND task_id IS NULL))\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -26,19 +26,8 @@
         }
       },
       {
-        "name": "reply_to",
-        "ordinal": 2,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "email",
-            "name": "reply_to"
-          }
-        }
-      },
-      {
         "name": "state: DeliveryColumn",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,19 +38,19 @@
       },
       {
         "name": "subject!: String",
-        "ordinal": 4,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": "Expression"
       },
       {
         "name": "body_md!: String",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": "Expression"
       },
       {
         "name": "resend_of",
-        "ordinal": 6,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -72,13 +61,13 @@
       },
       {
         "name": "resent!: bool",
-        "ordinal": 7,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": "Expression"
       },
       {
         "name": "planned_at",
-        "ordinal": 8,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -89,7 +78,7 @@
       },
       {
         "name": "latest_at",
-        "ordinal": 9,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -100,7 +89,7 @@
       },
       {
         "name": "from_address",
-        "ordinal": 10,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -111,7 +100,7 @@
       },
       {
         "name": "to_address",
-        "ordinal": 11,
+        "ordinal": 10,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -122,7 +111,7 @@
       },
       {
         "name": "sent_at",
-        "ordinal": 12,
+        "ordinal": 11,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -133,7 +122,7 @@
       },
       {
         "name": "error",
-        "ordinal": 13,
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -144,7 +133,7 @@
       },
       {
         "name": "cancel_reason",
-        "ordinal": 14,
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -160,7 +149,6 @@
     "nullable": [
       false,
       false,
-      true,
       false,
       false,
       false,
@@ -175,5 +163,5 @@
       true
     ]
   },
-  "hash": "18f1afee28cbdf2c2c78063b8c22eeb267309988666641fe5c0c7955df7b1a5c"
+  "hash": "bb4a5f66f0353fd4a35b89a43c5494e5a80ee9a736f562b47bc1e0cdf7a481b1"
 }

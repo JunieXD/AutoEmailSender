@@ -305,7 +305,6 @@ async fn snapshot(
 pub struct Email {
     pub id: i64,
     pub kind: DraftKind,
-    pub reply_to: Option<String>,
     pub planned_at: Option<i64>,
     pub latest_at: Option<i64>,
     pub subject: String,
@@ -395,7 +394,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
         });
     }
     sqlx::query!(
-        r#"SELECT id, kind AS "kind: DraftKind", reply_to, state AS "state: DeliveryColumn", coalesce(subject, '') AS "subject!: String",
+        r#"SELECT id, kind AS "kind: DraftKind", state AS "state: DeliveryColumn", coalesce(subject, '') AS "subject!: String",
              coalesce(body_md, '') AS "body_md!: String", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)
              AS "resent!: bool", planned_at, latest_at, from_address, to_address, sent_at,
              error, cancel_reason
@@ -451,7 +450,6 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
         Ok(Email {
             id: r.id,
             kind: r.kind,
-            reply_to: r.reply_to,
             planned_at: r.planned_at,
             latest_at: r.latest_at,
             subject: r.subject,

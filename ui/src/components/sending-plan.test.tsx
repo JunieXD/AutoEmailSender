@@ -31,7 +31,6 @@ vi.mock("@/api/call", () => ({
 const email: PlanEmail = {
   id: 1,
   kind: "first",
-  replyTo: null,
   mentorId: 1,
   name: "王伟",
   subject: "申请硕士",
