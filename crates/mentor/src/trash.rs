@@ -41,7 +41,7 @@ pub async fn list(db: &SqlitePool, query: &TrashQuery) -> Result<MentorPage, sql
 }
 
 /// Moves mentors to the trash and cancels their emails that have not gone out; restoring them does
-/// not bring those back. Emails already handed to SMTP are left to finish.
+/// not bring those back. Sending attempts keep the reason until their outcome is known.
 pub async fn trash(db: &SqlitePool, ids: &[i64], now: i64) -> Result<(), sqlx::Error> {
     let ids = Json(ids);
     let mut tx = db.begin().await?;
@@ -54,16 +54,7 @@ pub async fn trash(db: &SqlitePool, ids: &[i64], now: i64) -> Result<(), sqlx::E
     )
     .execute(&mut *tx)
     .await?;
-    sqlx::query!(
-        "UPDATE email SET state = 'canceled', planned_at = NULL, latest_at = NULL, error = ?1, updated_at = ?2
-         WHERE mentor_id IN (SELECT value FROM json_each(?3))
-           AND state IN ('generating', 'generation_failed', 'review', 'approved', 'failed')",
-        CANCELED,
-        now,
-        ids,
-    )
-    .execute(&mut *tx)
-    .await?;
+    email::cancel(&mut tx, email::CancelScope::Mentors(ids.0), CANCELED, now).await?;
     tx.commit().await
 }
 

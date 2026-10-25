@@ -459,6 +459,42 @@ pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Err
     schedule::retry(db, id, now).await
 }
 
+pub enum CancelScope<'a> {
+    Mentors(&'a [i64]),
+    Task { task: i64, email: Option<i64> },
+}
+
+/// A sending attempt keeps its state until SMTP answers. Its error holds the cancellation reason
+/// meanwhile, so restoring a mentor cannot restore approval for an attempt that did not go out.
+pub async fn cancel(
+    conn: &mut SqliteConnection,
+    scope: CancelScope<'_>,
+    reason: &str,
+    now: i64,
+) -> Result<u64, sqlx::Error> {
+    let (task, id, mentors) = match scope {
+        CancelScope::Mentors(ids) => (None, None, Some(Json(ids))),
+        CancelScope::Task { task, email } => (Some(task), email, None),
+    };
+    Ok(sqlx::query!(
+        "UPDATE email SET state = CASE WHEN state = 'sending' THEN state ELSE 'canceled' END,
+           planned_at = CASE WHEN state = 'sending' THEN planned_at END, latest_at = NULL,
+           error = ?1, generation_claim = generation_claim + 1, generation_queued_at = NULL,
+           updated_at = ?2
+         WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4))
+             OR mentor_id IN (SELECT value FROM json_each(?5)))
+           AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending', 'failed')",
+        reason,
+        now,
+        task,
+        id,
+        mentors,
+    )
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
 /// Sends a bounced email again, now, as another email with the same content and files, to the
 /// mentor's sending address by then; the bounced one keeps its bounce. Refused when it was sent
 /// again already, or the mentor is in the trash.
@@ -514,14 +550,16 @@ pub async fn interrupted(
     conn: &mut SqliteConnection,
     now: i64,
 ) -> Result<Vec<Handed>, sqlx::Error> {
-    sqlx::query!(
-        "UPDATE email SET state = 'failed', latest_at = NULL, error = ?, updated_at = ?
-         WHERE state = 'sending' AND to_address IS NULL",
-        NO_ADDRESS,
-        now,
+    // Take the write lock before selecting attempts known not to have gone out.
+    let unsent = sqlx::query_scalar!(
+        "UPDATE email SET updated_at = updated_at
+         WHERE state = 'sending' AND to_address IS NULL RETURNING id"
     )
-    .execute(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
+    for id in unsent {
+        failed(conn, id, NO_ADDRESS, now).await?;
+    }
     sqlx::query_as!(
         Handed,
         "UPDATE email SET state = 'maybe_sent', error = ?, updated_at = ? WHERE state = 'sending'
@@ -568,7 +606,7 @@ pub async fn start_sending(
     now: i64,
 ) -> Result<Option<Handover>, sqlx::Error> {
     let Some(row) = sqlx::query!(
-        r#"UPDATE email SET state = 'sending', latest_at = NULL, mailbox_id = ?1, from_address = ?2,
+        r#"UPDATE email SET state = 'sending', latest_at = NULL, error = NULL, mailbox_id = ?1, from_address = ?2,
              to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
                ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
@@ -617,7 +655,7 @@ pub async fn attachment_files(
 
 pub async fn sent(conn: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE email SET state = 'sent', sent_at = ?1, updated_at = ?1
+        "UPDATE email SET state = 'sent', error = NULL, sent_at = ?1, updated_at = ?1
          WHERE id = ?2 AND state = 'sending'",
         now,
         id,
@@ -653,7 +691,12 @@ pub async fn failed(
     now: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE email SET state = 'failed', latest_at = NULL, error = ?, updated_at = ?
+        "UPDATE email SET
+           state = CASE WHEN state = 'sending' AND error IS NOT NULL THEN 'canceled' ELSE 'failed' END,
+           planned_at = CASE WHEN state = 'sending' AND error IS NOT NULL THEN NULL ELSE planned_at END,
+           latest_at = NULL,
+           error = CASE WHEN state = 'sending' AND error IS NOT NULL THEN error ELSE ? END,
+           updated_at = ?
          WHERE id = ? AND state IN ('approved', 'sending')",
         error,
         now,

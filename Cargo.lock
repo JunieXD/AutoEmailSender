@@ -3228,6 +3228,7 @@ name = "mentor"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "email",
  "profile",
  "serde",
  "sheet",

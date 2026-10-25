@@ -533,10 +533,12 @@ pub async fn approve_in_zone<T: chrono::TimeZone>(
     Ok(approved)
 }
 pub async fn remove(db: &SqlitePool, key: &TaskEmail, now: i64) -> Result<()> {
-    emails::cancel(
+    email::cancel(
         &mut *db.acquire().await?,
-        key.task_id,
-        Some(key.id),
+        email::CancelScope::Task {
+            task: key.task_id,
+            email: Some(key.id),
+        },
         "移出任务",
         now,
     )

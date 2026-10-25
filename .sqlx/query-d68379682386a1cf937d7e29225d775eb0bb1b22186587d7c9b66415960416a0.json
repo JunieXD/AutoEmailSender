@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET\n           state = CASE WHEN state = 'sending' AND error IS NOT NULL THEN 'canceled' ELSE 'failed' END,\n           planned_at = CASE WHEN state = 'sending' AND error IS NOT NULL THEN NULL ELSE planned_at END,\n           latest_at = NULL,\n           error = CASE WHEN state = 'sending' AND error IS NOT NULL THEN error ELSE ? END,\n           updated_at = ?\n         WHERE id = ? AND state IN ('approved', 'sending')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "d68379682386a1cf937d7e29225d775eb0bb1b22186587d7c9b66415960416a0"
+}

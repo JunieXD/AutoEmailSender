@@ -14,6 +14,7 @@ serde.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true
 url = "2.5.8"
+email.workspace = true
 
 [dev-dependencies]
 db.workspace = true

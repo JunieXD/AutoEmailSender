@@ -290,7 +290,16 @@ pub async fn stop(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
     sqlx::query!("UPDATE task SET state = 'stopped' WHERE id = ?", id)
         .execute(&mut *tx)
         .await?;
-    emails::cancel(&mut tx, id, None, "任务停止", now).await?;
+    email::cancel(
+        &mut tx,
+        email::CancelScope::Task {
+            task: id,
+            email: None,
+        },
+        "任务停止",
+        now,
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }

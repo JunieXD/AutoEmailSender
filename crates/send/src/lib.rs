@@ -266,7 +266,7 @@ async fn send(
         })
         .await
     {
-        Ok(SendStatus::Expired) => return m.before.restore(db, id, now()).await,
+        Ok(SendStatus::Expired) => return m.before.restore(db, id).await,
         Ok(SendStatus::Sent) => {
             tracing::info!("email {id} sent from mailbox {mailbox_id}");
             Outcome::Sent
@@ -326,27 +326,16 @@ struct BeforeHandover {
 }
 
 impl BeforeHandover {
-    async fn restore(&self, db: &SqlitePool, id: i64, now: i64) -> Result<(), sqlx::Error> {
+    async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "WITH current AS (
-               SELECT e.id, t.state='stopped' AS stopped,
-                 CASE WHEN m.trashed_at IS NOT NULL THEN ?2
-                      WHEN t.state='stopped' THEN '任务停止' END AS reason
-               FROM email e JOIN mentor m ON m.id=e.mentor_id LEFT JOIN task t ON t.id=e.task_id
-               WHERE e.id=?1 AND e.state='sending'
-             ) UPDATE email SET
-               state=CASE WHEN current.reason IS NULL THEN 'approved' ELSE 'canceled' END,
-               planned_at=CASE WHEN current.reason IS NULL THEN email.planned_at END,
-               latest_at=CASE WHEN current.reason IS NULL THEN ?3 END,
-               mailbox_id=(SELECT id FROM mailbox WHERE id=?4),
-               from_address=?5,to_address=?6,message_id=?7,sent_at=?8,
-               error=coalesce(current.reason,email.error),
-               generation_claim=generation_claim+CASE WHEN current.stopped THEN 1 ELSE 0 END,
-               generation_queued_at=CASE WHEN current.stopped THEN NULL ELSE generation_queued_at END,
-               updated_at=CASE WHEN current.reason IS NULL THEN ?9 ELSE ?10 END
-             FROM current WHERE email.id=current.id",
-            id,
-            mentor::trash::CANCELED,
+            "UPDATE email SET
+               state=CASE WHEN error IS NULL THEN 'approved' ELSE 'canceled' END,
+               planned_at=CASE WHEN error IS NULL THEN planned_at END,
+               latest_at=CASE WHEN error IS NULL THEN ?1 END,
+               mailbox_id=(SELECT id FROM mailbox WHERE id=?2),
+               from_address=?3,to_address=?4,message_id=?5,sent_at=?6,
+               updated_at=CASE WHEN error IS NULL THEN ?7 ELSE updated_at END
+             WHERE id=?8 AND state='sending'",
             self.latest_at,
             self.mailbox_id,
             self.from_address,
@@ -354,8 +343,10 @@ impl BeforeHandover {
             self.message_id,
             self.sent_at,
             self.updated_at,
-            now,
-        ).execute(db).await?;
+            id,
+        )
+        .execute(db)
+        .await?;
         Ok(())
     }
 }
