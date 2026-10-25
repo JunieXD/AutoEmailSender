@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH trashed AS MATERIALIZED (SELECT id FROM mentor WHERE trashed_at IS NOT NULL), all_schools AS MATERIALIZED (\n SELECT university, count(DISTINCT mentor_id) AS n FROM mentor_affiliation WHERE university IS NOT NULL GROUP BY university\n), trash_schools AS MATERIALIZED (\n SELECT university, count(DISTINCT mentor_id) AS n FROM mentor_affiliation WHERE university IS NOT NULL AND mentor_id IN (SELECT id FROM trashed) GROUP BY university\n), schools AS MATERIALIZED (\n SELECT a.university, a.n-coalesce(t.n,0) AS n FROM all_schools a LEFT JOIN trash_schools t ON t.university=a.university WHERE a.n>coalesce(t.n,0)\n), top_schools AS MATERIALIZED (SELECT * FROM schools ORDER BY n DESC, university LIMIT 10)\nSELECT (SELECT json_group_array(json_object('university',university,'count',n)) FROM top_schools) AS \"schools!: String\",\n ((SELECT coalesce(sum(n),0) FROM schools)-(SELECT coalesce(sum(n),0) FROM top_schools)) AS \"other_schools!: i64\"\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "schools!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "other_schools!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "15c3bb310b128011ba2fc4b448a36ea054f78e3e2c08087b176b2fcbf02f5218"
+}

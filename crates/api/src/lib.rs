@@ -2,8 +2,10 @@
 //! (docs/design.md#桌面端). Input is validated here, when it is deserialized.
 
 mod crawling;
+mod statistics;
 mod tasks;
 use crawling::*;
+use statistics::*;
 use std::collections::BTreeMap;
 use tasks::*;
 
@@ -133,6 +135,9 @@ macro_rules! operations {
 }
 
 operations! {
+    "contactStats" => contact_stats(StatsQuery) -> stats::ContactProgress;
+    "mentorStats" => mentor_stats(Nothing) -> stats::MentorOverview;
+    "tokenStats" => token_stats(StatsPeriod) -> stats::TokenUsage;
     "checkCrawlUrls" => check_crawl_urls(CrawlUrls) -> Vec<String>;
     "crawlWork" => crawl_work(CrawlWorkQuery) -> Vec<crawl::queue::CrawlSummary>;
     "startCrawl" => start_crawl(CrawlStart) -> CrawlId;

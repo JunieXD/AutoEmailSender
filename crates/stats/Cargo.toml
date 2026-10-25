@@ -1,0 +1,24 @@
+[package]
+name = "stats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+chrono-tz = "0.10.4"
+model.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+db.workspace = true
+mentor.workspace = true
+test-fixtures = { path = "../test-fixtures" }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH cohort AS MATERIALIZED (\n SELECT o.mentor_id, o.first_at, o.reply_at FROM mentor_contact_first o JOIN mentor m ON m.id=o.mentor_id\n WHERE m.trashed_at IS NULL AND (?1 IS NULL OR o.first_at>=?1) AND o.first_at<?2\n) , schools AS MATERIALIZED (\n SELECT university, count(*) AS contacted, count(reply_at) AS replied\n FROM (SELECT DISTINCT c.mentor_id,a.university,c.reply_at FROM cohort c\n CROSS JOIN mentor_affiliation a ON a.mentor_id=c.mentor_id WHERE a.university IS NOT NULL) GROUP BY university\n)\nSELECT (SELECT json_group_array(json_object('university',university,'contacted',contacted,'replied',replied))\n    FROM (SELECT * FROM schools ORDER BY contacted DESC, university LIMIT ?3 OFFSET ?4)) AS \"schools!: String\",\n  (SELECT count(*) FROM schools) AS \"school_count!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "schools!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "school_count!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "ca8d5c0eb451bac0a11d42393edcdf12037df9d7bc19dd6a151c7e51d971d3e8"
+}

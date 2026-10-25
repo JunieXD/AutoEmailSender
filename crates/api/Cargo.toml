@@ -20,6 +20,7 @@ material.workspace = true
 model.workspace = true
 profile.workspace = true
 send.workspace = true
+stats.workspace = true
 template.workspace = true
 mentor.workspace = true
 net.workspace = true

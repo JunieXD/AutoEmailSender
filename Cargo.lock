@@ -136,6 +136,7 @@ dependencies = [
  "serde_json",
  "sheet",
  "sqlx",
+ "stats",
  "task",
  "template",
  "tokio",
@@ -5493,6 +5494,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff7589a1859b09232522bb9edf076ca7fcf14ded96685d3fa629db73023ffbb7"
 
 [[package]]
+name = "stats"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "db",
+ "mentor",
+ "model",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "test-fixtures",
+ "tokio",
+ "ts-rs",
+]
+
+[[package]]
 name = "stop-token"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7648,6 +7666,7 @@ dependencies = [
  "serde_json",
  "sheet",
  "sqlx",
+ "stats",
  "task",
  "tokio",
 ]

@@ -13,6 +13,7 @@ api.workspace = true
 crawl.workspace = true
 db.workspace = true
 send.workspace = true
+stats.workspace = true
 fastrand = "2.5.0"
 mentor.workspace = true
 sheet.workspace = true
