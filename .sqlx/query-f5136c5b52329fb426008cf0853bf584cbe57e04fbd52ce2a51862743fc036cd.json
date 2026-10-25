@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id,kind FROM email WHERE id = ? AND task_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f5136c5b52329fb426008cf0853bf584cbe57e04fbd52ce2a51862743fc036cd"
+}

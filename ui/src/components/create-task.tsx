@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Material, NewTask, TemplateSummary, Writer } from "@/api/types";
+import type { Material, NewTask, TemplateSummary, Writer, Kind } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,15 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { ScheduleFields, scheduleValid, useScheduleCapacity } from "@/components/schedule";
 import { day, fileSize } from "@/format";
 
-export function CreateTaskDialog({ ids, onClose }: { ids: number[]; onClose: () => void }) {
+export function CreateTaskDialog({
+  ids,
+  kind = "first",
+  onClose,
+}: {
+  ids: number[];
+  kind?: Kind;
+  onClose: () => void;
+}) {
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
   const templates = useQuery({ queryKey: ["listTemplates"], queryFn: () => call("listTemplates", {}) });
   const models = useQuery({ queryKey: ["listModelConfigs"], queryFn: () => call("listModelConfigs", {}) });
@@ -22,7 +30,7 @@ export function CreateTaskDialog({ ids, onClose }: { ids: number[]; onClose: () 
     return (
       <Dialog open onOpenChange={(open) => !open && onClose()}>
         <DialogContent>
-          <DialogHeader>新建任务</DialogHeader>
+          <DialogHeader>{kind === "follow_up" ? "新建追问任务" : "新建任务"}</DialogHeader>
           <DialogBody>
             <p className="py-4 text-destructive">{errorMessage(error)}</p>
           </DialogBody>
@@ -33,6 +41,7 @@ export function CreateTaskDialog({ ids, onClose }: { ids: number[]; onClose: () 
   return (
     <TaskSteps
       ids={ids}
+      kind={kind}
       materials={materials.data}
       templates={templates.data}
       modelId={models.data.find((m) => m.isDefault)?.id ?? null}
@@ -42,12 +51,14 @@ export function CreateTaskDialog({ ids, onClose }: { ids: number[]; onClose: () 
 }
 function TaskSteps({
   ids,
+  kind,
   materials,
   templates,
   modelId,
   onClose,
 }: {
   ids: number[];
+  kind: Kind;
   materials: Material[];
   templates: TemplateSummary[];
   modelId: number | null;
@@ -56,12 +67,14 @@ function TaskSteps({
   const navigate = useNavigate();
   const client = useQueryClient();
   const [step, setStep] = useState(0);
+  const [openedAt] = useState(() => Date.now());
   const [excluded, setExcluded] = useState<number[]>([]);
   const [form, setForm] = useState<NewTask>(() => {
     const date = new Date();
     return {
+      kind,
       schedule: { kind: "now" },
-      name: `首封 ${date.getMonth() + 1}月${date.getDate()}日`,
+      name: `${kind === "follow_up" ? "追问" : "首封"} ${date.getMonth() + 1}月${date.getDate()}日`,
       ids,
       writer: "ai",
       templateId: null,
@@ -70,7 +83,9 @@ function TaskSteps({
       attachments: materials
         .filter(
           (m, i) =>
-            m.attachByDefault && materials.findIndex((a) => a.attachByDefault && a.fileName === m.fileName) === i,
+            kind === "first" &&
+            m.attachByDefault &&
+            materials.findIndex((a) => a.attachByDefault && a.fileName === m.fileName) === i,
         )
         .map((m) => m.id),
     };
@@ -80,6 +95,7 @@ function TaskSteps({
     queryKey: [
       "planTask",
       requested,
+      kind,
       form.writer,
       form.templateId,
       form.references,
@@ -111,7 +127,7 @@ function TaskSteps({
   return (
     <Dialog open onOpenChange={formClose(true, create.isPending, onClose)}>
       <DialogContent className="w-[620px]">
-        <DialogHeader>新建任务</DialogHeader>
+        <DialogHeader>{kind === "follow_up" ? "新建追问任务" : "新建任务"}</DialogHeader>
         <div className="flex gap-4 px-6 pt-3 pb-2 text-sm phone:px-4">
           {["导师", "撰写方式", "发送"].map((s, i) => (
             <span key={s} className={i === step ? "font-medium text-brand-text" : "text-muted-foreground"}>
@@ -135,7 +151,7 @@ function TaskSteps({
                   </ul>
                 </details>
               )}
-              {contacted.length > 0 && (
+              {kind === "first" && contacted.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 text-warning">
                   <p>其中 {contacted.length} 位联系过</p>
                   <Button
@@ -152,7 +168,13 @@ function TaskSteps({
                   <div key={m.id} className="flex items-center gap-2 rounded-md bg-muted px-3 py-2">
                     <div className="min-w-0 grow">
                       <p>{m.name}</p>
-                      {(m.contactCount > 0 || m.lastContactAt !== null) && (
+                      {m.previous && (
+                        <p className="text-xs text-muted-foreground">
+                          {m.previous.subject ?? "（无主题）"} · 发出{" "}
+                          {Math.max(0, Math.floor((openedAt - m.previous.sentAt) / 86_400_000))} 天
+                        </p>
+                      )}
+                      {kind === "first" && (m.contactCount > 0 || m.lastContactAt !== null) && (
                         <p className="text-xs text-warning">
                           联系 {m.contactCount} 次{m.lastContactAt !== null && `，最近 ${day(m.lastContactAt)}`}
                         </p>
@@ -202,6 +224,11 @@ function TaskSteps({
                   ))}
                 </NativeSelect>
               </Field>
+              {kind === "follow_up" && (
+                <p className="text-muted-foreground">
+                  主题沿用上一封。AI 会把之前发出的信的主题和正文发给所选模型，用于撰写简短追问；选模板时只使用正文。
+                </p>
+              )}
               <fieldset className="space-y-2">
                 <legend className="mb-2 text-muted-foreground">参考材料</legend>
                 {materials

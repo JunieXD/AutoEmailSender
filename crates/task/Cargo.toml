@@ -32,5 +32,6 @@ db.workspace = true
 fakemail.workspace = true
 mailbox.workspace = true
 matching.workspace = true
+receive = { path = "../receive" }
 send.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }

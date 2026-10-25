@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET\n             state = CASE WHEN state IN ('sending', 'maybe_sent') THEN state ELSE 'canceled' END,\n             planned_at = CASE WHEN state IN ('sending', 'maybe_sent') THEN planned_at END,\n             latest_at = NULL, cancel_reason = coalesce(cancel_reason, ?1),\n             error = CASE WHEN state IN ('sending', 'maybe_sent') THEN error END,\n             generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ?2\n           WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4))\n               OR mentor_id IN (SELECT value FROM json_each(?5))\n               OR (mentor_id = ?6 AND kind = 'follow_up'\n                 AND (?7 IS NULL OR reply_to = ?7\n                   OR EXISTS (SELECT 1 FROM email parent\n                     WHERE parent.mentor_id = email.mentor_id\n                       AND (parent.message_id = ?7 OR parent.copy_message_id = ?7)\n                       AND (parent.message_id = email.reply_to\n                         OR parent.copy_message_id = email.reply_to)))))\n             AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending',\n               'maybe_sent', 'failed')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "31fdb4211e45e715545e1fbc2660f251365537207dfe4cf16831eb9adce45178"
+}

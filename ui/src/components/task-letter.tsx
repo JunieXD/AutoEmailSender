@@ -24,6 +24,7 @@ import {
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { day, time } from "@/format";
 import { letterHtml, letterText } from "@/letter";
 
 export type TaskComposerHandle = ComposerHandle & { replace: (draft: TaskDraft) => void };
@@ -160,13 +161,20 @@ export function TaskLetter({
     <div className="flex flex-col gap-3 px-5 py-4 phone:px-3">
       {review && !readOnly && <Rewrite {...review} />}
       <div className={review && !readOnly ? "hidden" : "flex flex-col gap-2"}>
-        <Input
-          aria-label="主题"
-          placeholder="主题"
-          value={letter.subject}
-          disabled={locked}
-          onChange={(e) => edit({ ...letter, subject: e.target.value })}
-        />
+        {task.kind === "follow_up" ? (
+          <div className="min-w-0">
+            <p className="break-words text-sm font-medium">{letter.subject || "（无主题）"}</p>
+            <p className="text-xs text-muted-foreground">主题自动沿用上一封</p>
+          </div>
+        ) : (
+          <Input
+            aria-label="主题"
+            placeholder="主题"
+            value={letter.subject}
+            disabled={locked}
+            onChange={(e) => edit({ ...letter, subject: e.target.value })}
+          />
+        )}
         <LazyLetterEditor
           key={body.version}
           id={`task-letter-${draft.id}`}
@@ -177,6 +185,16 @@ export function TaskLetter({
           onChange={(bodyMd) => edit({ ...letter, bodyMd })}
         />
       </div>
+      {draft.previous && (
+        <details className="rounded-lg bg-muted p-3 text-sm">
+          <summary className="cursor-pointer">
+            上一封 · {draft.previous.subject ?? "（无主题）"} · {day(draft.previous.sentAt)}{" "}
+            {time(draft.previous.sentAt)}
+          </summary>
+          <p className="mt-2 break-words text-xs text-muted-foreground">{draft.previous.attribution}</p>
+          <p className="mt-2 whitespace-pre-wrap break-words">{draft.previous.bodyText}</p>
+        </details>
+      )}
       <Attachments
         files={attached}
         onRemove={

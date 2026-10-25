@@ -122,7 +122,7 @@ export function TasksPage() {
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="px-7 pt-6 pb-5 phone:px-4">
         <h1 className="text-2xl font-semibold">任务</h1>
-        <p className="mt-1 text-sm text-muted-foreground">审核首封草稿，批准后依次发出</p>
+        <p className="mt-1 text-sm text-muted-foreground">审核邮件草稿，批准后依次发出</p>
       </header>
       <div className="mb-4 flex gap-2 px-7 phone:px-4" role="tablist" aria-label="任务页面">
         <Button
@@ -150,7 +150,7 @@ export function TasksPage() {
             {query.error ? (
               <Notice title="任务列表未能加载" detail={errorMessage(query.error)} />
             ) : query.data?.total === 0 ? (
-              <Notice title="尚未创建任务" detail="在导师列表勾选多位导师，按“写信”创建任务。" />
+              <Notice title="尚未创建任务" detail="在导师列表勾选导师，按“写信”或“追问”创建任务。" />
             ) : (
               query.data?.tasks.map((t) => (
                 <Link
@@ -597,7 +597,11 @@ function DraftDetail({
                       {task.writer === "ai" ? "重新生成" : "重新套用模板"}
                     </Button>
                   }
-                  message="替换当前这封的主题和正文？修改过的内容将被替换，仍需重新审核。"
+                  message={
+                    task.kind === "follow_up"
+                      ? "替换当前这封的正文？修改过的内容将被替换，仍需重新审核。"
+                      : "替换当前这封的主题和正文？修改过的内容将被替换，仍需重新审核。"
+                  }
                   action="替换"
                   onConfirm={() => action.mutate(task.writer === "ai" ? "regenerateTaskEmail" : "reapplyTaskTemplate")}
                 />
@@ -640,6 +644,11 @@ function DraftDetail({
             <p className="w-full text-sm text-warning">
               已取消：{d.cancelReason}
               {d.state !== "canceled" && "，等待发送结果。"}
+              {task.kind === "follow_up" && ["导师已回信", "上一封被退回"].includes(d.cancelReason) && (
+                <Link to="/mentors/$mentorId" params={{ mentorId: mentor.id }} className="ml-3 text-brand-text">
+                  去回复
+                </Link>
+              )}
             </p>
           )}
           {d.error && d.state !== "generation_failed" && <p className="w-full text-sm text-warning">{d.error}</p>}

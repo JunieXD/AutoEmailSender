@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT kind,model_config_id FROM task WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "kind",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "model_config_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "model_config_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "af97d3a9b3f38f8a6f2adf3f102ca080a582a842dcaa16326d2bcf78cf505bf8"
+}

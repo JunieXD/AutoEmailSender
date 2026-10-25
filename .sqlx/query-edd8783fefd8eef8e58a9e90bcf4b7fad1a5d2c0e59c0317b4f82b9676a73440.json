@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET subject = CASE WHEN kind = 'first' THEN ? ELSE subject END, body_md = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "edd8783fefd8eef8e58a9e90bcf4b7fad1a5d2c0e59c0317b4f82b9676a73440"
+}

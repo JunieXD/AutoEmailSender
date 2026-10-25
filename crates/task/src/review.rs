@@ -30,6 +30,7 @@ pub struct TaskSummary {
     pub id: i64,
     pub name: String,
     pub writer: Writer,
+    pub kind: Kind,
     pub state: TaskState,
     pub created_at: i64,
     pub pause_reason: Option<String>,
@@ -83,7 +84,7 @@ async fn list_page(
         .fetch_one(&mut *tx)
         .await?;
     let offset = i64::from(page.get() - 1) * 20;
-    let rows = sqlx::query!(r#"SELECT id,name,writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task ORDER BY id DESC LIMIT ? OFFSET ?"#,limit,offset).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query!(r#"SELECT id,name,kind AS "kind: Kind",writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task ORDER BY id DESC LIMIT ? OFFSET ?"#,limit,offset).fetch_all(&mut *tx).await?;
     let ids = rows.iter().map(|t| t.id).collect::<Vec<_>>();
     let mut counts = counts(&mut tx, &ids).await?;
     let mut tasks = Vec::new();
@@ -94,6 +95,7 @@ async fn list_page(
             id: r.id,
             name: r.name,
             writer: r.writer,
+            kind: r.kind,
             state,
             created_at: r.created_at,
             pause_reason: r.generation_pause_reason,
@@ -140,7 +142,7 @@ pub async fn get(
     id: i64,
 ) -> std::result::Result<Option<TaskSummary>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(r) = sqlx::query!(r#"SELECT id,name,writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task WHERE id = ?"#,id).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    let Some(r) = sqlx::query!(r#"SELECT id,name,kind AS "kind: Kind",writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task WHERE id = ?"#,id).fetch_optional(&mut *tx).await? else { return Ok(None); };
     let progress = counts(&mut tx, &[id])
         .await?
         .remove(&id)
@@ -149,6 +151,7 @@ pub async fn get(
         id: r.id,
         name: r.name,
         writer: r.writer,
+        kind: r.kind,
         state: state(&r.state, r.generation_paused_at.is_some(), &progress),
         created_at: r.created_at,
         pause_reason: r.generation_pause_reason,
@@ -262,6 +265,7 @@ struct ReviewRow {
     name: String,
     state: DraftState,
     subject: Option<String>,
+    kind: Kind,
     body_md: Option<String>,
     aliases: Json<Vec<String>>,
     attachments: Json<Vec<i64>>,
@@ -275,7 +279,7 @@ async fn review_rows(
     limit: i64,
     offset: i64,
 ) -> std::result::Result<Vec<ReviewRow>, sqlx::Error> {
-    sqlx::query_as!(ReviewRow, r#"SELECT e.id,e.mentor_id,m.name,e.state AS "state: DraftState",e.subject,e.body_md,
+    sqlx::query_as!(ReviewRow, r#"SELECT e.id,e.mentor_id,m.name,e.kind AS "kind: Kind",e.state AS "state: DraftState",e.subject,e.body_md,
         (SELECT json_group_array(name) FROM mentor_alias WHERE mentor_id = m.id) AS "aliases!: Json<Vec<String>>",
         (SELECT json_group_array(material_id) FROM email_attachment WHERE email_id = e.id AND material_id IS NOT NULL) AS "attachments!: Json<Vec<i64>>",
         c.contact_count,c.last_out_at
@@ -287,7 +291,11 @@ fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
         return vec![];
     }
     let (subject, body) = (
-        r.subject.as_deref().unwrap_or_default(),
+        if r.kind == Kind::FollowUp {
+            ""
+        } else {
+            r.subject.as_deref().unwrap_or_default()
+        },
         r.body_md.as_deref().unwrap_or_default(),
     );
     let mut p = check::letter(
@@ -300,7 +308,9 @@ fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
     p.extend(check::other_mentors(
         &r.name, &r.aliases, names, subject, body,
     ));
-    recent(&mut p, r.contact_count, r.last_out_at, now);
+    if r.kind == Kind::First {
+        recent(&mut p, r.contact_count, r.last_out_at, now);
+    }
     p
 }
 fn recent(problems: &mut Vec<check::Problem>, count: Option<i64>, last: Option<i64>, now: i64) {
@@ -332,6 +342,16 @@ pub struct TaskDraft {
     pub cancel_reason: Option<String>,
     pub planned_at: Option<i64>,
     pub latest_at: Option<i64>,
+    pub previous: Option<PreviousPreview>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousPreview {
+    pub subject: Option<String>,
+    pub sent_at: i64,
+    pub attribution: String,
+    pub body_text: Option<String>,
 }
 pub async fn draft(
     db: &SqlitePool,
@@ -341,7 +361,7 @@ pub async fn draft(
     let Some(r) = sqlx::query!(
         r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String", coalesce(body_md,
              '') AS "body_md!: String", state AS "state: DraftState", error, cancel_reason, planned_at,
-             latest_at
+             latest_at, kind AS "kind: Kind", reply_to
            FROM email
            WHERE id = ?
              AND task_id = ?"#,
@@ -353,7 +373,23 @@ pub async fn draft(
     else {
         return Ok(None);
     };
+    let previous = if r.kind == Kind::FollowUp {
+        email::thread::previous(&mut tx, r.mentor_id, r.reply_to.as_deref(), true)
+            .await?
+            .map(|p| {
+                Ok::<_, sqlx::Error>(PreviousPreview {
+                    attribution: p.attribution(&chrono::Local)?,
+                    subject: p.subject,
+                    sent_at: p.sent_at,
+                    body_text: p.body_text,
+                })
+            })
+            .transpose()?
+    } else {
+        None
+    };
     Ok(Some(TaskDraft {
+        previous,
         id: r.id,
         mentor_id: r.mentor_id,
         subject: r.subject,
@@ -397,21 +433,25 @@ pub async fn save(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<()> {
 }
 pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<check::Problem>> {
     let mut tx = db.begin().await?;
-    let id = sqlx::query_scalar!(
-        "SELECT mentor_id FROM email WHERE id = ? AND task_id = ?",
+    let row = sqlx::query!(
+        "SELECT mentor_id,kind FROM email WHERE id = ? AND task_id = ?",
         edit.id,
         edit.task_id
     )
     .fetch_one(&mut *tx)
     .await?;
-    let m = mentor::detail(&mut tx, id)
+    let m = mentor::detail(&mut tx, row.mentor_id)
         .await?
         .ok_or_else(|| Error::Invalid("导师已被删除。".into()))?;
     let names = other_names(&mut tx, edit.task_id).await?;
     let mut p = check::letter(
         &m.name,
         &m.aliases,
-        &edit.subject,
+        if row.kind == "follow_up" {
+            ""
+        } else {
+            &edit.subject
+        },
         &edit.body_md,
         !edit.attachments.is_empty(),
     );
@@ -419,16 +459,20 @@ pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<ch
         &m.name,
         &m.aliases,
         &names,
-        &edit.subject,
+        if row.kind == "follow_up" {
+            ""
+        } else {
+            &edit.subject
+        },
         &edit.body_md,
     ));
     let c = sqlx::query!(
         "SELECT contact_count,last_out_at FROM mentor_contact WHERE mentor_id = ?",
-        id
+        row.mentor_id
     )
     .fetch_optional(&mut *tx)
     .await?;
-    if let Some(c) = c {
+    if let Some(c) = c.filter(|_| row.kind == "first") {
         recent(&mut p, Some(c.contact_count), c.last_out_at, now);
     }
     Ok(p)
@@ -529,7 +573,10 @@ pub async fn approve_in_zone<T: chrono::TimeZone>(
     now: i64,
     zone: &T,
     random: &mut impl FnMut(i64) -> i64,
-) -> Result<u64> {
+) -> Result<u64>
+where
+    T::Offset: std::fmt::Display,
+{
     let mut tx = db.begin().await?;
     // First statement takes a write lock. Approval always uses the latest human draft.
     sqlx::query!("UPDATE task SET name = name WHERE id = ?", request.task_id)
@@ -538,7 +585,7 @@ pub async fn approve_in_zone<T: chrono::TimeZone>(
     let mut approved = 0;
     for r in &request.emails {
         let current = sqlx::query!(
-            "SELECT subject,body_md,state FROM email WHERE id = ? AND task_id = ?",
+            "SELECT mentor_id,kind,reply_to,subject,body_md,state FROM email WHERE id = ? AND task_id = ?",
             r.id,
             request.task_id
         )
@@ -559,7 +606,22 @@ pub async fn approve_in_zone<T: chrono::TimeZone>(
         if attached != expected {
             return Err(Error::Invalid("附件刚被修改，请重新核对后批准。".into()));
         }
-        if emails::approve(&mut tx, request.task_id, r.id, &r.html, &r.text, now).await? {
+        let (html, text) = if current.kind == "follow_up" {
+            let parent = email::thread::previous(
+                &mut tx,
+                current.mentor_id,
+                current.reply_to.as_deref(),
+                true,
+            )
+            .await?
+            .ok_or_else(|| Error::Invalid("上一封已不在往来里，请移出任务后重新创建。".into()))?;
+            let frozen =
+                email::thread::freeze(&mut tx, r.id, &parent, &r.html, &r.text, zone).await?;
+            (frozen.html, frozen.text)
+        } else {
+            (r.html.clone(), r.text.clone())
+        };
+        if emails::approve(&mut tx, request.task_id, r.id, &html, &text, now).await? {
             email::schedule::assign(&mut tx, r.id, request.task_id, now, zone, random).await?;
             approved += 1;
         }
@@ -666,6 +728,7 @@ pub async fn pending(
                     cancel_reason: None,
                     planned_at: None,
                     latest_at: None,
+                    previous: None,
                 },
                 problems: count,
             }

@@ -74,7 +74,7 @@ pub async fn write_task_draft(
     edit: task::DraftEdit,
 ) -> Result<writing::Letter, CallError> {
     let t = sqlx::query!(
-        "SELECT model_config_id FROM task WHERE id = ?",
+        "SELECT kind,model_config_id FROM task WHERE id = ?",
         edit.task_id
     )
     .fetch_one(&ctx.db)
@@ -97,8 +97,13 @@ pub async fn write_task_draft(
     .fetch_all(&ctx.db)
     .await?;
     let refs = task::references(&mut *ctx.db.acquire().await?, &ids).await?;
+    let previous = if t.kind == "follow_up" {
+        Some(task::history(&mut *ctx.db.acquire().await?, d.mentor_id).await?)
+    } else {
+        None
+    };
     let _permit = ctx.model_limit.acquire().await;
-    Ok(writing::write(
+    let mut letter = writing::write(
         &ctx.db,
         &ctx.net,
         d.mentor_id,
@@ -111,9 +116,14 @@ pub async fn write_task_draft(
         writing::Basis {
             chosen: &chosen,
             references: &refs,
+            previous: previous.as_deref(),
         },
     )
-    .await?)
+    .await?;
+    if t.kind == "follow_up" {
+        letter.subject = d.subject;
+    }
+    Ok(letter)
 }
 pub async fn prepare_task_approval(
     ctx: &Context,

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,'first','ai','now','active',?) RETURNING id AS \"id!\"",
+  "query": "INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,?,'ai','now','active',?) RETURNING id AS \"id!\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 3
     },
     "nullable": [
       false
     ]
   },
-  "hash": "5f12fb4af549a8012c152621f909b7cfda106e6bbeba99547fce2237e5b7bb82"
+  "hash": "3f752bbfd5daa40f846e43c976c28adbe3f1985cffb2f8057c77119025691543"
 }
