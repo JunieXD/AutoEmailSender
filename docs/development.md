@@ -47,7 +47,7 @@
 | `pnpm sqlx` | 改了 SQL 或迁移后，重新生成 `.sqlx` 里的查询元数据 |
 | `cargo xtask types` | 改了操作或它们的类型后，重新生成 `ui/src/api/types.ts` |
 | `cargo xtask bench` | 按[性能预算](data-model.md#性能)的规模测高频查询 |
-| `pnpm --dir ui icons` | 从 `docs/icon.svg` 重新生成应用图标 |
+| `pnpm --dir ui icons` | 从 `docs/icon.svg` 和 `docs/tray.svg` 重新生成应用图标和托盘图标 |
 | `pnpm package` | 打包安装包 |
 
 - 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
