@@ -5,7 +5,6 @@ mod logs;
 mod save;
 
 use std::error::Error;
-use std::fs::{File, TryLockError};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -123,27 +122,16 @@ fn main() -> tauri::Result<()> {
         .run(tauri::generate_context!())
 }
 
-/// Holds the data directory for the life of the process.
-struct InstanceLock(#[expect(dead_code, reason = "only kept open")] File);
-
 /// Opens the data directory, the logs and the database.
 async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
     let dir = data_dir(app).map_err(|e| StartupError::DataDir(e.into()))?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| StartupError::DataDir(format!("{}: {e}", dir.display()).into()))?;
-    // The single-instance plugin can miss a second copy launched at the same moment, and two
-    // copies sharing the database could send the same mail twice.
-    let lock = File::options()
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(dir.join("app.lock"))
-        .map_err(|e| StartupError::DataDir(e.into()))?;
-    match lock.try_lock() {
-        Ok(()) => app.manage(InstanceLock(lock)),
-        Err(TryLockError::WouldBlock) => std::process::exit(0),
-        Err(TryLockError::Error(e)) => return Err(StartupError::DataDir(e.into())),
+    let lock = match api::startup::DataLock::acquire(&dir) {
+        Ok(lock) => lock,
+        // The single-instance plugin can miss simultaneous launches.
+        Err(api::startup::Error::InUse) => std::process::exit(0),
+        Err(e) => return Err(StartupError::Core(e)),
     };
+    app.manage(lock);
     logs::init(&dir.join("logs")).map_err(StartupError::Logs)?;
     tracing::info!(
         "starting {} on {} {}",
@@ -151,19 +139,24 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let db = db::open(&dir.join("app.db"))
-        .await
-        .map_err(StartupError::Database)?;
-    let net = net::Net::new(Vec::new()).map_err(StartupError::Net)?;
-    let materials = dir.join("materials");
-    let sender = send::Sender::default();
+    let ctx = api::startup::open(&dir).await.map_err(StartupError::Core)?;
+    let api::Context {
+        db,
+        net,
+        materials,
+        sender,
+        receiver,
+        matcher,
+        crawler,
+        generator,
+        model_limit,
+    } = &ctx;
     tauri::async_runtime::spawn(send::run(
         db.clone(),
         net.clone(),
         materials.clone(),
         sender.clone(),
     ));
-    let receiver = receive::Receiver::default();
     let ui = app.clone();
     let notifications_db = db.clone();
     tauri::async_runtime::spawn(receive::run(
@@ -186,8 +179,6 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             }
         },
     ));
-    let model_limit = model::background::Limit::default();
-    let matcher = matching::Matcher::default();
     let (ui, done_ui) = (app.clone(), app.clone());
     let matching_notifications_db = db.clone();
     tauri::async_runtime::spawn(matching::run(
@@ -210,7 +201,6 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
-    let generator = task::generation::Generator::default();
     let (ui, done_ui) = (app.clone(), app.clone());
     let drafts_db = db.clone();
     tauri::async_runtime::spawn(task::generation::run(
@@ -232,7 +222,6 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
-    let crawler = crawl::runner::Crawler::default();
     let (ui, done_ui, crawl_db) = (app.clone(), app.clone(), db.clone());
     tauri::async_runtime::spawn(crawl::runner::run(
         db.clone(),
@@ -253,17 +242,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
-    Ok(api::Context {
-        crawler,
-        db,
-        net,
-        sender,
-        receiver,
-        matcher,
-        generator,
-        model_limit,
-        materials,
-    })
+    Ok(ctx)
 }
 
 async fn finish_crawl(
@@ -372,8 +351,7 @@ async fn notify_replies(
 enum StartupError {
     DataDir(Box<dyn Error>),
     Logs(Box<dyn Error>),
-    Database(db::OpenError),
-    Net(Box<dyn Error + Send + Sync>),
+    Core(api::startup::Error),
 }
 
 impl std::fmt::Display for StartupError {
@@ -381,8 +359,7 @@ impl std::fmt::Display for StartupError {
         match self {
             StartupError::DataDir(e) => write!(f, "data directory: {e}"),
             StartupError::Logs(e) => write!(f, "logs: {e}"),
-            StartupError::Database(e) => write!(f, "{e}"),
-            StartupError::Net(e) => write!(f, "network: {e}"),
+            StartupError::Core(e) => write!(f, "{e}"),
         }
     }
 }
@@ -390,26 +367,10 @@ impl std::fmt::Display for StartupError {
 impl StartupError {
     /// What the user reads: what happened, and what was kept safe.
     fn message(&self) -> String {
-        use db::OpenError;
         match self {
             StartupError::DataDir(e) => format!("数据目录无法使用：{e}"),
             StartupError::Logs(e) => format!("日志无法写入：{e}"),
-            StartupError::Net(e) => format!("网络连接无法初始化：{e}"),
-            StartupError::Database(OpenError::Open(e)) => format!("数据库无法打开：{e}"),
-            StartupError::Database(OpenError::Backup(e)) => {
-                format!("升级数据库前未能备份，为保护数据未做升级：{e}")
-            }
-            StartupError::Database(OpenError::Upgrade {
-                error,
-                backup: Some(path),
-            }) => format!(
-                "数据库升级失败：{error}。升级前的数据库已备份到 {}。",
-                path.display()
-            ),
-            StartupError::Database(OpenError::Upgrade {
-                error,
-                backup: None,
-            }) => format!("数据库创建失败：{error}"),
+            StartupError::Core(e) => e.message(),
         }
     }
 }
