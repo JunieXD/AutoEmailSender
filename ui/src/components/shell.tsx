@@ -1,9 +1,9 @@
-import { refreshCrawls, findSearch } from "@/pages/find";
+import { crawlName, refreshCrawls, findSearch } from "@/pages/find";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search, ChartNoAxesColumn } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
 import { call, errorMessage } from "@/api/call";
@@ -12,6 +12,7 @@ import type { MatchFinished, DraftsFinished, CrawlFinished } from "@/api/types";
 import { refreshTasks } from "@/pages/tasks";
 import { scheduledAt } from "@/components/schedule";
 import { refreshMentors } from "@/components/mentor";
+import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
 
@@ -122,6 +123,7 @@ export function Shell() {
             <span className="flex items-center gap-1">
               {label}
               {to === "/conversations" && <UnreadBadge />}
+              {to === "/more" && <WaitingDot />}
             </span>
           </Link>
         ))}
@@ -159,8 +161,8 @@ function UnreadBadge({ className }: { className?: string }) {
   );
 }
 
-function Background() {
-  const queryClient = useQueryClient();
+/** What runs in the background and what of it waits for the user (docs/ui.md#后台). */
+function useBackground() {
   const tasks = useQuery({
     queryKey: ["taskWork"],
     queryFn: () => call("taskWork", {}),
@@ -181,132 +183,175 @@ function Background() {
     },
     refetchInterval: 3000,
   });
-  const today = new Date(crawls.dataUpdatedAt).toDateString();
-  const pauseCrawl = useMutation({
-    mutationFn: (id: number) => call("pauseCrawl", { id }),
-    onSuccess: () => refreshCrawls(queryClient),
-  });
-  const crawling = crawls.data?.filter((c) => c.state === "running") ?? [];
-  const crawlPending = crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [];
   const scheduled = useQuery({
     queryKey: ["scheduledWork"],
     queryFn: () => call("scheduledWork", {}),
     refetchInterval: 3000,
   });
-  const attention = (scheduled.data?.pending ?? 0) + pendingTasks();
-  function pendingTasks() {
-    return tasks.data?.filter((t) => t.state === "paused").length ?? 0;
-  }
-  const active = tasks.data?.filter((t) => t.progress.generating > 0) ?? [];
-  const pending =
-    tasks.data?.filter((t) => t.state === "paused" || t.progress.generationFailed > 0 || t.progress.failed > 0) ?? [];
-  const count = crawling.length + active.length + (matching.data && matching.data.remaining > 0 ? 1 : 0);
+  const today = new Date(crawls.dataUpdatedAt).toDateString();
+  const work = {
+    // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
+    emails: scheduled.data?.pending ?? 0,
+    paused: tasks.data?.filter((t) => t.state === "paused") ?? [],
+    crawlsPending: crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [],
+    crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
+    generating: tasks.data?.filter((t) => t.progress.generating > 0) ?? [],
+    matching: matching.data?.remaining ?? 0,
+    crawled:
+      crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
+    next: scheduled.data?.nextAt ?? null,
+    nextToday: scheduled.data?.today ?? 0,
+    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error,
+  };
+  return {
+    ...work,
+    running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0),
+    waiting: (work.emails > 0 ? 1 : 0) + work.paused.length + work.crawlsPending.length,
+  };
+}
+
+/** On a phone the background panel is under "更多", and the tab lights up when something waits. */
+function WaitingDot() {
+  const { waiting } = useBackground();
+  return (
+    waiting > 0 && (
+      <span role="status" aria-label={`${waiting} 项待处理`} className="size-1.5 rounded-full bg-warning" />
+    )
+  );
+}
+
+function Background({ className }: { className?: string }) {
+  const queryClient = useQueryClient();
+  const work = useBackground();
+  const pauseCrawl = useMutation({
+    mutationFn: (id: number) => call("pauseCrawl", { id }),
+    onSuccess: () => refreshCrawls(queryClient),
+  });
+  const error = work.error ?? pauseCrawl.error;
   return (
     <Popover>
       <PopoverTrigger
         render={
           <button
-            className={`mb-1 flex h-10 items-center gap-2 rounded-md px-3 text-sm text-muted-foreground hover:bg-press `}
+            className={cn(
+              "mb-0.5 flex h-10 items-center gap-3 rounded-md px-3 text-muted-foreground hover:bg-press",
+              className,
+            )}
           />
         }
       >
-        <LoaderCircle className={`size-4 ${count > 0 ? "animate-spin" : ""}`} />
-        后台{count > 0 && <span>{count}</span>}
-        {attention + crawlPending.length > 0 && <span className="text-warning">{attention + crawlPending.length}</span>}
+        <LoaderCircle className={cn("size-[18px]", work.running > 0 && "animate-spin")} strokeWidth={1.6} />
+        后台
+        {work.waiting > 0 && (
+          <span
+            title={`${work.waiting} 项待处理`}
+            className="ml-auto min-w-5 rounded-full bg-warning-soft px-1.5 text-center text-xs leading-5 text-warning"
+          >
+            {work.waiting}
+          </span>
+        )}
       </PopoverTrigger>
-      <PopoverContent side="top" align="start" className="max-h-96 w-80 space-y-3 overflow-y-auto p-4 text-sm">
-        <h2 className="font-medium">后台工作</h2>
-        {attention > 0 && (
-          <div>
-            <h3 className="mb-2 text-warning">待处理</h3>
-            {(scheduled.data?.pending ?? 0) > 0 && (
-              <Link to="/tasks" search={{ tab: "plan" }} className="block py-2">
-                {scheduled.data?.pending} 封邮件待处理
+      <PopoverContent side="top" align="start" className="max-h-96 w-80 space-y-4 overflow-y-auto p-4 text-sm">
+        {work.waiting > 0 && (
+          <Group title="待处理" className="text-warning">
+            {work.emails > 0 && (
+              <Link to="/tasks" search={{ tab: "plan" }} className={ITEM}>
+                <Entry title={`${work.emails} 封邮件待处理`} detail="去发送计划里处理" />
               </Link>
             )}
-            {pending.map((t) => (
-              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className="block py-2">
-                {t.name}
-                <span className="block text-xs text-muted-foreground">
-                  {t.pauseReason ?? `${t.progress.generationFailed} 封生成失败，${t.progress.failed} 封发送失败`}
-                </span>
+            {work.paused.map((t) => (
+              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
+                <Entry title={t.name} detail={t.pauseReason ?? "已暂停"} />
               </Link>
             ))}
-          </div>
-        )}
-        {crawlPending.length > 0 && (
-          <div>
-            <h3 className="text-warning">抓取待处理</h3>
-            {crawlPending.map((c) => (
-              <Link key={c.id} to="/find" search={findSearch({ tab: "crawl", detail: c.id })} className="block py-2">
-                抓取 #{c.id} · {c.error ?? `${c.failed} 个页面未打开`}
+            {work.crawlsPending.map((c) => (
+              <Link key={c.id} to="/find" search={findSearch({ tab: "crawl", detail: c.id })} className={ITEM}>
+                <Entry
+                  title={crawlName(c)}
+                  detail={c.error ?? (c.state === "paused" ? "已暂停" : `${c.failed} 个页面没能打开`)}
+                />
               </Link>
             ))}
-          </div>
+          </Group>
         )}
-        {crawling.length > 0 && (
-          <div>
-            <h3 className="text-muted-foreground">智能抓取</h3>
-            {crawling.map((c) => (
-              <div key={c.id} className="py-2">
-                <Link to="/find" search={findSearch({ tab: "crawl", detail: c.id })}>
-                  {c.stage === "enrich"
-                    ? `信息补全 · 还剩 ${c.enrichRemaining} 位`
-                    : `抓取 #${c.id} · 已读 ${c.pages} 页，${c.candidates} 位候选${c.enrichRemaining > 0 ? ` · 信息补全还剩 ${c.enrichRemaining} 位` : ""}`}
+        {work.running > 0 && (
+          <Group title="进行中">
+            {work.crawling.map((c) => (
+              <div key={c.id} className="flex items-center gap-2">
+                <Link to="/find" search={findSearch({ tab: "crawl", detail: c.id })} className={ITEM}>
+                  {c.stage === "enrich" ? (
+                    <Entry title="信息补全" detail={`还剩 ${c.enrichRemaining} 位`} />
+                  ) : (
+                    <Entry
+                      title={crawlName(c)}
+                      detail={`已读 ${c.pages} 页，找到 ${c.candidates} 位候选${c.enrichRemaining > 0 ? `，补全还剩 ${c.enrichRemaining} 位` : ""}`}
+                    />
+                  )}
                 </Link>
-                <button className="ml-2 text-brand-text" onClick={() => pauseCrawl.mutate(c.id)}>
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  disabled={pauseCrawl.isPending}
+                  onClick={() => pauseCrawl.mutate(c.id)}
+                >
                   暂停
-                </button>
+                </Button>
               </div>
             ))}
-          </div>
-        )}
-        {crawls.data?.some((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) && (
-          <div>
-            <h3 className="text-muted-foreground">今天完成</h3>
-            {crawls.data
-              .filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today)
-              .map((c) => (
-                <Link key={c.id} to="/find" search={findSearch({ crawl: c.id })} className="block py-2">
-                  抓取 #{c.id} · {c.candidates} 位候选，去审核
-                </Link>
-              ))}
-          </div>
-        )}
-        {active.length > 0 && (
-          <div>
-            <h3 className="text-muted-foreground">生成草稿</h3>
-            {active.map((t) => (
-              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className="block py-2">
-                {t.name} · 还剩 {t.progress.generating} 封
+            {work.generating.map((t) => (
+              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
+                <Entry title={t.name} detail={`生成草稿，还剩 ${t.progress.generating} 封`} />
               </Link>
             ))}
-          </div>
+            {work.matching > 0 && (
+              <Link to="/mentors" className={ITEM}>
+                <Entry title="匹配度分析" detail={`还剩 ${work.matching} 位`} />
+              </Link>
+            )}
+          </Group>
         )}
-        {matching.data && matching.data.remaining > 0 && (
-          <Link to="/mentors" className="block">
-            匹配分析 · 还剩 {matching.data.remaining} 位
-          </Link>
-        )}
-        {scheduled.data?.nextAt !== null && scheduled.data?.nextAt !== undefined && (
-          <div>
-            <h3 className="text-muted-foreground">按计划进行</h3>
-            <Link to="/tasks" search={{ tab: "plan", column: "upcoming" }} className="block py-2">
-              下一封 {scheduledAt(scheduled.data.nextAt)}
-              <span className="block text-xs text-muted-foreground">今天还剩 {scheduled.data.today} 封</span>
+        {work.next !== null && (
+          <Group title="按计划进行">
+            <Link to="/tasks" search={{ tab: "plan", column: "upcoming" }} className={ITEM}>
+              <Entry title={`下一封 ${scheduledAt(work.next)}`} detail={`今天还剩 ${work.nextToday} 封`} />
             </Link>
-          </div>
+          </Group>
         )}
-        {count === 0 && attention === 0 && crawlPending.length === 0 && !scheduled.data?.nextAt && (
-          <p className="text-muted-foreground">当前没有后台工作</p>
+        {work.crawled.length > 0 && (
+          <Group title="今天完成">
+            {work.crawled.map((c) => (
+              <Link key={c.id} to="/find" search={findSearch({ crawl: c.id })} className={ITEM}>
+                <Entry title={crawlName(c)} detail={`找到 ${c.candidates} 位候选，去审核`} />
+              </Link>
+            ))}
+          </Group>
         )}
-        {(tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? pauseCrawl.error) && (
-          <p className="text-destructive">
-            {errorMessage(tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? pauseCrawl.error)}
-          </p>
+        {work.waiting === 0 && work.running === 0 && work.next === null && work.crawled.length === 0 && (
+          <p className="text-muted-foreground">现在没有后台工作</p>
         )}
+        {error && <p className="text-destructive">{errorMessage(error)}</p>}
       </PopoverContent>
     </Popover>
+  );
+}
+
+function Group({ title, className, children }: { title: string; className?: string; children: ReactNode }) {
+  return (
+    <section>
+      <h2 className={cn("mb-1 text-xs font-medium text-muted-foreground", className)}>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+const ITEM = "-mx-2 block min-w-0 grow rounded-md px-2 py-1.5 hover:bg-press";
+
+function Entry({ title, detail }: { title: string; detail: string }) {
+  return (
+    <>
+      <span className="block truncate">{title}</span>
+      <span className="block text-xs text-muted-foreground">{detail}</span>
+    </>
   );
 }
 
@@ -326,7 +371,7 @@ export function MorePage() {
         <Settings className="size-5" />
         设置
       </Link>
-      <Background />
+      <Background className="h-12 w-full rounded-md bg-muted px-4 text-foreground [&>svg]:size-5" />
     </div>
   );
 }

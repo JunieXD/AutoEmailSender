@@ -292,7 +292,13 @@ pub struct CrawlOption {
 pub async fn options(db: &SqlitePool) -> Result<Vec<CrawlOption>, sqlx::Error> {
     sqlx::query_as!(CrawlOption, r#"SELECT id,json_extract(start_urls,'$[0]') AS "url: String",created_at FROM crawl ORDER BY created_at DESC,id DESC"#).fetch_all(db).await
 }
-pub async fn list(db: &SqlitePool, page: u32) -> Result<Vec<CrawlSummary>, sqlx::Error> {
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CrawlList {
+    pub crawls: Vec<CrawlSummary>,
+    pub total: i64,
+}
+pub async fn list(db: &SqlitePool, page: u32) -> Result<CrawlList, sqlx::Error> {
     let mut tx = db.begin().await?;
     let offset = i64::from(page.saturating_sub(1)) * 50;
     let ids = sqlx::query_scalar!(
@@ -301,7 +307,13 @@ pub async fn list(db: &SqlitePool, page: u32) -> Result<Vec<CrawlSummary>, sqlx:
     )
     .fetch_all(&mut *tx)
     .await?;
-    summaries(&mut tx, &ids).await
+    let total = sqlx::query_scalar!(r#"SELECT count(*) AS "total!: i64" FROM crawl"#)
+        .fetch_one(&mut *tx)
+        .await?;
+    Ok(CrawlList {
+        crawls: summaries(&mut tx, &ids).await?,
+        total,
+    })
 }
 pub async fn work(db: &SqlitePool, start: i64, end: i64) -> Result<Vec<CrawlSummary>, sqlx::Error> {
     let mut tx = db.begin().await?;

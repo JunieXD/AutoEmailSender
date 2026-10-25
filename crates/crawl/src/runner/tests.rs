@@ -428,7 +428,7 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
     let result = process.await.unwrap();
     save(&db, &c, &result).await.unwrap();
     assert_eq!(
-        queue::list(&db, 1).await.unwrap()[0].state,
+        queue::list(&db, 1).await.unwrap().crawls[0].state,
         queue::CrawlState::Paused
     );
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
@@ -1120,7 +1120,7 @@ async fn a_run_with_only_failed_pages_can_retry_without_losing_its_page(db: Sqli
             .contains("1 个页面未打开")
     );
     assert_eq!(
-        queue::list(&db, 1).await.unwrap()[0].state,
+        queue::list(&db, 1).await.unwrap().crawls[0].state,
         queue::CrawlState::Failed
     );
     assert_eq!(queue::retry(&db, id, None, 2).await.unwrap(), 1);

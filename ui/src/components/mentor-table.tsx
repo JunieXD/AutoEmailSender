@@ -208,8 +208,11 @@ export function Pager({
   const pages = Math.max(1, Math.ceil(total / pageSize));
   return (
     <div className="flex items-center gap-2">
-      <span>
+      <span className="whitespace-nowrap phone:hidden">
         第 {page} 页，共 {pages} 页
+      </span>
+      <span className="hidden whitespace-nowrap tabular-nums phone:inline">
+        {page} / {pages}
       </span>
       <Button
         variant="ghost"

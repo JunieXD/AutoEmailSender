@@ -262,12 +262,7 @@ function Sent({
     <article className="flex flex-col items-end gap-1.5">
       <div className="max-w-[min(42rem,88%)] rounded-[18px] rounded-br-[6px] bg-mine px-4 py-3">
         <h3 className="mb-2 font-semibold">{e.subject}</h3>
-        <div
-          className={LETTER_BODY}
-          dangerouslySetInnerHTML={{ __html: toHtml(e.bodyMd) }}
-          // The letter keeps only web and mail links (docs/design.md#邮件格式).
-          onClick={openLinks}
-        />
+        <LetterBody markdown={e.bodyMd} />
         {e.attachments.length > 0 && (
           <div className="mt-3">
             <Attachments files={e.attachments} />
@@ -468,6 +463,18 @@ function Seen({
 
 // Subjects that already say they are an automatic reply.
 const AUTOMATIC = /^(自动回复|自动答复|automatic reply|auto[- ]?reply|out of office)/i;
+
+/** A letter's body as the app shows it, its links opened in the system's browser or mail app. */
+export function LetterBody({ markdown }: { markdown: string }) {
+  return (
+    <div
+      className={LETTER_BODY}
+      dangerouslySetInnerHTML={{ __html: toHtml(markdown) }}
+      // The letter keeps only web and mail links (docs/design.md#邮件格式).
+      onClick={openLinks}
+    />
+  );
+}
 
 /** Plain text as written, with web addresses that open in the system's browser. */
 function Text({ text }: { text: string }) {
