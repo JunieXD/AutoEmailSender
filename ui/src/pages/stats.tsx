@@ -45,19 +45,22 @@ export function StatsPage() {
   // The ranges end today: a page left open past midnight moves on with the date.
   useEffect(() => {
     const timer = setInterval(() => {
-      if (new Date().toDateString() !== new Date(now).toDateString()) setNow(Date.now());
+      if (new Date().toDateString() !== new Date(now).toDateString()) {
+        setNow(Date.now());
+        setPage(1);
+      }
     }, 60_000);
     return () => clearInterval(timer);
   }, [now]);
   const contact = useQuery({
-    queryKey: ["contactStats", range, now, timezone, page],
+    queryKey: ["stats", "contact", range, now, timezone, page],
     queryFn: () => call("contactStats", { ...period, page }),
     // Turning a page of schools keeps the rest in place; another range is drawn afresh.
     placeholderData: (previous, last) =>
-      last?.queryKey[1] === range && last.queryKey[2] === now ? previous : undefined,
+      last?.queryKey[2] === range && last.queryKey[3] === now ? previous : undefined,
   });
-  const mentors = useQuery({ queryKey: ["mentorStats"], queryFn: () => call("mentorStats", {}) });
-  const usage = useQuery({ queryKey: ["tokenStats", period], queryFn: () => call("tokenStats", period) });
+  const mentors = useQuery({ queryKey: ["stats", "mentors"], queryFn: () => call("mentorStats", {}) });
+  const usage = useQuery({ queryKey: ["stats", "tokens", period], queryFn: () => call("tokenStats", period) });
   return (
     <div className="@container flex-1 overflow-y-auto">
       <header className="flex max-w-[1120px] flex-wrap items-center gap-x-4 gap-y-3 px-7 pt-6 pb-2 phone:px-4 phone:pt-3.5">
@@ -204,8 +207,9 @@ function Contact({
               ))}
             </tbody>
           </table>
-          {p.schools.length === 0 && <p className="py-6 text-sm text-muted-foreground">联系过的导师都还没有填学校。</p>}
-          {p.schoolCount > SCHOOLS_PER_PAGE && (
+          {p.schoolCount === 0 && <p className="py-6 text-sm text-muted-foreground">联系过的导师都还没有填学校。</p>}
+          {/* Also past the end, when the list shrank under the page shown. */}
+          {(p.schoolCount > SCHOOLS_PER_PAGE || page > 1) && (
             <div className="mt-3 flex justify-end text-sm text-muted-foreground">
               <Pager page={page} total={p.schoolCount} pageSize={SCHOOLS_PER_PAGE} onPage={onPage} />
             </div>

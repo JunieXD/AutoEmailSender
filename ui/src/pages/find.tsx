@@ -75,6 +75,7 @@ export function refreshCrawls(client: ReturnType<typeof useQueryClient>) {
     "getCandidate",
     "previewCandidates",
     "previewEnrich",
+    "stats",
   ])
     void client.invalidateQueries({ queryKey: [key] });
 }
