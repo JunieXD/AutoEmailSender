@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET planned_at=coalesce(planned_at,?1),latest_at=CASE WHEN planned_at IS NULL THEN ?2 ELSE latest_at END WHERE id=?3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2ef1a4bdca07b46e959180e66c5e7c18ba1df0bf9b1c2d293e8d03248bb79eaa"
+}

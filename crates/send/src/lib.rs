@@ -1,5 +1,7 @@
 //! Sending approved emails from the user's mailboxes, one at a time (docs/design.md#桌面端).
 
+pub mod plan;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -85,14 +87,29 @@ pub async fn step(
     materials: &Path,
     now: impl Fn() -> i64,
 ) -> Result<Next, sqlx::Error> {
+    step_in_zone(db, net, materials, now, &chrono::Local, &mut |n| {
+        fastrand::i64(0..n)
+    })
+    .await
+}
+
+pub async fn step_in_zone<T: chrono::TimeZone>(
+    db: &SqlitePool,
+    net: &Net,
+    materials: &Path,
+    now: impl Fn() -> i64,
+    zone: &T,
+    random: &mut impl FnMut(i64) -> i64,
+) -> Result<Next, sqlx::Error> {
     let at = now();
+    email::schedule::rollover(db, at, zone, random).await?;
     let due = sqlx::query!(
         r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id,
              (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id
               WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply'))
            ELSE m.mailbox_id END AS own,
            e.kind = 'reply' AS "reply!: bool" FROM email e JOIN mentor m ON m.id = e.mentor_id
-         WHERE e.state = 'approved' AND e.planned_at <= ?
+         WHERE e.state = 'approved' AND e.planned_at <= ?1 AND (e.latest_at IS NULL OR e.latest_at > ?1)
            AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
          ORDER BY e.planned_at, e.id"#,
         at
@@ -100,14 +117,23 @@ pub async fn step(
     .fetch_all(db)
     .await?;
     let mut next = sqlx::query_scalar!(
-        r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?
+        r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?1 AND (latest_at IS NULL OR latest_at > ?1)
            AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))"#,
         at
     )
     .fetch_one(db)
     .await?;
+    let deadline = sqlx::query_scalar!(
+        r#"SELECT min(latest_at) AS "at: i64" FROM email WHERE state='approved' AND latest_at>?"#,
+        at
+    )
+    .fetch_one(db)
+    .await?;
+    if let Some(deadline) = deadline {
+        next = Some(next.map_or(deadline, |n| n.min(deadline)));
+    }
     let rotation = profile::rotation(db).await?;
-    let mailboxes = usage(db, at).await?;
+    let mailboxes = usage_on(&mut *db.acquire().await?, at).await?;
     for e in due {
         if e.reply && e.own.is_none() {
             email::failed(
@@ -166,7 +192,7 @@ impl Usage {
 }
 
 /// The mailboxes in rotation order, with what each has sent lately.
-async fn usage(db: &SqlitePool, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
+async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
     sqlx::query_as!(
         Usage,
         r#"SELECT b.id, b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
@@ -182,7 +208,7 @@ async fn usage(db: &SqlitePool, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
            FROM mailbox b ORDER BY b.rotation_order, b.id"#,
         now - DAY
     )
-    .fetch_all(db)
+    .fetch_all(conn)
     .await
 }
 

@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 api.workspace = true
 db.workspace = true
+send.workspace = true
 fastrand = "2.5.0"
 mentor.workspace = true
 sheet.workspace = true
@@ -18,3 +19,4 @@ serde_json.workspace = true
 sqlx.workspace = true
 task.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }

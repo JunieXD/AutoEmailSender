@@ -78,6 +78,22 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
+    for (label, column) in [
+        ("发送计划：待处理", send::plan::PlanColumn::Pending),
+        ("发送计划：即将发送", send::plan::PlanColumn::Upcoming),
+        ("发送计划：历史", send::plan::PlanColumn::History),
+    ] {
+        let query = send::plan::PlanQuery {
+            column,
+            page: NonZeroU32::MIN,
+        };
+        report(
+            label,
+            median(async || send::plan::list(&db, &query, NOW).await.map(drop)).await?,
+            home,
+        );
+    }
+
     // Each write runs the contact-summary triggers for the mentor.
     let email: i64 = sqlx::query_scalar("SELECT id FROM email WHERE state = 'sent' LIMIT 1")
         .fetch_one(&db)

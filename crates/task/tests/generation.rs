@@ -97,6 +97,7 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
     let task = task::create(
         db,
         &NewTask {
+            schedule: email::schedule::Schedule::Now,
             name: "AI 任务".into(),
             ids: ids.clone(),
             writer: Writer::Ai,

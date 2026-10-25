@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id,mentor_id,coalesce(subject,'') AS \"subject!: String\",coalesce(body_md,'') AS \"body_md!: String\",state AS \"state: DraftState\",error FROM email WHERE id = ? AND task_id = ?",
+  "query": "SELECT id,mentor_id,coalesce(subject,'') AS \"subject!: String\",coalesce(body_md,'') AS \"body_md!: String\",state AS \"state: DraftState\",error,planned_at,latest_at FROM email WHERE id = ? AND task_id = ?",
   "describe": {
     "columns": [
       {
@@ -58,6 +58,28 @@
             "name": "error"
           }
         }
+      },
+      {
+        "name": "planned_at",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -69,8 +91,10 @@
       false,
       false,
       false,
+      true,
+      true,
       true
     ]
   },
-  "hash": "390bcfb267e545bda748b50d3d7780cca0a37b3d76fd0b571e7b042610f0d0ca"
+  "hash": "f4f5aa60690839ca5dfb07e1a6f2185dd09cda3f24d45858de095af7c5869169"
 }

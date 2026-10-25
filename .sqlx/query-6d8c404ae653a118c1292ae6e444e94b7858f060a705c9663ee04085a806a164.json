@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM email WHERE state='approved' AND planned_at IS NOT NULL AND (latest_at IS NULL OR latest_at>?1) ORDER BY planned_at,id LIMIT ?2 OFFSET ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6d8c404ae653a118c1292ae6e444e94b7858f060a705c9663ee04085a806a164"
+}

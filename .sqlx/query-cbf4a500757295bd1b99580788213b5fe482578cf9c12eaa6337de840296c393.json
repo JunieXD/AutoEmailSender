@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET planned_at=?,latest_at=?,manual_schedule=1 WHERE id=?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "cbf4a500757295bd1b99580788213b5fe482578cf9c12eaa6337de840296c393"
+}

@@ -10,6 +10,7 @@ import { ReplyLetter } from "@/components/reply-letter";
 import { FirstLetter } from "@/components/first-letter";
 import { contactDetail, dropDrafts, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
+import { ScheduleActions, refreshSchedule, scheduledAt } from "@/components/schedule";
 import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
 import { toHtml } from "@/markdown";
@@ -173,6 +174,7 @@ function Sent({
   const act = useMutation({
     mutationFn: (op: "withdrawEmail" | "retryEmail" | "resendEmail") => call(op, { id: e.id }),
     onSuccess: (_, op) => {
+      refreshSchedule(queryClient);
       // Read again when the composer comes back, as the draft it shows is this email.
       if (op === "withdrawEmail") {
         dropDrafts(queryClient, [mentorId]);
@@ -202,7 +204,8 @@ function Sent({
       </div>
       <p className={`max-w-[min(42rem,88%)] text-right text-sm ${tone}`}>{text}</p>
       {actions && (
-        <div className="flex gap-1">
+        <div className="flex flex-wrap justify-end gap-1">
+          {e.state === "approved" && <ScheduleActions id={e.id} initial={e.plannedAt ?? undefined} />}
           {e.state === "failed" && (
             <Button variant="ghost" disabled={act.isPending} onClick={() => act.mutate("retryEmail")}>
               <RotateCcw strokeWidth={1.6} />
@@ -259,7 +262,11 @@ function Sent({
 
 /** What an email's state reads as, and its colour. A bounce always says which address it came back from. */
 function status(e: Email, several: boolean): [string, string] {
-  if (e.state === "approved") return ["待发送", "text-muted-foreground"];
+  if (e.state === "approved")
+    return [
+      e.latestAt !== null && e.plannedAt !== null ? `定时 ${scheduledAt(e.plannedAt)}` : "待发送",
+      "text-muted-foreground",
+    ];
   if (e.state === "sending") return ["发送中", "text-muted-foreground"];
   if (e.state === "sent") {
     const to = several ? `，发到 ${e.toAddress}` : "";

@@ -62,7 +62,7 @@ pub async fn approve(
     text: &str,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'approved', html = ?, text = ?, planned_at = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND trim(coalesce(subject, '')) <> '' AND trim(coalesce(body_md, '')) <> '' AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT mentor_id FROM mentor_email)) AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')", html, text, now, now, id, task).execute(conn).await?.rows_affected() > 0)
+    Ok(sqlx::query!("UPDATE email SET state = 'approved', approval_order = (SELECT coalesce(max(approval_order),0)+1 FROM email previous WHERE previous.task_id = email.task_id), html = ?, text = ?, planned_at = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND trim(coalesce(subject, '')) <> '' AND trim(coalesce(body_md, '')) <> '' AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT mentor_id FROM mentor_email)) AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')", html, text, now, now, id, task).execute(conn).await?.rows_affected() > 0)
 }
 
 pub async fn cancel(
@@ -72,7 +72,7 @@ pub async fn cancel(
     reason: &str,
     now: i64,
 ) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'canceled', error = ?, generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ? WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND state IN ('generating', 'generation_failed', 'review', 'approved', 'failed')", reason, now, task, id).execute(conn).await?.rows_affected())
+    Ok(sqlx::query!("UPDATE email SET state = 'canceled', planned_at = NULL, latest_at = NULL, error = ?, generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ? WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND state IN ('generating', 'generation_failed', 'review', 'approved', 'failed')", reason, now, task, id).execute(conn).await?.rows_affected())
 }
 
 pub async fn delete(conn: &mut SqliteConnection, task: i64) -> Result<(), sqlx::Error> {

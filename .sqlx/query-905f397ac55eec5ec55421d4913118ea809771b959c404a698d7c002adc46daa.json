@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET updated_at=updated_at WHERE state='approved' AND manual_schedule=0 AND (latest_at<=? OR planned_at IS NULL) AND task_id IS NOT NULL RETURNING id,task_id AS \"task!\",planned_at,latest_at",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "task!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "planned_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "905f397ac55eec5ec55421d4913118ea809771b959c404a698d7c002adc46daa"
+}

@@ -1,5 +1,6 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
+pub mod schedule;
 pub mod tasks;
 
 use std::collections::HashMap;
@@ -188,16 +189,21 @@ pub enum Approved {
     ReplyGone,
     ReplyChanged,
     NoAddress,
+    TimePassed,
 }
 
-/// Approves the mentor's first email with this content, to be sent now: the draft, or else a new
+/// Approves the mentor's first email for the selected time or now: the draft, or else a new
 /// email, as when the letter is the default template unchanged.
 pub async fn approve_first(
     db: &SqlitePool,
     mentor_id: i64,
     approval: &Approval<'_>,
+    planned: Option<i64>,
     now: i64,
 ) -> Result<Approved, sqlx::Error> {
+    if planned.is_some_and(|at| at <= now) {
+        return Ok(Approved::TimePassed);
+    }
     let mut tx = db.begin().await?;
     let drafted = sqlx::query_scalar!(
         "UPDATE email SET updated_at = ?1
@@ -229,6 +235,17 @@ pub async fn approve_first(
     };
     if !snapshot(&mut tx, id, approval, now).await? {
         return Ok(Approved::MaterialGone);
+    }
+    if let Some(at) = planned {
+        let latest = at + 3_600_000;
+        sqlx::query!(
+            "UPDATE email SET planned_at=?,latest_at=?,manual_schedule=1 WHERE id=?",
+            at,
+            latest,
+            id
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(Approved::Yes)
@@ -274,6 +291,8 @@ async fn snapshot(
 #[serde(rename_all = "camelCase")]
 pub struct Email {
     pub id: i64,
+    pub planned_at: Option<i64>,
+    pub latest_at: Option<i64>,
     pub subject: String,
     pub body_md: String,
     pub attachments: Vec<Attachment>,
@@ -356,7 +375,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
     sqlx::query!(
         r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS "body_md!",
              resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id) AS "resent!: bool",
-             from_address, to_address, sent_at, error
+             planned_at, latest_at, from_address, to_address, sent_at, error
            FROM email
            WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
            ORDER BY id"#,
@@ -400,6 +419,8 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
         };
         Ok(Email {
             id: r.id,
+            planned_at: r.planned_at,
+            latest_at: r.latest_at,
             subject: r.subject,
             body_md: r.body_md,
             attachments: attachments.remove(&r.id).unwrap_or_default(),
@@ -418,7 +439,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
 /// new text went out.
 pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
-        "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
+        "UPDATE email SET state = 'review', planned_at = NULL, latest_at = NULL, manual_schedule = 0, approval_order = NULL, mailbox_id = NULL, from_address = NULL,
            to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
            html = NULL, text = NULL, refs = NULL, updated_at = ?
          WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL
@@ -431,21 +452,11 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
     Ok(done.rows_affected() == 1)
 }
 
-/// Sends a failed or maybe-sent email again, now, unless its mentor is in the trash. It keeps its
+/// Retries a failed or maybe-sent email according to its task, or now outside a task. It keeps its
 /// Message-ID, so that mailboxes that drop duplicates drop a second copy (docs/design.md#桌面端),
 /// and where and when it went before, so that a copy of that turning up still settles it.
 pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
-    let done = sqlx::query!(
-        "UPDATE email SET state = 'approved', planned_at = ?1, error = NULL, updated_at = ?1
-         WHERE id = ?2 AND state IN ('failed', 'maybe_sent')
-           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))
-           AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
-        now,
-        id,
-    )
-    .execute(db)
-    .await?;
-    Ok(done.rows_affected() == 1)
+    schedule::retry(db, id, now).await
 }
 
 /// Sends a bounced email again, now, as another email with the same content and files, to the
@@ -504,7 +515,7 @@ pub async fn interrupted(
     now: i64,
 ) -> Result<Vec<Handed>, sqlx::Error> {
     sqlx::query!(
-        "UPDATE email SET state = 'failed', error = ?, updated_at = ?
+        "UPDATE email SET state = 'failed', latest_at = NULL, error = ?, updated_at = ?
          WHERE state = 'sending' AND to_address IS NULL",
         NO_ADDRESS,
         now,
@@ -556,11 +567,11 @@ pub async fn start_sending(
     now: i64,
 ) -> Result<Option<Handover>, sqlx::Error> {
     let Some(row) = sqlx::query!(
-        r#"UPDATE email SET state = 'sending', mailbox_id = ?1, from_address = ?2,
+        r#"UPDATE email SET state = 'sending', latest_at = NULL, mailbox_id = ?1, from_address = ?2,
              to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
                ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
-           WHERE id = ?5 AND state = 'approved'
+           WHERE id = ?5 AND state = 'approved' AND planned_at <= ?4 AND (latest_at IS NULL OR latest_at > ?4)
              AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
            RETURNING mentor_id, to_address, message_id AS "message_id!", reply_to, refs, subject AS "subject!",
              html AS "html!", text AS "text!""#,
@@ -634,7 +645,7 @@ pub async fn failed(
     now: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE email SET state = 'failed', error = ?, updated_at = ?
+        "UPDATE email SET state = 'failed', latest_at = NULL, error = ?, updated_at = ?
          WHERE id = ? AND state IN ('approved', 'sending')",
         error,
         now,
@@ -752,7 +763,7 @@ pub async fn copied(
     .execute(&mut *tx)
     .await?;
     let confirmed = sqlx::query!(
-        "UPDATE email SET state = 'sent', error = NULL, updated_at = ?1
+        "UPDATE email SET state = 'sent', latest_at = NULL, error = NULL, updated_at = ?1
          WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
            AND (state IN ('sending', 'maybe_sent')
              OR (state = 'approved' AND sent_at IS NOT NULL

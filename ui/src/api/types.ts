@@ -2,7 +2,9 @@
 
 export type Affiliation = { university: string | null, school: string | null, department: string | null, title: string | null, };
 
-export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, };
+export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, plannedAt: number | null, latestAt: number | null, };
+
+export type ApprovalPreview = { taskId: number, ids: Array<number>, };
 
 export type Attachment = { fileName: string, size: number, };
 
@@ -48,11 +50,11 @@ export type DraftSummary = { id: number, mentorId: number, name: string, state: 
 
 export type DraftsFinished = { taskId: number, name: string, generated: number, failed: number, };
 
-export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, 
+export type Email = { id: number, plannedAt: number | null, latestAt: number | null, subject: string, bodyMd: string, attachments: Array<Attachment>,
 /**
  * The bounced email this one sends again.
  */
-resendOf: number | null, 
+resendOf: number | null,
 /**
  * Whether this bounced email has been sent again, as an email in any state.
  */
@@ -72,19 +74,19 @@ export type FilledTemplate = { subject: string, bodyMd: string, };
 
 export type Filter = { status?: ContactStatus, keyword?: string, };
 
-export type FirstDraft = { subject: string | null, bodyMd: string | null, 
+export type FirstDraft = { subject: string | null, bodyMd: string | null,
 /**
  * The materials attached, by id.
  */
 attachments: Array<number>, };
 
-export type FirstDraftEdit = { mentorId: number, subject: string, bodyMd: string, 
+export type FirstDraftEdit = { mentorId: number, subject: string, bodyMd: string,
 /**
  * Materials, by id.
  */
 attachments: Array<number>, };
 
-export type FirstEmail = { mentorId: number, subject: string, bodyMd: string, html: string, text: string, 
+export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: string, bodyMd: string, html: string, text: string,
 /**
  * Materials, by id.
  */
@@ -106,11 +108,11 @@ export type Letter = { subject: string, bodyMd: string, };
 
 export type LetterFont = "song" | "hei";
 
-export type LetterStyle = { 
+export type LetterStyle = {
 /**
  * None leaves the font to the recipient's mail app.
  */
-font: LetterFont | null, fontSizePt: number, lineHeight: number, paragraphSpacingEm: number, 
+font: LetterFont | null, fontSizePt: number, lineHeight: number, paragraphSpacingEm: number,
 /**
  * Two characters at the start of each paragraph.
  */
@@ -118,21 +120,21 @@ firstLineIndent: boolean, };
 
 export type MailAddress = { address: string, };
 
-export type Mailbox = { id: number, address: string, senderName: string, 
+export type Mailbox = { id: number, address: string, senderName: string,
 /**
  * A provider's id, or `providers::CUSTOM`.
  */
-provider: string, smtp: Server, imap: Server, dailyLimit: number, 
+provider: string, smtp: Server, imap: Server, dailyLimit: number,
 /**
  * The shortest wait between two emails, in seconds.
  */
-minIntervalS: number, 
+minIntervalS: number,
 /**
  * Why the last round of receiving failed.
  */
 receiveError: string | null, };
 
-export type MailboxEdit = { id: number, 
+export type MailboxEdit = { id: number,
 /**
  * Blank keeps the saved one, unless the servers changed.
  */
@@ -140,7 +142,7 @@ secret: string, address: string, senderName: string, provider: string, smtp: Ser
 
 export type MailboxId = { id: number, };
 
-export type MailboxTest = { 
+export type MailboxTest = {
 /**
  * The saved mailbox being edited, whose secret a blank one stands for while the servers stay
  * the same.
@@ -169,7 +171,7 @@ export type MatchState = { "state": "queued" } | { "state": "running" } | { "sta
 
 export type MatchSummary = { result: MatchScore | null, state: MatchState | null, };
 
-export type Material = { id: number, fileName: string, size: number, 
+export type Material = { id: number, fileName: string, size: number,
 /**
  * False for a scan, which can only be attached.
  */
@@ -183,15 +185,15 @@ export type MaybeSame = { row: number, rows: Array<number>, incoming: ImportProf
 
 export type MentorAddress = { id: number, address: string, };
 
-export type MentorDetail = { id: number, name: string, aliases: Array<string>, 
+export type MentorDetail = { id: number, name: string, aliases: Array<string>,
 /**
  * The first is the one mail goes to.
  */
-emails: Array<string>, 
+emails: Array<string>,
 /**
  * The first is the main one.
  */
-affiliations: Array<Affiliation>, homepages: Array<string>, 
+affiliations: Array<Affiliation>, homepages: Array<string>,
 /**
  * The page the mentor was found on.
  */
@@ -207,7 +209,7 @@ export type MentorIds = { ids: Array<number>, };
 
 export type MentorMerge = { keep: number, other: number, };
 
-export type MentorNote = { id: number, 
+export type MentorNote = { id: number,
 /**
  * Blank clears the note.
  */
@@ -215,21 +217,21 @@ note: string, };
 
 export type MentorPage = { mentors: Array<MentorRow>, total: number, };
 
-export type MentorQuery = { 
+export type MentorQuery = {
 /**
  * All mentors when absent.
  */
-status?: ContactStatus, keyword?: string, 
+status?: ContactStatus, keyword?: string,
 /**
  * Starts at 1.
  */
 page: number, };
 
-export type MentorRow = { id: number, name: string, 
+export type MentorRow = { id: number, name: string,
 /**
  * The first of the mentor's affiliations, the main one.
  */
-affiliation: Affiliation | null, affiliationCount: number, 
+affiliation: Affiliation | null, affiliationCount: number,
 /**
  * The start of the research description, enough for the two lines the list shows.
  */
@@ -237,15 +239,15 @@ research: string | null, matchState: MatchSummary, contact: Contact, tags: Array
 
 export type MergePreview = { emails: number, affiliations: number, };
 
-export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number, 
+export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number,
 /**
  * What the message says, without the earlier mail it quotes.
  */
-text: string, 
+text: string,
 /**
  * The earlier mail it quotes, shown folded.
  */
-quote: string | null, 
+quote: string | null,
 /**
  * Only its start was read, which may leave out some of the text.
  */
@@ -253,37 +255,37 @@ truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, 
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
-export type ModelConfig = { id: number, 
+export type ModelConfig = { id: number,
 /**
  * None: known by the model's name.
  */
-name: string | null, 
+name: string | null,
 /**
  * A provider's id, or `providers::CUSTOM`.
  */
-provider: string, 
+provider: string,
 /**
  * Only for `providers::CUSTOM`.
  */
-baseUrl: string | null, model: string, 
+baseUrl: string | null, model: string,
 /**
  * The one AI features use: the user's choice, or else the earliest added.
  */
-isDefault: boolean, 
+isDefault: boolean,
 /**
  * The user agreed to what AI features send to its provider.
  */
 agreed: boolean, inputPrice: number | null, outputPrice: number | null, };
 
-export type ModelConfigEdit = { id: number, 
+export type ModelConfigEdit = { id: number,
 /**
  * Blank keeps the saved one, unless the provider or address changed.
  */
-apiKey: string, 
+apiKey: string,
 /**
  * May be blank.
  */
-name: string, provider: string, 
+name: string, provider: string,
 /**
  * Only read for `providers::CUSTOM`.
  */
@@ -291,33 +293,33 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type ModelConfigId = { id: number, };
 
-export type ModelProvider = { id: string, name: string, 
+export type ModelProvider = { id: string, name: string,
 /**
  * Where the user gets an API key.
  */
 keyUrl: string, };
 
-export type ModelSource = { 
+export type ModelSource = {
 /**
  * The saved configuration being edited, whose API key a blank one stands for while the
  * provider and address stay the same.
  */
-id?: number, provider: string, 
+id?: number, provider: string,
 /**
  * Only read for a custom provider.
  */
 baseUrl: string, apiKey: string, };
 
-export type ModelTest = { 
+export type ModelTest = {
 /**
  * The saved configuration being edited, whose API key a blank one stands for while the
  * provider and address stay the same.
  */
-id?: number, apiKey: string, 
+id?: number, apiKey: string,
 /**
  * May be blank.
  */
-name: string, provider: string, 
+name: string, provider: string,
 /**
  * Only read for `providers::CUSTOM`.
  */
@@ -327,11 +329,11 @@ export type NewMailbox = { secret: string, address: string, senderName: string, 
 
 export type NewMaterial = { fileName: string, data: string, };
 
-export type NewModelConfig = { apiKey: string, 
+export type NewModelConfig = { apiKey: string,
 /**
  * May be blank.
  */
-name: string, provider: string, 
+name: string, provider: string,
 /**
  * Only read for `providers::CUSTOM`.
  */
@@ -339,11 +341,19 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
-export type NewTask = { name: string, ids: Array<number>, writer: Writer, templateId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
+export type NewTask = { name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
 
 export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
+
+export type PlanColumn = "pending" | "upcoming" | "history";
+
+export type PlanEmail = { id: number, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, waiting: Waiting | null, };
+
+export type PlanPage = { emails: Array<PlanEmail>, total: number, };
+
+export type PlanQuery = { column: PlanColumn, page: number, };
 
 export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Column>, issue: string | null, created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
 
@@ -357,7 +367,7 @@ export type ProfileForm = { name: string, researchInterests: string, rewritePref
 
 export type Progress = { generating: number, review: number, generationFailed: number, approved: number, sent: number, failed: number, canceled: number, };
 
-export type Provider = { id: string, name: string, 
+export type Provider = { id: string, name: string,
 /**
  * The address domains it serves. Empty for services that host an organisation's own domain,
  * which the user picks by name.
@@ -380,7 +390,17 @@ export type ReplyTarget = { id: number, messageId: string | null, fromAddress: s
 
 export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
+export type RescheduleEmail = { id: number, plannedAt: number, };
+
 export type RowError = { row: number, reason: string, };
+
+export type Schedule = { "kind": "now" } | { "kind": "window" } & Window;
+
+export type ScheduleEdit = { id: number, schedule: Schedule, };
+
+export type SchedulePreview = { dates: Array<string>, unplaced: number, };
+
+export type ScheduledWork = { pending: number, nextAt: number | null, today: number, };
 
 export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
 
@@ -388,15 +408,15 @@ export type Security = "tls" | "starttls";
 
 export type Server = { host: string, port: number, security: Security, };
 
-export type Setup = { "kind": "password", smtp: Server, imap: Server, 
+export type Setup = { "kind": "password", smtp: Server, imap: Server,
 /**
  * What the provider calls that password.
  */
-secret: string, 
+secret: string,
 /**
  * How to turn on SMTP and IMAP and get the password.
  */
-steps: Array<string>, 
+steps: Array<string>,
 /**
  * Where the steps start.
  */
@@ -404,7 +424,7 @@ url: string, } | { "kind": "unsupported", reason: string, };
 
 export type TableFormat = "xlsx" | "csv";
 
-export type Tag = { id: number, name: string, 
+export type Tag = { id: number, name: string,
 /**
  * `#rrggbb`.
  */
@@ -414,7 +434,7 @@ export type TagColor = { id: number, color: string, };
 
 export type TagId = { id: number, };
 
-export type TagMentors = { tagId: number, mentorIds: Array<number>, 
+export type TagMentors = { tagId: number, mentorIds: Array<number>,
 /**
  * Adds the tag when true, removes it when false.
  */
@@ -426,7 +446,7 @@ export type TagName = { id: number, name: string, };
 
 export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
 
-export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, };
+export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, plannedAt: number | null, latestAt: number | null, };
 
 export type TaskEmail = { taskId: number, id: number, };
 
@@ -444,7 +464,7 @@ export type TaskRetry = { taskId: number, id: number | null, };
 
 export type TaskState = "active" | "paused" | "stopped" | "completed";
 
-export type TaskSummary = { id: number, name: string, writer: Writer, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, };
+export type TaskSummary = { id: number, name: string, writer: Writer, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, schedule: Schedule, };
 
 export type Template = { id: number, name: string, subject: string, bodyMd: string, };
 
@@ -456,13 +476,13 @@ export type TemplateForm = { name: string, subject: string, bodyMd: string, };
 
 export type TemplateId = { id: number, };
 
-export type TemplateSummary = { id: number, name: string, subject: string, 
+export type TemplateSummary = { id: number, name: string, subject: string,
 /**
  * The one a first email starts from.
  */
 isDefault: boolean, };
 
-export type TrashQuery = { 
+export type TrashQuery = {
 /**
  * Starts at 1.
  */
@@ -470,11 +490,21 @@ page: number, };
 
 export type Trashed = { rows: Array<number>, id: number, name: string, };
 
+export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "ready";
+
+export type Window = { dates: Array<string>, start: string, end: string, perWindow: number, };
+
 export type Writer = "ai" | "template";
 
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  previewTaskSchedule: { input: ApprovalPreview; output: SchedulePreview };
+  changeTaskSchedule: { input: ScheduleEdit; output: number };
+  rescheduleEmail: { input: RescheduleEmail; output: null };
+  sendEmailNow: { input: EmailId; output: null };
+  sendingPlan: { input: PlanQuery; output: PlanPage };
+  scheduledWork: { input: Nothing; output: ScheduledWork };
   planTask: { input: NewTask; output: TaskPlan };
   createTask: { input: NewTask; output: TaskId };
   taskWork: { input: Nothing; output: Array<TaskSummary> };

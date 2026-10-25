@@ -424,3 +424,71 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     tx.commit().await?;
     Ok(())
 }
+
+/// Seed-only scenarios: the later window is full, so the missed letter cannot roll forward.
+pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
+    use chrono::TimeZone;
+    let today = chrono::Local
+        .timestamp_millis_opt(now)
+        .single()
+        .ok_or_else(|| sqlx::Error::Decode("invalid seed time".into()))?
+        .date_naive();
+    let dates = [
+        today - chrono::Duration::days(1),
+        today + chrono::Duration::days(1),
+    ];
+    let dates_json = serde_json::to_string(&dates.map(|d| d.to_string()))
+        .map_err(|e| sqlx::Error::Encode(e.into()))?;
+    let task=sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('定时联系 · 人工智能','first','template','申请交流','老师您好，我是林晓。','window',?,'09:00','11:00',1,'active',?)").bind(dates_json).bind(now).execute(db).await?.last_insert_rowid();
+    for (i, state) in [
+        "review",
+        "approved",
+        "approved",
+        "generation_failed",
+        "failed",
+        "maybe_sent",
+        "sent",
+        "canceled",
+        "approved",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mentor = mentor::create(
+            db,
+            &mentor::MentorFields {
+                name: format!("定时示例{}", i + 1),
+                emails: vec![format!("schedule{i}@example.edu.cn")],
+                ..Default::default()
+            },
+            now,
+        )
+        .await?;
+        let date = if i == 1 { dates[0] } else { dates[1] };
+        let planned = chrono::Local
+            .from_local_datetime(
+                &date
+                    .and_hms_opt(9, 0, 0)
+                    .ok_or_else(|| sqlx::Error::Decode("invalid seed date".into()))?,
+            )
+            .earliest()
+            .ok_or_else(|| sqlx::Error::Decode("invalid seed time".into()))?
+            .timestamp_millis();
+        let latest = planned + 2 * 3_600_000;
+        let sent = matches!(*state, "sent" | "maybe_sent");
+        let error = match *state {
+            "generation_failed" => Some("模型未能返回完整的草稿"),
+            "failed" => Some("邮箱登录失败，请检查邮箱设置"),
+            "maybe_sent" => Some("发送途中连接中断，无法确认是否发出"),
+            "canceled" => Some("移出任务"),
+            _ => None,
+        };
+        sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,subject,body_md,html,text,planned_at,latest_at,approval_order,mailbox_id,from_address,to_address,message_id,sent_at,error,created_at,updated_at) VALUES (?,?,'first',?,'申请研究方向交流','老师您好，我是林晓。','<p>老师您好，我是林晓。</p>','老师您好，我是林晓。',?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(mentor).bind((i!=8).then_some(task)).bind(state)
+            .bind((!matches!(*state,"review"|"generation_failed"|"canceled")).then_some(if sent {now-3_600_000} else {planned}))
+            .bind((*state=="approved").then_some(if i==8 {planned+3_600_000} else {latest})).bind(i as i64+1)
+            .bind(sent.then_some(1_i64)).bind(sent.then_some("linxiao@qq.com")).bind(sent.then_some(format!("schedule{i}@example.edu.cn")))
+            .bind(sent.then_some(format!("<schedule{i}@aes>"))).bind(sent.then_some(now-3_600_000)).bind(error).bind(now).bind(now).execute(db).await?;
+    }
+    Ok(())
+}

@@ -36,6 +36,7 @@ async fn form(db: &SqlitePool, ids: Vec<i64>) -> NewTask {
     .await
     .unwrap();
     NewTask {
+        schedule: email::schedule::Schedule::Now,
         name: "首封 10月25日".into(),
         ids,
         writer: Writer::Template,
@@ -86,6 +87,136 @@ fn approval(d: &TaskDraft) -> RenderedApproval {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn approval_reserves_in_request_order_and_withdraw_releases_capacity(db: SqlitePool) {
+    use chrono::{TimeZone, Utc};
+    use email::schedule::{Schedule, Window};
+    let base = (T / 86_400_000 + 1) * 86_400_000;
+    let dates = (0..3)
+        .map(|n| {
+            Utc.timestamp_millis_opt(base + n * 86_400_000)
+                .unwrap()
+                .format("%Y-%m-%d")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let mut ids = vec![];
+    for n in 1..=3 {
+        ids.push(mentor(&db, n, true).await);
+    }
+    let mut f = form(&db, ids).await;
+    f.schedule = Schedule::Window(Window {
+        dates: dates.clone(),
+        start: "09:00".into(),
+        end: "11:00".into(),
+        per_window: 1,
+    });
+    let task = create(&db, &f, T).await.unwrap();
+    let ds = items(&db, task).await;
+    let req = TaskApprovals {
+        task_id: task,
+        emails: vec![approval(&ds[2]), approval(&ds[0])],
+    };
+    assert_eq!(
+        approve_in_zone(&db, &req, T, &Utc, &mut |_| 0)
+            .await
+            .unwrap(),
+        2
+    );
+    let get = async |id| {
+        draft(&db, &TaskEmail { task_id: task, id })
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(get(ds[2].id).await.planned_at, Some(base + 9 * 3_600_000));
+    assert_eq!(
+        get(ds[0].id).await.planned_at,
+        Some(base + 86_400_000 + 9 * 3_600_000)
+    );
+    email::withdraw(&db, ds[2].id, T).await.unwrap();
+    assert_eq!(get(ds[2].id).await.planned_at, None);
+    assert_eq!(get(ds[2].id).await.latest_at, None);
+    approve_in_zone(
+        &db,
+        &TaskApprovals {
+            task_id: task,
+            emails: vec![approval(&ds[1])],
+        },
+        T,
+        &Utc,
+        &mut |_| 0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(get(ds[1].id).await.planned_at, Some(base + 9 * 3_600_000));
+    approve_in_zone(
+        &db,
+        &TaskApprovals {
+            task_id: task,
+            emails: vec![approval(&ds[2])],
+        },
+        T,
+        &Utc,
+        &mut |_| 0,
+    )
+    .await
+    .unwrap();
+    // Changing the calendar preserves approval order, including an approval made again after withdrawal.
+    let changed = change_schedule(
+        &db,
+        &ScheduleEdit {
+            id: task,
+            schedule: Schedule::Window(Window {
+                dates: vec![dates[2].clone()],
+                start: "09:00".into(),
+                end: "11:00".into(),
+                per_window: 1,
+            }),
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(changed, 3);
+    assert!(get(ds[0].id).await.planned_at.is_some());
+    for id in [ds[1].id, ds[2].id] {
+        let d = get(id).await;
+        assert_eq!(d.state, DraftState::Approved);
+        assert_eq!(d.planned_at, None);
+    }
+    // Approving after all selected windows expired still freezes the content and enters pending.
+    email::withdraw(&db, ds[2].id, T).await.unwrap();
+    approve_in_zone(
+        &db,
+        &TaskApprovals {
+            task_id: task,
+            emails: vec![approval(&ds[2])],
+        },
+        base + 4 * 86_400_000,
+        &Utc,
+        &mut |_| 0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(get(ds[2].id).await.state, DraftState::Approved);
+    assert_eq!(get(ds[2].id).await.planned_at, None);
+    change_schedule(
+        &db,
+        &ScheduleEdit {
+            id: task,
+            schedule: Schedule::Now,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    for d in items(&db, task).await {
+        assert_eq!(d.planned_at, Some(T));
+        assert_eq!(d.latest_at, None);
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn eligibility_is_explicit_and_contacted_mentors_remain_eligible(db: SqlitePool) {
     let mut ids = vec![];
     for n in 1..=6 {
@@ -104,7 +235,9 @@ async fn eligibility_is_explicit_and_contacted_mentors_remain_eligible(db: Sqlit
         text: "您好",
         attachments: &[],
     };
-    email::approve_first(&db, ids[4], &a, T).await.unwrap();
+    email::approve_first(&db, ids[4], &a, None, T)
+        .await
+        .unwrap();
     sqlx::query("UPDATE email SET state='sent',from_address='me@example.com',to_address='m5@example.com',message_id='<sent@example.com>',sent_at=? WHERE mentor_id=?").bind(T).bind(ids[4]).execute(&db).await.unwrap();
     let f = form(&db, ids.clone()).await;
     let p = plan(&db, &f).await.unwrap();
@@ -309,6 +442,89 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
         send::step(&db, &net, std::path::Path::new("unused"), || T)
             .await
             .unwrap(),
+        send::Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn changing_task_time_defers_handover_and_retry_reserves_again(db: SqlitePool) {
+    use chrono::{Local, TimeZone};
+    use email::schedule::{Schedule, Window};
+    let pki = fakemail::pki();
+    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let server = |port| mailbox::Server {
+        host: "localhost".into(),
+        port,
+        security: mailbox::Security::Tls,
+    };
+    let b = mailbox::MailboxForm {
+        address: fakemail::ADDRESS.into(),
+        sender_name: "我".into(),
+        provider: "custom".into(),
+        smtp: server(port),
+        imap: server(993),
+        daily_limit: 50,
+        min_interval_s: 60,
+    };
+    mailbox::create(&db, &b.check().unwrap(), fakemail::SECRET, T)
+        .await
+        .unwrap();
+    let m = mentor(&db, 1, true).await;
+    let task = create(&db, &form(&db, vec![m]).await, T).await.unwrap();
+    let d = items(&db, task).await.remove(0);
+    approve(
+        &db,
+        &TaskApprovals {
+            task_id: task,
+            emails: vec![approval(&d)],
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    let date = Local
+        .timestamp_millis_opt(T + 86_400_000)
+        .unwrap()
+        .date_naive();
+    change_schedule(
+        &db,
+        &ScheduleEdit {
+            id: task,
+            schedule: Schedule::Window(Window {
+                dates: vec![date.to_string()],
+                start: "09:00".into(),
+                end: "11:00".into(),
+                per_window: 1,
+            }),
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    let new = items(&db, task).await.remove(0).planned_at.unwrap();
+    assert!(new > T);
+    let net = net::Net::new(vec![pki.root.clone()]).unwrap();
+    let nowhere = std::path::Path::new("unused");
+    assert_eq!(
+        send::step(&db, &net, nowhere, || T).await.unwrap(),
+        send::Next::At(new)
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+    email::failed(&mut db.acquire().await.unwrap(), d.id, "连接失败", T)
+        .await
+        .unwrap();
+    email::retry(&db, d.id, T).await.unwrap();
+    let retried = items(&db, task).await.remove(0);
+    assert!(retried.planned_at.unwrap() > T);
+    assert!(retried.latest_at.unwrap() > retried.planned_at.unwrap());
+    let at = retried.planned_at.unwrap();
+    assert_eq!(
+        send::step(&db, &net, nowhere, || at).await.unwrap(),
+        send::Next::Now
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere, || at).await.unwrap(),
         send::Next::Idle
     );
     assert_eq!(inbox.lock().unwrap().len(), 1);

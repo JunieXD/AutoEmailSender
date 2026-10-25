@@ -9,6 +9,7 @@ import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
 import type { MatchFinished, DraftsFinished } from "@/api/types";
 import { refreshTasks } from "@/pages/tasks";
+import { scheduledAt } from "@/components/schedule";
 import { refreshMentors } from "@/components/mentor";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
@@ -159,6 +160,15 @@ function Background() {
     queryFn: () => call("matchingProgress", {}),
     refetchInterval: 3000,
   });
+  const scheduled = useQuery({
+    queryKey: ["scheduledWork"],
+    queryFn: () => call("scheduledWork", {}),
+    refetchInterval: 3000,
+  });
+  const attention = (scheduled.data?.pending ?? 0) + pendingTasks();
+  function pendingTasks() {
+    return tasks.data?.filter((t) => t.state === "paused").length ?? 0;
+  }
   const active = tasks.data?.filter((t) => t.progress.generating > 0) ?? [];
   const pending =
     tasks.data?.filter((t) => t.state === "paused" || t.progress.generationFailed > 0 || t.progress.failed > 0) ?? [];
@@ -174,13 +184,18 @@ function Background() {
       >
         <LoaderCircle className={`size-4 ${count > 0 ? "animate-spin" : ""}`} />
         后台{count > 0 && <span>{count}</span>}
-        {pending.length > 0 && <span className="text-warning">{pending.length}</span>}
+        {attention > 0 && <span className="text-warning">{attention}</span>}
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="max-h-96 w-80 space-y-3 overflow-y-auto p-4 text-sm">
         <h2 className="font-medium">后台工作</h2>
-        {pending.length > 0 && (
+        {attention > 0 && (
           <div>
             <h3 className="mb-2 text-warning">待处理</h3>
+            {(scheduled.data?.pending ?? 0) > 0 && (
+              <Link to="/tasks" search={{ tab: "plan" }} className="block py-2">
+                {scheduled.data?.pending} 封邮件待处理
+              </Link>
+            )}
             {pending.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className="block py-2">
                 {t.name}
@@ -206,9 +221,20 @@ function Background() {
             匹配分析 · 还剩 {matching.data.remaining} 位
           </Link>
         )}
-        {count === 0 && pending.length === 0 && <p className="text-muted-foreground">当前没有后台工作</p>}
-        {(tasks.error ?? matching.error) && (
-          <p className="text-destructive">{errorMessage(tasks.error ?? matching.error)}</p>
+        {scheduled.data?.nextAt !== null && scheduled.data?.nextAt !== undefined && (
+          <div>
+            <h3 className="text-muted-foreground">按计划进行</h3>
+            <Link to="/tasks" search={{ tab: "plan", column: "upcoming" }} className="block py-2">
+              下一封 {scheduledAt(scheduled.data.nextAt)}
+              <span className="block text-xs text-muted-foreground">今天还剩 {scheduled.data.today} 封</span>
+            </Link>
+          </div>
+        )}
+        {count === 0 && attention === 0 && !scheduled.data?.nextAt && (
+          <p className="text-muted-foreground">当前没有后台工作</p>
+        )}
+        {(tasks.error ?? matching.error ?? scheduled.error) && (
+          <p className="text-destructive">{errorMessage(tasks.error ?? matching.error ?? scheduled.error)}</p>
         )}
       </PopoverContent>
     </Popover>

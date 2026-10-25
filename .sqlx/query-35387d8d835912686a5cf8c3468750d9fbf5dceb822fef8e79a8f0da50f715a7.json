@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT planned_at AS \"planned_at!\" FROM email WHERE task_id=?1 AND id<>?2 AND planned_at IS NOT NULL AND state NOT IN ('review','generating','generation_failed','canceled')",
+  "describe": {
+    "columns": [
+      {
+        "name": "planned_at!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "35387d8d835912686a5cf8c3468750d9fbf5dceb822fef8e79a8f0da50f715a7"
+}

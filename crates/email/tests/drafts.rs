@@ -35,6 +35,35 @@ async fn add_material(db: &SqlitePool, file_name: &str) -> i64 {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn standalone_scheduling_rejects_past_and_withdraw_clears_the_plan(db: SqlitePool) {
+    let mentor = add_mentor(&db).await;
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval(&[]), Some(10), 10)
+            .await
+            .unwrap(),
+        email::Approved::TimePassed
+    );
+    assert!(email::list(&db, mentor).await.unwrap().is_empty());
+    assert_eq!(
+        email::approve_first(&db, mentor, &approval(&[]), Some(20), 10)
+            .await
+            .unwrap(),
+        email::Approved::Yes
+    );
+    let e = email::list(&db, mentor).await.unwrap().remove(0);
+    assert_eq!(e.planned_at, Some(20));
+    assert_eq!(e.latest_at, Some(20 + 3_600_000));
+    assert!(email::withdraw(&db, e.id, 11).await.unwrap());
+    let times: (Option<i64>, Option<i64>) =
+        sqlx::query_as("SELECT planned_at,latest_at FROM email WHERE id=?")
+            .bind(e.id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(times, (None, None));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_mentor_has_one_first_draft_until_it_is_cleared(db: SqlitePool) {
     let mentor = add_mentor(&db).await;
     email::save_first_draft(&db, mentor, "申请", "", &[], 1)
@@ -78,14 +107,14 @@ async fn a_draft_is_approved_once_and_can_be_taken_back(db: SqlitePool) {
         .unwrap();
     let approval = approval(&[]);
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 2)
+        email::approve_first(&db, mentor, &approval, None, 2)
             .await
             .unwrap(),
         email::Approved::Yes
     );
     // Clicking again finds the email approved, so it is not sent twice.
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 3)
+        email::approve_first(&db, mentor, &approval, None, 3)
             .await
             .unwrap(),
         email::Approved::Refused
@@ -132,7 +161,7 @@ async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePoo
     let picked = [transcript, other_resume];
     let mut approval = approval(&picked);
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 2)
+        email::approve_first(&db, mentor, &approval, None, 2)
             .await
             .unwrap(),
         email::Approved::MaterialGone
@@ -141,7 +170,7 @@ async fn attachments_are_kept_with_the_draft_and_named_on_approval(db: SqlitePoo
 
     approval.attachments = &picked[1..];
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 2)
+        email::approve_first(&db, mentor, &approval, None, 2)
             .await
             .unwrap(),
         email::Approved::Yes
@@ -160,13 +189,13 @@ async fn a_letter_never_saved_is_approved_once(db: SqlitePool) {
     let mentor = add_mentor(&db).await;
     let approval = approval(&[]);
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 1)
+        email::approve_first(&db, mentor, &approval, None, 1)
             .await
             .unwrap(),
         email::Approved::Yes
     );
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 2)
+        email::approve_first(&db, mentor, &approval, None, 2)
             .await
             .unwrap(),
         email::Approved::Refused
@@ -176,7 +205,7 @@ async fn a_letter_never_saved_is_approved_once(db: SqlitePool) {
     let trashed = add_mentor(&db).await;
     mentor::trash::trash(&db, &[trashed], 3).await.unwrap();
     assert_eq!(
-        email::approve_first(&db, trashed, &approval, 4)
+        email::approve_first(&db, trashed, &approval, None, 4)
             .await
             .unwrap(),
         email::Approved::Refused

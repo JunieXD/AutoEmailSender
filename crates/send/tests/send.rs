@@ -64,7 +64,7 @@ async fn approve(db: &SqlitePool, address: &str, attachments: &[i64], now: i64) 
         attachments,
     };
     assert_eq!(
-        email::approve_first(db, mentor, &approval, now)
+        email::approve_first(db, mentor, &approval, None, now)
             .await
             .unwrap(),
         email::Approved::Yes
@@ -249,7 +249,7 @@ async fn an_email_taken_back_and_changed_is_another_letter(db: SqlitePool) {
         attachments: &[],
     };
     assert_eq!(
-        email::approve_first(&db, hangup, &changed, T + 3)
+        email::approve_first(&db, hangup, &changed, None, T + 3)
             .await
             .unwrap(),
         email::Approved::Yes
@@ -725,4 +725,306 @@ async fn a_reply_uses_the_responsible_mailbox_selected_after_approval(db: Sqlite
     ));
     assert!(receiving.lock().unwrap().is_empty());
     assert_eq!(responsible.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn scheduled_mail_obeys_time_and_deadline_and_immediate_send_is_once(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "scheduled@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T + MINUTE, T)
+        .await
+        .unwrap();
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T).await.unwrap(),
+        Next::At(T + MINUTE)
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + MINUTE)
+            .await
+            .unwrap(),
+        Next::Now
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + 2 * MINUTE)
+            .await
+            .unwrap(),
+        Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+    let mentor = approve(&db, "missed@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T + MINUTE, T)
+        .await
+        .unwrap();
+    let later = T + MINUTE + 3_600_000;
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || later).await.unwrap(),
+        Next::Idle
+    );
+    let pending = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Pending,
+            page: std::num::NonZeroU32::MIN,
+        },
+        later,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pending.emails[0].id, id);
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+    email::schedule::send_now(&db, id, later).await.unwrap();
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || later).await.unwrap(),
+        Next::Now
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || later).await.unwrap(),
+        Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn crossing_the_deadline_during_login_cannot_hand_the_letter_over(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let m = approve(&db, "late@example.edu.cn", &[], T).await;
+    let id = first_email(&db, m).await.id;
+    email::schedule::reschedule(&db, id, T + MINUTE, T)
+        .await
+        .unwrap();
+    let calls = Cell::new(0);
+    let now = || {
+        let n = calls.get();
+        calls.set(n + 1);
+        if n == 0 {
+            T + MINUTE
+        } else {
+            T + MINUTE + 3_600_000
+        }
+    };
+    send::step(&db, &net, nowhere(), now).await.unwrap();
+    assert!(inbox.lock().unwrap().is_empty());
+    assert!(matches!(
+        first_email(&db, m).await.delivery,
+        Delivery::Approved
+    ));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn expired_task_mail_rolls_only_into_selected_capacity_and_manual_dates_stay_pending(
+    db: SqlitePool,
+) {
+    use chrono::{TimeZone, Utc};
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let base = T / DAY * DAY;
+    let dates = [base, base + DAY].map(|at| {
+        Utc.timestamp_millis_opt(at)
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string()
+    });
+    let task=sqlx::query("INSERT INTO task(name,kind,writer,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('定时','first','ai','window',?,'09:00','11:00',1,'paused',?)").bind(sqlx::types::Json(dates)).bind(T).execute(&db).await.unwrap().last_insert_rowid();
+    let mentor = approve(&db, "task@example.edu.cn", &[], base).await;
+    let id = first_email(&db, mentor).await.id;
+    sqlx::query("UPDATE email SET task_id=?,planned_at=?,latest_at=? WHERE id=?")
+        .bind(task)
+        .bind(base + 9 * 3_600_000)
+        .bind(base + 11 * 3_600_000)
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let next = base + DAY + 9 * 3_600_000;
+    send::step_in_zone(
+        &db,
+        &net,
+        nowhere(),
+        || base + 12 * 3_600_000,
+        &Utc,
+        &mut |_| 0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(first_email(&db, mentor).await.planned_at, Some(next));
+    send::step_in_zone(&db, &net, nowhere(), || next, &Utc, &mut |_| 0)
+        .await
+        .unwrap();
+    assert!(inbox.lock().unwrap().is_empty());
+    let expired = base + DAY + 11 * 3_600_000;
+    send::step_in_zone(&db, &net, nowhere(), || expired, &Utc, &mut |_| 0)
+        .await
+        .unwrap();
+    assert_eq!(first_email(&db, mentor).await.planned_at, Some(next));
+    let pending = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Pending,
+            page: std::num::NonZeroU32::MIN,
+        },
+        expired,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pending.total, 1);
+    // A manual date's one-hour deadline does not silently return to task windows.
+    email::schedule::reschedule(&db, id, base + 12 * 3_600_000, base)
+        .await
+        .unwrap();
+    send::step_in_zone(
+        &db,
+        &net,
+        nowhere(),
+        || base + 14 * 3_600_000,
+        &Utc,
+        &mut |_| 0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        first_email(&db, mentor).await.planned_at,
+        Some(base + 12 * 3_600_000)
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+    sqlx::query("UPDATE task SET state='active' WHERE id=?")
+        .bind(task)
+        .execute(&db)
+        .await
+        .unwrap();
+    email::schedule::send_now(&db, id, expired).await.unwrap();
+    assert_eq!(
+        send::step_in_zone(&db, &net, nowhere(), || expired, &Utc, &mut |_| 0)
+            .await
+            .unwrap(),
+        Next::Now
+    );
+    assert_eq!(
+        send::step_in_zone(&db, &net, nowhere(), || expired, &Utc, &mut |_| 0)
+            .await
+            .unwrap(),
+        Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn plan_columns_explain_waiting_and_history_is_limited_and_paged(db: SqlitePool) {
+    use send::plan::{PlanColumn as C, PlanQuery, Waiting};
+    let (_net, _inbox) = mailbox(&db, SECRET).await;
+    let mut ids = vec![];
+    for name in ["time", "limit", "paused", "missed", "failed", "unknown"] {
+        let m = approve(&db, &format!("{name}@example.edu.cn"), &[], T).await;
+        ids.push(first_email(&db, m).await.id);
+    }
+    email::schedule::reschedule(&db, ids[0], T + MINUTE, T)
+        .await
+        .unwrap();
+    email::schedule::reschedule(&db, ids[3], T - 2 * 3_600_000, T - 3 * 3_600_000)
+        .await
+        .unwrap();
+    email::failed(&mut db.acquire().await.unwrap(), ids[4], "拒收", T)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE email SET state='maybe_sent',mailbox_id=1,from_address='me@example.com',to_address='unknown@example.edu.cn',message_id='<unknown@example.com>',sent_at=?,error='连接中断' WHERE id=?").bind(T).bind(ids[5]).execute(&db).await.unwrap();
+    let task=sqlx::query("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES ('暂停任务','first','ai','now','paused',?)").bind(T).execute(&db).await.unwrap().last_insert_rowid();
+    sqlx::query("UPDATE email SET task_id=? WHERE id=?")
+        .bind(task)
+        .bind(ids[2])
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mailbox SET daily_limit=1")
+        .execute(&db)
+        .await
+        .unwrap();
+    let q = |column, page| PlanQuery {
+        column,
+        page: std::num::NonZeroU32::new(page).unwrap(),
+    };
+    let upcoming = send::plan::list(&db, &q(C::Upcoming, 1), T).await.unwrap();
+    assert_eq!(upcoming.total, 3);
+    assert!(matches!(
+        upcoming
+            .emails
+            .iter()
+            .find(|e| e.id == ids[0])
+            .unwrap()
+            .waiting,
+        Some(Waiting::Time)
+    ));
+    assert!(matches!(
+        upcoming
+            .emails
+            .iter()
+            .find(|e| e.id == ids[1])
+            .unwrap()
+            .waiting,
+        Some(Waiting::MailboxLimit)
+    ));
+    assert!(matches!(
+        upcoming
+            .emails
+            .iter()
+            .find(|e| e.id == ids[2])
+            .unwrap()
+            .waiting,
+        Some(Waiting::TaskPaused)
+    ));
+    sqlx::query("UPDATE mailbox SET paused_until=?,pause_reason='服务商限流'")
+        .bind(T + MINUTE)
+        .execute(&db)
+        .await
+        .unwrap();
+    let paused = send::plan::list(&db, &q(C::Upcoming, 1), T).await.unwrap();
+    assert!(matches!(
+        paused
+            .emails
+            .iter()
+            .find(|e| e.id == ids[1])
+            .unwrap()
+            .waiting,
+        Some(Waiting::MailboxPaused)
+    ));
+    let pending = send::plan::list(&db, &q(C::Pending, 1), T).await.unwrap();
+    assert_eq!(pending.total, 3);
+    assert_eq!(
+        pending
+            .emails
+            .iter()
+            .map(|e| e.id)
+            .collect::<std::collections::HashSet<_>>(),
+        ids[3..].iter().copied().collect()
+    );
+    assert!(
+        send::plan::list(&db, &q(C::History, 1), T)
+            .await
+            .unwrap()
+            .emails
+            .is_empty()
+    );
+    for n in 0..110 {
+        sqlx::query("INSERT INTO email(mentor_id,kind,state,subject,body_md,html,text,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,created_at,updated_at) SELECT mentor_id,'first','sent','历史','正文','<p>正文</p>','正文',?,1,'me@example.com','mentor@example.edu.cn',?,?,?,? FROM email WHERE id=?")
+            .bind(T).bind(format!("<history{n}@example.com>")).bind(T+n).bind(T).bind(T).bind(ids[0]).execute(&db).await.unwrap();
+    }
+    let history = send::plan::list(&db, &q(C::History, 1), T).await.unwrap();
+    assert_eq!(history.total, 100);
+    assert_eq!(history.emails.len(), 50);
+    assert_eq!(history.emails[0].sent_at, Some(T + 109));
+    assert_eq!(
+        send::plan::list(&db, &q(C::History, 2), T)
+            .await
+            .unwrap()
+            .emails
+            .len(),
+        50
+    );
+    assert!(
+        send::plan::list(&db, &q(C::History, 3), T)
+            .await
+            .unwrap()
+            .emails
+            .is_empty()
+    );
 }

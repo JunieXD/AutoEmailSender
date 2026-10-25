@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS \"body_md!\",\n             resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id) AS \"resent!: bool\",\n             from_address, to_address, sent_at, error\n           FROM email\n           WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
+  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS \"body_md!\",\n             resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id) AS \"resent!: bool\",\n             planned_at, latest_at, from_address, to_address, sent_at, error\n           FROM email\n           WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -65,8 +65,30 @@
         "origin": "Expression"
       },
       {
-        "name": "from_address",
+        "name": "planned_at",
         "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -77,7 +99,7 @@
       },
       {
         "name": "to_address",
-        "ordinal": 7,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -88,7 +110,7 @@
       },
       {
         "name": "sent_at",
-        "ordinal": 8,
+        "ordinal": 10,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -99,7 +121,7 @@
       },
       {
         "name": "error",
-        "ordinal": 9,
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -122,8 +144,10 @@
       true,
       true,
       true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "b1caa2bc805de4de7fc6c77a8ad12b701ca3928d6f15f25292b536c3f7d23ada"
+  "hash": "8adb1d424ba556171701fee25de1adc07c93145486df6354271d9985c57f1722"
 }

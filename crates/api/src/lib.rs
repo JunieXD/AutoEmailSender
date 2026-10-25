@@ -123,12 +123,18 @@ macro_rules! operations {
             out.push_str("export interface Operations {\n");
             $(out.push_str(&format!("  {}: {{ input: {}; output: {} }};\n", $op, <$input>::name(&cfg), <$output>::name(&cfg)));)*
             out.push_str("}\n");
-            out
+            out.lines().map(str::trim_end).collect::<Vec<_>>().join("\n") + "\n"
         }
     };
 }
 
 operations! {
+    "previewTaskSchedule" => preview_task_schedule(task::ApprovalPreview) -> task::SchedulePreview;
+    "changeTaskSchedule" => change_task_schedule(task::ScheduleEdit) -> u64;
+    "rescheduleEmail" => reschedule_email(RescheduleEmail) -> ();
+    "sendEmailNow" => send_email_now(EmailId) -> ();
+    "sendingPlan" => sending_plan(send::plan::PlanQuery) -> send::plan::PlanPage;
+    "scheduledWork" => scheduled_work(Nothing) -> send::plan::ScheduledWork;
     "planTask" => plan_task(task::NewTask) -> task::TaskPlan;
     "createTask" => create_task(task::NewTask) -> TaskId;
     "taskWork" => task_work(Nothing) -> Vec<task::TaskSummary>;
@@ -1238,6 +1244,7 @@ async fn check_mail_domain(
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FirstEmail {
+    pub planned_at: Option<i64>,
     pub mentor_id: i64,
     pub subject: String,
     pub body_md: String,
@@ -1273,7 +1280,7 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
     };
     approved(
         ctx,
-        email::approve_first(&ctx.db, input.mentor_id, &approval, now()).await?,
+        email::approve_first(&ctx.db, input.mentor_id, &approval, input.planned_at, now()).await?,
         "这位导师已经有一封首封邮件，或已移入回收站。",
         "有附件的材料已被删除。重新选择附件后再发送。",
     )
@@ -1290,6 +1297,9 @@ fn approved(
             ctx.sender.wake();
             Ok(())
         }
+        email::Approved::TimePassed => Err(CallError::invalid(
+            "所选时间已过，请选择未来的日期和时间。".into(),
+        )),
         email::Approved::Refused => Err(CallError::not_found(refused)),
         email::Approved::MaterialGone => Err(CallError::invalid(material_gone.into())),
         email::Approved::ReplyGone => Err(CallError::not_found(
@@ -1470,7 +1480,9 @@ async fn withdraw_email(ctx: &Context, input: EmailId) -> Result<(), CallError> 
                 e.into()
             }
         })?;
-    require_applied(applied, "这封邮件已在发送或已发出，无法改回草稿。")
+    require_applied(applied, "这封邮件已在发送或已发出，无法改回草稿。")?;
+    ctx.sender.wake();
+    Ok(())
 }
 
 async fn retry_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {

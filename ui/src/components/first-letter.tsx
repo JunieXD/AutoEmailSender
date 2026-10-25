@@ -7,7 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { FileText } from "lucide-react";
+import { FileText, ChevronDown } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type {
@@ -29,6 +29,7 @@ import { usePlaceholders } from "@/components/template-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DateTimeDialog, refreshSchedule } from "@/components/schedule";
 import { letterHtml, letterText } from "@/letter";
 
 /** Writing the first email to a mentor on their page (docs/ui.md#交互). */
@@ -160,6 +161,8 @@ function Composer({
       // The correspondence takes this composer's place first, so that it does not show the draft emptied.
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
       dropDrafts(queryClient, [mentorId], "first");
+      refreshSchedule(queryClient);
+      setScheduleOpen(false);
     },
   });
   // An approval still waiting for the saves before it holds the letter even after leaving and coming
@@ -190,9 +193,15 @@ function Composer({
       里添加。
     </>
   ) : null;
-  function send() {
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  function send(plannedAt: number | null = null) {
     if (style.data) {
-      approve.mutate({ ...letter, html: letterHtml(letter.bodyMd, style.data), text: letterText(letter.bodyMd) });
+      approve.mutate({
+        ...letter,
+        plannedAt,
+        html: letterHtml(letter.bodyMd, style.data),
+        text: letterText(letter.bodyMd),
+      });
     }
   }
   // Only a first fill that failed holds the letter back; a later one keeps what was filled, and a
@@ -318,7 +327,7 @@ function Composer({
               <LetterSend
                 blocker={blocker}
                 problems={problems}
-                onSend={send}
+                onSend={() => send()}
                 disabled={
                   locked ||
                   !style.data ||
@@ -327,10 +336,45 @@ function Composer({
                   letter.bodyMd.trim() === ""
                 }
               />
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      size="icon"
+                      aria-label="更多发送方式"
+                      disabled={
+                        locked ||
+                        !!blocker ||
+                        !style.data ||
+                        !mailboxes.data ||
+                        !letter.subject.trim() ||
+                        !letter.bodyMd.trim()
+                      }
+                    />
+                  }
+                >
+                  <ChevronDown />
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-44 p-1.5">
+                  <Button variant="ghost" onClick={() => setScheduleOpen(true)}>
+                    定时发送…
+                  </Button>
+                </PopoverContent>
+              </Popover>
             </>
           )}
         </div>
       </div>
+      {scheduleOpen && (
+        <DateTimeDialog
+          title="定时发送"
+          problems={problems.length}
+          pending={approving}
+          error={approve.error}
+          onClose={() => setScheduleOpen(false)}
+          onConfirm={(at) => send(at)}
+        />
+      )}
       {(style.error ?? mailboxes.error ?? approve.error) && (
         <p className="text-sm text-destructive">
           未能发送：{errorMessage(style.error ?? mailboxes.error ?? approve.error)}

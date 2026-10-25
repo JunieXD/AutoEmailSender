@@ -1,0 +1,189 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id,e.mentor_id,m.name,e.subject,e.task_id,t.name AS task_name,e.state AS \"state: DraftState\",e.planned_at,e.latest_at,e.sent_at,e.from_address,e.error,\n        t.state AS task_state,t.generation_paused_at,\n        CASE WHEN e.kind='reply' THEN coalesce(m.mailbox_id,(SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id=r.id WHERE mm.mentor_id=e.mentor_id AND r.message_id=e.reply_to AND r.kind='reply')) ELSE m.mailbox_id END AS own\n        FROM json_each(?1) j JOIN email e ON e.id=j.value JOIN mentor m ON m.id=e.mentor_id LEFT JOIN task t ON t.id=e.task_id\n        ORDER BY j.key",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "task_id",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "task_name",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "state: DraftState",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "planned_at",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "name": "task_state",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "generation_paused_at",
+        "ordinal": 13,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "generation_paused_at"
+          }
+        }
+      },
+      {
+        "name": "own",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "88741751f05422637e028d5788f0eb3c5025038ebb1de369bbbbe4f6296ca36e"
+}
