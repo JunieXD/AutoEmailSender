@@ -29,6 +29,8 @@ pub struct Candidate {
     pub fields: MentorFields,
     pub papers: Vec<String>,
     pub source_url: Option<String>,
+    #[serde(flatten)]
+    pub enrichment: crate::enrich::Enrichment,
 }
 #[derive(Debug, Serialize, TS)]
 pub struct CandidateDetail {
@@ -65,6 +67,8 @@ pub struct CandidateRow {
     pub affiliation: Option<mentor::Affiliation>,
     pub research: Option<String>,
     pub source_url: Option<String>,
+    #[serde(flatten)]
+    pub enrichment: crate::enrich::Enrichment,
     pub review: String,
     pub mentor_id: Option<i64>,
     pub category: CandidateFilter,
@@ -86,9 +90,12 @@ pub struct Reviewed {
     pub skipped: u32,
 }
 
-async fn read(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<Candidate>, sqlx::Error> {
+pub(crate) async fn read(
+    conn: &mut SqliteConnection,
+    ids: &[i64],
+) -> Result<Vec<Candidate>, sqlx::Error> {
     let ids = Json(ids);
-    Ok(sqlx::query!(r#"SELECT id,crawl_id,review,mentor_id,name,aliases AS "aliases: Json<Vec<String>>",emails AS "emails: Json<Vec<String>>",affiliations AS "affiliations: Json<Vec<mentor::Affiliation>>",homepages AS "homepages: Json<Vec<String>>",research,papers AS "papers: Json<Vec<String>>",source_url FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id"#,ids).fetch_all(conn).await?.into_iter().map(|r|Candidate{id:r.id,crawl_id:r.crawl_id,review:r.review,mentor_id:r.mentor_id,fields:MentorFields{name:r.name,aliases:r.aliases.map(|Json(v)|v).unwrap_or_default(),emails:r.emails.map(|Json(v)|v).unwrap_or_default(),affiliations:r.affiliations.map(|Json(v)|v).unwrap_or_default(),homepages:r.homepages.map(|Json(v)|v).unwrap_or_default(),research:r.research},papers:r.papers.map(|Json(v)|v).unwrap_or_default(),source_url:r.source_url}).collect())
+    Ok(sqlx::query!(r#"SELECT id,crawl_id,review,mentor_id,name,aliases AS "aliases: Json<Vec<String>>",emails AS "emails: Json<Vec<String>>",affiliations AS "affiliations: Json<Vec<mentor::Affiliation>>",homepages AS "homepages: Json<Vec<String>>",research,papers AS "papers: Json<Vec<String>>",source_url,enrich AS "enrich: crate::enrich::EnrichState",enrich_changes AS "changes: Json<Vec<crate::enrich::EnrichChange>>",enrich_error FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id"#,ids).fetch_all(conn).await?.into_iter().map(|r|Candidate{id:r.id,crawl_id:r.crawl_id,review:r.review,mentor_id:r.mentor_id,fields:MentorFields{name:r.name,aliases:r.aliases.map(|Json(v)|v).unwrap_or_default(),emails:r.emails.map(|Json(v)|v).unwrap_or_default(),affiliations:r.affiliations.map(|Json(v)|v).unwrap_or_default(),homepages:r.homepages.map(|Json(v)|v).unwrap_or_default(),research:r.research},papers:r.papers.map(|Json(v)|v).unwrap_or_default(),source_url:r.source_url,enrichment:crate::enrich::Enrichment{enrich:r.enrich,enrich_changes:r.changes.map(|Json(v)|v).unwrap_or_default(),enrich_error:r.enrich_error}}).collect())
 }
 async fn rows(
     conn: &mut SqliteConnection,
@@ -170,6 +177,7 @@ pub async fn accept(
         let candidate = ids[(*row - 1) as usize];
         sqlx::query!("UPDATE candidate SET review = 'accepted',mentor_id = ? WHERE id = ? AND review = 'pending'",id,candidate).execute(&mut *tx).await?;
     }
+    crate::enrich::retire(&mut tx).await?;
     tx.commit().await?;
     Ok(Reviewed {
         accepted: accepted.len() as u32,
@@ -178,7 +186,11 @@ pub async fn accept(
     })
 }
 pub async fn reject(db: &SqlitePool, ids: &[i64]) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE candidate SET review = 'rejected' WHERE review = 'pending' AND id IN (SELECT value FROM json_each(?))",Json(ids)).execute(db).await?.rows_affected())
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let n = sqlx::query!("UPDATE candidate SET review = 'rejected' WHERE review = 'pending' AND id IN (SELECT value FROM json_each(?))",Json(ids)).execute(&mut *tx).await?.rows_affected();
+    crate::enrich::retire(&mut tx).await?;
+    tx.commit().await?;
+    Ok(n)
 }
 #[derive(Debug, Deserialize)]
 struct Classified {
@@ -241,6 +253,7 @@ pub async fn list(db: &SqlitePool, q: &CandidateQuery) -> Result<CandidatePage, 
             affiliation: c.fields.affiliations.into_iter().next(),
             research: c.fields.research.map(|s| s.chars().take(100).collect()),
             source_url: c.source_url,
+            enrichment: c.enrichment,
             review: c.review,
             mentor_id: c.mentor_id,
             category: classification.category,
@@ -278,6 +291,9 @@ pub(crate) async fn save(
         old.retain(|c| Some(c.id) == keep);
     }
     let ids: Vec<_> = old.iter().map(|c| c.id).collect();
+    if ids.len() > 1 {
+        crate::enrich::stop(conn, &ids).await?;
+    }
     if old.is_empty()
         && sqlx::query_scalar!("SELECT count(*) FROM candidate WHERE crawl_id = ?", crawl)
             .fetch_one(&mut *conn)

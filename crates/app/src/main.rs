@@ -271,18 +271,15 @@ async fn finish_crawl(
     db: &sqlx::SqlitePool,
     result: crawl::runner::CrawlFinished,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if result.message.is_empty() {
+        return Ok(());
+    }
     if let Some(window) = app.get_webview_window("main")
         && window.is_focused()?
     {
         app.emit("crawl-finished", result)?;
     } else if profile::background_notifications(db).await? {
-        app.notification()
-            .builder()
-            .title(format!(
-                "抓取完成：找到 {} 位候选，{} 个页面未打开",
-                result.candidates, result.failed
-            ))
-            .show()?;
+        app.notification().builder().title(&result.message).show()?;
     }
     Ok(())
 }

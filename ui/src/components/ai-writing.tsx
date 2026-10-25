@@ -70,11 +70,13 @@ export function AiButton({
 /** The same provider consent for every AI entry point. */
 export function ModelAction({
   modelId,
+  modelIds,
   children,
   disabled,
   onWrite,
 }: {
   modelId?: number | null;
+  modelIds?: number[];
   children: ReactNode;
   disabled: boolean;
   onWrite: () => void;
@@ -87,9 +89,12 @@ export function ModelAction({
     mutationFn: (m: ModelConfig) => call("agreeModel", { id: m.id, provider: m.provider, baseUrl: m.baseUrl }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
-  const chosen =
-    models.data?.find((m) => (modelId != null ? m.id === modelId : m.isDefault)) ??
-    models.data?.find((m) => m.isDefault);
+  const fallback = models.data?.find((m) => m.isDefault);
+  const required =
+    modelIds && modelIds.length > 0
+      ? modelIds.map((id) => models.data?.find((m) => m.id === id) ?? fallback).filter((m) => m !== undefined)
+      : [models.data?.find((m) => m.id === modelId) ?? fallback].filter((m) => m !== undefined);
+  const chosen = required.find((m) => !m.agreed) ?? required[0];
   const button = (onClick?: () => void) => (
     <Button
       variant="ai"
@@ -119,7 +124,13 @@ export function ModelAction({
           trigger={button()}
           message={notice(chosen, providers.data ?? [])}
           action="同意并继续"
-          onConfirm={() => agree.mutate(chosen, { onSuccess: onWrite })}
+          onConfirm={() =>
+            agree.mutate(chosen, {
+              onSuccess: () => {
+                if (required.every((m) => m.id === chosen.id || m.agreed)) onWrite();
+              },
+            })
+          }
         />
       ) : (
         button(onWrite)

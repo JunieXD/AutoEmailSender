@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate SET enrich='queued',enrich_changes='[]',enrich_error=NULL WHERE id=?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "b2706238316ae1bec9b93a840f98035751cb85592a307db5729c7e0cf46e695b"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id,crawl_id,review,mentor_id,name,aliases AS \"aliases: Json<Vec<String>>\",emails AS \"emails: Json<Vec<String>>\",affiliations AS \"affiliations: Json<Vec<mentor::Affiliation>>\",homepages AS \"homepages: Json<Vec<String>>\",research,papers AS \"papers: Json<Vec<String>>\",source_url FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+  "query": "SELECT id,crawl_id,review,mentor_id,name,aliases AS \"aliases: Json<Vec<String>>\",emails AS \"emails: Json<Vec<String>>\",affiliations AS \"affiliations: Json<Vec<mentor::Affiliation>>\",homepages AS \"homepages: Json<Vec<String>>\",research,papers AS \"papers: Json<Vec<String>>\",source_url,enrich AS \"enrich: crate::enrich::EnrichState\",enrich_changes AS \"changes: Json<Vec<crate::enrich::EnrichChange>>\",enrich_error FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -134,6 +134,39 @@
             "name": "source_url"
           }
         }
+      },
+      {
+        "name": "enrich: crate::enrich::EnrichState",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich"
+          }
+        }
+      },
+      {
+        "name": "changes: Json<Vec<crate::enrich::EnrichChange>>",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich_changes"
+          }
+        }
+      },
+      {
+        "name": "enrich_error",
+        "ordinal": 14,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich_error"
+          }
+        }
       }
     ],
     "parameters": {
@@ -151,8 +184,11 @@
       true,
       true,
       true,
+      true,
+      false,
+      true,
       true
     ]
   },
-  "hash": "83e74cb6fbfc25f8edddb65d87678444a732c1c6685c1b38dc7767acce4d9135"
+  "hash": "577ce1e1da4827a2cb3b186470534061d184131081652fdf068d894cb9b18a99"
 }

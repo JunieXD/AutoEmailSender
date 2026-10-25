@@ -1,0 +1,93 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!: i64\",crawl_id,profile_url,review,enrich AS \"enrich: EnrichState\",\n        coalesce(json_array_length(emails),0) AS \"emails!: i64\",research\n        FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "crawl_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "profile_url",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "profile_url"
+          }
+        }
+      },
+      {
+        "name": "review",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "review"
+          }
+        }
+      },
+      {
+        "name": "enrich: EnrichState",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich"
+          }
+        }
+      },
+      {
+        "name": "emails!: i64",
+        "ordinal": 5,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "research",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "research"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      true,
+      true,
+      false,
+      false,
+      null,
+      true
+    ]
+  },
+  "hash": "8d57fa6ea2384bd1f5530819c2f8c46ddb3c14e365d972d6913b49ab48571b44"
+}

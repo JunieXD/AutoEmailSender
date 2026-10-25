@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT count(*) FROM crawl_page WHERE crawl_id = ? AND kind != 'profile'",
+  "query": "SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=? AND candidate_id IS NULL AND work_state!='done') AS \"present!: bool\"",
   "describe": {
     "columns": [
       {
-        "name": "count(*)",
+        "name": "present!: bool",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": "Expression"
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "d95d123cc4e1d65e464271e622c673cd5130556c28db11978a066f5810bb0f38"
+  "hash": "a2d3a64fa87edba6c69c7af75b9d696933a8a7252358bb9c763c2feb36f39191"
 }

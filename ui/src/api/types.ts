@@ -18,7 +18,7 @@ export type CallError = { code: ErrorCode, message: string, };
 
 export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, previous: PreviousLetter | null, };
 
-export type CandidateDetail = { evidence: Array<Evidence>, id: number, crawlId: number | null, review: string, mentorId: number | null, fields: MentorFields, papers: Array<string>, sourceUrl: string | null, };
+export type CandidateDetail = { evidence: Array<Evidence>, id: number, crawlId: number | null, review: string, mentorId: number | null, fields: MentorFields, papers: Array<string>, sourceUrl: string | null, enrich: EnrichState, enrichChanges: Array<EnrichChange>, enrichError: string | null, };
 
 export type CandidateFilter = "all" | "new" | "supplement" | "maybe" | "missing_email";
 
@@ -28,7 +28,7 @@ export type CandidatePage = { candidates: Array<CandidateRow>, total: number, };
 
 export type CandidateQuery = { crawlId: number | null, processed: boolean, filter: CandidateFilter, page: number, };
 
-export type CandidateRow = { id: number, crawlId: number | null, name: string, emails: Array<string>, affiliation: Affiliation | null, research: string | null, sourceUrl: string | null, review: string, mentorId: number | null, category: CandidateFilter, issue: string | null, };
+export type CandidateRow = { id: number, crawlId: number | null, name: string, emails: Array<string>, affiliation: Affiliation | null, research: string | null, sourceUrl: string | null, review: string, mentorId: number | null, category: CandidateFilter, issue: string | null, enrich: EnrichState, enrichChanges: Array<EnrichChange>, enrichError: string | null, };
 
 export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
@@ -48,7 +48,7 @@ export type CrawlDetail = { summary: CrawlSummary, urls: Array<string>, limits: 
 
 export type CrawlDetailQuery = { id: number, page: number, };
 
-export type CrawlFinished = { id: number, candidates: number, failed: number, };
+export type CrawlFinished = { id: number, message: string, };
 
 export type CrawlId = { id: number, };
 
@@ -62,13 +62,13 @@ export type CrawlRetry = { id: number, page: number | null, };
 
 export type CrawlRun = { appVersion: string, startedAt: number, endedAt: number | null, };
 
-export type CrawlStage = "lists" | "profiles" | "paused" | "done" | "failed" | "canceled";
+export type CrawlStage = "lists" | "profiles" | "enrich" | "paused" | "done" | "failed" | "canceled";
 
 export type CrawlStart = { urls: string, modelId: number, };
 
 export type CrawlState = "running" | "paused" | "done" | "failed" | "canceled";
 
-export type CrawlSummary = { id: number, url: string | null, modelConfigId: number | null, state: CrawlState, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, profiles: number, candidates: number, failed: number, tokens: number | null, stage: CrawlStage, };
+export type CrawlSummary = { id: number, url: string | null, modelConfigId: number | null, state: CrawlState, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, enrichRemaining: number, modelIds: Array<number>, profiles: number, candidates: number, failed: number, tokens: number | null, stage: CrawlStage, };
 
 export type CrawlUrls = { urls: string, };
 
@@ -111,6 +111,18 @@ resendOf: number | null,
 resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
 
 export type EmailId = { id: number, };
+
+export type EnrichChange = { field: EnrichField, value: unknown, };
+
+export type EnrichField = "email" | "alias" | "homepage" | "paper" | "research" | "affiliation" | "university" | "school" | "department" | "title";
+
+export type EnrichPlan = { ids: Array<number>, skipped: Array<EnrichSkip>, };
+
+export type EnrichSkip = { reason: EnrichSkipReason, ids: Array<number>, };
+
+export type EnrichSkipReason = "missing_profile" | "deleted_crawl" | "complete" | "active" | "reviewed";
+
+export type EnrichState = "none" | "queued" | "running" | "done" | "failed";
 
 export type Entry = { "email": Email } | { "message": Message };
 
@@ -403,7 +415,7 @@ export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
 
-export type PageKind = "entry" | "list" | "profile";
+export type PageKind = "entry" | "list" | "profile" | "enrich_profile" | "enrich_child";
 
 export type PageState = "queued" | "running" | "done";
 
@@ -580,6 +592,8 @@ export interface Operations {
   cancelCrawl: { input: CrawlId; output: null };
   retryCrawl: { input: CrawlRetry; output: number };
   deleteCrawl: { input: CrawlId; output: null };
+  previewEnrich: { input: CandidateIds; output: EnrichPlan };
+  enrichCandidates: { input: CandidateIds; output: EnrichPlan };
   listCandidates: { input: CandidateQuery; output: CandidatePage };
   getCandidate: { input: CrawlId; output: CandidateDetail };
   previewCandidates: { input: ReviewInput; output: Preview };

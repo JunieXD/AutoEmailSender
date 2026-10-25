@@ -99,7 +99,14 @@ pub(super) async fn resume_crawl(ctx: &Context, input: CrawlId) -> Result<(), Ca
         .fetch_optional(&ctx.db)
         .await?
         .flatten();
-    crawl_ready(ctx, id).await?;
+    let enrichment = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=? AND candidate_id IS NOT NULL AND work_state!='done') AS \"present!: bool\"",input.id).fetch_one(&ctx.db).await?;
+    let ordinary = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=? AND candidate_id IS NULL AND work_state!='done') AS \"present!: bool\"",input.id).fetch_one(&ctx.db).await?;
+    if ordinary {
+        crawl_ready(ctx, id).await?;
+    }
+    if enrichment {
+        crawl_ready(ctx, None).await?;
+    }
     queue::control(&ctx.db, input.id, "resume", now()).await?;
     ctx.crawler.wake();
     Ok(())
@@ -114,7 +121,14 @@ pub(super) async fn retry_crawl(ctx: &Context, input: CrawlRetry) -> Result<u64,
         .fetch_optional(&ctx.db)
         .await?
         .flatten();
-    crawl_ready(ctx, id).await?;
+    let enrichment = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=?1 AND (?2 IS NULL OR id=?2) AND candidate_id IN (SELECT id FROM candidate WHERE review='pending') AND status!='success') AS \"present!: bool\"",input.id,input.page).fetch_one(&ctx.db).await?;
+    let ordinary = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=?1 AND (?2 IS NULL OR id=?2) AND candidate_id IS NULL AND status!='success') AS \"present!: bool\"",input.id,input.page).fetch_one(&ctx.db).await?;
+    if ordinary {
+        crawl_ready(ctx, id).await?;
+    }
+    if enrichment {
+        crawl_ready(ctx, None).await?;
+    }
     let n = queue::retry(&ctx.db, input.id, input.page, now()).await?;
     ctx.crawler.wake();
     Ok(n)
@@ -123,6 +137,21 @@ pub(super) async fn delete_crawl(ctx: &Context, input: CrawlId) -> Result<(), Ca
     queue::delete(&ctx.db, input.id).await?;
     ctx.crawler.wake();
     Ok(())
+}
+pub(super) async fn preview_enrich(
+    ctx: &Context,
+    input: CandidateIds,
+) -> Result<crawl::enrich::EnrichPlan, CallError> {
+    Ok(crawl::enrich::preview(&ctx.db, &input.ids).await?)
+}
+pub(super) async fn enrich_candidates(
+    ctx: &Context,
+    input: CandidateIds,
+) -> Result<crawl::enrich::EnrichPlan, CallError> {
+    crawl_ready(ctx, None).await?;
+    let result = crawl::enrich::start(&ctx.db, &input.ids, now()).await?;
+    ctx.crawler.wake();
+    Ok(result)
 }
 pub(super) async fn list_candidates(
     ctx: &Context,
@@ -198,5 +227,65 @@ mod tests {
                 .unwrap(),
             Some(ids[0])
         );
+    }
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn enrichment_requires_current_default_consent_instead_of_original_crawl_model(
+        db: SqlitePool,
+    ) {
+        let first = sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom','http://127.0.0.1:1','original','fixture',1,1) RETURNING id").fetch_one(&db).await.unwrap();
+        let default = sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom','http://127.0.0.1:2','default','fixture',0,1) RETURNING id").fetch_one(&db).await.unwrap();
+        sqlx::query("UPDATE profile SET default_model_config_id=?")
+            .bind(default)
+            .execute(&db)
+            .await
+            .unwrap();
+        let crawl=sqlx::query_scalar::<_,i64>("INSERT INTO crawl(kind,start_urls,model_config_id,state,created_at,finished_at) VALUES('site','[]',?,'done',1,1) RETURNING id").bind(first).fetch_one(&db).await.unwrap();
+        let id=sqlx::query_scalar::<_,i64>("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name) VALUES(?,'https://school.example.edu/p','pending','none','张三') RETURNING id").bind(crawl).fetch_one(&db).await.unwrap();
+        let ctx = Context {
+            db: db.clone(),
+            net: net::Net::new(vec![]).unwrap(),
+            sender: send::Sender::default(),
+            receiver: receive::Receiver::default(),
+            matcher: matching::Matcher::default(),
+            generator: task::generation::Generator::default(),
+            crawler: crawl::runner::Crawler::default(),
+            model_limit: Default::default(),
+            materials: Default::default(),
+        };
+        let error = enrich_candidates(&ctx, CandidateIds { ids: vec![id] })
+            .await
+            .unwrap_err();
+        assert!(matches!(error.code, ErrorCode::NeedsAgreement));
+        assert_eq!(
+            preview_enrich(&ctx, CandidateIds { ids: vec![id] })
+                .await
+                .unwrap()
+                .ids,
+            vec![id]
+        );
+        model::agree(&db, default, "custom", Some("http://127.0.0.1:2"))
+            .await
+            .unwrap();
+        assert_eq!(
+            enrich_candidates(&ctx, CandidateIds { ids: vec![id] })
+                .await
+                .unwrap()
+                .ids,
+            vec![id]
+        );
+        let claim = queue::next(&db).await.unwrap().unwrap();
+        assert_eq!(claim.model_id, None);
+        assert_eq!(
+            model::selected(&db, claim.model_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            default
+        );
+        let summary = queue::work(&db, 0, i64::MAX).await.unwrap();
+        assert_eq!(summary[0].enrich_remaining, 1);
+        assert_eq!(summary[0].stage, queue::CrawlStage::Enrich);
+        assert_eq!(summary[0].model_ids.0, vec![default]);
     }
 }

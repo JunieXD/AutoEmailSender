@@ -144,6 +144,8 @@ operations! {
     "cancelCrawl" => cancel_crawl(CrawlId) -> ();
     "retryCrawl" => retry_crawl(CrawlRetry) -> u64;
     "deleteCrawl" => delete_crawl(CrawlId) -> ();
+    "previewEnrich" => preview_enrich(CandidateIds) -> crawl::enrich::EnrichPlan;
+    "enrichCandidates" => enrich_candidates(CandidateIds) -> crawl::enrich::EnrichPlan;
     "listCandidates" => list_candidates(crawl::review::CandidateQuery) -> crawl::review::CandidatePage;
     "getCandidate" => get_candidate(CrawlId) -> crawl::review::CandidateDetail;
     "previewCandidates" => preview_candidates(crawl::review::ReviewInput) -> mentor::import::Preview;
