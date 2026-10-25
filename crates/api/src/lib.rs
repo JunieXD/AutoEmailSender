@@ -939,6 +939,9 @@ impl From<material::Error> for CallError {
             material::Error::InUse => CallError::invalid(
                 "这份材料是待发邮件的附件，邮件发出或改回草稿去掉附件后才能删除。".into(),
             ),
+            material::Error::TaskInUse { name } => CallError::invalid(format!(
+                "这份材料正用于任务“{name}”的草稿生成，请等待生成完成，或停止该任务后再删除。"
+            )),
             material::Error::Db(e) => e.into(),
             material::Error::File(e) => CallError::internal(format!("material file: {e}")),
         }

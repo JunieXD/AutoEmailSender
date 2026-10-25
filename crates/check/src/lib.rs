@@ -75,7 +75,7 @@ pub fn letter(
     problems
 }
 
-/// Other task mentors' full names, excluding names shared with this mentor or their aliases.
+/// Other task mentors' names outside occurrences of the recipient's names or aliases.
 pub fn other_mentors(
     mentor: &str,
     aliases: &[String],
@@ -83,13 +83,41 @@ pub fn other_mentors(
     subject: &str,
     body: &str,
 ) -> Vec<Problem> {
+    let texts = [subject, body].map(|text| {
+        let text = text.to_lowercase();
+        let own: Vec<_> = std::iter::once(mentor)
+            .chain(aliases.iter().map(String::as_str))
+            .flat_map(|name| {
+                text.match_indices(&name.to_lowercase())
+                    .map(|(start, matched)| start..start + matched.len())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        (text, own)
+    });
     let mut found = Vec::new();
     for name in others {
-        if name != mentor
-            && !aliases.contains(name)
-            && !found.contains(name)
-            && (subject.contains(name) || body.contains(name))
-        {
+        let folded = name.to_lowercase();
+        let english = name.chars().any(latin);
+        let short = name.chars().count() <= 2;
+        let present = texts.iter().any(|(text, own)| {
+            text.match_indices(&folded).any(|(start, matched)| {
+                let end = start + matched.len();
+                if own
+                    .iter()
+                    .any(|span| span.start <= start && end <= span.end)
+                {
+                    return false;
+                }
+                if english {
+                    let word = |c: char| latin(c) || c.is_ascii_digit() || c == '_';
+                    !text[..start].ends_with(word) && !text[end..].starts_with(word)
+                } else {
+                    !short || TITLES.iter().any(|title| text[end..].starts_with(title))
+                }
+            })
+        });
+        if !found.contains(name) && present {
             found.push(name.clone());
         }
     }
@@ -172,6 +200,94 @@ pub async fn mail_domain(address: &str) -> Result<Option<Problem>, NetError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_words_and_names_inside_the_recipients_names_are_not_other_mentors() {
+        let results: Vec<_> = [
+            (
+                "李明",
+                vec![],
+                "高峰",
+                "李明老师：我的课题研究交通高峰时段的预测。",
+            ),
+            ("李明", vec![], "明", "李明老师：您好！"),
+            ("李明", vec![], "Ann", "Annual reports"),
+            (
+                "李明",
+                vec!["欧阳晓明".into()],
+                "晓明",
+                "欧阳晓明老师：您好！",
+            ),
+            (
+                "李明",
+                vec!["Joann Smith".into()],
+                "Ann Smith",
+                "Dear JOANN SMITH,",
+            ),
+        ]
+        .into_iter()
+        .map(|(mentor, aliases, other, body)| {
+            other_mentors(mentor, &aliases, &[other.into()], "申请", body)
+        })
+        .collect();
+        assert!(results.iter().all(Vec::is_empty), "{results:?}");
+    }
+
+    #[test]
+    fn other_full_english_names_are_case_insensitive_whole_words() {
+        for body in [
+            "Dear john smith, I would like to apply.",
+            "I read John Smith's paper.",
+        ] {
+            assert_eq!(
+                other_mentors("李明", &[], &["John Smith".into()], "申请", body),
+                [Problem::OtherMentor {
+                    name: "John Smith".into()
+                }],
+                "{body}"
+            );
+        }
+        assert!(other_mentors("李明", &[], &["John Smith".into()], "", "John Smithson").is_empty());
+        assert!(
+            other_mentors(
+                "JOHN SMITH",
+                &[],
+                &["John Smith".into()],
+                "",
+                "Dear john smith,"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn short_chinese_names_need_a_title_and_long_names_do_not() {
+        for (name, text) in [
+            ("张伟", "张伟老师：您好！"),
+            ("高峰", "高峰教授：您好！"),
+            ("明", "明研究员：您好！"),
+            ("张小伟", "我读过张小伟的论文。"),
+        ] {
+            for (subject, body) in [(text, ""), ("申请", text)] {
+                assert_eq!(
+                    other_mentors("李明", &[], &[name.into()], subject, body),
+                    [Problem::OtherMentor { name: name.into() }],
+                    "{text}"
+                );
+            }
+        }
+        // A short shared name can still be a separate address outside the recipient's full name.
+        assert_eq!(
+            other_mentors(
+                "李明",
+                &[],
+                &["明".into()],
+                "",
+                "李明老师：明博士也参与了课题。"
+            ),
+            [Problem::OtherMentor { name: "明".into() }]
+        );
+    }
 
     #[test]
     fn other_task_names_are_reported_once_and_own_aliases_are_excluded() {

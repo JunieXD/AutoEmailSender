@@ -26,6 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { letterHtml, letterText } from "@/letter";
 
+export type TaskComposerHandle = ComposerHandle & { replace: (draft: TaskDraft) => void };
+
 /** Task-specific state uses the same saving, picker, rules and approval controls as first letters and replies. */
 export function TaskLetter({
   mentor,
@@ -35,6 +37,7 @@ export function TaskLetter({
   placeholders,
   actions,
   onApproved,
+  replacing,
   ref,
 }: {
   mentor: MentorDetail;
@@ -44,7 +47,8 @@ export function TaskLetter({
   placeholders: string[];
   actions?: ReactNode;
   onApproved: () => void;
-  ref?: Ref<ComposerHandle>;
+  replacing: boolean;
+  ref?: Ref<TaskComposerHandle>;
 }) {
   const client = useQueryClient();
   const { save, last, scope, flush } = useDraftSave<DraftEdit, TaskDraft>(
@@ -121,16 +125,25 @@ export function TaskLetter({
     },
     onSuccess: onApproved,
   });
-  const locked = readOnly || busy || uploading || approving || approve.isSuccess || review !== undefined;
+  const locked = readOnly || busy || uploading || approving || approve.isSuccess || review !== undefined || replacing;
   const sendButton = useRef<HTMLButtonElement>(null);
-  useImperativeHandle(ref, () => ({ flush: saved, approve: () => sendButton.current?.click() }));
+  function replaceLetter(next: DraftEdit) {
+    setLetter(next);
+    setBody((previous) => ({ version: previous.version + 1, markdown: next.bodyMd }));
+  }
+  useImperativeHandle(ref, () => ({
+    flush: saved,
+    approve: () => sendButton.current?.click(),
+    replace: (stored) =>
+      replaceLetter({ ...letter, subject: stored.subject, bodyMd: stored.bodyMd, attachments: stored.attachments }),
+  }));
   function edit(next: DraftEdit) {
     setLetter(next);
     save.mutate(next);
   }
   function rewrite(next: DraftEdit) {
-    edit(next);
-    setBody({ version: body.version + 1, markdown: next.bodyMd });
+    save.mutate(next);
+    replaceLetter(next);
   }
   const blocker = !address ? (
     "导师尚未填写邮箱，可在资料里填写。"

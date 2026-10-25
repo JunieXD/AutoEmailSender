@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM email\n         WHERE mentor_id IN (?1, ?2) AND task_id IS NOT NULL AND state = 'canceled'\n           AND EXISTS (SELECT 1 FROM email k WHERE k.task_id = email.task_id\n             AND k.mentor_id IN (?1, ?2) AND k.mentor_id <> email.mentor_id\n             AND (email.mentor_id = ?2 OR k.state IN ('maybe_sent', 'sent', 'bounced')))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e73e4ff7e80208e7addb83162b64d1206b9f6be16abefc63051975c795211479"
+}

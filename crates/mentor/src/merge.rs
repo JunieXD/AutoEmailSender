@@ -185,6 +185,27 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     )
     .execute(&mut *tx)
     .await?;
+    // Resolve task membership before changing mentor_id; delivered letters must survive the merge.
+    sqlx::query!(
+        "DELETE FROM email
+         WHERE mentor_id IN (?1, ?2) AND task_id IS NOT NULL AND state = 'canceled'
+           AND EXISTS (SELECT 1 FROM email k WHERE k.task_id = email.task_id
+             AND k.mentor_id IN (?1, ?2) AND k.mentor_id <> email.mentor_id
+             AND (email.mentor_id = ?2 OR k.state IN ('maybe_sent', 'sent', 'bounced')))",
+        keep,
+        other,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE email SET task_id = NULL
+         WHERE mentor_id = ?2 AND task_id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.task_id = email.task_id)",
+        keep,
+        other,
+    )
+    .execute(&mut *tx)
+    .await?;
     sqlx::query!(
         "UPDATE email SET mentor_id = ? WHERE mentor_id = ?",
         keep,

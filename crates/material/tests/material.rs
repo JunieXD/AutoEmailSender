@@ -150,10 +150,17 @@ async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePoo
         email::Approved::Yes
     );
 
+    let task = task_material(&db, id, "reference", "review", 0).await;
     assert!(matches!(
         material::delete(&db, dir.path(), id, 2).await,
         Err(Error::InUse)
     ));
+    let references: i64 = sqlx::query_scalar("SELECT count(*) FROM task_material WHERE task_id=?")
+        .bind(task)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(references, 1);
     let email = email::list(&db, mentor).await.unwrap().remove(0);
     assert!(email::withdraw(&db, email.id, 3).await.unwrap());
     // Back to a draft, which loses the attachment along with the material.
@@ -306,4 +313,81 @@ async fn extracted_material_invalidates_results_only_when_stored(db: SqlitePool)
             .analyze,
         1
     );
+}
+
+async fn task_material(db: &SqlitePool, material: i64, role: &str, state: &str, claim: i64) -> i64 {
+    let task = sqlx::query("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES ('申请任务','first','ai','now','paused',0)")
+        .execute(db).await.unwrap().last_insert_rowid();
+    sqlx::query("INSERT INTO task_material(task_id,material_id,role) VALUES (?,?,?)")
+        .bind(task)
+        .bind(material)
+        .bind(role)
+        .execute(db)
+        .await
+        .unwrap();
+    let mentor = mentor::create(
+        db,
+        &mentor::MentorFields {
+            name: format!("导师{task}"),
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,generation_claim,error,created_at,updated_at) VALUES (?,?,'first',?,?,?,0,0)")
+        .bind(mentor).bind(task).bind(state).bind(claim)
+        .bind(matches!(state, "canceled" | "generation_failed").then_some("已停止或失败"))
+        .execute(db).await.unwrap();
+    task
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn task_references_protect_queued_and_running_generation_with_an_actionable_error(
+    db: SqlitePool,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    for claim in [0, 1] {
+        let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 1)
+            .await
+            .unwrap();
+        task_material(&db, id, "reference", "generating", claim).await;
+        let result = material::delete(&db, dir.path(), id, 2).await;
+        assert!(
+            matches!(result, Err(Error::TaskInUse { ref name }) if name == "申请任务"),
+            "{result:?}"
+        );
+        assert!(material::file(dir.path(), id).exists());
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn task_materials_are_released_when_no_draft_needs_them_for_generation(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    for (role, state) in [
+        ("reference", "review"),
+        ("reference", "generation_failed"),
+        ("reference", "canceled"),
+        ("attachment", "generating"),
+    ] {
+        let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 1)
+            .await
+            .unwrap();
+        let task = task_material(&db, id, role, state, 0).await;
+        if state == "canceled" {
+            sqlx::query("UPDATE task SET state='stopped' WHERE id=?")
+                .bind(task)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        assert!(material::delete(&db, dir.path(), id, 2).await.unwrap());
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM task_material WHERE task_id=?")
+            .bind(task)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!material::file(dir.path(), id).exists());
+    }
 }

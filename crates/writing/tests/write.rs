@@ -121,6 +121,16 @@ async fn a_blank_letter_is_drafted_from_the_user_and_the_mentor(db: SqlitePool) 
 
     let (system, message) = received.lock().unwrap().pop().unwrap();
     assert!(system.ends_with("语气再正式一些"), "{system}");
+    let me = profile::get(&db).await.unwrap();
+    let references = material::for_writing(&db).await.unwrap();
+    let mentor = mentor::get(&db, mentor).await.unwrap().unwrap();
+    assert_eq!(
+        writing::estimate(&me, &references, &["简历.pdf".into()], &mentor, None),
+        (
+            model::background::tokens(&system) + model::background::tokens(&message),
+            1200
+        )
+    );
     // Only materials for writing, and nothing of the mentor's the letter has no use for; what the
     // mentor's page says stays inside its field.
     let data: Value = serde_json::from_str(&message).unwrap();

@@ -51,7 +51,7 @@ pub fn estimate(
     current: Option<&Letter>,
 ) -> (i64, i64) {
     (
-        model::background::tokens(SYSTEM)
+        model::background::tokens(&system(me))
             + model::background::tokens(&message(me, references, attached, mentor, current)),
         1200,
     )
@@ -82,13 +82,7 @@ pub async fn write(
         .collect();
     let blank = current.subject.trim().is_empty() && current.body_md.trim().is_empty();
     let current = (!blank).then_some(current);
-    // The user's own wishes are instructions, which the material must not be able to pass for.
-    let system = match &me.rewrite_preference {
-        Some(preference) => {
-            format!("{SYSTEM}\n\n学生的写信偏好，优先于第 5 条的篇幅和语气：\n{preference}")
-        }
-        None => SYSTEM.to_owned(),
-    };
+    let system = system(&me);
     let message = message(&me, references, &attached, &mentor, current);
     let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
         .await
@@ -117,6 +111,16 @@ pub async fn write(
         return Err(Error::NotALetter { finish_reason });
     }
     letter(&answer.text).ok_or(Error::NotALetter { finish_reason })
+}
+
+// The user's own wishes are instructions, which the material must not be able to pass for.
+fn system(me: &profile::Profile) -> String {
+    match &me.rewrite_preference {
+        Some(preference) => {
+            format!("{SYSTEM}\n\n学生的写信偏好，优先于第 5 条的篇幅和语气：\n{preference}")
+        }
+        None => SYSTEM.to_owned(),
+    }
 }
 
 /// The rules, from what V2 learned: letters made up or overstated did the student harm.

@@ -6,8 +6,7 @@ import { call, errorMessage } from "@/api/call";
 import type { DraftFilter, DraftState, Progress, TaskSummary } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
-import { type ComposerHandle } from "@/components/letter-composer";
-import { TaskLetter } from "@/components/task-letter";
+import { TaskLetter, type TaskComposerHandle } from "@/components/task-letter";
 import { Avatar } from "@/components/mentor";
 import { Pager, pageParam } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
@@ -163,7 +162,7 @@ export function TaskReviewPage() {
   const search = useSearch({ from: "/tasks/$id" });
   const navigate = useNavigate({ from: "/tasks/$id" });
   const client = useQueryClient();
-  const composer = useRef<ComposerHandle>(null);
+  const composer = useRef<TaskComposerHandle>(null);
   const [error, setError] = useState<string | null>(null);
   const [bulk, setBulk] = useState(false);
   const filter = search.filter ?? "all";
@@ -211,7 +210,15 @@ export function TaskReviewPage() {
     if (next) choose(next.id);
     else if (delta > 0 && page * 50 < (list.data?.total ?? 0))
       void navigate({ search: (s) => ({ ...s, page: page + 1, email: undefined }) });
-    else if (delta < 0 && page > 1) void navigate({ search: (s) => ({ ...s, page: page - 1, email: undefined }) });
+    else if (delta < 0 && page > 1) {
+      void client
+        .fetchQuery({
+          queryKey: ["listTaskDrafts", id, filter, page - 1],
+          queryFn: () => call("listTaskDrafts", { taskId: id, filter, page: page - 1 }),
+        })
+        .then((previous) => navigate({ search: (s) => ({ ...s, page: page - 1, email: previous.drafts.at(-1)?.id }) }))
+        .catch((e: unknown) => setError(errorMessage(e)));
+    }
   }
   useEffect(() => {
     function key(e: KeyboardEvent) {
@@ -342,7 +349,10 @@ export function TaskReviewPage() {
               disabled={t.progress.review === 0 || t.state === "stopped"}
               onClick={() => {
                 void flush()
-                  .then(() => setBulk(true))
+                  .then(() => {
+                    client.removeQueries({ queryKey: ["prepareTaskApproval", id] });
+                    setBulk(true);
+                  })
                   .catch((e: unknown) => setError(errorMessage(e)));
               }}
             >
@@ -418,7 +428,7 @@ function DraftDetail({
 }: {
   id: number;
   task: TaskSummary;
-  composer: RefObject<ComposerHandle | null>;
+  composer: RefObject<TaskComposerHandle | null>;
   mobileOpen: boolean;
   onBack: () => void;
   onApproved: () => void;
@@ -441,10 +451,15 @@ function DraftDetail({
     mutationFn: async (
       op: "removeTaskEmail" | "regenerateTaskEmail" | "reapplyTaskTemplate" | "withdrawEmail" | "retryTaskGeneration",
     ) => {
-      await composer.current?.flush();
+      const editor = composer.current;
+      await editor?.flush();
       if (op === "withdrawEmail") await call(op, { id });
       else if (op === "retryTaskGeneration") await call(op, key);
       else await call(op, key);
+      if (op === "reapplyTaskTemplate") {
+        const stored = await call("getTaskDraft", key);
+        editor?.replace(stored);
+      }
     },
     onSuccess: () => refreshTasks(client),
   });
@@ -498,6 +513,7 @@ function DraftDetail({
             materials={materials.data}
             task={task}
             onApproved={onApproved}
+            replacing={action.isPending}
             actions={
               editable && (
                 <Confirm
