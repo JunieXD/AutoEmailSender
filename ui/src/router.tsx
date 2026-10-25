@@ -1,4 +1,4 @@
-import { StatsPage, statsSearch } from "./pages/stats";
+import { StatsPage } from "./pages/stats";
 import { FindPage, findSearch } from "./pages/find";
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { TasksPage, TaskReviewPage, tasksSearch, taskSearch } from "./pages/tasks";
@@ -68,7 +68,6 @@ const findRoute = createRoute({
 const statsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "stats",
-  validateSearch: statsSearch,
   component: StatsPage,
 });
 const moreRoute = createRoute({ getParentRoute: () => rootRoute, path: "more", component: MorePage });
