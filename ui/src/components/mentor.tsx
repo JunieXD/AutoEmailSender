@@ -98,6 +98,7 @@ export function dropDrafts(queryClient: QueryClient, ids: number[], kind: "first
       queryClient.removeQueries({ queryKey: ["getFollowUpDraft", id] });
       for (const m of mutations.findAll({ mutationKey: ["saveFollowUpDraft", id] })) mutations.remove(m);
       for (const m of mutations.findAll({ mutationKey: ["writeFollowUp", id] })) mutations.remove(m);
+      for (const m of mutations.findAll({ mutationKey: ["writeReply", id] })) mutations.remove(m);
       for (const m of mutations.findAll({ mutationKey: ["saveReplyDraft", id], status: "error" })) mutations.remove(m);
     }
     queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
