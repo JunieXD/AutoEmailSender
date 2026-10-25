@@ -448,6 +448,108 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePool) {
+    use std::cell::Cell;
+    use std::sync::mpsc;
+    let pki = fakemail::pki();
+    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let server = |port| mailbox::Server {
+        host: "localhost".into(),
+        port,
+        security: mailbox::Security::Tls,
+    };
+    let mailbox = mailbox::MailboxForm {
+        address: fakemail::ADDRESS.into(),
+        sender_name: "我".into(),
+        provider: "custom".into(),
+        smtp: server(port),
+        imap: server(993),
+        daily_limit: 50,
+        min_interval_s: 60,
+    };
+    mailbox::create(&db, &mailbox.check().unwrap(), fakemail::SECRET, T)
+        .await
+        .unwrap();
+    let mentor = mentor(&db, 1, true).await;
+    let task = create(&db, &form(&db, vec![mentor]).await, T)
+        .await
+        .unwrap();
+    let draft = items(&db, task).await.remove(0);
+    approve(
+        &db,
+        &TaskApprovals {
+            task_id: task,
+            emails: vec![approval(&draft)],
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    let id = draft.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    let options = db.connect_options().as_ref().clone();
+    let (request, requested) = mpsc::channel();
+    let (finish, finished) = mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let db = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect_with(options)
+                    .await
+                    .unwrap();
+                requested.recv().unwrap();
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id=?")
+                        .bind(id)
+                        .fetch_one(&db)
+                        .await
+                        .unwrap(),
+                    "sending"
+                );
+                stop(&db, task, T).await.unwrap();
+                db.close().await;
+                finish.send(()).unwrap();
+            });
+    });
+    let calls = Cell::new(0);
+    let net = net::Net::new(vec![pki.root.clone()]).unwrap();
+    let nowhere = std::path::Path::new("unused");
+    send::step(&db, &net, nowhere, || {
+        calls.set(calls.get() + 1);
+        if calls.get() == 4 {
+            request.send(()).unwrap();
+            finished.recv().unwrap();
+        }
+        if calls.get() < 4 { T } else { T + 3_600_000 }
+    })
+    .await
+    .unwrap();
+    writer.join().unwrap();
+    let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
+        "SELECT state,error,planned_at,latest_at FROM email WHERE id=?",
+    )
+    .bind(id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        canceled,
+        ("canceled".into(), Some("任务停止".into()), None, None)
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere, || T + 86_400_000)
+            .await
+            .unwrap(),
+        send::Next::Idle
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn changing_task_time_defers_handover_and_retry_reserves_again(db: SqlitePool) {
     use chrono::{Local, TimeZone};
     use email::schedule::{Schedule, Window};

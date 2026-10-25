@@ -94,15 +94,16 @@ fn capacity_counts_only_unexpired_distinct_windows_in_the_planning_zone() {
     let mut w = window();
     w.dates.push("2026-10-26".into());
     let zone = FixedOffset::east_opt(8 * 3600).unwrap();
-    for (now, windows) in [
-        (at(26, 0), 2),
-        (at(26, 2), 2),
-        (at(26, 3), 1),
-        (at(27, 3), 0),
+    for (now, windows, next_change) in [
+        (at(26, 0), 2, Some(at(26, 3))),
+        (at(26, 2), 2, Some(at(26, 3))),
+        (at(26, 3), 1, Some(at(27, 3))),
+        (at(27, 3), 0, None),
     ] {
         let capacity = w.capacity(now, &zone);
         assert_eq!(capacity.windows, windows);
         assert_eq!(capacity.emails, windows as u64 * 2);
+        assert_eq!(capacity.next_change_at, next_change);
     }
 }
 
@@ -113,7 +114,7 @@ fn capacity_and_planning_skip_the_same_missing_dst_boundaries() {
         .with_ymd_and_hms(2026, 3, 8, 0, 0, 0)
         .unwrap()
         .timestamp_millis();
-    for (start, end) in [("02:30", "04:30"), ("01:30", "02:30")] {
+    for (start, end, end_utc_hour) in [("02:30", "04:30", 8), ("01:30", "02:30", 6)] {
         let mut w = Window {
             dates: vec!["2026-03-08".into()],
             start: start.into(),
@@ -121,10 +122,19 @@ fn capacity_and_planning_skip_the_same_missing_dst_boundaries() {
             per_window: 2,
         };
         assert_eq!(w.capacity(now, &zone).emails, 0);
+        assert_eq!(w.capacity(now, &zone).next_change_at, None);
         assert_eq!(plan(&w, &[], now, &zone, &mut |_| 0), None);
         w.dates.push("2026-03-09".into());
         assert_eq!(w.capacity(now, &zone).windows, 1);
         assert_eq!(w.capacity(now, &zone).emails, 2);
+        assert_eq!(
+            w.capacity(now, &zone).next_change_at,
+            Some(
+                Utc.with_ymd_and_hms(2026, 3, 9, end_utc_hour, 30, 0)
+                    .unwrap()
+                    .timestamp_millis()
+            )
+        );
         assert!(plan(&w, &[], now, &zone, &mut |_| 0).is_some());
     }
 }

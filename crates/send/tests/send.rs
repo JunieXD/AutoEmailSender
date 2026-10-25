@@ -22,8 +22,16 @@ const DAY: i64 = 24 * 60 * MINUTE;
 
 /// A mailbox on a fake server that sends at most two emails a day, a minute apart.
 async fn mailbox(db: &SqlitePool, secret: &str) -> (Net, Inbox) {
+    mailbox_with_rcpt_hook(db, secret, || {}).await
+}
+
+async fn mailbox_with_rcpt_hook(
+    db: &SqlitePool,
+    secret: &str,
+    on_rcpt: impl Fn() + Send + Sync + 'static,
+) -> (Net, Inbox) {
     let pki = fakemail::pki();
-    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let (port, inbox) = fakemail::smtp_with_rcpt_hook(&pki, false, on_rcpt).await;
     let server = |port| Server {
         host: Cow::Borrowed("localhost"),
         port,
@@ -1173,6 +1181,247 @@ async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool
             .unwrap(),
         Next::Idle
     );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn review_deadline_crossed_during_envelope_must_not_upload(db: SqlitePool) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    };
+    let clock = Arc::new(AtomicI64::new(T));
+    let advancing = clock.clone();
+    let (net, inbox) = mailbox_with_rcpt_hook(&db, SECRET, move || {
+        advancing.store(T + 3_600_000, Ordering::SeqCst);
+    })
+    .await;
+    let mentor = approve(&db, "envelope@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    send::step(&db, &net, nowhere(), || clock.load(Ordering::SeqCst))
+        .await
+        .unwrap();
+    assert!(inbox.lock().unwrap().is_empty());
+    let email = first_email(&db, mentor).await;
+    assert_eq!(email.delivery, Delivery::Approved);
+    assert_eq!(email.latest_at, Some(T + 3_600_000));
+    assert_eq!(
+        sqlx::query_as::<
+            _,
+            (
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<i64>
+            ),
+        >(
+            "SELECT mailbox_id,from_address,to_address,message_id,sent_at FROM email WHERE id=?"
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        (None, None, None, None, None)
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deadline_crossed_after_body_upload_keeps_the_uncertain_attempt(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    let calls = Cell::new(0);
+    send::step(&db, &net, nowhere(), || {
+        calls.set(calls.get() + 1);
+        if calls.get() <= 4 { T } else { T + 3_600_000 }
+    })
+    .await
+    .unwrap();
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+    assert!(matches!(
+        first_email(&db, mentor).await.delivery,
+        Delivery::MaybeSent { .. }
+    ));
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + DAY).await.unwrap(),
+        Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+/// Expires the claim after another connection has changed business state, with no timed sleeps.
+async fn expire_during_commit<F: Future<Output = ()>>(
+    db: &SqlitePool,
+    net: &Net,
+    id: i64,
+    at: i64,
+    change: impl FnOnce(SqlitePool) -> F + Send + 'static,
+) {
+    let options = db.connect_options().as_ref().clone();
+    let (request, requested) = std::sync::mpsc::channel();
+    let (finish, finished) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let db = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(1)
+                    .connect_with(options)
+                    .await
+                    .unwrap();
+                requested.recv().unwrap();
+                assert_eq!(
+                    sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id=?")
+                        .bind(id)
+                        .fetch_one(&db)
+                        .await
+                        .unwrap(),
+                    "sending"
+                );
+                change(db.clone()).await;
+                db.close().await;
+                finish.send(()).unwrap();
+            });
+    });
+    let calls = Cell::new(0);
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        send::step_in_zone(
+            db,
+            net,
+            nowhere(),
+            || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 4 {
+                    request.send(()).unwrap();
+                    finished.recv().unwrap();
+                }
+                if calls.get() < 4 { at } else { at + 3_600_000 }
+            },
+            &chrono::Utc,
+            &mut |_| 0,
+        ),
+    )
+    .await;
+    writer.join().unwrap();
+    result.expect("expiry restoration must finish").unwrap();
+}
+
+async fn scheduled_task(db: &SqlitePool, email: i64) -> (i64, i64) {
+    use chrono::{TimeZone, Utc};
+    let base = T / DAY * DAY;
+    let dates = [base, base + DAY].map(|at| {
+        Utc.timestamp_millis_opt(at)
+            .unwrap()
+            .format("%Y-%m-%d")
+            .to_string()
+    });
+    let task = sqlx::query("INSERT INTO task(name,kind,writer,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('定时','first','ai','window',?,'09:00','11:00',1,'active',?)")
+        .bind(sqlx::types::Json(dates)).bind(T).execute(db).await.unwrap().last_insert_rowid();
+    sqlx::query("UPDATE email SET task_id=?,planned_at=?,latest_at=? WHERE id=?")
+        .bind(task)
+        .bind(base + 9 * 3_600_000)
+        .bind(base + 11 * 3_600_000)
+        .bind(email)
+        .execute(db)
+        .await
+        .unwrap();
+    (task, base + 10 * 3_600_000)
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn review_expiry_restore_must_respect_trashing_during_commit(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "trash@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    let (_, at) = scheduled_task(&db, id).await;
+    expire_during_commit(&db, &net, id, at, move |db| async move {
+        mentor::trash::trash(&db, &[mentor], at).await.unwrap();
+    })
+    .await;
+    let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
+        "SELECT state,error,planned_at,latest_at FROM email WHERE id=?",
+    )
+    .bind(id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(
+        canceled,
+        (
+            "canceled".into(),
+            Some(mentor::trash::CANCELED.into()),
+            None,
+            None
+        )
+    );
+    send::step_in_zone(&db, &net, nowhere(), || at + DAY, &chrono::Utc, &mut |_| 0)
+        .await
+        .unwrap();
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn review_expiry_restore_after_mailbox_deleted_must_finish(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    let id = first_email(&db, mentor).await.id;
+    assert!(matches!(
+        first_email(&db, mentor).await.delivery,
+        Delivery::MaybeSent { .. }
+    ));
+    email::retry(&db, id, T + MINUTE).await.unwrap();
+    email::schedule::reschedule(&db, id, T + MINUTE, T + MINUTE)
+        .await
+        .unwrap();
+    let evidence = async || {
+        sqlx::query_as::<
+            _,
+            (
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<i64>,
+                i64,
+            ),
+        >(
+            "SELECT from_address,to_address,message_id,sent_at,updated_at FROM email WHERE id=?"
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap()
+    };
+    let before = evidence().await;
+    expire_during_commit(&db, &net, id, T + MINUTE, |db| async move {
+        mailbox::delete(&db, 1).await.unwrap();
+    })
+    .await;
+    assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
+    assert_eq!(evidence().await, before);
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT mailbox_id FROM email WHERE id=?")
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+    // The expired retry stays pending while the same sender can process another email.
+    let (net, next_inbox) = mailbox(&db, SECRET).await;
+    let next = approve(&db, "next@example.edu.cn", &[], T + DAY).await;
+    send::step(&db, &net, nowhere(), || T + DAY).await.unwrap();
+    assert!(
+        matches!(first_email(&db, next).await.delivery, Delivery::Sent { sent_at, .. } if sent_at == T + DAY)
+    );
+    assert_eq!(next_inbox.lock().unwrap().len(), 1);
+    assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

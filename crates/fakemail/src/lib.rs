@@ -119,12 +119,22 @@ pub type Inbox = Arc<Mutex<Vec<String>>>;
 /// An SMTP server that takes mail for anyone, except that it refuses recipients named `unknown`, and
 /// hangs up without answering once it has the mail for one named `hangup`.
 pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
+    smtp_with_rcpt_hook(pki, starttls, || {}).await
+}
+
+/// Runs `on_rcpt` before answering an accepted recipient, so tests can control the envelope stage.
+pub async fn smtp_with_rcpt_hook(
+    pki: &Pki,
+    starttls: bool,
+    on_rcpt: impl Fn() + Send + Sync + 'static,
+) -> (u16, Inbox) {
     let tls = &pki.tls;
     let inbox = Inbox::default();
     let received = inbox.clone();
     let acceptor = tls.clone();
+    let on_rcpt = Arc::new(on_rcpt);
     let port = listen(tls, starttls, move |io| {
-        smtp_session(io, acceptor.clone(), received.clone())
+        smtp_session(io, acceptor.clone(), received.clone(), on_rcpt.clone())
     })
     .await;
     (port, inbox)
@@ -134,6 +144,7 @@ async fn smtp_session(
     mut io: BufReader<Box<dyn Stream>>,
     tls: TlsAcceptor,
     inbox: Inbox,
+    on_rcpt: Arc<dyn Fn() + Send + Sync>,
 ) -> std::io::Result<()> {
     let login = base64::engine::general_purpose::STANDARD.encode(format!("\0{ADDRESS}\0{SECRET}"));
     let mut encrypted = false;
@@ -160,6 +171,7 @@ async fn smtp_session(
             Some("RCPT") if line.contains("<unknown@") => "550 5.1.1 user unknown\r\n",
             Some("RCPT") => {
                 hangup |= line.contains("<hangup@");
+                on_rcpt();
                 "250 ok\r\n"
             }
             Some("MAIL") => "250 ok\r\n",
@@ -167,7 +179,9 @@ async fn smtp_session(
                 io.write_all(b"354 go ahead\r\n").await?;
                 let mut message = String::new();
                 while !message.ends_with("\r\n.\r\n") {
-                    io.read_line(&mut message).await?;
+                    if io.read_line(&mut message).await? == 0 {
+                        return Ok(());
+                    }
                 }
                 inbox.lock().unwrap().push(message);
                 if hangup {

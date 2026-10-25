@@ -48,8 +48,9 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
         .map_err(|e| MailError::Broken(e.to_string()))?;
     login(net, account)
         .await?
-        .send(&Outgoing::from(message))
+        .send(&Outgoing::from(message), || false)
         .await
+        .map(|_| ())
         .map_err(|(SendError::NotSent(e) | SendError::Unknown(e))| e)
 }
 
@@ -158,6 +159,12 @@ pub enum SendError {
     Unknown(MailError),
 }
 
+/// Whether this attempt handed the email over before its deadline.
+pub enum SendStatus {
+    Sent,
+    Expired,
+}
+
 impl std::fmt::Display for SendError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -198,7 +205,12 @@ pub async fn login(net: &Net, account: &Account) -> Result<Smtp, MailError> {
 impl Smtp {
     /// Hands the email over and leaves. Takes the steps one by one rather than with lettre's
     /// `send`, which on a refusal waits for the server to answer QUIT, and some never do.
-    pub async fn send(self, email: &Outgoing) -> Result<(), SendError> {
+    /// Checks `expired` after the envelope and DATA reply, immediately before uploading the body.
+    pub async fn send(
+        self,
+        email: &Outgoing,
+        expired: impl Fn() -> bool,
+    ) -> Result<SendStatus, SendError> {
         let Smtp { server, mut conn } = self;
         let envelope = &email.envelope;
         let ready = connect::within(&server, async {
@@ -228,6 +240,10 @@ impl Smtp {
             quit(&server.host, conn);
             return Err(SendError::NotSent(e));
         }
+        if expired() {
+            // DATA has started: QUIT would be read as body text, so close the connection instead.
+            return Ok(SendStatus::Expired);
+        }
         // From here on, a server that got the whole email may have taken it, whatever happens next.
         let message = &email.message;
         let sent = connect::uploading(&server, message.len(), async {
@@ -237,7 +253,7 @@ impl Smtp {
         match sent {
             Ok(_) => {
                 quit(&server.host, conn);
-                Ok(())
+                Ok(SendStatus::Sent)
             }
             Err(e @ MailError::Refused(_)) => {
                 quit(&server.host, conn);

@@ -12,7 +12,7 @@ export type CallError = { code: ErrorCode, message: string, };
 
 export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, };
 
-export type Capacity = { windows: number, emails: number, };
+export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
 export type Column = { header: string, field: Field | null, };
 

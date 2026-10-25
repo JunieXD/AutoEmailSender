@@ -16,7 +16,8 @@ mod smtp;
 pub use error::MailError;
 pub use imap::{Head, Imap, Opened, check_receiving};
 pub use smtp::{
-    File, Letter, Outgoing, SendError, Smtp, check_sending, compose, login, message_id, send_test,
+    File, Letter, Outgoing, SendError, SendStatus, Smtp, check_sending, compose, login, message_id,
+    send_test,
 };
 
 /// A mailbox as the settings show it. Its secret never leaves the core.

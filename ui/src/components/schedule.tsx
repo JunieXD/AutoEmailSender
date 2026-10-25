@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call, errorMessage } from "@/api/call";
 import type { Schedule, TaskSummary } from "@/api/types";
@@ -28,12 +28,34 @@ export function scheduleValid(s: Schedule): boolean {
   );
 }
 export function useScheduleCapacity(schedule: Schedule) {
-  return useQuery({
+  const enabled = schedule.kind === "window" && scheduleValid(schedule);
+  const capacity = useQuery({
     queryKey: ["scheduleCapacity", schedule],
     queryFn: () => (schedule.kind === "window" ? call("scheduleCapacity", schedule) : null),
-    enabled: schedule.kind === "window" && scheduleValid(schedule),
-    refetchInterval: 1000,
+    enabled,
+    refetchOnWindowFocus: "always",
   });
+  const { refetch } = capacity;
+  const nextChangeAt = capacity.data?.nextChangeAt;
+  useEffect(() => {
+    if (!enabled || nextChangeAt == null) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refreshAtBoundary = () => {
+      const wait = nextChangeAt - Date.now();
+      // Browser timers cannot wait more than 2^31 - 1 ms in one go.
+      if (wait > 0) timer = setTimeout(refreshAtBoundary, Math.min(wait, 2_147_483_647));
+      else void refetch({ cancelRefetch: false });
+    };
+    refreshAtBoundary();
+    return () => clearTimeout(timer);
+  }, [enabled, nextChangeAt, refetch]);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const refresh = () => void refetch({ cancelRefetch: false });
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [enabled, refetch]);
+  return capacity;
 }
 export function scheduledAt(at: number): string {
   return `${day(at)} ${time(at)}`;

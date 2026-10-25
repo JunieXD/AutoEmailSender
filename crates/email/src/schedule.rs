@@ -71,10 +71,11 @@ impl Window {
             .windows(zone)
             .into_iter()
             .filter(|s| now < s.latest_at)
-            .count();
+            .collect::<Vec<_>>();
         Capacity {
-            windows,
-            emails: windows as u64 * u64::from(self.per_window),
+            windows: windows.len(),
+            emails: windows.len() as u64 * u64::from(self.per_window),
+            next_change_at: windows.iter().map(|s| s.latest_at).min(),
         }
     }
 }
@@ -86,9 +87,11 @@ pub struct Slot {
 }
 
 #[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Capacity {
     pub windows: usize,
     pub emails: u64,
+    pub next_change_at: Option<i64>,
 }
 
 /// A repeated wall time uses its first occurrence; a window with a missing DST boundary is skipped.
