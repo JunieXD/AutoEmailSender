@@ -134,7 +134,7 @@ export function MatchingProgress() {
       {p && (
         <>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <p className="grow">
+            <p className="grow phone:w-full">
               {p.remaining > 0
                 ? `${p.pause ? "已暂停匹配度分析" : "正在分析匹配度"}，还剩 ${p.remaining} 位`
                 : "匹配度分析结束"}

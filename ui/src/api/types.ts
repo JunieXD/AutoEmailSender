@@ -52,6 +52,8 @@ export type CrawlFinished = { id: number, message: string, };
 
 export type CrawlId = { id: number, };
 
+export type CrawlList = { crawls: Array<CrawlSummary>, total: number, };
+
 export type CrawlOption = { id: number, url: string | null, createdAt: number, };
 
 export type CrawlPage = { id: number, url: string, kind: PageKind, state: PageState, status: PageStatus, error: string | null, };
@@ -592,7 +594,7 @@ export interface Operations {
   checkCrawlUrls: { input: CrawlUrls; output: Array<string> };
   crawlWork: { input: CrawlWorkQuery; output: Array<CrawlSummary> };
   startCrawl: { input: CrawlStart; output: CrawlId };
-  listCrawls: { input: CrawlQuery; output: Array<CrawlSummary> };
+  listCrawls: { input: CrawlQuery; output: CrawlList };
   crawlOptions: { input: Nothing; output: Array<CrawlOption> };
   getCrawl: { input: CrawlDetailQuery; output: CrawlDetail };
   pauseCrawl: { input: CrawlId; output: null };
