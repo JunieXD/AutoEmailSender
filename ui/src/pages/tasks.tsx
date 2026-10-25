@@ -7,6 +7,7 @@ import type { DraftFilter, DraftState, Progress, TaskSummary } from "@/api/types
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
 import { TaskLetter, type TaskComposerHandle } from "@/components/task-letter";
+import { waitForSaves } from "@/components/letter-composer";
 import { Avatar } from "@/components/mentor";
 import { Pager, pageParam } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
@@ -173,12 +174,14 @@ export function TaskReviewPage() {
     queryFn: () => call("listTaskDrafts", { taskId: id, filter, page }),
     refetchInterval: 3000,
   });
-  // Every router navigation, including the sidebar and browser back, shares the save boundary.
+  // Every router navigation, including the sidebar and browser back, waits for the current letter's operations.
   useBlocker({
-    enableBeforeUnload: () => client.isMutating({ mutationKey: ["saveTaskDraft"] }) > 0,
+    enableBeforeUnload: () =>
+      client.isMutating({ mutationKey: ["saveTaskDraft"] }) > 0 ||
+      client.isMutating({ mutationKey: ["taskDraftAction", id] }) > 0,
     shouldBlockFn: async () => {
       try {
-        await composer.current?.flush();
+        await flush();
         return false;
       } catch (e) {
         setError(errorMessage(e));
@@ -199,6 +202,8 @@ export function TaskReviewPage() {
   }, [current, search.email, navigate]);
   async function flush() {
     await composer.current?.flush();
+    await waitForSaves(client, ["taskDraftAction", id]);
+    setError(null);
   }
   function choose(email?: number) {
     void navigate({ search: (s) => ({ ...s, email }) });
@@ -448,6 +453,7 @@ function DraftDetail({
   const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
   const placeholders = usePlaceholders();
   const action = useMutation({
+    mutationKey: ["taskDraftAction", task.id],
     mutationFn: async (
       op: "removeTaskEmail" | "regenerateTaskEmail" | "reapplyTaskTemplate" | "withdrawEmail" | "retryTaskGeneration",
     ) => {
@@ -458,6 +464,8 @@ function DraftDetail({
       else await call(op, key);
       if (op === "reapplyTaskTemplate") {
         const stored = await call("getTaskDraft", key);
+        await client.cancelQueries({ queryKey: ["getTaskDraft", id] });
+        client.setQueryData(["getTaskDraft", id], stored);
         editor?.replace(stored);
       }
     },
