@@ -1,11 +1,14 @@
-//! Public school pages, isolated evidence units, and the persistent page ledger.
+//! Public school pages, structured evidence, ownership checks, and the page ledger.
 
 mod email;
 pub mod fetch;
+mod ownership;
 mod page;
+mod pagination;
 pub mod store;
 mod url;
 
+pub use ownership::owns_email;
 pub use page::{
     BrowserReason, EmailEvidence, EmailLocation, Link, Material, Pagination, Unit, parse,
 };

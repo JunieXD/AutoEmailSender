@@ -46,8 +46,15 @@ impl Emails {
         self.candidate
             .find_iter(&normalized)
             .filter_map(|found| {
+                let mut start = found.start();
+                let end = found.end();
+                if normalized[start..end].starts_with('\'') && normalized[end..].starts_with('\'') {
+                    start += 1;
+                }
+                start += normalized[start..end].len()
+                    - normalized[start..end].trim_start_matches('.').len();
                 // Normalize only a complete address fragment; prose punctuation keeps its spaces.
-                let raw = self.at.replace_all(found.as_str(), "@");
+                let raw = self.at.replace_all(&normalized[start..end], "@");
                 let raw = self.dot.replace_all(&raw, ".");
                 let raw = self.hash.replace_all(&raw, "#");
                 if raw.contains('#') && !raw.contains('@') {
@@ -75,15 +82,15 @@ impl Emails {
                 mentor::is_email(&address).then(|| EmailEvidence {
                     address,
                     location: EmailLocation::Text {
-                        start: positions[found.start()].0,
-                        end: positions[found.end() - 1].1,
+                        start: positions[start].0,
+                        end: positions[end - 1].1,
                     },
                 })
             })
             .collect()
     }
 
-    pub fn mailto(&self, href: &str, element: usize) -> Vec<EmailEvidence> {
+    pub fn mailto(&self, href: &str, element: usize, offset: usize) -> Vec<EmailEvidence> {
         let Some((scheme, rest)) = href.split_once(':') else {
             return Vec::new();
         };
@@ -99,6 +106,7 @@ impl Emails {
                     element,
                     attribute: "href".into(),
                     raw: href.into(),
+                    offset,
                 };
                 evidence
             })

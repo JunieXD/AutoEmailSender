@@ -107,165 +107,13 @@ fn host_normalization_cannot_hide_private_ip_literals() {
 }
 
 #[test]
-fn nested_contact_fields_stay_with_their_person() {
-    for html in [
-        r#"<ul>
-          <li><h2><a href="/a">Alice</a></h2><ul>
-            <li><a href="mailto:a@pku.edu.cn">Email</a></li>
-            <li><a href="/a/home">Homepage</a></li>
-          </ul></li>
-          <li><h2><a href="/b">Bob</a></h2><ul>
-            <li><a href="mailto:b@pku.edu.cn">Email</a></li>
-            <li><a href="/b/home">Homepage</a></li>
-          </ul></li>
-        </ul>"#,
-        r#"<section>
-          <div class="person"><h2><a href="/a">Alice</a></h2><div class="contacts">
-            <div><a href="mailto:a@pku.edu.cn">Email</a></div>
-            <div><a href="/a/home">Homepage</a></div>
-          </div></div>
-          <div class="person"><h2><a href="/b">Bob</a></h2><div class="contacts">
-            <div><a href="mailto:b@pku.edu.cn">Email</a></div>
-            <div><a href="/b/home">Homepage</a></div>
-          </div></div>
-        </section>"#,
-    ] {
-        let page = parse(&url(), html).unwrap();
-        assert_eq!(page.units.len(), 2, "{:?}", page.units);
-        for (unit, (name, address, other)) in page.units.iter().zip([
-            ("Alice", "a@pku.edu.cn", "Bob"),
-            ("Bob", "b@pku.edu.cn", "Alice"),
-        ]) {
-            assert!(unit.is_card && unit.text.contains(name), "{unit:?}");
-            assert!(!unit.text.contains(other), "{unit:?}");
-            assert_eq!(unit.emails.len(), 1, "{unit:?}");
-            assert_eq!(unit.emails[0].address, address);
-            assert_eq!(unit.links.len(), 2, "{unit:?}");
-        }
-    }
-}
-
-#[test]
-fn repeated_columns_still_split_into_individual_people() {
-    let page = parse(
-        &url(),
-        r#"<main>
-      <section class="column"><h1>教授</h1>
-        <article><h2>Alice</h2><p>a@pku.edu.cn</p></article>
-        <article><h2>Bob</h2><p>b@pku.edu.cn</p></article>
-      </section>
-      <section class="column"><h1>副教授</h1>
-        <article><h2>Carol</h2><p>c@pku.edu.cn</p></article>
-        <article><h2>David</h2><p>d@pku.edu.cn</p></article>
-      </section>
-    </main>"#,
-    )
-    .unwrap();
-    let cards: Vec<_> = page.units.iter().filter(|u| u.is_card).collect();
-    assert_eq!(cards.len(), 4, "{:?}", page.units);
-    for (unit, (name, address)) in cards.iter().zip([
-        ("Alice", "a@pku.edu.cn"),
-        ("Bob", "b@pku.edu.cn"),
-        ("Carol", "c@pku.edu.cn"),
-        ("David", "d@pku.edu.cn"),
-    ]) {
-        assert!(unit.text.contains(name), "{unit:?}");
-        assert_eq!(unit.emails.len(), 1);
-        assert_eq!(unit.emails[0].address, address);
-    }
-}
-
-#[test]
-fn repeated_email_labels_are_fields_inside_a_person() {
-    let page = parse(
-        &url(),
-        r#"<ul>
-      <li><h2>Alice</h2><ul><li>Email: a@pku.edu.cn</li><li>Email: alice@pku.edu.cn</li></ul></li>
-      <li><h2>Bob</h2><ul><li>Email: b@pku.edu.cn</li><li>Email: bob@pku.edu.cn</li></ul></li>
-    </ul>"#,
-    )
-    .unwrap();
-    assert_eq!(page.units.len(), 2, "{:?}", page.units);
-    for (unit, (name, addresses)) in page.units.iter().zip([
-        ("Alice", ["a@pku.edu.cn", "alice@pku.edu.cn"]),
-        ("Bob", ["b@pku.edu.cn", "bob@pku.edu.cn"]),
-    ]) {
-        assert!(unit.is_card && unit.text.contains(name), "{unit:?}");
-        assert_eq!(
-            unit.emails
-                .iter()
-                .map(|e| e.address.as_str())
-                .collect::<Vec<_>>(),
-            addresses
-        );
-    }
-}
-
-#[test]
-fn repeated_obfuscated_contacts_define_separate_people() {
-    for (first, second) in [
-        ("a[at]pku.edu.cn", "b[at]pku.edu.cn"),
-        ("a at pku dot edu dot cn", "b at pku dot edu dot cn"),
-        ("a（at）pku．edu．cn", "b（at）pku．edu．cn"),
-    ] {
-        let page = parse(
-            &url(),
-            &format!("<ul><li>Alice {first}</li><li>Bob {second}</li></ul>"),
-        )
-        .unwrap();
-        assert_eq!(page.units.len(), 2, "{first}: {:?}", page.units);
-        for (unit, (name, address, other)) in page.units.iter().zip([
-            ("Alice", "a@pku.edu.cn", "Bob"),
-            ("Bob", "b@pku.edu.cn", "Alice"),
-        ]) {
-            assert!(unit.is_card && unit.text.contains(name), "{unit:?}");
-            assert!(!unit.text.contains(other));
-            assert_eq!(unit.emails.len(), 1);
-            assert_eq!(unit.emails[0].address, address);
-        }
-    }
-}
-
-#[test]
-fn real_mcgill_cards_keep_each_name_and_email_together() {
-    let base = PageUrl::parse("https://www.cs.mcgill.ca/people/faculty/").unwrap();
-    let material = parse(&base, include_str!("pages/mcgill.html")).unwrap();
-    let expectations = [
-        ("David Adelani", "david.adelani@mcgill.ca"),
-        ("Oana Balmau", "oana.balmau@cs.mcgill.ca"),
-        ("Jackie Chi Kit Cheung", "jcheung@cs.mcgill.ca"),
-    ];
-    for (name, address) in expectations {
-        let units: Vec<_> = material
-            .units
-            .iter()
-            .filter(|u| u.text.contains(address))
-            .collect();
-        assert_eq!(units.len(), 1, "{address}");
-        let unit = units[0];
-        assert!(
-            unit.is_card && unit.text.contains(name),
-            "{name}: {}",
-            unit.text
-        );
-        assert_eq!(unit.emails.len(), 1, "{}", unit.text);
-        assert_eq!(unit.emails[0].address, address);
-        let EmailLocation::Text { start, end } = unit.emails[0].location else {
-            panic!("expected text evidence");
-        };
-        assert_eq!(&unit.text[start..end], address);
-    }
-    assert!(material.units.iter().filter(|u| u.is_card).count() >= 30);
-}
-
-#[test]
-fn real_muc_cards_retain_onclick_and_image_only_profile_links() {
+fn real_muc_blocks_retain_onclick_and_image_only_profile_links() {
     let base = PageUrl::parse("https://xingong.muc.edu.cn/szdw/xyjs.htm").unwrap();
     let material = parse(&base, include_str!("pages/muc.html")).unwrap();
     let unit = material
         .units
         .iter()
-        .find(|u| u.text.contains("毕晓君") && u.is_card)
+        .find(|u| u.links.iter().any(|l| l.text == "毕晓君"))
         .unwrap();
     assert!(!unit.text.contains("陈波"));
     assert!(
@@ -639,27 +487,27 @@ fn last_page_placeholders_do_not_require_browser_pagination() {
 #[test]
 fn fallback_keeps_document_order_and_ignores_hidden_executable_content() {
     let page = parse(&url(), r#"<p>先读这里</p><a href="/image#x"><img alt="图片主页"></a><p>再读这里</p><div onclick="location.href='/profile'">静态主页</div><aside onclick="window.open('https://outside.edu/a')">不执行</aside><template>hidden@school.edu.cn</template><div hidden>hidden@school.edu.cn</div>"#).unwrap();
-    assert_eq!(page.units.len(), 1);
-    assert!(page.units[0].text.find("先读这里") < page.units[0].text.find("再读这里"));
+    assert!(page.text().find("先读这里") < page.text().find("再读这里"));
     assert!(
-        page.units[0]
-            .links
+        page.units
             .iter()
+            .flat_map(|u| &u.links)
             .any(|l| l.text == "图片主页" && l.url.as_str() == "https://cs.pku.edu.cn/image")
     );
     assert!(
-        page.units[0]
-            .links
+        page.units
             .iter()
+            .flat_map(|u| &u.links)
             .any(|l| l.url.as_str() == "https://cs.pku.edu.cn/profile")
     );
     assert!(
-        !page.units[0]
-            .links
+        !page
+            .units
             .iter()
+            .flat_map(|u| &u.links)
             .any(|l| l.url.as_str().contains("outside.edu"))
     );
-    assert!(page.units[0].emails.is_empty());
+    assert!(page.units.iter().all(|u| u.emails.is_empty()));
 }
 
 #[test]
@@ -715,4 +563,156 @@ fn real_profile_text_survives_legacy_encoding_and_header_precedence() {
             .contains("周志华")
     );
     assert!(response_material(&url(), 200, Some("application/pdf"), b"%PDF-1.7").is_err());
+}
+
+#[test]
+fn numbered_navigation_uses_consecutive_pages_or_the_current_list_url() {
+    for (current, link, label) in [
+        ("https://cs.pku.edu.cn/teachers/2", "3", "3"),
+        ("https://cs.pku.edu.cn/teachers/", "2", "2"),
+        (
+            "https://cs.pku.edu.cn/teachers/2/list.htm",
+            "../3/list.htm",
+            "3",
+        ),
+    ] {
+        let current = PageUrl::parse(current).unwrap();
+        let page = parse(&current, &format!("<a href='{link}'>{label}</a>")).unwrap();
+        assert_eq!(page.pagination.urls, [current.join(link).unwrap()]);
+        assert!(!page.pagination.needs_browser);
+    }
+    for html in [
+        r#"<nav aria-label="Page navigation"><a href="list2.htm">2</a><a href="list3.htm">3</a></nav>"#,
+        r#"<div class="page"><a href="list_2.htm">2</a><a href="list_3.htm">3</a></div>"#,
+        r#"<div><a href="/directory/second">2</a><a href="/directory/third">3</a></div>"#,
+        r#"<a href="list2.htm">2</a><a href="list3.htm">3</a>"#,
+        r#"<nav><span><a href="/directory/second">2</a></span><span><a href="/directory/third">3</a></span></nav>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert_eq!(
+            page.pagination.urls.len(),
+            2,
+            "{html}: {:?}",
+            page.pagination
+        );
+        assert!(!page.pagination.needs_browser);
+    }
+    for html in [
+        r#"<nav aria-label="Page navigation"><a href="/year/2024">2024</a><a href="/year/2026">2026</a></nav>"#,
+        r#"<div class="page"><a href="/people/alice">2</a></div>"#,
+        r#"<a href="/other.htm?page=2">2</a>"#,
+        r#"<a href="list.htm?page=2&pageno=3">2</a>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert!(
+            page.pagination.urls.is_empty(),
+            "{html}: {:?}",
+            page.pagination
+        );
+        assert!(!page.pagination.needs_browser);
+    }
+}
+
+#[test]
+fn application_shells_can_contain_loading_placeholders() {
+    for html in [
+        r#"<div id="app">加载中...</div><noscript>请启用 JavaScript 后访问</noscript><script src="/app.js"></script>"#,
+        r#"<div id="root"><p>Loading...</p></div><script type="module" src="/app.js"></script>"#,
+        r#"<div id="app">加载中...</div><script src="/runtime.js"></script><script src="/vendor.js"></script><script src="/app.js"></script>"#,
+        r#"<div id="app">加载中...</div><noscript>请启用 JavaScript 后访问</noscript>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert_eq!(
+            page.needs_browser,
+            Some(BrowserReason::JavaScript),
+            "{html}"
+        );
+        assert!(!page.text().is_empty());
+    }
+    for html in [
+        r#"<div id="app">教师名单暂未公布</div><script src="/app.js"></script>"#,
+        r#"<div id="app">Alice a@pku.edu.cn</div><noscript>请启用 JavaScript</noscript><script src="/app.js"></script>"#,
+        r#"<p>教师名单暂未公布</p><div id="app">加载中...</div><script src="/app.js"></script>"#,
+        r#"<div id="app">加载中...</div><script type="application/json" src="/data.json"></script>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert_eq!(page.needs_browser, None, "{html}");
+    }
+}
+
+#[test]
+fn email_quotes_and_ellipses_are_outside_the_evidence() {
+    for (raw, spelling, address) in [
+        (
+            "'alice@pku.edu.cn'.",
+            "alice@pku.edu.cn",
+            "alice@pku.edu.cn",
+        ),
+        (
+            "...alice@pku.edu.cn",
+            "alice@pku.edu.cn",
+            "alice@pku.edu.cn",
+        ),
+        (
+            "'...alice [at] pku [dot] edu.cn'",
+            "alice [at] pku [dot] edu.cn",
+            "alice@pku.edu.cn",
+        ),
+        (
+            "'o'connor@pku.edu.cn'",
+            "o'connor@pku.edu.cn",
+            "o'connor@pku.edu.cn",
+        ),
+        (
+            "o'connor@pku.edu.cn",
+            "o'connor@pku.edu.cn",
+            "o'connor@pku.edu.cn",
+        ),
+        (
+            "'ａｌｉｃｅ＠ｐｋｕ．ｅｄｕ．ｃｎ'",
+            "ａｌｉｃｅ＠ｐｋｕ．ｅｄｕ．ｃｎ",
+            "alice@pku.edu.cn",
+        ),
+    ] {
+        let page = parse(&url(), &format!("<p>Email: {raw}</p>")).unwrap();
+        let unit = &page.units[0];
+        assert_eq!(unit.emails.len(), 1, "{raw}: {:?}", unit.emails);
+        assert_eq!(unit.emails[0].address, address, "{raw}");
+        let EmailLocation::Text { start, end } = unit.emails[0].location else {
+            panic!("expected text evidence");
+        };
+        assert_eq!(&unit.text[start..end], spelling, "{raw}");
+    }
+}
+
+#[test]
+fn data_scripts_cannot_bind_pagination_events() {
+    for kind in [
+        "application/ld+json",
+        "application/json",
+        "importmap",
+        "text/plain",
+    ] {
+        let html = format!(
+            r#"<nav class="pagination"><a href="javascript:void(0)">下一页</a></nav><script type="{kind}">{{}}</script>"#
+        );
+        let page = parse(&url(), &html).unwrap();
+        assert!(page.pagination.urls.is_empty());
+        assert!(!page.pagination.needs_browser, "{kind}");
+        assert_eq!(page.needs_browser, None);
+    }
+    let page = parse(&url(), r#"<nav class="pagination"><span>第 4 页 / 共 4 页</span><a href="javascript:void(0)">下一页</a></nav><script type="application/ld+json">{}</script>"#).unwrap();
+    assert!(!page.pagination.needs_browser);
+    let page = parse(&url(), r#"<nav><span>第 4 页 / 共 4 页</span><a href="javascript:void(0)">下一页</a></nav><script>document.querySelector('a').onclick=()=>go(5)</script>"#).unwrap();
+    assert!(!page.pagination.needs_browser);
+    assert_eq!(page.needs_browser, None);
+    for kind in ["", "text/javascript", "application/javascript", "module"] {
+        let html = format!(
+            r#"<nav><a href="javascript:void(0)">下一页</a></nav><script type="{kind}">document.querySelector('a').onclick=()=>go(2)</script>"#
+        );
+        assert!(
+            parse(&url(), &html).unwrap().pagination.needs_browser,
+            "{kind}"
+        );
+    }
 }

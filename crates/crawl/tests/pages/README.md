@@ -5,7 +5,7 @@
 | 文件 | 来源 | 验证场景 |
 |---|---|---|
 | `muc.html` | https://xingong.muc.edu.cn/szdw/xyjs.htm | 中央民族大学卡片、图片链接、`onclick` 导航 |
-| `mcgill.html` | https://www.cs.mcgill.ca/people/faculty/ | 麦吉尔大学名单，每张卡片的姓名与邮箱归属 |
+| `mcgill.html` | https://www.cs.mcgill.ca/people/faculty/ | 麦吉尔大学名单，每位导师的姓名与邮箱归属 |
 | `fudan.html` | https://software.fudan.edu.cn/zzjs/list.htm | 复旦大学未加载的动态教师列表 |
 | `bupt.html` | https://scs.bupt.edu.cn/szjs1/jsyl.htm | 北京邮电大学 HTTP 412 挑战页 |
 | `fzu.html` | https://chem.fzu.edu.cn/szdw/jsml1.htm | 福州大学图片链接中的 `mailto:` 联系方式 |
@@ -15,3 +15,5 @@
 | `toronto.html` | https://www.cs.toronto.edu/~hinton/ | 多伦多大学真实个人页中的 `[at]`、`[dot]` 邮箱 |
 
 Cloudflare 属性及错误输入等组合场景在测试中构造，不冒充真实网站样本。
+
+`mcgill-emails.tsv` 是从同页逐项核对的 92 组姓名和邮箱，作为归属测试的期望数据，包含学校主任与全部教师类别。
