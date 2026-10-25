@@ -8,7 +8,8 @@ export type Point = { label: string; title: string; values: readonly [number, nu
 
 /**
  * Grouped columns, one group per point, drawn with plain elements so they stay sharp at any width.
- * The numbers stay readable without colour: the tooltip and the table view name each series.
+ * The numbers stay readable without colour: the tooltip and the table view name each series. A mouse
+ * shows a point's numbers on hover, a finger or pen on tap.
  */
 export function BarChart({
   series,
@@ -25,7 +26,7 @@ export function BarChart({
   const every = Math.ceil(points.length / 7);
   const point = active === null ? undefined : points[active];
   return (
-    <div className="relative" onMouseLeave={() => setActive(null)}>
+    <div className="relative" onPointerLeave={(e) => e.pointerType === "mouse" && setActive(null)}>
       <div className="relative ml-9 h-44" role="img" aria-label={caption}>
         {ticks.map((t) => (
           <div
@@ -41,10 +42,11 @@ export function BarChart({
         <div className="absolute inset-0 flex items-end gap-0.5">
           {points.map((p, i) => (
             <div
-              key={p.label}
+              // Columns are told apart by place alone; labels repeat across years.
+              key={i}
               className={cn("flex h-full flex-1 items-end justify-center gap-px", active === i && "bg-muted")}
-              onMouseEnter={() => setActive(i)}
-              onClick={() => setActive(active === i ? null : i)}
+              onPointerEnter={(e) => e.pointerType === "mouse" && setActive(i)}
+              onPointerUp={(e) => e.pointerType !== "mouse" && setActive(active === i ? null : i)}
             >
               {BOTH.map((n) => (
                 <div
@@ -79,15 +81,22 @@ export function BarChart({
           </div>
         )}
       </div>
-      <div className="mt-1.5 ml-9 flex gap-0.5 text-[11px] text-faint">
-        {points.map((p, i) => (
-          <span
-            key={p.label}
-            className={cn("flex-1 text-center whitespace-nowrap", (i / every) % 2 === 1 && "phone:invisible")}
-          >
-            {i % every === 0 ? p.label : ""}
-          </span>
-        ))}
+      <div className="relative mt-1.5 ml-9 h-4 text-[11px] text-faint">
+        {points.map((p, i) => {
+          if (i % every !== 0) return null;
+          // Under its column, slid along by as much of its width as the column is along the axis, so
+          // the first and last labels stay within the chart.
+          const along = ((i + 0.5) / points.length) * 100;
+          return (
+            <span
+              key={i}
+              className={cn("absolute whitespace-nowrap", (i / every) % 2 === 1 && "phone:hidden")}
+              style={{ left: `${along}%`, transform: `translateX(-${along}%)` }}
+            >
+              {p.label}
+            </span>
+          );
+        })}
       </div>
     </div>
   );

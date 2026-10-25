@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
@@ -42,10 +42,19 @@ export function StatsPage() {
   const [page, setPage] = useState(1);
   const timezone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const period = { range, now, timezone };
+  // The ranges end today: a page left open past midnight moves on with the date.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (new Date().toDateString() !== new Date(now).toDateString()) setNow(Date.now());
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [now]);
   const contact = useQuery({
-    queryKey: ["contactStats", period, page],
+    queryKey: ["contactStats", range, now, timezone, page],
     queryFn: () => call("contactStats", { ...period, page }),
-    placeholderData: (previous) => previous,
+    // Turning a page of schools keeps the rest in place; another range is drawn afresh.
+    placeholderData: (previous, last) =>
+      last?.queryKey[1] === range && last.queryKey[2] === now ? previous : undefined,
   });
   const mentors = useQuery({ queryKey: ["mentorStats"], queryFn: () => call("mentorStats", {}) });
   const usage = useQuery({ queryKey: ["tokenStats", period], queryFn: () => call("tokenStats", period) });
