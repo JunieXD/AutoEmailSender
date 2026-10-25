@@ -1724,6 +1724,119 @@ fn detail_approval() -> email::Approval<'static> {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn merging_replied_mentors_cancels_follow_up_in_either_direction(db: SqlitePool) {
+    let (net, store, inbox) = detail_mail(&db).await;
+    for (n, reply_on_keep) in [(221, true), (223, false)] {
+        let keep = mentor(&db, n, true).await;
+        let other = mentor(&db, n + 1, true).await;
+        let (replied, pending) = if reply_on_keep {
+            (n, other)
+        } else {
+            (n + 1, keep)
+        };
+        previous(&db, pending, false, T - 1000).await;
+        let d = email::follow_up::create(&db, pending, T).await.unwrap();
+        email::follow_up::save(&db, pending, d.id, &d.reply_to, "已写好的追问", &[], T)
+            .await
+            .unwrap()
+            .unwrap();
+        store.deliver("INBOX", T + 1, &format!(
+            "From: m{replied}@example.com\nMessage-ID: <merge-reply-{n}@example.com>\nSubject: 回复\n\n欢迎交流。"
+        ));
+        receive::round(&db, &net, T + 2).await.unwrap();
+        mentor::merge::merge(&db, keep, other, T + 3).await.unwrap();
+        assert!(email::follow_up::draft(&db, keep).await.unwrap().is_none());
+        let canceled = email::list(&db, keep)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|e| e.id == d.id)
+            .unwrap();
+        assert!(
+            matches!(canceled.delivery, email::Delivery::Canceled { cancel_reason } if cancel_reason == "导师已回信")
+        );
+        assert_eq!(canceled.body_md, "已写好的追问");
+        assert_eq!(
+            email::follow_up::approve(&db, keep, d.id, &d.reply_to, &detail_approval(), T + 4)
+                .await
+                .unwrap(),
+            email::Approved::Refused
+        );
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+            .await
+            .unwrap();
+    }
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn adding_an_address_cancels_follow_ups_when_earlier_replies_are_linked(db: SqlitePool) {
+    let (net, store, inbox) = detail_mail(&db).await;
+    for (n, standalone, edit) in [
+        (231, true, false),
+        (232, false, false),
+        (233, true, true),
+        (234, false, true),
+    ] {
+        let m = mentor(&db, n, true).await;
+        previous(&db, m, false, T - 1000).await;
+        let id = if standalone {
+            email::follow_up::create(&db, m, T).await.unwrap().id
+        } else {
+            let t = create(&db, &follow_form(&db, vec![m]).await, T)
+                .await
+                .unwrap();
+            let d = items(&db, t).await.remove(0);
+            approve(
+                &db,
+                &TaskApprovals {
+                    task_id: t,
+                    emails: vec![approval(&d)],
+                },
+                T,
+            )
+            .await
+            .unwrap();
+            d.id
+        };
+        let address = format!("old{n}@example.com");
+        store.deliver("INBOX", T - 100, &format!(
+            "From: {address}\nMessage-ID: <earlier-reply-{n}@example.com>\nSubject: 回复\n\n欢迎交流。"
+        ));
+        receive::round(&db, &net, T + 1).await.unwrap();
+        if edit {
+            mentor::update(
+                &db,
+                m,
+                &MentorFields {
+                    name: format!("导师{n}"),
+                    emails: vec![format!("m{n}@example.com"), address],
+                    ..Default::default()
+                },
+                T + 2,
+            )
+            .await
+            .unwrap();
+        } else {
+            mentor::add_email(&db, m, &address, T + 2).await.unwrap();
+        }
+        receive::round(&db, &net, T + 3).await.unwrap();
+        let state: (String, Option<String>) =
+            sqlx::query_as("SELECT state,cancel_reason FROM email WHERE id=?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(state, ("canceled".into(), Some("导师已回信".into())));
+        assert!(!email::retry(&db, id, T + 4).await.unwrap());
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+            .await
+            .unwrap();
+    }
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn standalone_follow_up_admission_and_concurrent_first_or_task(db: SqlitePool) {
     let (_net, _store, _inbox) = detail_mail(&db).await;
     for (n, state) in [

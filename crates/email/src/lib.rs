@@ -578,14 +578,7 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
         return Ok(Approved::Refused);
     };
     if source.kind == "follow_up" {
-        if sqlx::query_scalar!(
-            r#"SELECT EXISTS (SELECT 1 FROM mentor_contact
-               WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS "replied!: bool""#,
-            source.mentor_id
-        )
-        .fetch_one(&mut *tx)
-        .await?
-        {
+        if follow_up::replied(&mut tx, source.mentor_id).await? {
             return Ok(Approved::FollowUpReplied);
         }
         if thread::previous(&mut tx, source.mentor_id, source.reply_to.as_deref(), false)

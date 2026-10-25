@@ -233,6 +233,7 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     )
     .execute(&mut *tx)
     .await?;
+    email::follow_up::cancel_replied(&mut tx, keep, now).await?;
     sqlx::query!(
         "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id)
          SELECT ?, tag_id FROM mentor_tag WHERE mentor_id = ?",

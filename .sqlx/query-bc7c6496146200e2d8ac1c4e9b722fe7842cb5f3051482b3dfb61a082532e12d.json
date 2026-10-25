@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT EXISTS (SELECT 1 FROM mentor_contact\n               WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS \"replied!: bool\"",
+  "query": "SELECT EXISTS (SELECT 1 FROM mentor_contact\n           WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS \"replied!: bool\"",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "bd8eccfb33861657ac5f571939719e919b461c2d1e87ee2ba952564587334884"
+  "hash": "bc7c6496146200e2d8ac1c4e9b722fe7842cb5f3051482b3dfb61a082532e12d"
 }

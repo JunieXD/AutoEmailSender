@@ -10,6 +10,37 @@ pub struct Eligibility {
     pub pending: bool,
 }
 
+pub(super) async fn replied(conn: &mut SqliteConnection, mentor: i64) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM mentor_contact
+           WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS "replied!: bool""#,
+        mentor
+    )
+    .fetch_one(conn)
+    .await
+}
+
+/// Call after linking incoming mail, in the same write transaction.
+pub async fn cancel_replied(
+    conn: &mut SqliteConnection,
+    mentor: i64,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    if replied(conn, mentor).await? {
+        super::cancel(
+            conn,
+            super::CancelScope::FollowUps {
+                mentor,
+                parent: None,
+            },
+            "导师已回信",
+            now,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn eligibility(
     conn: &mut SqliteConnection,
     mentor: i64,
@@ -17,8 +48,6 @@ pub async fn eligibility(
     let row = sqlx::query!(
         r#"SELECT m.trashed_at,
              EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id) AS "address!: bool",
-             EXISTS (SELECT 1 FROM mentor_contact
-               WHERE mentor_id = m.id AND last_reply_at IS NOT NULL) AS "replied!: bool",
              EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
                AND kind IN ('first', 'follow_up')
                AND state IN ('generating', 'generation_failed', 'review', 'approved',
@@ -29,7 +58,7 @@ pub async fn eligibility(
     .fetch_one(&mut *conn)
     .await?;
     let previous = thread::previous(conn, mentor, None, false).await?;
-    let reason = if row.replied {
+    let reason = if replied(conn, mentor).await? {
         Some("导师已回信，请到往来里回复")
     } else if previous.as_ref().is_some_and(|p| p.bounced) {
         Some("上一封被退回，请先核对邮箱")
