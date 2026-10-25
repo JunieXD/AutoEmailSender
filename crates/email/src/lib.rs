@@ -836,8 +836,9 @@ pub async fn copy_candidates(
 
 /// Records the copy found of an email, and that the email went out if that was not known and the
 /// copy is of its last try: maybe sent, still being sent, canceled after a prior attempt, or
-/// waiting to be sent again to the same address. SMTP answering later changes nothing then, as it only writes to an email still being
-/// sent. A copy of an earlier try, to an address since changed, settles nothing.
+/// waiting to be sent again to the same address. SMTP answering later changes nothing then, as it
+/// only writes to an email still being sent. A copy of an earlier try, to an address since changed,
+/// settles nothing.
 pub async fn copied(
     conn: &mut SqliteConnection,
     id: i64,
