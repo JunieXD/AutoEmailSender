@@ -312,9 +312,9 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         let at = now - rng.i64(0..180) * DAY - rng.i64(0..DAY);
         sqlx::query(
             "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, mailbox_id, from_address,
-               to_address, model, message_id, sent_at, error, created_at, updated_at, subject, body_md,
-               html, text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
+               to_address, model, message_id, sent_at, error, cancel_reason, created_at, updated_at,
+               subject, body_md, html, text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
         )
         .bind(mentor)
         .bind(kind)
@@ -327,7 +327,8 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         .bind(out.then(|| format!("m{mentor}@example.edu.cn")))
         .bind(out.then(|| format!("<e{i}@aes>")))
         .bind(out.then_some(at))
-        .bind(matches!(state, "maybe_sent" | "failed" | "bounced" | "canceled").then_some("示例错误"))
+        .bind(matches!(state, "maybe_sent" | "failed" | "bounced").then_some("示例错误"))
+        .bind((state == "canceled").then_some("任务停止"))
         .bind(at)
         .bind(at)
         .bind("老师您好：\n\n我是北京航空航天大学的林晓。")
@@ -405,22 +406,135 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             let error = match *state {
                 "generation_failed" => Some("模型未能返回完整的草稿"),
                 "failed" => Some("收件地址不存在，请核对导师邮箱"),
-                "canceled" => Some(if name == "夏令营联系" {
-                    "任务停止"
-                } else {
-                    "移出任务"
-                }),
                 _ => None,
             };
-            sqlx::query("UPDATE email SET state=?,error=?,generation_queued_at=?,planned_at=?,html=coalesce(html,'<p>老师您好，我是林晓。</p>'),text=coalesce(text,'老师您好，我是林晓。'),message_id=NULL,copy_message_id=NULL,sent_at=NULL,from_address=NULL,to_address=NULL WHERE id=?")
-                .bind(state).bind(error).bind((*state == "generating").then_some(now))
-                .bind(matches!(*state,"approved"|"failed").then_some(now+DAY)).bind(id).execute(&mut *tx).await?;
+            sqlx::query(
+                r#"UPDATE email SET state = ?, error = ?, cancel_reason = ?, generation_queued_at = ?,
+                 planned_at = ?, html = coalesce(html, '<p>老师您好，我是林晓。</p>'),
+                 text = coalesce(text, '老师您好，我是林晓。'), message_id = NULL,
+                 copy_message_id = NULL, sent_at = NULL, from_address = NULL, to_address = NULL
+               WHERE id = ?"#,
+            )
+            .bind(state)
+            .bind(error)
+            .bind((*state == "canceled").then_some(if name == "夏令营联系" {
+                "任务停止"
+            } else {
+                "移出任务"
+            }))
+            .bind((*state == "generating").then_some(now))
+            .bind(matches!(*state, "approved" | "failed").then_some(now + DAY))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         }
         if state == "stopped" {
-            sqlx::query("UPDATE email SET state='canceled',error='任务停止',generation_queued_at=NULL WHERE task_id=? AND state IN ('generating','generation_failed','review','approved','failed')")
-                .bind(task).execute(&mut *tx).await?;
+            sqlx::query(
+                r#"UPDATE email SET state = 'canceled', error = NULL, cancel_reason = '任务停止',
+                 generation_queued_at = NULL
+               WHERE task_id = ?
+                 AND state IN ('generating', 'generation_failed', 'review', 'approved', 'failed')"#,
+            )
+            .bind(task)
+            .execute(&mut *tx)
+            .await?;
         }
     }
     tx.commit().await?;
+    Ok(())
+}
+
+/// Seed-only scenarios: the later window is full, so the missed letter cannot roll forward.
+pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
+    use chrono::TimeZone;
+    let today = chrono::Local
+        .timestamp_millis_opt(now)
+        .single()
+        .ok_or_else(|| sqlx::Error::Decode("invalid seed time".into()))?
+        .date_naive();
+    let dates = [
+        today - chrono::Duration::days(1),
+        today + chrono::Duration::days(1),
+    ];
+    let dates_json = serde_json::to_string(&dates.map(|d| d.to_string()))
+        .map_err(|e| sqlx::Error::Encode(e.into()))?;
+    let task=sqlx::query(r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md, schedule,
+                              window_dates, window_start, window_end, per_window, state, created_at)
+                            VALUES ('定时联系 · 人工智能', 'first', 'template', '申请交流', '老师您好，我是林晓。', 'window', ?,
+                              '09:00', '11:00', 1, 'active', ?)"#).bind(dates_json).bind(now).execute(db).await?.last_insert_rowid();
+    for (i, state) in [
+        "review",
+        "approved",
+        "approved",
+        "generation_failed",
+        "failed",
+        "maybe_sent",
+        "sent",
+        "canceled",
+        "approved",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mentor = mentor::create(
+            db,
+            &mentor::MentorFields {
+                name: format!("定时示例{}", i + 1),
+                emails: vec![format!("schedule{i}@example.edu.cn")],
+                ..Default::default()
+            },
+            now,
+        )
+        .await?;
+        let date = if i == 1 { dates[0] } else { dates[1] };
+        let planned = chrono::Local
+            .from_local_datetime(
+                &date
+                    .and_hms_opt(9, 0, 0)
+                    .ok_or_else(|| sqlx::Error::Decode("invalid seed date".into()))?,
+            )
+            .earliest()
+            .ok_or_else(|| sqlx::Error::Decode("invalid seed time".into()))?
+            .timestamp_millis();
+        let latest = planned + 2 * 3_600_000;
+        let sent = matches!(*state, "sent" | "maybe_sent");
+        let error = match *state {
+            "generation_failed" => Some("模型未能返回完整的草稿"),
+            "failed" => Some("邮箱登录失败，请检查邮箱设置"),
+            "maybe_sent" => Some("发送途中连接中断，无法确认是否发出"),
+            _ => None,
+        };
+        sqlx::query(
+            r#"INSERT INTO email (mentor_id, task_id, kind, state, subject, body_md, html, text,
+                 planned_at, latest_at, approval_order, mailbox_id, from_address, to_address,
+                 message_id, sent_at, error, cancel_reason, created_at, updated_at)
+               VALUES (?, ?, 'first', ?, '申请研究方向交流', '老师您好，我是林晓。',
+                 '<p>老师您好，我是林晓。</p>', '老师您好，我是林晓。',
+                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(mentor)
+        .bind((i != 8).then_some(task))
+        .bind(state)
+        .bind(
+            (!matches!(*state, "review" | "generation_failed" | "canceled")).then_some(if sent {
+                now - 3_600_000
+            } else {
+                planned
+            }),
+        )
+        .bind((*state == "approved").then_some(if i == 8 { planned + 3_600_000 } else { latest }))
+        .bind(i as i64 + 1)
+        .bind(sent.then_some(1_i64))
+        .bind(sent.then_some("linxiao@qq.com"))
+        .bind(sent.then_some(format!("schedule{i}@example.edu.cn")))
+        .bind(sent.then_some(format!("<schedule{i}@aes>")))
+        .bind(sent.then_some(now - 3_600_000))
+        .bind(error)
+        .bind((*state == "canceled").then_some("移出任务"))
+        .bind(now)
+        .bind(now)
+        .execute(db)
+        .await?;
+    }
     Ok(())
 }

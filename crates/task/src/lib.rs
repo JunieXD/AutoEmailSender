@@ -30,6 +30,7 @@ pub enum Writer {
 #[serde(rename_all = "camelCase")]
 pub struct NewTask {
     pub name: String,
+    pub schedule: email::schedule::Schedule,
     pub ids: Vec<i64>,
     pub writer: Writer,
     pub template_id: Option<i64>,
@@ -156,9 +157,28 @@ pub fn fill(
     }
 }
 
+pub fn schedule_capacity(
+    window: &email::schedule::Window,
+    now: i64,
+) -> Result<email::schedule::Capacity> {
+    window
+        .validate()
+        .map_err(|message| Error::Invalid(message.into()))?;
+    Ok(window.capacity(now, &chrono::Local))
+}
+
 pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     if form.name.trim().is_empty() {
         return Err(Error::Invalid("请填写任务名称".into()));
+    }
+    if let email::schedule::Schedule::Window(w) = &form.schedule {
+        let count = schedule_capacity(w, now)?.emails;
+        if count < form.ids.len() as u64 {
+            return Err(Error::Invalid(format!(
+                "发送容量不足，还差 {} 封",
+                form.ids.len() as u64 - count
+            )));
+        }
     }
     let writer = match form.writer {
         Writer::Ai => "ai",
@@ -167,6 +187,7 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     let mut tx = db.begin().await?;
     // Take the write lock before reading template content or checking membership.
     let id = sqlx::query_scalar!("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,'first','ai','now','active',?) RETURNING id AS \"id!\"",form.name.trim(),now).fetch_one(&mut *tx).await?;
+    email::schedule::save(&mut tx, id, &form.schedule).await?;
     let template = match form.template_id {
         Some(id) => Some(
             sqlx::query!("SELECT subject,body_md FROM template WHERE id = ?", id)
@@ -269,7 +290,16 @@ pub async fn stop(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
     sqlx::query!("UPDATE task SET state = 'stopped' WHERE id = ?", id)
         .execute(&mut *tx)
         .await?;
-    emails::cancel(&mut tx, id, None, "任务停止", now).await?;
+    email::cancel(
+        &mut tx,
+        email::CancelScope::Task {
+            task: id,
+            email: None,
+        },
+        "任务停止",
+        now,
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -297,4 +327,59 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<()> {
         .await?;
     tx.commit().await?;
     Ok(())
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleEdit {
+    pub id: i64,
+    pub schedule: email::schedule::Schedule,
+}
+
+pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> Result<u64> {
+    if let email::schedule::Schedule::Window(w) = &edit.schedule {
+        w.validate().map_err(|s| Error::Invalid(s.into()))?;
+    }
+    let mut tx = db.begin().await?;
+    if sqlx::query!(
+        r#"UPDATE task SET name = name
+           WHERE id = ?
+             AND state <> 'stopped'"#,
+        edit.id
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 0
+    {
+        return Err(Error::Invalid("任务已停止或已删除。".into()));
+    }
+    email::schedule::save(&mut tx, edit.id, &edit.schedule).await?;
+    let count = sqlx::query!(
+        r#"UPDATE email SET planned_at = NULL, latest_at = NULL, manual_schedule = 0
+           WHERE task_id = ?
+             AND state = 'approved'"#,
+        edit.id
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    let ordered = sqlx::query_scalar!(
+        r#"SELECT id
+           FROM email
+           WHERE task_id = ?
+             AND state = 'approved'
+           ORDER BY approval_order, id"#,
+        edit.id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for id in ordered {
+        email::schedule::assign(&mut tx, id, edit.id, now, &chrono::Local, &mut |n| {
+            fastrand::i64(0..n)
+        })
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(count)
 }

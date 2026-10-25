@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n           FROM email\n           WHERE task_id = ?\n             AND state = 'approved'\n           ORDER BY approval_order, id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cab2bdac44dd41d76fea0496d06f768058a56dd9af74ee7f49adcbec5b9aff65"
+}

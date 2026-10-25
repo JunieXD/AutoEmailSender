@@ -807,6 +807,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "chrono-tz"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
+dependencies = [
+ "chrono",
+ "phf 0.12.1",
+]
+
+[[package]]
 name = "cipher"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1470,7 +1480,9 @@ name = "email"
 version = "3.0.0-alpha.0"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "db",
+ "fastrand",
  "mentor",
  "serde",
  "sqlx",
@@ -3260,6 +3272,7 @@ name = "mentor"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "email",
  "profile",
  "serde",
  "sheet",
@@ -3923,6 +3936,15 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phf"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
+dependencies = [
+ "phf_shared 0.12.1",
+]
+
+[[package]]
+name = "phf"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
@@ -4007,6 +4029,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
+dependencies = [
+ "siphasher",
 ]
 
 [[package]]
@@ -4884,18 +4915,24 @@ name = "send"
 version = "3.0.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "db",
  "email",
  "fakemail",
+ "fastrand",
  "mailbox",
  "material",
  "mentor",
  "net",
  "profile",
+ "receive",
+ "serde",
  "sqlx",
+ "task",
  "tempfile",
  "tokio",
  "tracing",
+ "ts-rs",
 ]
 
 [[package]]
@@ -5735,9 +5772,11 @@ name = "task"
 version = "3.0.0-alpha.0"
 dependencies = [
  "check",
+ "chrono",
  "db",
  "email",
  "fakemail",
+ "fastrand",
  "mailbox",
  "matching",
  "material",
@@ -7590,10 +7629,12 @@ name = "xtask"
 version = "3.0.0-alpha.0"
 dependencies = [
  "api",
+ "chrono",
  "crawl",
  "db",
  "fastrand",
  "mentor",
+ "send",
  "serde_json",
  "sheet",
  "sqlx",

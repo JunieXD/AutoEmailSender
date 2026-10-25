@@ -62,21 +62,42 @@ pub async fn approve(
     text: &str,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'approved', html = ?, text = ?, planned_at = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND trim(coalesce(subject, '')) <> '' AND trim(coalesce(body_md, '')) <> '' AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT mentor_id FROM mentor_email)) AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')", html, text, now, now, id, task).execute(conn).await?.rows_affected() > 0)
-}
-
-pub async fn cancel(
-    conn: &mut SqliteConnection,
-    task: i64,
-    id: Option<i64>,
-    reason: &str,
-    now: i64,
-) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'canceled', error = ?, generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ? WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND state IN ('generating', 'generation_failed', 'review', 'approved', 'failed')", reason, now, task, id).execute(conn).await?.rows_affected())
+    Ok(sqlx::query!(
+        r#"UPDATE email SET state = 'approved', approval_order = (SELECT
+             coalesce(max(approval_order), 0) + 1 FROM email previous WHERE previous.task_id =
+             email.task_id), html = ?, text = ?, planned_at = ?, updated_at = ?
+           WHERE id = ?
+             AND task_id = ?
+             AND state = 'review'
+             AND trim(coalesce(subject, '')) <> ''
+             AND trim(coalesce(body_md, '')) <> ''
+             AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT
+               mentor_id FROM mentor_email))
+             AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')"#,
+        html,
+        text,
+        now,
+        now,
+        id,
+        task
+    )
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 pub async fn delete(conn: &mut SqliteConnection, task: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!("DELETE FROM email WHERE task_id = ? AND state NOT IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')", task).execute(conn).await?;
+    // `state = 'canceled' AND sent_at IS NOT NULL` retains a prior attempt's delivery evidence;
+    // cleanup must preserve it for late copies and bounces, just as copied/copy_candidates/bounced do.
+    sqlx::query!(
+        "DELETE FROM email WHERE task_id = ?
+           AND NOT (state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')
+             OR (state = 'canceled' AND sent_at IS NOT NULL))",
+        task
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 

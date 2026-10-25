@@ -1,10 +1,12 @@
 //! Sending approved emails from the user's mailboxes, one at a time (docs/design.md#桌面端).
 
+pub mod plan;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mailbox::{Letter, SendError};
+use mailbox::{Letter, SendError, SendStatus};
 use net::Net;
 use profile::Rotation;
 use sqlx::{Connection, SqlitePool};
@@ -85,29 +87,65 @@ pub async fn step(
     materials: &Path,
     now: impl Fn() -> i64,
 ) -> Result<Next, sqlx::Error> {
+    step_in_zone(db, net, materials, now, &chrono::Local, &mut |n| {
+        fastrand::i64(0..n)
+    })
+    .await
+}
+
+pub async fn step_in_zone<T: chrono::TimeZone>(
+    db: &SqlitePool,
+    net: &Net,
+    materials: &Path,
+    now: impl Fn() -> i64,
+    zone: &T,
+    random: &mut impl FnMut(i64) -> i64,
+) -> Result<Next, sqlx::Error> {
     let at = now();
+    email::schedule::rollover(db, at, zone, random).await?;
     let due = sqlx::query!(
-        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id,
-             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id
-              WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply'))
-           ELSE m.mailbox_id END AS own,
-           e.kind = 'reply' AS "reply!: bool" FROM email e JOIN mentor m ON m.id = e.mentor_id
-         WHERE e.state = 'approved' AND e.planned_at <= ?
-           AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
-         ORDER BY e.planned_at, e.id"#,
+        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT
+             r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id WHERE
+             mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply')) ELSE
+             m.mailbox_id END AS own, e.kind = 'reply' AS "reply!: bool"
+           FROM email e
+           JOIN mentor m ON m.id = e.mentor_id
+           WHERE e.state = 'approved'
+             AND e.planned_at <= ?1
+             AND (e.latest_at IS NULL OR e.latest_at > ?1)
+             AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active'
+               AND generation_paused_at IS NULL))
+           ORDER BY e.planned_at, e.id"#,
         at
     )
     .fetch_all(db)
     .await?;
     let mut next = sqlx::query_scalar!(
-        r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?
-           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))"#,
+        r#"SELECT min(planned_at) AS "at: i64"
+           FROM email
+           WHERE state = 'approved'
+             AND planned_at > ?1
+             AND (latest_at IS NULL OR latest_at > ?1)
+             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND
+               generation_paused_at IS NULL))"#,
         at
     )
     .fetch_one(db)
     .await?;
+    let deadline = sqlx::query_scalar!(
+        r#"SELECT min(latest_at) AS "at: i64"
+           FROM email
+           WHERE state = 'approved'
+             AND latest_at > ?"#,
+        at
+    )
+    .fetch_one(db)
+    .await?;
+    if let Some(deadline) = deadline {
+        next = Some(next.map_or(deadline, |n| n.min(deadline)));
+    }
     let rotation = profile::rotation(db).await?;
-    let mailboxes = usage(db, at).await?;
+    let mailboxes = usage_on(&mut *db.acquire().await?, at).await?;
     for e in due {
         if e.reply && e.own.is_none() {
             email::failed(
@@ -166,7 +204,7 @@ impl Usage {
 }
 
 /// The mailboxes in rotation order, with what each has sent lately.
-async fn usage(db: &SqlitePool, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
+async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
     sqlx::query_as!(
         Usage,
         r#"SELECT b.id, b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
@@ -182,7 +220,7 @@ async fn usage(db: &SqlitePool, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
            FROM mailbox b ORDER BY b.rotation_order, b.id"#,
         now - DAY
     )
-    .fetch_all(db)
+    .fetch_all(conn)
     .await
 }
 
@@ -228,49 +266,34 @@ async fn send(
             return email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await;
         }
     };
-    let Some(m) = mark_sending(db, id, &account, mailbox_id, now()).await? else {
+    let attached = email::attachment_files(&mut *db.acquire().await?, id).await?;
+    let files = files(materials, &attached).await;
+    let Some(m) = mark_sending(db, id, &account, mailbox_id, now, &attached, files).await? else {
         smtp.quit();
         return Ok(());
     };
-    let outgoing = async {
-        let to = m.handover.to_address.as_deref().ok_or(email::NO_ADDRESS)?;
-        let attachments = files(materials, &m.handover.attachments).await?;
-        let letter = Letter {
-            message_id: &m.handover.message_id,
-            in_reply_to: m.handover.reply_to.as_deref(),
-            references: m.handover.refs.as_deref(),
-            to_name: &m.to_name,
-            to,
-            subject: &m.handover.subject,
-            html: &m.handover.html,
-            text: &m.handover.text,
-            attachments: &attachments,
-        };
-        mailbox::compose(&account, &letter).map_err(|e| e.message())
-    }
-    .await;
-    let outcome = match outgoing {
-        Ok(outgoing) => match smtp.send(&outgoing).await {
-            Ok(()) => {
-                tracing::info!("email {id} sent from mailbox {mailbox_id}");
-                Outcome::Sent
+    let outcome = match smtp
+        .send(&m.outgoing, || {
+            m.before.latest_at.is_some_and(|latest| now() >= latest)
+        })
+        .await
+    {
+        Ok(SendStatus::Expired) => return m.before.restore(db, id).await,
+        Ok(SendStatus::Sent) => {
+            tracing::info!("email {id} sent from mailbox {mailbox_id}");
+            Outcome::Sent
+        }
+        Err(err) => {
+            tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
+            match err {
+                SendError::NotSent(_) => Outcome::Failed(err.message()),
+                SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
             }
-            Err(err) => {
-                tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
-                match err {
-                    SendError::NotSent(_) => Outcome::Failed(err.message()),
-                    SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
-                }
-            }
-        },
-        Err(error) => {
-            smtp.quit();
-            Outcome::Failed(error)
         }
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, m.handover.mentor_id, mailbox_id, &outcome, answered).await {
+    while let Err(e) = record(db, id, mailbox_id, &m, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }
@@ -296,10 +319,76 @@ async fn files(dir: &Path, attachments: &[email::Attached]) -> Result<Vec<mailbo
     Ok(files)
 }
 
-/// What goes out, read as the email is marked as being handed over.
 struct Marked {
-    handover: email::Handover,
-    to_name: String,
+    mentor_id: i64,
+    outgoing: mailbox::Outgoing,
+    before: BeforeHandover,
+}
+
+/// A retry can already carry delivery evidence from an earlier attempt; keep it intact if this
+/// attempt expires without handing anything to SMTP.
+struct BeforeHandover {
+    latest_at: Option<i64>,
+    mailbox_id: Option<i64>,
+    from_address: Option<String>,
+    to_address: Option<String>,
+    message_id: Option<String>,
+    sent_at: Option<i64>,
+    updated_at: i64,
+}
+
+impl BeforeHandover {
+    /// A known rejection proves nothing about this attempt; only the previous attempt may still
+    /// have a late copy or bounce. Keep the Message-ID for duplicate suppression on another retry.
+    async fn failed(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        id: i64,
+        error: &str,
+        now: i64,
+    ) -> Result<(), sqlx::Error> {
+        email::failed(conn, id, error, now).await?;
+        sqlx::query!(
+            r#"UPDATE email SET mailbox_id = (SELECT id FROM mailbox WHERE id = ?1),
+                 from_address = ?2, to_address = ?3, message_id = coalesce(?4, message_id),
+                 sent_at = ?5
+               WHERE id = ?6 AND state IN ('failed', 'canceled')"#,
+            self.mailbox_id,
+            self.from_address,
+            self.to_address,
+            self.message_id,
+            self.sent_at,
+            id,
+        )
+        .execute(conn)
+        .await?;
+        Ok(())
+    }
+
+    async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            r#"UPDATE email SET
+                 state = CASE WHEN cancel_reason IS NULL THEN 'approved' ELSE 'canceled' END,
+                 planned_at = CASE WHEN cancel_reason IS NULL THEN planned_at END,
+                 latest_at = CASE WHEN cancel_reason IS NULL THEN ?1 END,
+                 mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
+                 from_address = ?3, to_address = ?4, message_id = ?5, sent_at = ?6,
+                 error = NULL,
+                 updated_at = CASE WHEN cancel_reason IS NULL THEN ?7 ELSE updated_at END
+               WHERE id = ?8 AND state = 'sending'"#,
+            self.latest_at,
+            self.mailbox_id,
+            self.from_address,
+            self.to_address,
+            self.message_id,
+            self.sent_at,
+            self.updated_at,
+            id,
+        )
+        .execute(db)
+        .await?;
+        Ok(())
+    }
 }
 
 /// Marks the email as being handed over in a transaction synced to the disk itself: were the mark
@@ -310,27 +399,80 @@ async fn mark_sending(
     id: i64,
     account: &mailbox::Account,
     mailbox_id: i64,
-    now: i64,
+    now: &impl Fn() -> i64,
+    attached: &[email::Attached],
+    files: Result<Vec<mailbox::File>, String>,
 ) -> Result<Option<Marked>, sqlx::Error> {
     let mut conn = db.acquire().await?.detach();
     // fullfsync, on macOS, gets the commit past the drive's own cache.
     sqlx::raw_sql("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON")
         .execute(&mut conn)
         .await?;
-    let mut tx = conn.begin().await?;
-    let message_id = mailbox::message_id(account);
-    let from: &str = account.address.as_ref();
-    let Some(handover) =
-        email::start_sending(&mut tx, id, mailbox_id, from, &message_id, now).await?
+    let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
+    let at = now();
+    let Some(before) = sqlx::query_as!(
+        BeforeHandover,
+        r#"SELECT latest_at, mailbox_id, from_address, to_address, message_id, sent_at,
+             updated_at
+           FROM email
+           WHERE id = ?"#,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
     else {
         return Ok(None);
     };
+    let message_id = mailbox::message_id(account);
+    let from: &str = account.address.as_ref();
+    let Some(handover) =
+        email::start_sending(&mut tx, id, mailbox_id, from, &message_id, at).await?
+    else {
+        return Ok(None);
+    };
+    // The approval may have changed while files were being read. Re-read its files next step.
+    if handover.attachments != attached {
+        return Ok(None);
+    }
     let to_name = sqlx::query_scalar!("SELECT name FROM mentor WHERE id = ?", handover.mentor_id)
         .fetch_one(&mut *tx)
         .await?;
+    let outgoing = files.and_then(|files| {
+        let to = handover.to_address.as_deref().ok_or(email::NO_ADDRESS)?;
+        mailbox::compose(
+            account,
+            &Letter {
+                message_id: &handover.message_id,
+                in_reply_to: handover.reply_to.as_deref(),
+                references: handover.refs.as_deref(),
+                to_name: &to_name,
+                to,
+                subject: &handover.subject,
+                html: &handover.html,
+                text: &handover.text,
+                attachments: &files,
+            },
+        )
+        .map_err(|e| e.message())
+    });
+    if before.latest_at.is_some_and(|latest| now() >= latest) {
+        return Ok(None);
+    }
+    let outgoing = match outgoing {
+        Ok(outgoing) => outgoing,
+        Err(error) => {
+            before.failed(&mut tx, id, &error, now()).await?;
+            tx.commit().await?;
+            return Ok(None);
+        }
+    };
     tx.commit().await?;
     conn.close().await?;
-    Ok(Some(Marked { handover, to_name }))
+    Ok(Some(Marked {
+        mentor_id: handover.mentor_id,
+        outgoing,
+        before,
+    }))
 }
 
 /// How SMTP answered.
@@ -343,8 +485,8 @@ enum Outcome {
 async fn record(
     db: &SqlitePool,
     id: i64,
-    mentor_id: i64,
     mailbox_id: i64,
+    marked: &Marked,
     outcome: &Outcome,
     now: i64,
 ) -> Result<(), sqlx::Error> {
@@ -353,12 +495,12 @@ async fn record(
         Outcome::Sent => email::sent(&mut tx, id, now).await?,
         Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
         Outcome::Failed(error) => {
-            email::failed(&mut tx, id, error, now).await?;
+            marked.before.failed(&mut tx, id, error, now).await?;
             return tx.commit().await;
         }
     }
     // It went out, or may have: later emails to this mentor go from the same mailbox.
-    mentor::assign_mailbox(&mut tx, mentor_id, mailbox_id).await?;
+    mentor::assign_mailbox(&mut tx, marked.mentor_id, mailbox_id).await?;
     tx.commit().await
 }
 

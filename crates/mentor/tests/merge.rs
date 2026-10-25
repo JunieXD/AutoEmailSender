@@ -151,7 +151,7 @@ async fn mentors_with_mail_to_go_or_in_the_trash_are_not_merged(db: SqlitePool) 
     ));
     exec(
         &db,
-        "UPDATE email SET state = 'canceled', error = '取消' WHERE id = ?",
+        "UPDATE email SET state = 'canceled', cancel_reason = '取消' WHERE id = ?",
         approved,
     )
     .await;
@@ -220,8 +220,18 @@ async fn task_pair(db: &SqlitePool, states: [&str; 2]) -> (i64, [i64; 2], [i64; 
         )
         .await
         .unwrap();
-        sqlx::query("UPDATE email SET task_id=?, state=?, error=CASE WHEN ?='canceled' THEN '任务停止' END WHERE id=?")
-            .bind(task).bind(states[i]).bind(states[i]).bind(emails[i]).execute(db).await.unwrap();
+        sqlx::query(
+            r#"UPDATE email SET task_id = ?, state = ?,
+                 cancel_reason = CASE WHEN ? = 'canceled' THEN '任务停止' END
+               WHERE id = ?"#,
+        )
+        .bind(task)
+        .bind(states[i])
+        .bind(states[i])
+        .bind(emails[i])
+        .execute(db)
+        .await
+        .unwrap();
     }
     (task, mentors, emails)
 }

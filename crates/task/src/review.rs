@@ -35,6 +35,7 @@ pub struct TaskSummary {
     pub pause_reason: Option<String>,
     pub model_config_id: Option<i64>,
     pub progress: Progress,
+    pub schedule: email::schedule::Schedule,
 }
 #[derive(Debug, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -85,23 +86,22 @@ async fn list_page(
     let rows = sqlx::query!(r#"SELECT id,name,writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task ORDER BY id DESC LIMIT ? OFFSET ?"#,limit,offset).fetch_all(&mut *tx).await?;
     let ids = rows.iter().map(|t| t.id).collect::<Vec<_>>();
     let mut counts = counts(&mut tx, &ids).await?;
-    let tasks = rows
-        .into_iter()
-        .map(|r| {
-            let progress = counts.remove(&r.id).unwrap_or_default();
-            let state = state(&r.state, r.generation_paused_at.is_some(), &progress);
-            TaskSummary {
-                id: r.id,
-                name: r.name,
-                writer: r.writer,
-                state,
-                created_at: r.created_at,
-                pause_reason: r.generation_pause_reason,
-                model_config_id: r.model_config_id,
-                progress,
-            }
-        })
-        .collect();
+    let mut tasks = Vec::new();
+    for r in rows {
+        let progress = counts.remove(&r.id).unwrap_or_default();
+        let state = state(&r.state, r.generation_paused_at.is_some(), &progress);
+        tasks.push(TaskSummary {
+            id: r.id,
+            name: r.name,
+            writer: r.writer,
+            state,
+            created_at: r.created_at,
+            pause_reason: r.generation_pause_reason,
+            model_config_id: r.model_config_id,
+            progress,
+            schedule: email::schedule::get(&mut tx, r.id).await?,
+        });
+    }
     Ok(TaskPage { tasks, total })
 }
 fn state(state: &str, paused: bool, p: &Progress) -> TaskState {
@@ -154,6 +154,7 @@ pub async fn get(
         pause_reason: r.generation_pause_reason,
         model_config_id: r.model_config_id,
         progress,
+        schedule: email::schedule::get(&mut tx, id).await?,
     }))
 }
 
@@ -328,13 +329,30 @@ pub struct TaskDraft {
     pub attachments: Vec<i64>,
     pub state: DraftState,
     pub error: Option<String>,
+    pub cancel_reason: Option<String>,
+    pub planned_at: Option<i64>,
+    pub latest_at: Option<i64>,
 }
 pub async fn draft(
     db: &SqlitePool,
     key: &TaskEmail,
 ) -> std::result::Result<Option<TaskDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(r) = sqlx::query!(r#"SELECT id,mentor_id,coalesce(subject,'') AS "subject!: String",coalesce(body_md,'') AS "body_md!: String",state AS "state: DraftState",error FROM email WHERE id = ? AND task_id = ?"#,key.id,key.task_id).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    let Some(r) = sqlx::query!(
+        r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String", coalesce(body_md,
+             '') AS "body_md!: String", state AS "state: DraftState", error, cancel_reason, planned_at,
+             latest_at
+           FROM email
+           WHERE id = ?
+             AND task_id = ?"#,
+        key.id,
+        key.task_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
     Ok(Some(TaskDraft {
         id: r.id,
         mentor_id: r.mentor_id,
@@ -342,6 +360,9 @@ pub async fn draft(
         body_md: r.body_md,
         state: r.state,
         error: r.error,
+        cancel_reason: r.cancel_reason,
+        planned_at: r.planned_at,
+        latest_at: r.latest_at,
         attachments: email::attached(&mut tx, r.id).await?,
     }))
 }
@@ -428,7 +449,87 @@ pub struct TaskApprovals {
     pub task_id: i64,
     pub emails: Vec<RenderedApproval>,
 }
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalPreview {
+    pub task_id: i64,
+    pub ids: Vec<i64>,
+}
+
+#[derive(Debug, Serialize, TS)]
+pub struct SchedulePreview {
+    pub dates: Vec<String>,
+    pub unplaced: i64,
+}
+
+pub async fn preview_schedule(
+    db: &SqlitePool,
+    input: &ApprovalPreview,
+    now: i64,
+) -> Result<SchedulePreview> {
+    use chrono::TimeZone;
+    let mut tx = db.begin().await?;
+    let schedule = email::schedule::get(&mut tx, input.task_id).await?;
+    let mut preview = SchedulePreview {
+        dates: vec![],
+        unplaced: 0,
+    };
+    if let email::schedule::Schedule::Window(w) = schedule {
+        let count = sqlx::query_scalar!(
+            r#"SELECT count(*)
+               FROM email
+               WHERE task_id = ?
+                 AND state = 'review'
+                 AND id IN (SELECT value FROM json_each(?))"#,
+            input.task_id,
+            Json(&input.ids)
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut reserved = sqlx::query_scalar!(
+            r#"SELECT planned_at AS "planned_at!"
+               FROM email
+               WHERE task_id = ?
+                 AND planned_at IS NOT NULL
+                 AND state NOT IN ('review', 'generating', 'generation_failed', 'canceled')"#,
+            input.task_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for _ in 0..count {
+            match email::schedule::plan(&w, &reserved, now, &chrono::Local, &mut |_| 0) {
+                Some(slot) => {
+                    reserved.push(slot.planned_at);
+                    let date = chrono::Local
+                        .timestamp_millis_opt(slot.planned_at)
+                        .single()
+                        .ok_or_else(|| Error::Invalid("发送时间超出范围".into()))?
+                        .format("%Y-%m-%d")
+                        .to_string();
+                    if !preview.dates.contains(&date) {
+                        preview.dates.push(date);
+                    }
+                }
+                None => preview.unplaced += 1,
+            }
+        }
+    }
+    Ok(preview)
+}
 pub async fn approve(db: &SqlitePool, request: &TaskApprovals, now: i64) -> Result<u64> {
+    approve_in_zone(db, request, now, &chrono::Local, &mut |n| {
+        fastrand::i64(0..n)
+    })
+    .await
+}
+pub async fn approve_in_zone<T: chrono::TimeZone>(
+    db: &SqlitePool,
+    request: &TaskApprovals,
+    now: i64,
+    zone: &T,
+    random: &mut impl FnMut(i64) -> i64,
+) -> Result<u64> {
     let mut tx = db.begin().await?;
     // First statement takes a write lock. Approval always uses the latest human draft.
     sqlx::query!("UPDATE task SET name = name WHERE id = ?", request.task_id)
@@ -458,18 +559,21 @@ pub async fn approve(db: &SqlitePool, request: &TaskApprovals, now: i64) -> Resu
         if attached != expected {
             return Err(Error::Invalid("附件刚被修改，请重新核对后批准。".into()));
         }
-        approved += u64::from(
-            emails::approve(&mut tx, request.task_id, r.id, &r.html, &r.text, now).await?,
-        );
+        if emails::approve(&mut tx, request.task_id, r.id, &r.html, &r.text, now).await? {
+            email::schedule::assign(&mut tx, r.id, request.task_id, now, zone, random).await?;
+            approved += 1;
+        }
     }
     tx.commit().await?;
     Ok(approved)
 }
 pub async fn remove(db: &SqlitePool, key: &TaskEmail, now: i64) -> Result<()> {
-    emails::cancel(
+    email::cancel(
         &mut *db.acquire().await?,
-        key.task_id,
-        Some(key.id),
+        email::CancelScope::Task {
+            task: key.task_id,
+            email: Some(key.id),
+        },
         "移出任务",
         now,
     )
@@ -559,6 +663,9 @@ pub async fn pending(
                     attachments: r.attachments.0,
                     state: r.state,
                     error: None,
+                    cancel_reason: None,
+                    planned_at: None,
+                    latest_at: None,
                 },
                 problems: count,
             }

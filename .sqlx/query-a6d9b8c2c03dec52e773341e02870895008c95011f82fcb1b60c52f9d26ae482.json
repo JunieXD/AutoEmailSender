@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'canceled', planned_at = NULL, latest_at = NULL,\n             error = NULL, updated_at = ?\n           WHERE id = ? AND state = 'maybe_sent' AND cancel_reason IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a6d9b8c2c03dec52e773341e02870895008c95011f82fcb1b60c52f9d26ae482"
+}

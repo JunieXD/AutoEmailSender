@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_name AS \"file_name!\", material_id AS \"material_id!\"\n           FROM email_attachment\n           WHERE email_id = ?\n           ORDER BY file_name",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_name!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "material_id!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email_attachment",
+            "name": "material_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "2ba88675f4eff59dcb4e298735195017815e280ff691b68358a7c68e64307a4c"
+}

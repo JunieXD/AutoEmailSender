@@ -144,7 +144,7 @@ async fn a_material_stays_while_an_email_to_go_out_has_it_attached(db: SqlitePoo
         attachments: &[id],
     };
     assert_eq!(
-        email::approve_first(&db, mentor, &approval, 2)
+        email::approve_first(&db, mentor, &approval, None, 2)
             .await
             .unwrap(),
         email::Approved::Yes
@@ -335,9 +335,12 @@ async fn task_material(db: &SqlitePool, material: i64, role: &str, state: &str, 
     )
     .await
     .unwrap();
-    sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,generation_claim,error,created_at,updated_at) VALUES (?,?,'first',?,?,?,0,0)")
+    sqlx::query(r#"INSERT INTO email (mentor_id, task_id, kind, state, generation_claim, error, cancel_reason,
+             created_at, updated_at)
+           VALUES (?, ?, 'first', ?, ?, ?, ?, 0, 0)"#)
         .bind(mentor).bind(task).bind(state).bind(claim)
-        .bind(matches!(state, "canceled" | "generation_failed").then_some("已停止或失败"))
+        .bind((state == "generation_failed").then_some("生成失败"))
+        .bind((state == "canceled").then_some("任务停止"))
         .execute(db).await.unwrap();
     task
 }
