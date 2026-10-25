@@ -36,9 +36,15 @@ pub enum MailError {
         source: io::Error,
     },
     /// The server turned down the login, with its reply.
-    Login(String),
+    Login {
+        reply: String,
+        smtp_code: Option<u16>,
+    },
     /// The server turned down some other request, with its reply.
-    Refused(String),
+    Refused {
+        reply: String,
+        smtp_code: Option<u16>,
+    },
     /// The connection broke off, or the server answered in a way that makes no sense.
     Broken(String),
     /// An address mail cannot be sent to.
@@ -63,8 +69,8 @@ impl std::fmt::Display for MailError {
             } => write!(f, "proxy {proxy} to {host}:{port}: {reason}"),
             MailError::TimedOut { host, port } => write!(f, "{host}:{port} timed out"),
             MailError::Tls { host, source } => write!(f, "tls with {host}: {source}"),
-            MailError::Login(reply) => write!(f, "login refused: {reply}"),
-            MailError::Refused(reply) => write!(f, "refused: {reply}"),
+            MailError::Login { reply, .. } => write!(f, "login refused: {reply}"),
+            MailError::Refused { reply, .. } => write!(f, "refused: {reply}"),
             MailError::Broken(e) => write!(f, "{e}"),
             MailError::Recipient(address) => write!(f, "unusable recipient {address}"),
         }
@@ -103,10 +109,10 @@ impl MailError {
             MailError::Tls { host, source } => format!(
                 "和 {host} 建立加密连接失败（{source}）。检查加密方式和端口是否对应：SSL/TLS 一般用 465、993 端口，STARTTLS 一般用 587、143 端口。"
             ),
-            MailError::Login(reply) => format!(
+            MailError::Login { reply, .. } => format!(
                 "登录被拒绝（服务器回复：{reply}）。检查授权码或密码有没有填错，邮箱设置里有没有开启 IMAP/SMTP 服务；学校和公司的邮箱还可能被管理员关闭了客户端登录，需要问管理员。"
             ),
-            MailError::Refused(reply) => format!("服务器拒绝了请求（{reply}）。"),
+            MailError::Refused { reply, .. } => format!("服务器拒绝了请求（{reply}）。"),
             MailError::Broken(e) => {
                 format!("和服务器通信出错（{e}）。稍后再试；一直出错时，导出日志发给开发者。")
             }

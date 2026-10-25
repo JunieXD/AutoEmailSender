@@ -1,5 +1,6 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
+pub mod fact_check;
 pub mod follow_up;
 pub mod schedule;
 pub mod tasks;
@@ -19,6 +20,8 @@ use ts_rs::TS;
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct FirstDraft {
+    pub id: i64,
+    pub fact_check: Option<fact_check::FactCheck>,
     pub subject: Option<String>,
     pub body_md: Option<String>,
     /// The materials attached, by id.
@@ -31,8 +34,8 @@ pub async fn first_draft(
 ) -> Result<Option<FirstDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query!(
-        "SELECT id, subject, body_md FROM email
-         WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'",
+        r#"SELECT id, subject, body_md, fact_check AS "fact_check: Json<fact_check::FactCheck>" FROM email
+         WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'"#,
         mentor_id
     )
     .fetch_optional(&mut *tx)
@@ -41,6 +44,8 @@ pub async fn first_draft(
         return Ok(None);
     };
     Ok(Some(FirstDraft {
+        id: row.id,
+        fact_check: row.fact_check.map(|v| v.0),
         subject: row.subject,
         body_md: row.body_md,
         attachments: attached(&mut tx, row.id).await?,
@@ -79,7 +84,7 @@ pub async fn save_first_draft(
              AND NOT (e.kind='first' AND e.task_id IS NULL AND e.state='review'))
          ON CONFLICT (mentor_id) WHERE kind IN ('first', 'follow_up') AND task_id IS NULL AND state = 'review'
          DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
-         RETURNING id AS \"id!\", subject, body_md",
+         RETURNING id AS \"id!\", subject, body_md, fact_check AS \"fact_check: Json<fact_check::FactCheck>\"",
         mentor_id,
         now,
         subject,
@@ -94,6 +99,8 @@ pub async fn save_first_draft(
     let attachments = attached(&mut tx, row.id).await?;
     tx.commit().await?;
     Ok(Some(FirstDraft {
+        id: row.id,
+        fact_check: row.fact_check.map(|v| v.0),
         subject: row.subject,
         body_md: row.body_md,
         attachments,

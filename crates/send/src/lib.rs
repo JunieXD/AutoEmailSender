@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use mailbox::pause::{self, Failure};
 use mailbox::{Letter, SendError, SendStatus};
 use net::Net;
 use profile::Rotation;
@@ -16,6 +17,8 @@ const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
 /// How long to wait before trying the database again.
 const RETRY: Duration = Duration::from_secs(5);
+/// How often at most the window hears about emails going out back to back.
+const TELL_EVERY: Duration = Duration::from_secs(5);
 
 /// Wakes the sender, so that an email approved or retried goes out without waiting.
 #[derive(Clone, Default)]
@@ -28,32 +31,55 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`.
-pub async fn run(db: SqlitePool, net: Net, materials: PathBuf, sender: Sender) {
+/// attached from `materials`. `changed` runs once emails have been sent or failed.
+pub async fn run(
+    db: SqlitePool,
+    net: Net,
+    materials: PathBuf,
+    sender: Sender,
+    changed: impl Fn() + Send + 'static,
+) {
     while let Err(e) = recover(&db, now()).await {
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
-    loop {
-        let wait = match step(&db, &net, &materials, now).await {
-            Ok(Next::Now) => continue,
-            Ok(Next::At(at)) => Some(at - now()),
-            Ok(Next::Idle) => None,
-            // Nobody to tell but the log; the database is likely to work again in a while.
-            Err(e) => {
-                tracing::error!("send: {e}");
-                Some(MINUTE)
+    let dealt = Notify::new();
+    let sending = async {
+        loop {
+            let wait = match step(&db, &net, &materials, now).await {
+                Ok(Next::Now) => {
+                    dealt.notify_one();
+                    continue;
+                }
+                Ok(Next::At(at)) => Some(at - now()),
+                Ok(Next::Idle) => None,
+                // Nobody to tell but the log; the database is likely to work again in a while.
+                Err(e) => {
+                    tracing::error!("send: {e}");
+                    Some(MINUTE)
+                }
+            };
+            match wait {
+                // Looks again within a minute: the timer stands still while the computer sleeps.
+                Some(ms) => tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
+                    () = sender.0.notified() => {}
+                },
+                None => sender.0.notified().await,
             }
-        };
-        match wait {
-            // Looks again within a minute: the timer stands still while the computer sleeps.
-            Some(ms) => tokio::select! {
-                () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
-                () = sender.0.notified() => {}
-            },
-            None => sender.0.notified().await,
         }
-    }
+    };
+    // Each telling makes the window read its lists and statistics again, so emails dealt with back
+    // to back, such as many failing at once, are told of together: the first at once, the rest
+    // when a few seconds have passed, however long the email being sent then takes.
+    let telling = async {
+        loop {
+            dealt.notified().await;
+            changed();
+            tokio::time::sleep(TELL_EVERY).await;
+        }
+    };
+    tokio::join!(sending, telling);
 }
 
 /// Emails the last run left being sent may have gone out, so they are marked maybe sent, and their
@@ -156,11 +182,15 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     for e in due {
         match choose(rotation, e.own, e.reply, &mailboxes, at) {
             Some((mailbox, ready)) if ready <= at => {
-                send(db, net, materials, e.id, mailbox, &now).await?;
+                send(db, net, materials, e.id, mailbox, &now, zone).await?;
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
-            None if e.reply => {
+            None if e.reply
+                && !mailboxes
+                    .iter()
+                    .any(|m| Some(m.id) == e.own && m.needs_secret) =>
+            {
                 email::failed(
                     &mut *db.acquire().await?,
                     e.id,
@@ -181,6 +211,7 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
 #[derive(Debug)]
 struct Usage {
     id: i64,
+    needs_secret: bool,
     daily_limit: i64,
     min_interval_ms: i64,
     paused_until: Option<i64>,
@@ -214,7 +245,7 @@ impl Usage {
 async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
     sqlx::query_as!(
         Usage,
-        r#"SELECT b.id, b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
+        r#"SELECT b.id, b.secret IS NULL AS "needs_secret!: bool", b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
              (SELECT count(*) FROM email e
               WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
                 AND e.sent_at > ?1) AS "recent!: i64",
@@ -241,13 +272,19 @@ fn choose(
     now: i64,
 ) -> Option<(i64, i64)> {
     let chosen = match own {
-        Some(id) => mailboxes.iter().find(|m| m.id == id),
+        Some(id) => mailboxes.iter().find(|m| m.id == id && !m.needs_secret),
         None if reply => None,
         None => {
             // Ties go to the mailbox that has gone longest without sending, then to rotation order.
-            let soonest = mailboxes.iter().min_by_key(|m| (m.ready_at(now), m.last));
+            let soonest = mailboxes
+                .iter()
+                .filter(|m| !m.needs_secret)
+                .min_by_key(|m| (m.ready_at(now), m.last));
             match rotation {
-                Rotation::Failover => mailboxes.iter().find(|m| m.open(now)).or(soonest),
+                Rotation::Failover => mailboxes
+                    .iter()
+                    .find(|m| !m.needs_secret && m.open(now))
+                    .or(soonest),
                 Rotation::PerEmail => soonest,
             }
         }
@@ -256,13 +293,14 @@ fn choose(
 }
 
 /// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
-async fn send(
+async fn send<T: chrono::TimeZone>(
     db: &SqlitePool,
     net: &Net,
     materials: &Path,
     id: i64,
     mailbox_id: i64,
     now: &impl Fn() -> i64,
+    zone: &T,
 ) -> Result<(), sqlx::Error> {
     // Deleted since the mailboxes were read; the next step picks another.
     let Some(account) = mailbox::account(db, mailbox_id).await? else {
@@ -272,7 +310,21 @@ async fn send(
         Ok(smtp) => smtp,
         Err(err) => {
             tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
-            return email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await;
+            return match pause::classify(&err) {
+                Failure::Pause(kind) => {
+                    let pause = kind.in_zone(now(), zone);
+                    pause::apply_for_account(
+                        &mut *db.acquire().await?,
+                        mailbox_id,
+                        &account,
+                        &pause,
+                    )
+                    .await
+                }
+                Failure::Email => {
+                    email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await
+                }
+            };
         }
     };
     let attached = email::attachment_files(&mut *db.acquire().await?, id).await?;
@@ -287,7 +339,7 @@ async fn send(
         })
         .await
     {
-        Ok(SendStatus::Expired) => return m.before.restore(db, id).await,
+        Ok(SendStatus::Expired) => return m.before.restore(&mut *db.acquire().await?, id).await,
         Ok(SendStatus::Sent) => {
             tracing::info!("email {id} sent from mailbox {mailbox_id}");
             Outcome::Sent
@@ -295,14 +347,17 @@ async fn send(
         Err(err) => {
             tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
             match err {
-                SendError::NotSent(_) => Outcome::Failed(err.message()),
+                SendError::NotSent(ref error) => match pause::classify(error) {
+                    Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)),
+                    Failure::Email => Outcome::Failed(err.message()),
+                },
                 SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
             }
         }
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, mailbox_id, &m, &outcome, answered).await {
+    while let Err(e) = record(db, id, mailbox_id, &account, &m, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }
@@ -338,7 +393,7 @@ struct Marked {
 }
 
 /// A retry can already carry delivery evidence from an earlier attempt; keep it intact if this
-/// attempt expires without handing anything to SMTP.
+/// attempt ends without handing anything to SMTP.
 struct BeforeHandover {
     latest_at: Option<i64>,
     mailbox_id: Option<i64>,
@@ -377,7 +432,7 @@ impl BeforeHandover {
         Ok(())
     }
 
-    async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+    async fn restore(&self, conn: &mut sqlx::SqliteConnection, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query!(
             r#"UPDATE email SET
                  state = CASE WHEN cancel_reason IS NULL THEN 'approved' ELSE 'canceled' END,
@@ -397,7 +452,7 @@ impl BeforeHandover {
             self.updated_at,
             id,
         )
-        .execute(db)
+        .execute(conn)
         .await?;
         Ok(())
     }
@@ -492,12 +547,14 @@ enum Outcome {
     Sent,
     MaybeSent(String),
     Failed(String),
+    Paused(pause::Pause),
 }
 
 async fn record(
     db: &SqlitePool,
     id: i64,
     mailbox_id: i64,
+    account: &mailbox::Account,
     marked: &Marked,
     outcome: &Outcome,
     now: i64,
@@ -506,6 +563,11 @@ async fn record(
     match outcome {
         Outcome::Sent => email::sent(&mut tx, id, now).await?,
         Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
+        Outcome::Paused(pause) => {
+            pause::apply_for_account(&mut tx, mailbox_id, account, pause).await?;
+            marked.before.restore(&mut tx, id).await?;
+            return tx.commit().await;
+        }
         Outcome::Failed(error) => {
             marked.before.failed(&mut tx, id, error, now).await?;
             return tx.commit().await;
@@ -533,12 +595,32 @@ mod tests {
     fn mailbox(id: i64, recent: i64, last: Option<i64>) -> Usage {
         Usage {
             id,
+            needs_secret: false,
             daily_limit: 2,
             min_interval_ms: MINUTE,
             paused_until: None,
             recent,
             earliest_recent: last,
             last,
+        }
+    }
+
+    #[test]
+    fn rotation_skips_missing_secrets_but_keeps_the_assigned_mailbox() {
+        let mailboxes = [
+            Usage {
+                needs_secret: true,
+                ..mailbox(1, 0, None)
+            },
+            mailbox(2, 0, None),
+        ];
+        for rotation in [Rotation::Failover, Rotation::PerEmail] {
+            assert_eq!(
+                choose(rotation, None, false, &mailboxes, NOW),
+                Some((2, NOW))
+            );
+            assert_eq!(choose(rotation, Some(1), false, &mailboxes, NOW), None);
+            assert_eq!(choose(rotation, Some(1), true, &mailboxes, NOW), None);
         }
     }
 

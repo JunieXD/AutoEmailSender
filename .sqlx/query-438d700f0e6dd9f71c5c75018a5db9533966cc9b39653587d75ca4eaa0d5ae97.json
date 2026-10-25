@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM mailbox WHERE receive_retry_at IS NULL OR receive_retry_at <= ?\n         ORDER BY rotation_order, id",
+  "query": "SELECT id FROM mailbox WHERE secret IS NOT NULL\n           AND (receive_retry_at IS NULL OR receive_retry_at <= ?)\n         ORDER BY rotation_order, id",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "ea1019025a466493a753591032f0a57bed8be60191ec3dc5d10e002b0745ae98"
+  "hash": "438d700f0e6dd9f71c5c75018a5db9533966cc9b39653587d75ca4eaa0d5ae97"
 }

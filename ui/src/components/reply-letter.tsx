@@ -10,12 +10,26 @@ import {
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Material, MentorDetail, ReplyDraft, ReplyDraftEdit, ReplyTarget, FollowUpDraft } from "@/api/types";
-import { AiButton, Rewrite, useReplyWritingTarget, useWriting } from "@/components/ai-writing";
+import {
+  AiButton,
+  FactCheckStatus,
+  Rewrite,
+  useFactCheck,
+  useReplyWritingTarget,
+  useWriting,
+} from "@/components/ai-writing";
 import { TemplateMenu } from "@/components/first-letter";
 import { Confirm } from "@/components/batch-bar";
 import { Button } from "@/components/ui/button";
 import { Attachments } from "@/components/attachments";
-import { AttachMenu, LetterProblems, LetterSend, useDraftSave, useUploading } from "@/components/letter-composer";
+import {
+  AttachMenu,
+  LetterProblems,
+  LetterSend,
+  quotes,
+  useDraftSave,
+  useUploading,
+} from "@/components/letter-composer";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { usePlaceholders } from "@/components/template-dialog";
 import { day, time } from "@/format";
@@ -118,7 +132,7 @@ function Composer({
   const draftQuery = followUp ? "getFollowUpDraft" : "getReplyDraft";
   const label = followUp ? "追问" : "回复";
   const queryClient = useQueryClient();
-  const { save, last, scope } = useDraftSave<
+  const { save, last, scope, flush } = useDraftSave<
     { letter: ReplyDraftEdit; target: ThreadTarget | null },
     ReplyDraft | FollowUpDraft | null
   >(
@@ -164,6 +178,7 @@ function Composer({
     mutationFn: () => (followUpId !== null ? call("discardFollowUpDraft", { id: followUpId }) : Promise.resolve()),
     onSuccess: async () => {
       writing.forget();
+      factCheck.forget();
       await queryClient.invalidateQueries({ queryKey: [draftQuery, mentorId] });
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
     },
@@ -183,10 +198,12 @@ function Composer({
     answer && !fills
       ? { before: { subject: "", bodyMd: letter.bodyMd }, after: { ...answer, subject: "" } }
       : undefined;
+  const factCheck = useFactCheck([draftQuery, mentorId], followUp ? "checkFollowUpDraft" : "checkReplyDraft", flush);
   const fill = useEffectEvent(() => {
     if (answer) {
       writing.forget();
       rewrite(answer.bodyMd);
+      factCheck.start();
     }
   });
   useEffect(() => {
@@ -213,8 +230,8 @@ function Composer({
   }, [selection]);
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const checks = useQuery({
-    queryKey: ["checkReplyDraft", letter, mentor.name, mentor.aliases],
-    queryFn: () => call("checkReplyDraft", letter),
+    queryKey: [followUp ? "checkFollowUpDraft" : "checkReplyDraft", letter, mentor.name, mentor.aliases],
+    queryFn: () => call(followUp ? "checkFollowUpDraft" : "checkReplyDraft", letter),
     placeholderData: keepPreviousData,
     gcTime: 0,
   });
@@ -248,6 +265,7 @@ function Composer({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [draftQuery, mentorId] });
       writing.forget();
+      factCheck.forget();
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
     },
   });
@@ -325,6 +343,7 @@ function Composer({
         placeholders={placeholders}
         unfilled
         compact
+        quotes={quotes(problems)}
         focus={selection.version}
         disabled={locked}
         onChange={(bodyMd) => edit({ ...letter, bodyMd })}
@@ -340,6 +359,7 @@ function Composer({
         locked={locked}
         onSalutation={(salutation) => rewrite(`${salutation}\n\n${letter.bodyMd}`)}
       />
+      {!review && <FactCheckStatus check={factCheck} stored={draft?.factCheck} />}
       <div className="flex flex-wrap items-center gap-2">
         {busy ? (
           <>
@@ -397,6 +417,7 @@ function Composer({
                 onClick={() => {
                   writing.forget();
                   rewrite(review.after.bodyMd);
+                  factCheck.start();
                 }}
               >
                 采用修改

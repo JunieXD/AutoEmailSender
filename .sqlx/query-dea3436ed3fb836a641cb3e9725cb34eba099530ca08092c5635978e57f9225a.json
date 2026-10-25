@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, mentor_id, coalesce(subject, '') AS \"subject!: String\", coalesce(body_md,\n             '') AS \"body_md!: String\", state AS \"state: DraftState\", error, cancel_reason, planned_at,\n             latest_at, kind AS \"kind: Kind\", reply_to\n           FROM email\n           WHERE id = ?\n             AND task_id = ?",
+  "query": "SELECT id, mentor_id, coalesce(subject, '') AS \"subject!: String\", coalesce(body_md,\n             '') AS \"body_md!: String\", state AS \"state: DraftState\", error, cancel_reason, planned_at,\n             latest_at, kind AS \"kind: Kind\", reply_to, fact_check AS \"fact_check: Json<email::fact_check::FactCheck>\"\n           FROM email\n           WHERE id = ?\n             AND task_id = ?",
   "describe": {
     "columns": [
       {
@@ -113,6 +113,17 @@
             "name": "reply_to"
           }
         }
+      },
+      {
+        "name": "fact_check: Json<email::fact_check::FactCheck>",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "fact_check"
+          }
+        }
       }
     ],
     "parameters": {
@@ -129,8 +140,9 @@
       true,
       true,
       false,
+      true,
       true
     ]
   },
-  "hash": "66b357f1089c643dd20412d426f9c81fd764b23e18ad756ca9c8b1dcc9ca7ab4"
+  "hash": "dea3436ed3fb836a641cb3e9725cb34eba099530ca08092c5635978e57f9225a"
 }

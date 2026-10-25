@@ -1,3 +1,4 @@
+import { StatsPage } from "./pages/stats";
 import { FindPage, findSearch } from "./pages/find";
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { call } from "./api/call";
@@ -13,8 +14,9 @@ import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
-import { AboutSection, BackgroundSection, NotificationsSection, SettingsPage } from "./pages/settings";
+import { AboutSection, BackgroundSection, ChecksSection, NotificationsSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
+import { BackupSection } from "./pages/backup";
 import { WelcomePage } from "./pages/welcome";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -77,6 +79,11 @@ const findRoute = createRoute({
   validateSearch: findSearch,
   component: FindPage,
 });
+const statsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "stats",
+  component: StatsPage,
+});
 const moreRoute = createRoute({ getParentRoute: () => rootRoute, path: "more", component: MorePage });
 const tasksRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -134,6 +141,12 @@ const mailboxesRoute = createRoute({
   component: MailboxesSection,
 });
 
+const checksRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "checks",
+  component: ChecksSection,
+});
+
 const modelsRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "models",
@@ -152,6 +165,12 @@ const backgroundRoute = createRoute({
   component: BackgroundSection,
 });
 
+const backupRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "backup",
+  component: BackupSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -168,6 +187,7 @@ export const router = createRouter({
     mentorRoute,
     conversationsRoute,
     moreRoute,
+    statsRoute,
     findRoute,
     tasksRoute,
     taskRoute,
@@ -178,9 +198,11 @@ export const router = createRouter({
       templatesRoute,
       letterStyleRoute,
       mailboxesRoute,
+      checksRoute,
       modelsRoute,
       notificationsRoute,
       backgroundRoute,
+      backupRoute,
       aboutRoute,
     ]),
   ]),

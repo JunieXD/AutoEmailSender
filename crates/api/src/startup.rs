@@ -28,6 +28,11 @@ impl DataLock {
 
 /// The host must hold the data directory lock before opening the core.
 pub async fn open(dir: &Path) -> Result<Context, Error> {
+    let data = dir.to_owned();
+    tokio::task::spawn_blocking(move || crate::backup::apply_pending(&data))
+        .await
+        .map_err(|e| Error::Restore(crate::backup::Error::Worker(e)))?
+        .map_err(Error::Restore)?;
     let db = db::open(&dir.join("app.db"))
         .await
         .map_err(Error::Database)?;
@@ -50,6 +55,7 @@ pub enum Error {
     InUse,
     DataDir(std::io::Error),
     Database(db::OpenError),
+    Restore(crate::backup::Error),
     Net(Box<dyn StdError + Send + Sync>),
 }
 
@@ -58,6 +64,7 @@ impl std::fmt::Display for Error {
         match self {
             Self::InUse => write!(f, "data directory already in use"),
             Self::DataDir(e) => write!(f, "data directory: {e}"),
+            Self::Restore(e) => write!(f, "restore: {e}"),
             Self::Database(e) => write!(f, "{e}"),
             Self::Net(e) => write!(f, "network: {e}"),
         }
@@ -73,6 +80,7 @@ impl Error {
             Self::InUse => {
                 "数据目录正在使用中，请先关闭这个工作树的桌面开发版或浏览器预览，再重试。".into()
             }
+            Self::Restore(e) => format!("恢复尚未完成，原数据已保留，请重启重试。{}", e.message()),
             Self::DataDir(e) => format!("数据目录无法使用：{e}"),
             Self::Net(e) => format!("网络连接无法初始化：{e}"),
             Self::Database(OpenError::Open(e)) => format!("数据库无法打开：{e}"),

@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -28,6 +29,9 @@ export default defineConfig(({ command, mode }) => {
       },
     }),
     resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
+    // Windows CI runners can take seconds to load the editor or the Chinese word segmenter in a test
+    // that otherwise runs in milliseconds; the limit is only there to stop a test that hangs.
+    test: { testTimeout: 30_000 },
     clearScreen: false,
     server: {
       port: 1420,

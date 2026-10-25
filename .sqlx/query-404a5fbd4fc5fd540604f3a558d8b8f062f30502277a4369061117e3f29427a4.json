@@ -1,0 +1,61 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT u.purpose AS \"purpose!: model::usage::Purpose\",\n coalesce(sum(u.input_tokens),0) AS \"input!: i64\", coalesce(sum(u.cached_tokens),0) AS \"cached!: i64\",\n coalesce(sum(u.output_tokens),0) AS \"output!: i64\",\n sum(CASE WHEN c.input_price IS NOT NULL AND c.output_price IS NOT NULL\n   THEN (u.input_tokens*c.input_price+u.output_tokens*c.output_price)/1000000.0 END) AS \"estimated_cost?: f64\",\n count(CASE WHEN c.input_price IS NULL OR c.output_price IS NULL THEN 1 END) AS \"unpriced_calls!: i64\"\nFROM usage u LEFT JOIN model_config c ON c.id=u.model_config_id\nWHERE (?1 IS NULL OR u.at>=?1) AND u.at<?2 GROUP BY u.purpose ORDER BY u.purpose\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "purpose!: model::usage::Purpose",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "usage",
+            "name": "purpose"
+          }
+        }
+      },
+      {
+        "name": "input!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "cached!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "output!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "estimated_cost?: f64",
+        "ordinal": 4,
+        "type_info": "Float",
+        "origin": "Expression"
+      },
+      {
+        "name": "unpriced_calls!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "404a5fbd4fc5fd540604f3a558d8b8f062f30502277a4369061117e3f29427a4"
+}

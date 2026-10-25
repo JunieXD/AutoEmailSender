@@ -20,6 +20,7 @@ const WAITING: Record<Waiting, string> = {
   mailbox_paused: "邮箱已暂停",
   task_paused: "任务已暂停",
   mailbox_interval: "等待邮箱发送间隔",
+  mailbox_secret: "恢复后需要重新填写邮箱授权码",
   no_mailbox: "尚无可用邮箱",
   ready: "等待发送",
 };

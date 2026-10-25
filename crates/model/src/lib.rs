@@ -30,6 +30,7 @@ pub struct ModelConfig {
     pub is_default: bool,
     /// The user agreed to what AI features send to its provider.
     pub agreed: bool,
+    pub needs_api_key: bool,
     pub input_price: Option<f64>,
     pub output_price: Option<f64>,
 }
@@ -102,7 +103,7 @@ impl Source {
     }
 
     /// Where and how to call, with this API key.
-    pub fn access(&self, api_key: String) -> Access {
+    pub fn access(&self, api_key: Option<String>) -> Access {
         match self {
             Source::Known(p) => Access {
                 base_url: p.base_url.into(),
@@ -159,7 +160,7 @@ pub async fn list(db: &SqlitePool) -> Result<Vec<ModelConfig>, sqlx::Error> {
         r#"SELECT id, name, provider, base_url, model, input_price, output_price,
              id = coalesce((SELECT default_model_config_id FROM profile),
                            (SELECT min(id) FROM model_config)) AS "is_default!: bool",
-             agreed AS "agreed: bool"
+             agreed AS "agreed: bool", api_key IS NULL AS "needs_api_key!: bool"
            FROM model_config ORDER BY id"#
     )
     .fetch_all(db)
@@ -294,11 +295,12 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
 
 /// The saved API key of a configuration, for an edit that leaves it blank; None when the
 /// configuration was saved for another provider or address, which must not get this key.
+/// Some(None) is a matching restored configuration whose key must be filled in again.
 pub async fn api_key(
     db: &SqlitePool,
     id: i64,
     source: &Source,
-) -> Result<Option<String>, sqlx::Error> {
+) -> Result<Option<Option<String>>, sqlx::Error> {
     let (provider, base_url) = (source.id(), source.custom_url());
     sqlx::query_scalar!(
         "SELECT api_key FROM model_config WHERE id = ? AND provider = ? AND base_url IS ?",
