@@ -18,15 +18,21 @@ const EMPTY: TemplateForm = { name: "", subject: "", bodyMd: "" };
 /** Adding or editing a template (docs/ui.md#交互). Mounted while open. */
 export function TemplateDialog({
   template,
+  sample = EMPTY,
   placeholders,
+  onSaved,
   onClose,
 }: {
   template: Template | null;
+  /** What a new template starts from. */
+  sample?: TemplateForm;
   placeholders: string[];
+  /** After saving, before closing. */
+  onSaved?: (id: number) => Promise<unknown>;
   onClose: () => void;
 }) {
   const [initial] = useState(() =>
-    template ? { name: template.name, subject: template.subject, bodyMd: template.bodyMd } : EMPTY,
+    template ? { name: template.name, subject: template.subject, bodyMd: template.bodyMd } : sample,
   );
   const [form, setForm] = useState(initial);
   // The editor writes the body back in its own Markdown, which may differ from what was loaded
@@ -34,9 +40,12 @@ export function TemplateDialog({
   const [bodyEdited, setBodyEdited] = useState(false);
   const queryClient = useQueryClient();
   const save = useMutation({
-    mutationFn: (f: TemplateForm) =>
-      template ? call("updateTemplate", { ...f, id: template.id }) : call("addTemplate", f),
-    onSuccess: async () => {
+    mutationFn: async (f: TemplateForm) =>
+      template
+        ? (await call("updateTemplate", { ...f, id: template.id }), template.id)
+        : (await call("addTemplate", f)).id,
+    onSuccess: async (id) => {
+      await onSaved?.(id);
       await queryClient.invalidateQueries({ queryKey: ["listTemplates"] });
       onClose();
     },
