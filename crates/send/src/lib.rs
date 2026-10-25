@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use mailbox::pause::{self, Failure};
 use mailbox::{Letter, SendError, SendStatus};
 use net::Net;
 use profile::Rotation;
@@ -181,7 +182,7 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     for e in due {
         match choose(rotation, e.own, e.reply, &mailboxes, at) {
             Some((mailbox, ready)) if ready <= at => {
-                send(db, net, materials, e.id, mailbox, &now).await?;
+                send(db, net, materials, e.id, mailbox, &now, zone).await?;
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
@@ -292,13 +293,14 @@ fn choose(
 }
 
 /// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
-async fn send(
+async fn send<T: chrono::TimeZone>(
     db: &SqlitePool,
     net: &Net,
     materials: &Path,
     id: i64,
     mailbox_id: i64,
     now: &impl Fn() -> i64,
+    zone: &T,
 ) -> Result<(), sqlx::Error> {
     // Deleted since the mailboxes were read; the next step picks another.
     let Some(account) = mailbox::account(db, mailbox_id).await? else {
@@ -308,7 +310,21 @@ async fn send(
         Ok(smtp) => smtp,
         Err(err) => {
             tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
-            return email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await;
+            return match pause::classify(&err) {
+                Failure::Pause(kind) => {
+                    let pause = kind.in_zone(now(), zone);
+                    pause::apply_for_account(
+                        &mut *db.acquire().await?,
+                        mailbox_id,
+                        &account,
+                        &pause,
+                    )
+                    .await
+                }
+                Failure::Email => {
+                    email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await
+                }
+            };
         }
     };
     let attached = email::attachment_files(&mut *db.acquire().await?, id).await?;
@@ -323,7 +339,7 @@ async fn send(
         })
         .await
     {
-        Ok(SendStatus::Expired) => return m.before.restore(db, id).await,
+        Ok(SendStatus::Expired) => return m.before.restore(&mut *db.acquire().await?, id).await,
         Ok(SendStatus::Sent) => {
             tracing::info!("email {id} sent from mailbox {mailbox_id}");
             Outcome::Sent
@@ -331,14 +347,17 @@ async fn send(
         Err(err) => {
             tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
             match err {
-                SendError::NotSent(_) => Outcome::Failed(err.message()),
+                SendError::NotSent(ref error) => match pause::classify(error) {
+                    Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)),
+                    Failure::Email => Outcome::Failed(err.message()),
+                },
                 SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
             }
         }
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, mailbox_id, &m, &outcome, answered).await {
+    while let Err(e) = record(db, id, mailbox_id, &account, &m, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }
@@ -374,7 +393,7 @@ struct Marked {
 }
 
 /// A retry can already carry delivery evidence from an earlier attempt; keep it intact if this
-/// attempt expires without handing anything to SMTP.
+/// attempt ends without handing anything to SMTP.
 struct BeforeHandover {
     latest_at: Option<i64>,
     mailbox_id: Option<i64>,
@@ -413,7 +432,7 @@ impl BeforeHandover {
         Ok(())
     }
 
-    async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+    async fn restore(&self, conn: &mut sqlx::SqliteConnection, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query!(
             r#"UPDATE email SET
                  state = CASE WHEN cancel_reason IS NULL THEN 'approved' ELSE 'canceled' END,
@@ -433,7 +452,7 @@ impl BeforeHandover {
             self.updated_at,
             id,
         )
-        .execute(db)
+        .execute(conn)
         .await?;
         Ok(())
     }
@@ -528,12 +547,14 @@ enum Outcome {
     Sent,
     MaybeSent(String),
     Failed(String),
+    Paused(pause::Pause),
 }
 
 async fn record(
     db: &SqlitePool,
     id: i64,
     mailbox_id: i64,
+    account: &mailbox::Account,
     marked: &Marked,
     outcome: &Outcome,
     now: i64,
@@ -542,6 +563,11 @@ async fn record(
     match outcome {
         Outcome::Sent => email::sent(&mut tx, id, now).await?,
         Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
+        Outcome::Paused(pause) => {
+            pause::apply_for_account(&mut tx, mailbox_id, account, pause).await?;
+            marked.before.restore(&mut tx, id).await?;
+            return tx.commit().await;
+        }
         Outcome::Failed(error) => {
             marked.before.failed(&mut tx, id, error, now).await?;
             return tx.commit().await;

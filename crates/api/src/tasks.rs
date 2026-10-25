@@ -137,7 +137,7 @@ pub async fn approve_task_emails(
     ctx: &Context,
     input: task::TaskApprovals,
 ) -> Result<u64, CallError> {
-    if mailbox::list(&ctx.db).await?.is_empty() {
+    if mailbox::list(&ctx.db, now()).await?.is_empty() {
         return Err(CallError::invalid(
             "尚未添加发信的邮箱，请在设置中添加。".into(),
         ));

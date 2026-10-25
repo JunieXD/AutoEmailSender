@@ -228,6 +228,7 @@ operations! {
     "listMailboxes" => list_mailboxes(Nothing) -> Vec<mailbox::Mailbox>;
     "addMailbox" => add_mailbox(NewMailbox) -> MailboxId;
     "updateMailbox" => update_mailbox(MailboxEdit) -> ();
+    "resumeMailbox" => resume_mailbox(MailboxId) -> ();
     "deleteMailbox" => delete_mailbox(MailboxId) -> ();
     "testSending" => test_sending(MailboxTest) -> ();
     "testReceiving" => test_receiving(MailboxTest) -> ();
@@ -686,7 +687,7 @@ async fn list_providers(
 }
 
 async fn list_mailboxes(ctx: &Context, _: Nothing) -> Result<Vec<mailbox::Mailbox>, CallError> {
-    Ok(mailbox::list(&ctx.db).await?)
+    Ok(mailbox::list(&ctx.db, now()).await?)
 }
 
 async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, CallError> {
@@ -711,6 +712,12 @@ async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallErr
     // failed may work now.
     ctx.sender.wake();
     ctx.receiver.wake();
+    Ok(())
+}
+
+async fn resume_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
+    require_applied(mailbox::resume(&ctx.db, input.id).await?, NO_MAILBOX)?;
+    ctx.sender.wake();
     Ok(())
 }
 
@@ -1441,7 +1448,7 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
             "导师尚未填写邮箱。在导师资料里填写后再发送。".into(),
         ));
     }
-    if mailbox::list(&ctx.db).await?.is_empty() {
+    if mailbox::list(&ctx.db, now()).await?.is_empty() {
         return Err(CallError::invalid(
             "尚未添加发信的邮箱。在“设置 › 邮件 › 邮箱”里添加后再发送。".into(),
         ));

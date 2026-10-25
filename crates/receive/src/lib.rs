@@ -158,7 +158,7 @@ pub async fn round(db: &SqlitePool, net: &Net, now: i64) -> Result<Round, sqlx::
             Ok(()) => round.changed |= mailbox::received(db, id).await?,
             Err(Error::Mail(e)) => {
                 tracing::warn!(mailbox = id, "receive: {e}");
-                let refused = matches!(e, MailError::Login(_) | MailError::Refused(_));
+                let refused = matches!(e, MailError::Login { .. } | MailError::Refused { .. });
                 mailbox::receive_failed(db, id, &e.message(), refused.then_some(now + REFUSED))
                     .await?;
                 round.changed = true;
@@ -441,7 +441,9 @@ impl Session<'_> {
                 continue;
             };
             let Some((kind, mentors)) = keep else {
-                self.bounced(raw).await?;
+                // A bounce is written before it arrives; a later Date comes from a wrong clock.
+                let written = headers.date.map_or(sent_at, |date| date.min(sent_at));
+                self.bounced(raw, written).await?;
                 continue;
             };
             let text = mail::text(raw);
@@ -689,7 +691,7 @@ impl Session<'_> {
     }
 
     /// Marks the mail a bounce returns, whether the app sent it or it was sent elsewhere.
-    async fn bounced(&mut self, raw: &[u8]) -> Result<(), Error> {
+    async fn bounced(&mut self, raw: &[u8], sent_at: i64) -> Result<(), Error> {
         let Some(bounce) = mail::bounce(raw) else {
             return Ok(());
         };
@@ -699,7 +701,23 @@ impl Session<'_> {
         // says why it came back.
         for failure in &bounce.failures {
             let (to, reason) = (&failure.recipients, &failure.reason);
-            marked |= email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?;
+            let bounced = email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?;
+            if bounced && let Some(throttle) = failure.throttle {
+                let mailbox = sqlx::query_scalar!(
+                    "SELECT mailbox_id FROM email WHERE message_id = ?1 OR copy_message_id = ?1",
+                    bounce.original,
+                )
+                .fetch_one(&mut *tx)
+                .await?;
+                if let Some(mailbox) = mailbox {
+                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(sent_at);
+                    pause.reason = format!("退信说明{}", pause.reason);
+                    if pause.until > self.now {
+                        mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
+                    }
+                }
+            }
+            marked |= bounced;
         }
         for failure in &bounce.failures {
             // Mail sent elsewhere to several mentors bounces for those the bounce names, or for

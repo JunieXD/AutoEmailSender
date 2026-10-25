@@ -178,8 +178,8 @@ impl SendError {
     /// What happened and what to do about it.
     pub fn message(&self) -> String {
         match self {
-            SendError::NotSent(MailError::Refused(reply)) => format!(
-                "服务器拒收了这封邮件（服务器回复：{reply}）。检查导师的邮箱地址有没有填错；回复里提到垃圾邮件或发送频率时，稍后再重试。"
+            SendError::NotSent(MailError::Refused { reply, .. }) => format!(
+                "服务器拒收了这封邮件（服务器回复：{reply}）。检查导师的邮箱地址有没有填错；回复里提到垃圾邮件时，请检查邮件内容。"
             ),
             SendError::NotSent(e) => e.message(),
             SendError::Unknown(_) => "交给服务器的途中连接中断，无法确定是否已发出。".into(),
@@ -255,7 +255,7 @@ impl Smtp {
                 quit(&server.host, conn);
                 Ok(SendStatus::Sent)
             }
-            Err(e @ MailError::Refused(_)) => {
+            Err(e @ MailError::Refused { .. }) => {
                 quit(&server.host, conn);
                 Err(SendError::NotSent(e))
             }
@@ -302,7 +302,7 @@ async fn open(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailE
     conn.auth(&[Mechanism::Plain, Mechanism::Login], &credentials)
         .await
         .map_err(|e| match refused(e) {
-            MailError::Refused(reply) => MailError::Login(reply),
+            MailError::Refused { reply, smtp_code } => MailError::Login { reply, smtp_code },
             e => e,
         })?;
     Ok(conn)
@@ -315,8 +315,11 @@ fn quit(host: &str, mut conn: AsyncSmtpConnection) {
 /// A reply from the server, worded by lettre like "permanent error (535): ...", is a refusal;
 /// anything else means the connection broke.
 fn refused(e: lettre::transport::smtp::Error) -> MailError {
-    if e.status().is_some() {
-        MailError::Refused(e.to_string())
+    if let Some(code) = e.status() {
+        MailError::Refused {
+            reply: e.to_string(),
+            smtp_code: Some(code.into()),
+        }
     } else {
         MailError::Broken(e.to_string())
     }

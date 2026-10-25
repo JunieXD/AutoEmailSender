@@ -53,7 +53,7 @@ async fn restored_credentials_must_be_refilled_before_editing_or_testing(db: Sql
     );
     edit["secret"] = json!("replacement");
     call(&ctx, "updateMailbox", edit).await.unwrap();
-    assert!(!mailbox::list(&ctx.db).await.unwrap()[0].needs_secret);
+    assert!(!mailbox::list(&ctx.db, 0).await.unwrap()[0].needs_secret);
 
     let model = json!({"name":"模型","provider":"custom","baseUrl":"http://127.0.0.1:1/v1","model":"m","apiKey":"fixture"});
     let id = call(&ctx, "addModelConfig", model.clone()).await.unwrap()["id"].clone();

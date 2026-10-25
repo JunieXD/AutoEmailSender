@@ -4,8 +4,23 @@ import { call, errorMessage } from "@/api/call";
 import type { Mailbox, Provider } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { MailboxDialog, useProviders } from "@/components/mailbox-dialog";
+import { scheduledAt } from "@/components/schedule";
 import { Button } from "@/components/ui/button";
 import { Section } from "./settings";
+
+/** Sends from a paused mailbox again at once (docs/design.md#多邮箱轮转). */
+export function useResume() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => call("resumeMailbox", { id }),
+    onSuccess: () =>
+      Promise.all(
+        ["listMailboxes", "sendingPlan", "scheduledWork"].map((key) =>
+          queryClient.invalidateQueries({ queryKey: [key] }),
+        ),
+      ),
+  });
+}
 
 /** Settings › 邮件 › 邮箱 (docs/ui.md#交互). */
 export function MailboxesSection() {
@@ -46,6 +61,7 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
     mutationFn: () => call("deleteMailbox", { id: m.id }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["listMailboxes"] }),
   });
+  const resume = useResume();
   // A mailbox with servers filled in by hand is known by its server.
   const provider = providers.find((p) => p.id === m.provider)?.name ?? m.smtp.host;
   return (
@@ -58,6 +74,20 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
           </p>
           {m.needsSecret && <p className="text-sm text-warning">恢复后需要重新填写授权码，填好之前不收发信。</p>}
           {m.receiveError && <p className="text-sm text-destructive">收信失败：{m.receiveError}</p>}
+          {m.pause && (
+            <p className="text-sm text-warning">
+              发信暂停到 {scheduledAt(m.pause.until)}：{m.pause.reason}
+              <Button
+                variant="quiet"
+                size="sm"
+                className="ml-2"
+                disabled={resume.isPending}
+                onClick={() => resume.mutate(m.id)}
+              >
+                立即恢复
+              </Button>
+            </p>
+          )}
         </div>
         <div className="flex gap-1">
           <Button variant="quiet" disabled={test.isPending} onClick={() => test.mutate()}>
@@ -84,6 +114,7 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
         {test.isSuccess && <span className="text-muted-foreground">测试信已发到 {m.address}，去收件箱看看。</span>}
         {test.isError && <span className="text-destructive">{errorMessage(test.error)}</span>}
         {remove.isError && <span className="text-destructive">{errorMessage(remove.error)}</span>}
+        {resume.isError && <span className="text-destructive">{errorMessage(resume.error)}</span>}
       </p>
       {editing && (
         <MailboxDialog
