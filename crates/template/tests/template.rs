@@ -22,23 +22,42 @@ async fn the_body_is_saved_as_written(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_first_email_starts_from_the_default_template_until_it_is_deleted(db: SqlitePool) {
-    let form = TemplateForm {
+async fn the_first_template_is_the_default_until_another_is_chosen(db: SqlitePool) {
+    let fields = TemplateForm {
         name: "首封".into(),
         subject: "硕士申请".into(),
         body_md: "{导师姓名}老师：".into(),
-    };
-    let id = template::create(&db, &form.check().unwrap(), 0)
-        .await
-        .unwrap();
+    }
+    .check()
+    .unwrap();
+    let first = template::create(&db, &fields, 0).await.unwrap();
+    assert_eq!(template::default(&db).await.unwrap().unwrap().id, first);
+    let second = template::create(&db, &fields, 0).await.unwrap();
+    assert_eq!(template::default(&db).await.unwrap().unwrap().id, first);
+
+    assert!(profile::set_default_template(&db, None).await.unwrap());
+    let third = template::create(&db, &fields, 0).await.unwrap();
     assert!(template::default(&db).await.unwrap().is_none());
 
-    assert!(profile::set_default_template(&db, Some(id)).await.unwrap());
-    assert_eq!(template::default(&db).await.unwrap().unwrap().id, id);
-    assert!(template::list(&db).await.unwrap()[0].is_default);
-    template::delete(&db, id).await.unwrap();
+    assert!(
+        profile::set_default_template(&db, Some(second))
+            .await
+            .unwrap()
+    );
+    assert_eq!(template::default(&db).await.unwrap().unwrap().id, second);
+    assert!(template::list(&db).await.unwrap()[1].is_default);
+    template::delete(&db, second).await.unwrap();
     assert!(template::default(&db).await.unwrap().is_none());
-    assert!(!profile::set_default_template(&db, Some(id)).await.unwrap());
+    assert!(
+        !profile::set_default_template(&db, Some(second))
+            .await
+            .unwrap()
+    );
+    assert!(
+        profile::set_default_template(&db, Some(third))
+            .await
+            .unwrap()
+    );
 }
 
 fn fill<'a>(mentor_name: &'a str, research: Option<&'a str>) -> Fill<'a> {
