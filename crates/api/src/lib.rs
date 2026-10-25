@@ -1216,6 +1216,7 @@ async fn check_first_draft(
 
 /// Drafts the letter when it is blank and rewrites it otherwise.
 async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let current = writing::Letter {
         subject: input.subject,
         body_md: input.body_md,
@@ -1225,7 +1226,6 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    let _permit = ctx.model_limit.acquire().await;
     Ok(writing::write(
         &ctx.db,
         &ctx.net,
@@ -1568,12 +1568,12 @@ async fn write_follow_up(
     ctx: &Context,
     input: FirstDraftEdit,
 ) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
-    let _permit = ctx.model_limit.acquire().await;
     Ok(writing::write(
         &ctx.db,
         &ctx.net,
@@ -1605,11 +1605,11 @@ impl From<writing::reply::Error> for CallError {
 }
 
 async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    let _permit = ctx.model_limit.acquire().await;
     let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
     Ok(writing::write(
         &ctx.db,
