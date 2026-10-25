@@ -137,17 +137,37 @@ fn table_rows_and_obfuscated_addresses_keep_ownership() {
 }
 
 #[test]
-fn flat_headings_and_inline_attributes_follow_name_segments() {
+fn flat_headings_and_contacts_use_direct_children() {
     for html in [
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
-        "<p>Alice a@pku.edu.cn Bob b@pku.edu.cn</p>",
-        "<p><a href='mailto:a@pku.edu.cn'>Alice</a> <a href='mailto:b@pku.edu.cn'>Bob</a></p>",
-        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a> Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
+        "<main><div><h2>Alice</h2></div><p>Research: AI</p><p><a href='mailto:a@pku.edu.cn'>联系</a></p><h2>Bob</h2><p><a href='mailto:b@pku.edu.cn'>联系</a></p></main>",
+        "<main><h2>Alice</h2><p>a@pku.edu.cn</p><aside><h2>Bob</h2></aside><p>b@pku.edu.cn</p></main>",
     ] {
         check(
             html,
             &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
         );
+    }
+}
+
+#[test]
+fn shared_name_blocks_cannot_use_the_flat_fallback() {
+    for html in [
+        "<p>Alice a@pku.edu.cn Bob b@pku.edu.cn</p>",
+        "<p><a href='mailto:a@pku.edu.cn'>Alice</a> <a href='mailto:b@pku.edu.cn'>Bob</a></p>",
+        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a> Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
+        "<main><div><h2>Alice</h2><h2>Bob</h2></div><p>a@pku.edu.cn b@pku.edu.cn</p></main>",
+    ] {
+        let page = parse(&url(), html).unwrap();
+        let names = ["Alice", "Bob"];
+        for name in names {
+            for address in ["a@pku.edu.cn", "b@pku.edu.cn"] {
+                assert!(
+                    !owns_email(&page, &names, name, address),
+                    "{name}: {address}, {html}"
+                );
+            }
+        }
     }
 }
 
@@ -210,6 +230,34 @@ fn every_real_mcgill_person_accepts_own_email_and_rejects_adjacent_emails() {
             );
         }
     }
+}
+
+#[test]
+fn mcgill_footer_email_does_not_belong_to_the_last_mentor() {
+    let page = parse(
+        &PageUrl::parse("https://www.cs.mcgill.ca/people/faculty/").unwrap(),
+        include_str!("pages/mcgill.html"),
+    )
+    .unwrap();
+    let names: Vec<_> = include_str!("pages/mcgill-emails.tsv")
+        .lines()
+        .map(|line| line.split_once('\t').unwrap().0)
+        .collect();
+    assert!(owns_email(&page, &names, "Sue Whitesides", "sue@uvic.ca"));
+    assert!(!owns_email(
+        &page,
+        &names,
+        "Sue Whitesides",
+        "webadmin@cs.mcgill.ca"
+    ));
+}
+
+#[test]
+fn contacts_before_names_do_not_cross_sibling_articles() {
+    check(
+        "<section><article><p>a@pku.edu.cn</p><h2>Alice</h2></article><article><p>b@pku.edu.cn</p><h2>Bob</h2></article></section>",
+        &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+    );
 }
 
 #[test]

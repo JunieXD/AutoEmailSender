@@ -1,4 +1,4 @@
-use crate::{EmailLocation, Material};
+use crate::Material;
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -7,13 +7,6 @@ fn compact(text: &str) -> String {
 struct Occurrence<'a> {
     name: &'a str,
     unit: usize,
-    offset: usize,
-}
-
-impl Occurrence<'_> {
-    fn position(&self) -> (usize, usize) {
-        (self.unit, self.offset)
-    }
 }
 
 /// Checks one proposed address against all mentor names extracted from this page.
@@ -23,20 +16,12 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
         .units
         .iter()
         .enumerate()
-        .flat_map(|(unit, block)| {
+        .filter_map(|(unit, block)| {
             block
                 .emails
                 .iter()
-                .filter(|email| email.address.eq_ignore_ascii_case(address))
-                .map(move |email| {
-                    (
-                        unit,
-                        match email.location {
-                            EmailLocation::Text { start, .. } => start,
-                            EmailLocation::Attribute { offset, .. } => offset,
-                        },
-                    )
-                })
+                .any(|email| email.address.eq_ignore_ascii_case(address))
+                .then_some(unit)
         })
         .collect();
     if evidence.is_empty() {
@@ -53,29 +38,17 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
     let mut occurrences = Vec::new();
     for (unit, block) in material.units.iter().enumerate() {
         let text = compact(&block.text);
-        let positions: Vec<_> = block
-            .text
-            .char_indices()
-            .filter(|(_, c)| !c.is_whitespace())
-            .flat_map(|(index, c)| std::iter::repeat_n(index, c.len_utf8()))
-            .collect();
         for name in &names {
-            for (start, _) in text.match_indices(name.as_str()) {
-                occurrences.push(Occurrence {
-                    name,
-                    unit,
-                    offset: positions[start],
-                });
+            if text.contains(name.as_str()) {
+                occurrences.push(Occurrence { name, unit });
             }
         }
     }
-    occurrences.sort_by_key(Occurrence::position);
     occurrences
         .iter()
-        .enumerate()
-        .filter(|(_, found)| found.name == name)
-        .any(|(index, found)| {
-            evidence.iter().any(|&(unit, offset)| {
+        .filter(|found| found.name == name)
+        .any(|found| {
+            evidence.iter().any(|&unit| {
                 let name_path = &material.units[found.unit].path;
                 let email_path = &material.units[unit].path;
                 let common = name_path
@@ -87,11 +60,25 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                 let contains_other = occurrences.iter().any(|other| {
                     other.name != name && material.units[other.unit].path.starts_with(ancestor)
                 });
-                !contains_other
-                    || ((unit, offset) >= found.position()
-                        && occurrences
-                            .get(index + 1)
-                            .is_none_or(|next| (unit, offset) < next.position()))
+                if !contains_other {
+                    return true;
+                }
+                let (Some(&name_child), Some(&email_child)) =
+                    (name_path.get(common), email_path.get(common))
+                else {
+                    return false;
+                };
+                name_child < email_child
+                    && !occurrences.iter().any(|other| {
+                        let path = &material.units[other.unit].path;
+                        if !path.starts_with(ancestor) {
+                            return false;
+                        }
+                        path.get(common).is_some_and(|&child| {
+                            (child == name_child && other.name != name)
+                                || (name_child < child && child <= email_child)
+                        })
+                    })
             })
         })
 }
