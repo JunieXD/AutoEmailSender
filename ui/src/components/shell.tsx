@@ -170,15 +170,20 @@ function Background() {
     refetchInterval: 3000,
   });
   const crawls = useQuery({
-    queryKey: ["listCrawls", 1],
-    queryFn: () => call("listCrawls", { page: 1 }),
+    queryKey: ["crawlWork"],
+    queryFn: () => {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+      return call("crawlWork", { start, end });
+    },
     refetchInterval: 3000,
   });
+  const today = new Date(crawls.dataUpdatedAt).toDateString();
   const pauseCrawl = useMutation({
     mutationFn: (id: number) => call("pauseCrawl", { id }),
     onSuccess: () => refreshCrawls(queryClient),
   });
-  const today = new Date(crawls.dataUpdatedAt).toDateString();
   const crawling = crawls.data?.filter((c) => c.state === "running") ?? [];
   const crawlPending = crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [];
   const active = tasks.data?.filter((t) => t.progress.generating > 0) ?? [];

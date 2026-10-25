@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT profile_fields AS \"profile_fields: Json<MentorFields>\" FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "profile_fields: Json<MentorFields>",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "profile_fields"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "dc7eac3c7ea7c74442fcd920222d9366e284d0eb3118e78ab784cd60f836989b"
+}

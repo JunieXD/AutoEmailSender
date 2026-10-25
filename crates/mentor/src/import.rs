@@ -176,6 +176,31 @@ pub struct RowError {
     pub reason: String,
 }
 
+#[derive(Debug, Serialize, TS)]
+pub struct AffiliationAddition {
+    pub before: Option<Affiliation>,
+    pub added: Affiliation,
+}
+#[derive(Debug, Default, Serialize, TS)]
+pub struct AddedFields {
+    pub aliases: Vec<String>,
+    pub emails: Vec<String>,
+    pub affiliations: Vec<AffiliationAddition>,
+    pub homepages: Vec<String>,
+    pub research: Option<String>,
+}
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Addition {
+    pub rows: Vec<u32>,
+    pub target: ImportCandidate,
+    pub fields: AddedFields,
+    pub papers: Vec<String>,
+    pub tags: Vec<String>,
+    pub source_url: Option<String>,
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Default, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Preview {
@@ -188,6 +213,7 @@ pub struct Preview {
     pub updated: u32,
     pub unchanged: u32,
     pub differences: Vec<Difference>,
+    pub additions: Vec<Addition>,
     pub maybe_same: Vec<MaybeSame>,
     pub trashed: Vec<Trashed>,
     pub errors: Vec<RowError>,
@@ -268,7 +294,7 @@ fn read_rows(sheets: &[Sheet], setup: &Setup, preview: &mut Preview) -> Vec<Row>
         match read_row(cells, &preview.columns) {
             Ok(profile) => rows.push(Row {
                 number,
-                target: None,
+                targets: vec![],
                 profile,
             }),
             Err(reason) => preview.errors.push(RowError {

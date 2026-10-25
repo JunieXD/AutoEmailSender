@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO candidate_profile(candidate_id,crawl_id,url) VALUES(?,?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f0ed18882da373b29e3b7f303cae1db90b4a3f935f24cdbbf233fee1c7b43113"
+}

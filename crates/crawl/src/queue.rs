@@ -1,28 +1,12 @@
 //! Durable page queue. Claims are invalidated before pause/cancel returns.
 use crate::{PageUrl, Scope, now};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
 use ts_rs::TS;
 
 pub const LIST_LIMIT: i64 = 60;
 pub const PERSON_LIMIT: i64 = 1000;
 
-#[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct CrawlInput {
-    pub urls: String,
-    pub expected_pages: u32,
-    pub expected_mentors: u32,
-}
-#[derive(Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct CrawlEstimate {
-    pub urls: Vec<String>,
-    pub model_id: Option<i64>,
-    pub model: Option<String>,
-    pub tokens: i64,
-    pub cost: Option<f64>,
-}
 pub fn starts(input: &str) -> Result<Vec<PageUrl>, String> {
     let mut urls = Vec::new();
     for line in input.lines().map(str::trim).filter(|s| !s.is_empty()) {
@@ -41,28 +25,6 @@ pub fn starts(input: &str) -> Result<Vec<PageUrl>, String> {
         return Err("起点网址不能超过 60 个".into());
     }
     Ok(urls)
-}
-pub async fn estimate(db: &SqlitePool, input: &CrawlInput) -> Result<CrawlEstimate, sqlx::Error> {
-    let chosen = model::list(db).await?.into_iter().find(|m| m.is_default);
-    let input_tokens = i64::from(input.expected_pages.min(60)) * 1000
-        + i64::from(input.expected_mentors.min(1000)) * 4000;
-    let output_tokens = i64::from(input.expected_mentors.min(1000)) * 1000;
-    Ok(CrawlEstimate {
-        urls: starts(&input.urls)
-            .map_err(sqlx::Error::Protocol)?
-            .iter()
-            .map(|u| u.as_str().into())
-            .collect(),
-        model_id: chosen.as_ref().map(|m| m.id),
-        model: chosen.as_ref().map(|m| m.model.clone()),
-        tokens: input_tokens + output_tokens,
-        cost: chosen.and_then(|m| {
-            Some(
-                (m.input_price? * input_tokens as f64 + m.output_price? * output_tokens as f64)
-                    / 1_000_000.0,
-            )
-        }),
-    })
 }
 pub async fn start(
     db: &SqlitePool,
@@ -263,7 +225,25 @@ pub struct CrawlSummary {
     pub stage: String,
 }
 pub async fn list(db: &SqlitePool, page: u32) -> Result<Vec<CrawlSummary>, sqlx::Error> {
+    let mut tx = db.begin().await?;
     let offset = i64::from(page.saturating_sub(1)) * 50;
+    let ids = sqlx::query_scalar!(
+        "SELECT id FROM crawl ORDER BY id DESC LIMIT 50 OFFSET ?",
+        offset
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    summaries(&mut tx, &ids).await
+}
+pub async fn work(db: &SqlitePool, start: i64, end: i64) -> Result<Vec<CrawlSummary>, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let ids = sqlx::query_scalar!("SELECT id FROM crawl WHERE state IN ('running','paused','failed') OR (state = 'done' AND finished_at >= ? AND finished_at < ?) OR id IN (SELECT crawl_id FROM crawl_page WHERE work_state = 'done' AND status != 'success') ORDER BY id DESC",start,end).fetch_all(&mut *tx).await?;
+    summaries(&mut tx, &ids).await
+}
+async fn summaries(
+    conn: &mut SqliteConnection,
+    ids: &[i64],
+) -> Result<Vec<CrawlSummary>, sqlx::Error> {
     sqlx::query_as!(CrawlSummary,r#"SELECT c.id,json_extract(c.start_urls,'$[0]') AS "url: String",c.model_config_id,c.state,c.error,c.created_at,c.finished_at,
       (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND work_state = 'done') AS "pages!: i64",
       (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND work_state != 'done') AS "remaining!: i64",
@@ -272,11 +252,12 @@ pub async fn list(db: &SqlitePool, page: u32) -> Result<Vec<CrawlSummary>, sqlx:
       (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND work_state = 'done' AND status != 'success') AS "failed!: i64",
       (SELECT sum(input_tokens+output_tokens) FROM usage WHERE crawl_id = c.id) AS "tokens: i64",
       CASE WHEN c.state != 'running' THEN c.state WHEN EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = c.id AND kind != 'profile' AND work_state != 'done') THEN 'lists' ELSE 'profiles' END AS "stage!: String"
-      FROM crawl c ORDER BY c.id DESC LIMIT 50 OFFSET ?"#,offset).fetch_all(db).await
+      FROM crawl c WHERE c.id IN (SELECT value FROM json_each(?)) ORDER BY c.id DESC"#,Json(ids)).fetch_all(conn).await
 }
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct CrawlDetail {
+    pub summary: CrawlSummary,
     pub urls: Vec<String>,
     pub limits: Vec<String>,
     pub pages: Vec<CrawlPage>,
@@ -313,7 +294,12 @@ pub async fn detail(
         .fetch_one(&mut *tx)
         .await?;
     let runs=sqlx::query_as!(CrawlRun,"SELECT app_version,started_at,ended_at FROM crawl_run WHERE crawl_id = ? ORDER BY id DESC LIMIT 50",id).fetch_all(&mut *tx).await?;
+    let summary = summaries(&mut tx, &[id])
+        .await?
+        .pop()
+        .ok_or(sqlx::Error::RowNotFound)?;
     Ok(Some(CrawlDetail {
+        summary,
         urls: row.urls.map(|Json(v)| v).unwrap_or_default(),
         limits: row.limits.0,
         pages,

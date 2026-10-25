@@ -37,12 +37,30 @@ async fn crawl_ready(ctx: &Context, id: Option<i64>) -> Result<model::Chosen, Ca
     }
     Ok(m)
 }
-pub(super) async fn plan_crawl(
+#[derive(Debug, Deserialize, TS)]
+pub struct CrawlUrls {
+    pub urls: String,
+}
+#[derive(Debug, Deserialize, TS)]
+pub struct CrawlWorkQuery {
+    pub start: i64,
+    pub end: i64,
+}
+pub(super) async fn check_crawl_urls(
+    _: &Context,
+    input: CrawlUrls,
+) -> Result<Vec<String>, CallError> {
+    Ok(queue::starts(&input.urls)
+        .map_err(CallError::invalid)?
+        .iter()
+        .map(|u| u.as_str().to_owned())
+        .collect())
+}
+pub(super) async fn crawl_work(
     ctx: &Context,
-    input: queue::CrawlInput,
-) -> Result<queue::CrawlEstimate, CallError> {
-    queue::starts(&input.urls).map_err(CallError::invalid)?;
-    Ok(queue::estimate(&ctx.db, &input).await?)
+    input: CrawlWorkQuery,
+) -> Result<Vec<queue::CrawlSummary>, CallError> {
+    Ok(queue::work(&ctx.db, input.start, input.end).await?)
 }
 pub(super) async fn start_crawl(ctx: &Context, input: CrawlStart) -> Result<CrawlId, CallError> {
     let urls = queue::starts(&input.urls).map_err(CallError::invalid)?;
@@ -137,7 +155,7 @@ pub(super) async fn reject_candidates(
 mod tests {
     use super::*;
     #[sqlx::test(migrator = "db::MIGRATOR")]
-    async fn starting_uses_the_model_shown_in_the_estimate(db: SqlitePool) {
+    async fn starting_uses_the_selected_model(db: SqlitePool) {
         let mut ids = Vec::new();
         for name in ["first", "second"] {
             let id=sqlx::query_scalar!("INSERT INTO model_config (provider,base_url,model,api_key,agreed,created_at) VALUES ('custom','http://127.0.0.1:1',?,'fixture',1,1) RETURNING id",name).fetch_one(&db).await.unwrap();
@@ -154,17 +172,6 @@ mod tests {
             model_limit: Default::default(),
             materials: Default::default(),
         };
-        let plan = plan_crawl(
-            &ctx,
-            queue::CrawlInput {
-                urls: "https://school.example.edu/".into(),
-                expected_pages: 10,
-                expected_mentors: 100,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(plan.model_id, Some(ids[0]));
         sqlx::query!("UPDATE profile SET default_model_config_id = ?", ids[1])
             .execute(&db)
             .await

@@ -1,4 +1,4 @@
-import type { Decisions, Preview, ImportProfile } from "@/api/types";
+import type { Decisions, Preview, ImportProfile, Addition } from "@/api/types";
 import { Differences } from "@/components/differences";
 import { placeOf } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
@@ -17,7 +17,7 @@ export function IntakeChoices({
   const choose = onChange;
   return (
     <>
-      {" "}
+      <IntakeAdditions additions={preview.additions} />
       {preview.differences.length > 0 && (
         <section>
           <h3 className="mb-2 font-medium">资料不同</h3>
@@ -166,5 +166,67 @@ export function ProfileDetails({ profile }: { profile: ImportProfile }) {
         ))}
       </span>
     </span>
+  );
+}
+
+export function IntakeAdditions({ additions }: { additions: Addition[] }) {
+  if (additions.length === 0) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="font-medium">补充内容</h3>
+      {additions.map((a) => {
+        const items: [string, string[]][] = [
+          ["邮箱", a.fields.emails],
+          ["别名", a.fields.aliases],
+          [
+            "单位",
+            a.fields.affiliations.map(({ before, added }) => {
+              const fields = [
+                ["学校", added.university],
+                ["学院", added.school],
+                ["系所", added.department],
+                ["职称", added.title],
+              ]
+                .filter(([, value]) => value)
+                .map(([label, value]) => `${label}：${value}`)
+                .join("；");
+              return before
+                ? `现有单位（${[placeOf(before), before.title].filter(Boolean).join(" · ")}）补上${fields}`
+                : `新增单位 · ${fields}`;
+            }),
+          ],
+          ["主页", a.fields.homepages],
+          ["研究方向", a.fields.research ? [a.fields.research] : []],
+          ["代表论文", a.papers],
+          ["标签", a.tags],
+          ["来源网址", a.sourceUrl ? [a.sourceUrl] : []],
+          ["备注", a.note ? [a.note] : []],
+        ];
+        return (
+          <div key={a.target.id} className="space-y-2 rounded-lg border border-border p-3 text-sm">
+            <p>
+              补给 <strong>{a.target.profile.name}</strong> · 编号 {a.target.id}
+            </p>
+            {a.target.profile.affiliations.length > 0 && (
+              <p className="text-muted-foreground">{a.target.profile.affiliations.map(placeOf).join("；")}</p>
+            )}
+            {items.some(([, values]) => values.length > 0) ? (
+              <dl className="space-y-2">
+                {items
+                  .filter(([, values]) => values.length > 0)
+                  .map(([label, values]) => (
+                    <div key={label}>
+                      <dt className="text-xs text-muted-foreground">补上{label}</dt>
+                      <dd className="break-words whitespace-pre-wrap">{values.join("\n")}</dd>
+                    </div>
+                  ))}
+              </dl>
+            ) : (
+              <p className="text-muted-foreground">没有可直接补上的空项；资料不同的部分由你选择</p>
+            )}
+          </div>
+        );
+      })}
+    </section>
   );
 }

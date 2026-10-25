@@ -340,6 +340,7 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
                 &Fetcher::local(port),
                 &Limit::default(),
                 &c,
+                &Cooldown::default(),
             )
             .await
             .unwrap()
@@ -590,7 +591,8 @@ fn segments_preserve_blocks_and_external_output_is_checked() {
             research: None,
         }],
         &Scope::new(&url),
-    );
+    )
+    .unwrap();
     assert_eq!(people.len(), 1);
     assert!(people[0].fields.emails.is_empty());
     assert!(people[0].profile.is_none());
@@ -1227,4 +1229,722 @@ async fn retrying_one_failed_page_after_cancel_does_not_restart_other_planned_pa
         .await
         .unwrap();
     assert!(queue::next(&db).await.unwrap().is_none());
+}
+
+async fn observation(
+    db: &SqlitePool,
+    c: &Claim,
+    site: &Site,
+    path: &str,
+    kind: &str,
+    fields: MentorFields,
+) {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    if kind == "profile" {
+        sqlx::query("UPDATE crawl_page SET work_state='done' WHERE crawl_id=? AND url=?")
+            .bind(c.crawl)
+            .bind(site.url(path).as_str())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    review::save(
+        &mut tx,
+        c.crawl,
+        c.id,
+        kind,
+        site.url(path).as_str(),
+        Person {
+            fields,
+            papers: vec![],
+            profile: Some(site.url(path)),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+fn observed(name: &str, emails: &[&str], research: Option<&str>) -> MentorFields {
+    MentorFields {
+        name: name.into(),
+        emails: emails.iter().map(|s| (*s).into()).collect(),
+        research: research.map(Into::into),
+        ..Default::default()
+    }
+}
+async fn candidate_ids(db: &SqlitePool) -> Vec<i64> {
+    sqlx::query_scalar("SELECT id FROM candidate ORDER BY id")
+        .fetch_all(db)
+        .await
+        .unwrap()
+}
+async fn review_fixture(db: &SqlitePool) -> (Site, Claim) {
+    let site = Site::new().await;
+    let model = config(db, "http://127.0.0.1:1").await;
+    queue::start(db, &[site.url("/")], model, 1).await.unwrap();
+    let claim = queue::next(db).await.unwrap().unwrap();
+    (site, claim)
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_distinct_confirmed_targets_survive_new_shared_email(db: SqlitePool) {
+    let (site, c) = review_fixture(&db).await;
+    for path in ["/one", "/two"] {
+        observation(&db, &c, &site, path, "list", observed("张三", &[], None)).await;
+        let id = *candidate_ids(&db).await.last().unwrap();
+        review::accept(
+            &db,
+            &ReviewInput {
+                ids: vec![id],
+                decisions: Decisions {
+                    matches: vec![mentor::import::GroupChoice { row: 1, id: None }],
+                    ..Default::default()
+                },
+            },
+            2,
+        )
+        .await
+        .unwrap();
+    }
+    let ids = candidate_ids(&db).await;
+    let targets: Vec<_> =
+        sqlx::query_scalar::<_, Option<i64>>("SELECT mentor_id FROM candidate ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_ne!(targets[0], targets[1]);
+    for path in ["/one", "/two"] {
+        observation(
+            &db,
+            &c,
+            &site,
+            path,
+            "profile",
+            observed("张三", &["z@example.edu"], None),
+        )
+        .await;
+    }
+    assert_eq!(candidate_ids(&db).await, ids);
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT mentor_id FROM candidate ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap(),
+        targets
+    );
+    for id in &ids {
+        let input = ReviewInput {
+            ids: vec![*id],
+            decisions: Decisions::default(),
+        };
+        let preview = review::preview(&db, &input).await.unwrap();
+        assert_eq!(
+            preview.errors.len(),
+            1,
+            "a single candidate must expose both prior targets"
+        );
+        assert_eq!(review::accept(&db, &input, 3).await.unwrap().accepted, 0);
+    }
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_merged_profile_identity_routes_late_results_and_removes_queued_work(
+    db: SqlitePool,
+) {
+    let (site, c) = review_fixture(&db).await;
+    observation(&db, &c, &site, "/one", "list", observed("张三", &[], None)).await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/two",
+        "list",
+        observed("张三", &["z@example.edu"], None),
+    )
+    .await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/one",
+        "profile",
+        observed("张三", &["z@example.edu"], None),
+    )
+    .await;
+    assert_eq!(candidate_ids(&db).await.len(), 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM crawl_page WHERE kind='profile' AND work_state='queued'"
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        0,
+        "unstarted duplicate profiles must be removed at merge time"
+    );
+    observation(
+        &db,
+        &c,
+        &site,
+        "/two",
+        "profile",
+        observed("San Zhang", &[], None),
+    )
+    .await;
+    let ids = candidate_ids(&db).await;
+    assert_eq!(ids.len(), 1);
+    let detail = review::detail(&db, ids[0]).await.unwrap().unwrap();
+    assert!(
+        detail
+            .candidate
+            .fields
+            .aliases
+            .contains(&"San Zhang".into())
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM crawl_page WHERE kind='profile' AND work_state='queued'"
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        0
+    );
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_profile_scalars_replace_list_snippets_and_reopen_accepted_review(
+    db: SqlitePool,
+) {
+    let (site, c) = review_fixture(&db).await;
+    let fields = |research: &str, title: &str| MentorFields {
+        affiliations: vec![mentor::Affiliation {
+            title: Some(title.into()),
+            ..Default::default()
+        }],
+        ..observed("张三", &["z@example.edu"], Some(research))
+    };
+    observation(&db, &c, &site, "/one", "list", fields("机器学习", "讲师")).await;
+    let id = candidate_ids(&db).await[0];
+    review::accept(
+        &db,
+        &ReviewInput {
+            ids: vec![id],
+            decisions: Decisions::default(),
+        },
+        2,
+    )
+    .await
+    .unwrap();
+    let full = "机器学习、隐私计算与大模型安全，主持可信人工智能项目";
+    observation(&db, &c, &site, "/one", "profile", fields(full, "教授")).await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/one",
+        "list",
+        fields("后到的名单片段", "副教授"),
+    )
+    .await;
+    observation(
+        &db,
+        &c,
+        &site,
+        "/one",
+        "profile",
+        fields("同级后到的方向", "研究员"),
+    )
+    .await;
+    let detail = review::detail(&db, id).await.unwrap().unwrap().candidate;
+    assert_eq!(detail.fields.research.as_deref(), Some(full));
+    assert_eq!(detail.fields.affiliations[0].title.as_deref(), Some("教授"));
+    assert_eq!(detail.review, "pending");
+    let local = mentor::get(&db, detail.mentor_id.unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(local.research.as_deref(), Some("机器学习"));
+    assert_eq!(
+        review::preview(
+            &db,
+            &ReviewInput {
+                ids: vec![id],
+                decisions: Decisions::default()
+            }
+        )
+        .await
+        .unwrap()
+        .differences
+        .len(),
+        2
+    );
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/", "<title>教师名单</title><p>张三 z@example.edu</p>");
+    let mut p = Provider::start().await;
+    let config = config(&db, &p.address).await;
+    for correct in [false, true] {
+        let id = queue::start(&db, &[site.url("/")], config, 1)
+            .await
+            .unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let process = tokio::spawn({
+            let db = db.clone();
+            let c = c.clone();
+            let port = site.port;
+            async move {
+                super::process(
+                    &db,
+                    &net::Net::new(vec![]).unwrap(),
+                    &Fetcher::local(port),
+                    &Limit::default(),
+                    &c,
+                    &Cooldown::default(),
+                )
+                .await
+                .unwrap()
+            }
+        });
+        let server = tokio::spawn(async move {
+            let mut invalid = false;
+            while let Some(r) = p.requests.recv().await {
+                let system = r.body["messages"][0]["content"].as_str().unwrap();
+                let answer = if system.starts_with("你整理学院") {
+                    json!({"kind":"list","next":[]}).to_string()
+                } else if invalid && correct {
+                    json!({"people":[listed("张三", Some(999), vec!["z@example.edu", "invented@example.edu"])]}).to_string()
+                } else {
+                    invalid = true;
+                    include_str!("../../tests/model/invalid-name.json").into()
+                };
+                r.respond.send(Response::answer(&answer)).ok();
+            }
+            p
+        });
+        let outcome = tokio::time::timeout(Duration::from_secs(10), process)
+            .await
+            .unwrap()
+            .unwrap();
+        if correct {
+            assert!(matches!(outcome, Outcome::Done(ref page) if page.people.len()==1));
+        } else {
+            assert!(matches!(outcome, Outcome::Failed(ref reason) if reason.contains("姓名")));
+        }
+        save(&db, &c, &outcome).await.unwrap();
+        finish(&db).await.unwrap();
+        let detail = queue::detail(&db, id, 1).await.unwrap().unwrap();
+        assert_eq!(
+            detail.pages[0].status,
+            if correct { "success" } else { "failed" }
+        );
+        server.abort();
+        // A fresh fixture isolates the second run from the first server's lifetime.
+        if !correct {
+            p = Provider::start().await;
+            sqlx::query("UPDATE model_config SET base_url=? WHERE id=?")
+                .bind(&p.address)
+                .bind(config)
+                .execute(&db)
+                .await
+                .unwrap();
+        } else {
+            break;
+        }
+    }
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_deleted_or_changed_config_requeues_and_requires_current_consent(
+    db: SqlitePool,
+) {
+    let site = Site::new().await;
+    site.page("/", "<title>学院</title><p>教师名单</p>");
+    let fetcher = Fetcher::local(site.port);
+    for deleted in [true, false] {
+        let mut old_provider = Provider::start().await;
+        let mut new_provider = Provider::start().await;
+        let old_id = config(&db, &old_provider.address).await;
+        let fallback = config(&db, &new_provider.address).await;
+        sqlx::query("UPDATE model_config SET agreed=0 WHERE id=?")
+            .bind(fallback)
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE profile SET default_model_config_id=?")
+            .bind(fallback)
+            .execute(&db)
+            .await
+            .unwrap();
+        let crawl = queue::start(&db, &[site.url("/")], old_id, 1)
+            .await
+            .unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let chosen = model::selected(&db, Some(old_id)).await.unwrap().unwrap();
+        let limit = Limit::default();
+        let permits = [
+            limit.acquire().await,
+            limit.acquire().await,
+            limit.acquire().await,
+        ];
+        let net = net::Net::new(vec![]).unwrap();
+        let cooldown = Cooldown::default();
+        let reader = Reader {
+            db: &db,
+            net: &net,
+            limit: &limit,
+            claim: &c,
+            chosen: &chosen,
+            cooldown: &cooldown,
+        };
+        let ask = reader.ask::<extract::Route>(extract::ROUTE, json!({"title":"学院","links":[]}));
+        tokio::pin!(ask);
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(ask.as_mut().poll(cx).is_pending()))
+                .await
+        );
+        if deleted {
+            model::delete(&db, old_id).await.unwrap();
+        } else {
+            let fields = model::ModelForm {
+                name: "修改后的模型".into(),
+                provider: "custom".into(),
+                base_url: new_provider.address.clone(),
+                model: "fixture".into(),
+                input_price: None,
+                output_price: None,
+            }
+            .check()
+            .unwrap();
+            model::update(&db, old_id, &fields, "fixture")
+                .await
+                .unwrap();
+        }
+        drop(permits);
+        tokio::select! { result = &mut ask => assert!(matches!(result, Err(ReadError::Gone))), _ = old_provider.requests.recv() => panic!("started a request using stale configuration") }
+        save(&db, &c, &Outcome::Gone).await.unwrap();
+        assert!(
+            !queue::valid(&mut db.acquire().await.unwrap(), &c)
+                .await
+                .unwrap()
+        );
+        let fresh = queue::next(&db).await.unwrap().unwrap();
+        let chosen = model::selected(&db, fresh.model_id).await.unwrap().unwrap();
+        assert_eq!(chosen.id, if deleted { fallback } else { old_id });
+        let outcome = process(&db, &net, &fetcher, &limit, &fresh, &cooldown)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, Outcome::Pause(_, _)));
+        save(&db, &fresh, &outcome).await.unwrap();
+        assert!(old_provider.requests.try_recv().is_err());
+        assert!(new_provider.requests.try_recv().is_err());
+        model::agree(&db, chosen.id, "custom", Some(&new_provider.address))
+            .await
+            .unwrap();
+        queue::control(&db, crawl, "resume", 2).await.unwrap();
+        let fresh = queue::next(&db).await.unwrap().unwrap();
+        let read = process(&db, &net, &fetcher, &limit, &fresh, &cooldown);
+        let answer = async {
+            new_provider
+                .requests
+                .recv()
+                .await
+                .unwrap()
+                .respond
+                .send(Response::answer(r#"{"kind":"other","next":[]}"#))
+                .ok();
+        };
+        let (outcome, ()) = tokio::join!(read, answer);
+        save(&db, &fresh, &outcome.unwrap()).await.unwrap();
+        finish(&db).await.unwrap();
+    }
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_supplement_preview_names_target_and_added_content(db: SqlitePool) {
+    let (site, c) = review_fixture(&db).await;
+    let local = MentorFields {
+        affiliations: vec![mentor::Affiliation {
+            university: Some("示例大学".into()),
+            ..Default::default()
+        }],
+        ..observed("张三", &["z@example.edu"], None)
+    };
+    let target = mentor::create(&db, &local, 1).await.unwrap();
+    let mut fields = observed(
+        "张三",
+        &["z@example.edu", "extra@example.edu"],
+        Some("机器学习"),
+    );
+    fields.homepages = vec!["https://school.example.edu/one".into()];
+    fields.affiliations = vec![
+        mentor::Affiliation {
+            university: Some("示例大学".into()),
+            school: Some("计算机学院".into()),
+            title: Some("教授".into()),
+            ..Default::default()
+        },
+        mentor::Affiliation {
+            university: Some("兼任大学".into()),
+            ..Default::default()
+        },
+    ];
+    observation(&db, &c, &site, "/one", "profile", fields).await;
+    let preview = review::preview(
+        &db,
+        &ReviewInput {
+            ids: candidate_ids(&db).await,
+            decisions: Decisions::default(),
+        },
+    )
+    .await
+    .unwrap();
+    let value = serde_json::to_value(preview).unwrap();
+    assert_eq!(value["additions"][0]["target"]["id"], target);
+    assert_eq!(value["additions"][0]["target"]["profile"]["name"], "张三");
+    assert_eq!(
+        value["additions"][0]["fields"]["emails"],
+        json!(["extra@example.edu"])
+    );
+    assert_eq!(
+        value["additions"][0]["fields"]["homepages"],
+        json!(["https://school.example.edu/one"])
+    );
+    assert_eq!(value["additions"][0]["fields"]["research"], "机器学习");
+    assert_eq!(
+        value["additions"][0]["fields"]["affiliations"][0]["before"]["university"],
+        "示例大学"
+    );
+    let units = &value["additions"][0]["fields"]["affiliations"];
+    assert_eq!(units[0]["added"]["school"], "计算机学院");
+    assert_eq!(units[0]["added"]["title"], "教授");
+    assert_eq!(units[0]["added"]["university"], Value::Null);
+    assert_eq!(units[1]["before"], Value::Null);
+    assert_eq!(units[1]["added"]["university"], "兼任大学");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePool) {
+    let site = Site::new().await;
+    for path in ["/a", "/b"] {
+        site.page(path, "<title>教师名单</title><p>张三 z@example.edu</p>");
+    }
+    let mut p = Provider::start().await;
+    let config = config(&db, &p.address).await;
+    queue::start(&db, &[site.url("/a"), site.url("/b")], config, 1)
+        .await
+        .unwrap();
+    let cooldown = Cooldown::default();
+    let limit = Limit::default();
+    let start = |claim: Claim| {
+        let (db, cooldown, limit, port) = (db.clone(), cooldown.clone(), limit.clone(), site.port);
+        tokio::spawn(async move {
+            process(
+                &db,
+                &net::Net::new(vec![]).unwrap(),
+                &Fetcher::local(port),
+                &limit,
+                &claim,
+                &cooldown,
+            )
+            .await
+            .unwrap()
+        })
+    };
+    let a = start(queue::next(&db).await.unwrap().unwrap());
+    let b = start(queue::next(&db).await.unwrap().unwrap());
+    let first = p.requests.recv().await.unwrap();
+    let second = p.requests.recv().await.unwrap();
+    let guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    first
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "slow down".into(),
+            retry_after: Some(60),
+        })
+        .ok();
+    // Whichever page received 429 finishes first. The other page remains in flight.
+    tokio::pin!(a, b);
+    let a_limited = tokio::select! { result = &mut a => { assert!(matches!(result.unwrap(), Outcome::RateLimit)); true }, result = &mut b => { assert!(matches!(result.unwrap(), Outcome::RateLimit)); false } };
+    second
+        .respond
+        .send(Response::answer(r#"{"kind":"list","next":[]}"#))
+        .ok();
+    let permit = cooldown.acquire(&limit);
+    tokio::pin!(permit);
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(permit.as_mut().poll(cx).is_pending()))
+            .await,
+        "new model work must wait after the other page was limited"
+    );
+    // The in-flight route's usage is saved while further extraction waits.
+    loop {
+        if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM usage")
+            .fetch_one(&db)
+            .await
+            .unwrap()
+            == 1
+        {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(59)).await;
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(permit.as_mut().poll(cx).is_pending()))
+            .await
+    );
+    assert!(p.requests.try_recv().is_err());
+    tokio::time::advance(Duration::from_secs(2)).await;
+    drop(permit.await);
+    tokio::time::resume();
+    guard.abort();
+    let next = tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        next.body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("你从教师")
+    );
+    next.respond.send(Response::answer(r#"{"people":[]}"#)).ok();
+    let outcome = if a_limited {
+        b.await.unwrap()
+    } else {
+        a.await.unwrap()
+    };
+    assert!(matches!(outcome, Outcome::Done(ref p) if p.people.is_empty()));
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn regression_background_includes_old_running_paused_and_failed_crawls(db: SqlitePool) {
+    let (site, c) = review_fixture(&db).await;
+    let paused = queue::start(&db, &[site.url("/paused")], c.model_id.unwrap(), 2)
+        .await
+        .unwrap();
+    queue::control(&db, paused, "pause", 3).await.unwrap();
+    let failed: i64 = sqlx::query_scalar("INSERT INTO crawl(kind,state,error,created_at,finished_at) VALUES('agent','failed','打不开',3,4) RETURNING id").fetch_one(&db).await.unwrap();
+    for n in 0..51 {
+        sqlx::query(
+            "INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',?,?)",
+        )
+        .bind(10 + n)
+        .bind(10 + n)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    let today: i64 = sqlx::query_scalar("INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',150,150) RETURNING id").fetch_one(&db).await.unwrap();
+    sqlx::query(
+        "INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',200,200)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let work = queue::work(&db, 100, 200).await.unwrap();
+    assert_eq!(
+        work.iter()
+            .filter(|c| c.state == "done")
+            .map(|c| c.id)
+            .collect::<Vec<_>>(),
+        vec![today]
+    );
+    for id in [c.crawl, paused, failed] {
+        assert!(work.iter().any(|c| c.id == id), "old work {id} is absent");
+    }
+    assert!(queue::detail(&db, c.crawl, 1).await.unwrap().is_some());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn candidate_classification_pages_follow_normalized_names_schools_and_mentor_edits(
+    db: SqlitePool,
+) {
+    let (site, c) = review_fixture(&db).await;
+    let affiliation = |university: &str| mentor::Affiliation {
+        university: Some(university.into()),
+        ..Default::default()
+    };
+    let mut local = MentorFields {
+        name: "张三".into(),
+        aliases: vec!["Ａ  B".into()],
+        affiliations: vec![affiliation("ＡＢ 大学")],
+        ..Default::default()
+    };
+    let target = mentor::create(&db, &local, 1).await.unwrap();
+    for n in 0..55 {
+        observation(
+            &db,
+            &c,
+            &site,
+            &format!("/person/{n}"),
+            "profile",
+            MentorFields {
+                name: "A B".into(),
+                affiliations: vec![affiliation("AB   大学")],
+                ..Default::default()
+            },
+        )
+        .await;
+    }
+    let mut query = CandidateQuery {
+        crawl_id: Some(c.crawl),
+        processed: false,
+        filter: CandidateFilter::Maybe,
+        page: 1,
+    };
+    let first = review::list(&db, &query).await.unwrap();
+    assert_eq!((first.total, first.candidates.len()), (55, 50));
+    query.page = 2;
+    let second = review::list(&db, &query).await.unwrap();
+    assert_eq!((second.total, second.candidates.len()), (55, 5));
+    assert!(
+        second
+            .candidates
+            .iter()
+            .all(|c| c.id > first.candidates.last().unwrap().id)
+    );
+    local.affiliations = vec![affiliation("另一所大学")];
+    mentor::update(&db, target, &local, 2).await.unwrap();
+    assert_eq!(review::list(&db, &query).await.unwrap().total, 0);
+    query.filter = CandidateFilter::New;
+    let new = review::list(&db, &query).await.unwrap();
+    assert_eq!((new.total, new.candidates.len()), (55, 5));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn candidate_categories_do_not_depend_on_other_rows_on_the_page(db: SqlitePool) {
+    let (site, c) = review_fixture(&db).await;
+    mentor::create(&db, &observed("李四", &[], None), 1)
+        .await
+        .unwrap();
+    for (name, path) in [("张三", "/zhang"), ("李四", "/li")] {
+        observation(
+            &db,
+            &c,
+            &site,
+            path,
+            "profile",
+            observed(name, &["shared@example.edu"], None),
+        )
+        .await;
+    }
+    let mut q = CandidateQuery {
+        crawl_id: Some(c.crawl),
+        processed: false,
+        filter: CandidateFilter::All,
+        page: 1,
+    };
+    let all = review::list(&db, &q).await.unwrap();
+    assert_eq!(all.candidates[0].category, CandidateFilter::New);
+    assert_eq!(all.candidates[1].category, CandidateFilter::Maybe);
+    for filter in [CandidateFilter::New, CandidateFilter::Maybe] {
+        q.filter = filter;
+        let page = review::list(&db, &q).await.unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.candidates[0].category, filter);
+    }
 }

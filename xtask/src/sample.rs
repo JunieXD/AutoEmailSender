@@ -444,7 +444,7 @@ pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
         (known.0, vec![]),
         ("尚无邮箱的导师".into(), vec![]),
     ] {
-        sqlx::query("INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,research,source_url) VALUES (?,'pending','none',?,?,'[]','机器学习与智能系统','https://example.edu.cn/faculty')").bind(id).bind(name).bind(sqlx::types::Json(emails)).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,research,source_url,match_names) VALUES (?,'pending','none',?,?,'[]','机器学习与智能系统','https://example.edu.cn/faculty',?)").bind(id).bind(&name).bind(sqlx::types::Json(emails)).bind(sqlx::types::Json(vec![mentor::intake::comparable(&name)])).execute(&mut *tx).await?;
     }
     sqlx::query("INSERT INTO crawl (kind,start_urls,state,created_at,error) VALUES ('site','[\"https://example.edu.cn/teachers\"]','paused',?,'模型额度不足，请补充额度后继续')").bind(at).execute(&mut *tx).await?;
     tx.commit().await?;

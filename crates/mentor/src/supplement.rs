@@ -2,7 +2,7 @@
 
 use crate::{Affiliation, MentorFields, place};
 
-pub(crate) fn comparable(value: &str) -> String {
+pub fn comparable(value: &str) -> String {
     value
         .split_whitespace()
         .collect::<Vec<_>>()

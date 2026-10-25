@@ -13,7 +13,11 @@ use model::{
 };
 use serde::Serialize;
 use sqlx::SqlitePool;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use ts_rs::TS;
 const RETRY: Duration = Duration::from_secs(5);
@@ -41,15 +45,46 @@ enum Outcome {
     Done(Page),
     Failed(String),
     Pause(String, Option<Chosen>),
-    RateLimit(Duration),
+    RateLimit,
     Gone,
 }
 
 enum ReadError {
     Failed(String),
     Pause(String),
-    RateLimit(Duration),
+    RateLimit,
     Gone,
+}
+
+#[derive(Clone, Default)]
+struct Cooldown(Arc<Mutex<Option<Instant>>>);
+impl Cooldown {
+    fn until(&self) -> Option<Instant> {
+        self.0
+            .lock()
+            .unwrap_or_else(|_| {
+                unreachable!("cooldown updates cannot panic while holding the lock")
+            })
+            .filter(|at| *at > Instant::now())
+    }
+    fn defer(&self, wait: Duration) {
+        let at = Instant::now() + wait;
+        let mut current = self.0.lock().unwrap_or_else(|_| {
+            unreachable!("cooldown updates cannot panic while holding the lock")
+        });
+        *current = Some(current.map_or(at, |old| old.max(at)));
+    }
+    async fn acquire(&self, limit: &Limit) -> tokio::sync::OwnedSemaphorePermit {
+        loop {
+            if let Some(at) = self.until() {
+                tokio::time::sleep_until(at).await;
+            }
+            let permit = limit.acquire().await;
+            if self.until().is_none() {
+                return permit;
+            }
+        }
+    }
 }
 
 struct Reader<'a> {
@@ -58,27 +93,41 @@ struct Reader<'a> {
     limit: &'a Limit,
     claim: &'a Claim,
     chosen: &'a Chosen,
+    cooldown: &'a Cooldown,
 }
 impl Reader<'_> {
-    async fn ask<T: serde::de::DeserializeOwned>(
+    async fn ask<T: extract::Output>(
         &self,
         system: &str,
         data: serde_json::Value,
     ) -> Result<T, ReadError> {
         let mut rules = system.to_owned();
         for attempt in 0..2 {
-            let _permit = self.limit.acquire().await;
-            let mut conn = self.db.acquire().await.map_err(|e| {
-                tracing::error!("crawl connection: {e}");
-                ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
-            })?;
-            if !queue::valid(&mut conn, self.claim)
-                .await
-                .map_err(|_| ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into()))?
-            {
-                return Err(ReadError::Gone);
-            }
-            drop(conn);
+            let _permit = loop {
+                let permit = self.cooldown.acquire(self.limit).await;
+                let mut conn = self.db.acquire().await.map_err(|e| {
+                    tracing::error!("crawl connection: {e}");
+                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
+                })?;
+                if !queue::valid(&mut conn, self.claim).await.map_err(|_| {
+                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
+                })? {
+                    return Err(ReadError::Gone);
+                }
+                let current = model::selected(&mut *conn, Some(self.chosen.id))
+                    .await
+                    .map_err(|_| ReadError::Pause("模型配置暂时无法读取，请重试。".into()))?;
+                if !current.as_ref().is_some_and(|m| {
+                    m.agreed
+                        && m.provider == self.chosen.provider
+                        && model::background::same_config(m, self.chosen)
+                }) {
+                    return Err(ReadError::Gone);
+                }
+                if self.cooldown.until().is_none() {
+                    break permit;
+                }
+            };
             let answer = model::ask(
                 self.net,
                 &self.chosen.access,
@@ -89,7 +138,10 @@ impl Reader<'_> {
             .await
             .map_err(|e| match model::background::classify(e) {
                 Failure::Pause(r) => ReadError::Pause(r),
-                Failure::RateLimit(w) => ReadError::RateLimit(w),
+                Failure::RateLimit(w) => {
+                    self.cooldown.defer(w);
+                    ReadError::RateLimit
+                }
                 Failure::Failed(r) => ReadError::Failed(r),
             })?;
             if let Some(usage) = answer.usage {
@@ -118,10 +170,10 @@ impl Reader<'_> {
                     rules =
                         format!("{system}\n上次输出未通过字段校验：{reason}。请重新输出完整 JSON。")
                 }
-                Err(_) => {
-                    return Err(ReadError::Failed(
-                        "模型未按要求返回完整资料，请重试或换一个模型。".into(),
-                    ));
+                Err(reason) => {
+                    return Err(ReadError::Failed(format!(
+                        "模型返回的资料不合格：{reason}。请重试或换一个模型。"
+                    )));
                 }
             }
         }
@@ -134,6 +186,7 @@ async fn process(
     fetcher: &Fetcher,
     limit: &Limit,
     c: &Claim,
+    cooldown: &Cooldown,
 ) -> Result<Outcome, sqlx::Error> {
     let Some(chosen) = model::selected(db, c.model_id).await? else {
         return Ok(Outcome::Pause(
@@ -147,13 +200,15 @@ async fn process(
             Some(chosen),
         ));
     }
-    Ok(match read(db, net, fetcher, limit, c, &chosen).await {
-        Ok(page) => Outcome::Done(page),
-        Err(ReadError::Pause(reason)) => Outcome::Pause(reason, Some(chosen)),
-        Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
-        Err(ReadError::RateLimit(wait)) => Outcome::RateLimit(wait),
-        Err(ReadError::Gone) => Outcome::Gone,
-    })
+    Ok(
+        match read(db, net, fetcher, limit, c, &chosen, cooldown).await {
+            Ok(page) => Outcome::Done(page),
+            Err(ReadError::Pause(reason)) => Outcome::Pause(reason, Some(chosen)),
+            Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
+            Err(ReadError::RateLimit) => Outcome::RateLimit,
+            Err(ReadError::Gone) => Outcome::Gone,
+        },
+    )
 }
 
 async fn read(
@@ -163,6 +218,7 @@ async fn read(
     limit: &Limit,
     c: &Claim,
     chosen: &Chosen,
+    cooldown: &Cooldown,
 ) -> Result<Page, ReadError> {
     let url = PageUrl::parse(&c.url).map_err(|e| ReadError::Failed(e.message()))?;
     let start = PageUrl::parse(&c.scope).map_err(|e| ReadError::Failed(e.message()))?;
@@ -197,6 +253,7 @@ async fn read(
         limit,
         claim: c,
         chosen,
+        cooldown,
     };
     if m.units.is_empty()
         || matches!(
@@ -254,7 +311,7 @@ async fn read(
                         .people,
                 );
             }
-            extract::listed(&m, all, &scope)
+            extract::listed(&m, all, &scope).map_err(ReadError::Failed)?
         }
         Kind::Profile => {
             let p = reader
@@ -362,9 +419,9 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                 .await?;
             }
         }
-        Outcome::RateLimit(_) | Outcome::Gone => {
+        Outcome::RateLimit | Outcome::Gone => {
             sqlx::query!(
-                "UPDATE crawl_page SET work_state = 'queued' WHERE id = ?",
+                "UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE id = ?",
                 c.id
             )
             .execute(&mut *tx)
@@ -443,7 +500,7 @@ async fn run_with_fetcher(
     }
     let mut workers = JoinSet::new();
     let mut claims = HashMap::new();
-    let mut retry_at: Option<Instant> = None;
+    let cooldown = Cooldown::default();
     loop {
         match finish(&db).await {
             Ok(results) => {
@@ -458,15 +515,17 @@ async fn run_with_fetcher(
                 continue;
             }
         }
-        let cooling = retry_at.is_some_and(|at| at > Instant::now());
+        let retry_at = cooldown.until();
+        let cooling = retry_at.is_some();
         if !cooling && workers.len() < CONCURRENCY {
             match queue::next(&db).await {
                 Ok(Some(c)) => {
                     let (db, net, limit, fetcher) =
                         (db.clone(), net.clone(), limit.clone(), fetcher.clone());
                     let claim = c.clone();
+                    let cooldown = cooldown.clone();
                     let task = workers.spawn(async move {
-                        let result = process(&db, &net, &fetcher, &limit, &claim).await;
+                        let result = process(&db, &net, &fetcher, &limit, &claim, &cooldown).await;
                         (claim, result)
                     });
                     claims.insert(task.id(), c);
@@ -487,8 +546,7 @@ async fn run_with_fetcher(
                     Ok((id,(c,result)))=>{claims.remove(&id);let outcome=match result{Ok(o)=>o,Err(e)=>{tracing::error!("crawl database: {e}");Outcome::Pause("抓取数据暂时无法保存，请继续或重启应用。".into(),None)}};(c,outcome)},
                     Err(e)=>{tracing::error!("crawl worker: {e}");let Some(c)=claims.remove(&e.id())else{continue};(c,Outcome::Pause("抓取意外中断，请继续或重启应用。".into(),None))}
                 };
-                let applied=loop{match save(&db,&c,&outcome).await{Ok(a)=>break a,Err(e)=>{tracing::error!("save crawl: {e}");tokio::time::sleep(RETRY).await;}}};
-                if applied && let Outcome::RateLimit(wait)=outcome{let at=Instant::now()+wait;retry_at=Some(retry_at.map_or(at,|old|old.max(at)));}
+                loop{match save(&db,&c,&outcome).await{Ok(_)=>break,Err(e)=>{tracing::error!("save crawl: {e}");tokio::time::sleep(RETRY).await;}}};
                 changed();
             },
             ()=crawler.0.notified()=>{},

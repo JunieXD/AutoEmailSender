@@ -242,6 +242,7 @@ pub async fn agree(
 #[derive(Debug)]
 pub struct Chosen {
     pub id: i64,
+    pub provider: String,
     pub model: String,
     pub agreed: bool,
     pub access: Access,
@@ -276,6 +277,7 @@ pub async fn selected<'a>(
         .map_err(|e| sqlx::Error::Decode(e.into()))?;
     Ok(Some(Chosen {
         id: row.id,
+        provider: row.provider,
         model: row.model,
         agreed: row.agreed,
         access: source.access(row.api_key),

@@ -56,7 +56,46 @@ pub struct Person {
     pub profile: Option<PageUrl>,
 }
 
-pub fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> {
+pub trait Output: serde::de::DeserializeOwned {
+    fn check(&self) -> Result<(), String>;
+}
+impl Output for Route {
+    fn check(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+impl Output for People {
+    fn check(&self) -> Result<(), String> {
+        for p in &self.people {
+            MentorForm {
+                name: p.name.clone(),
+                aliases: vec![],
+                emails: vec![],
+                affiliations: vec![],
+                homepages: vec![],
+                research: String::new(),
+            }
+            .check()?;
+        }
+        Ok(())
+    }
+}
+impl Output for Profile {
+    fn check(&self) -> Result<(), String> {
+        MentorForm {
+            name: self.name.clone(),
+            aliases: self.aliases.clone(),
+            emails: vec![],
+            affiliations: self.affiliations.clone(),
+            homepages: vec![],
+            research: self.research.clone().unwrap_or_default(),
+        }
+        .check()?;
+        Ok(())
+    }
+}
+
+pub fn parse<T: Output>(text: &str) -> Result<T, String> {
     let mut text = text.trim();
     while let Some(rest) = text.strip_prefix("<think>") {
         text = rest
@@ -69,7 +108,10 @@ pub fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, String> {
         text = rest.split_once('\n').ok_or("缺少 JSON 内容")?.1.trim_end();
         text = text.strip_suffix("```").unwrap_or(text).trim();
     }
-    serde_json::from_str(text).map_err(|_| "模型输出的字段或 JSON 格式不正确".into())
+    let output: T =
+        serde_json::from_str(text).map_err(|_| "模型输出的字段或 JSON 格式不正确".to_owned())?;
+    output.check()?;
+    Ok(output)
 }
 pub fn links(m: &Material) -> Vec<(&str, &PageUrl)> {
     let mut links = Vec::new();
@@ -111,7 +153,7 @@ fn address(m: &Material, address: &str) -> Option<String> {
         .find(|e| e.address.eq_ignore_ascii_case(address.trim()))
         .map(|e| e.address.clone())
 }
-pub fn listed(m: &Material, people: Vec<Listed>, scope: &Scope) -> Vec<Person> {
+pub fn listed(m: &Material, people: Vec<Listed>, scope: &Scope) -> Result<Vec<Person>, String> {
     let names: Vec<_> = people
         .iter()
         .map(|p| p.name.trim())
@@ -122,18 +164,16 @@ pub fn listed(m: &Material, people: Vec<Listed>, scope: &Scope) -> Vec<Person> {
     let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
     people
         .iter()
-        .filter_map(|p| {
+        .filter(|p| {
+            compact.contains(
+                &p.name
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect::<String>(),
+            )
+        })
+        .map(|p| {
             let name = p.name.trim();
-            if name.is_empty()
-                || !compact.contains(
-                    &name
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect::<String>(),
-                )
-            {
-                return None;
-            }
             let emails = p
                 .emails
                 .iter()
@@ -157,9 +197,8 @@ pub fn listed(m: &Material, people: Vec<Listed>, scope: &Scope) -> Vec<Person> {
                 homepages: profile.iter().map(|u| u.as_str().into()).collect(),
                 research: p.research.clone().unwrap_or_default(),
             }
-            .check()
-            .ok()?;
-            Some(Person {
+            .check()?;
+            Ok(Person {
                 fields,
                 papers: vec![],
                 profile,

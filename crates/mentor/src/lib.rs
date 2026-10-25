@@ -823,13 +823,21 @@ async fn save_lists(
         .execute(&mut *tx)
         .await?;
     let affiliations = Json(&mentor.affiliations);
+    let universities = Json(
+        mentor
+            .affiliations
+            .iter()
+            .map(|a| a.university.as_deref().map(supplement::comparable))
+            .collect::<Vec<_>>(),
+    );
     sqlx::query!(
-        "INSERT INTO mentor_affiliation (mentor_id, position, university, school, department, title)
+        "INSERT INTO mentor_affiliation (mentor_id, position, university, school, department, title, university_match)
          SELECT ?1, j.key, j.value ->> 'university', j.value ->> 'school',
-           j.value ->> 'department', j.value ->> 'title'
+           j.value ->> 'department', j.value ->> 'title', json_extract(?3, '$[' || j.key || ']')
          FROM json_each(?2) j",
         id,
         affiliations,
+        universities,
     )
     .execute(&mut *tx)
     .await?;

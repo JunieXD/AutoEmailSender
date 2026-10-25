@@ -121,13 +121,16 @@ pub async fn run(path: &Path) -> Result {
     .await?;
     sqlx::query(
         "WITH RECURSIVE people(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM people WHERE n<10000)
-         INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,source_url)
+         INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,source_url,match_names,match_schools)
          SELECT ?,'pending','none',CASE WHEN n%4 IN (0,3) THEN '新候选'||n ELSE m.name END,
            CASE WHEN n%4=0 THEN json_array('candidate'||n||'@example.edu.cn')
                 WHEN n%4=1 THEN (SELECT json_group_array(address) FROM mentor_email WHERE mentor_id=m.id)
                 ELSE '[]' END,
            (SELECT json_group_array(json_object('university',university,'school',school,'department',department,'title',title)) FROM mentor_affiliation WHERE mentor_id=m.id),
-           'https://school.edu.cn/faculty' FROM people JOIN mentor m ON m.id=n"
+           'https://school.edu.cn/faculty',
+           CASE WHEN n%4 IN (0,3) THEN json_array('新候选'||n) ELSE (SELECT json_group_array(name) FROM mentor_name WHERE mentor_id=m.id) END,
+           (SELECT json_group_array(university_match) FROM mentor_affiliation WHERE mentor_id=m.id AND university_match IS NOT NULL)
+           FROM people JOIN mentor m ON m.id=n"
     ).bind(crawl).execute(&db).await?;
     let candidates = crawl::review::CandidateQuery {
         crawl_id: None,
@@ -140,6 +143,24 @@ pub async fn run(path: &Path) -> Result {
         median(async || crawl::review::list(&db, &candidates).await.map(drop)).await?,
         home,
     );
+    for (label, filter) in [
+        ("新导师", crawl::review::CandidateFilter::New),
+        ("可补充", crawl::review::CandidateFilter::Supplement),
+        ("可能相同", crawl::review::CandidateFilter::Maybe),
+    ] {
+        for page in [1, 20] {
+            let query = crawl::review::CandidateQuery {
+                filter,
+                page,
+                ..candidates
+            };
+            report(
+                &format!("候选分类，{label}，第 {page} 页（1 万候选、10 万导师）"),
+                median(async || crawl::review::list(&db, &query).await.map(drop)).await?,
+                home,
+            );
+        }
+    }
     let url = crawl::PageUrl::parse("https://school.edu.cn/people/99999")?;
     report(
         "查已访问的抓取页面（10 万页，不读正文）",

@@ -3,14 +3,16 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { CandidateFilter, CandidateRow, CrawlInput, CrawlSummary, Decisions } from "@/api/types";
+import type { CandidateFilter, CandidateRow, CrawlSummary, Decisions } from "@/api/types";
 import { ModelAction, AiIcon } from "@/components/ai-writing";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { IntakeChoices, ProfileDetails } from "@/components/intake-choices";
 import { refreshMentors, placeOf } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { NativeSelect } from "@/components/ui/native-select";
+import { day, time } from "@/format";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 
 const FILTERS = {
@@ -20,7 +22,6 @@ const FILTERS = {
   maybe: "可能是同一位",
   missing_email: "缺邮箱",
 } as const;
-const CRAWL_INPUT: CrawlInput = { urls: "", expectedPages: 10, expectedMentors: 100 };
 const EMPTY: Decisions = { take: [], matches: [], restore: [] };
 const STATES: Record<string, string> = {
   running: "抓取中",
@@ -31,7 +32,6 @@ const STATES: Record<string, string> = {
   lists: "寻找名单",
   profiles: "读取个人页",
 };
-const SELECT = "h-10 max-w-full rounded-md border border-border bg-background px-3 text-sm";
 export function findSearch(s: Record<string, unknown>) {
   const filter: CandidateFilter =
     s.filter === "new" || s.filter === "supplement" || s.filter === "maybe" || s.filter === "missing_email"
@@ -47,7 +47,7 @@ export function findSearch(s: Record<string, unknown>) {
   };
 }
 export function refreshCrawls(client: ReturnType<typeof useQueryClient>) {
-  for (const key of ["listCrawls", "getCrawl", "listCandidates", "getCandidate", "previewCandidates"])
+  for (const key of ["listCrawls", "crawlWork", "getCrawl", "listCandidates", "getCandidate", "previewCandidates"])
     void client.invalidateQueries({ queryKey: [key] });
 }
 export function FindPage() {
@@ -79,16 +79,24 @@ function Crawls() {
   const s = useSearch({ from: "/find" });
   const navigate = useNavigate({ from: "/find" });
   const client = useQueryClient();
-  const { data: input = CRAWL_INPUT } = useQuery({
-    queryKey: ["crawlInput"],
+  const { data: urls = "" } = useQuery({
+    queryKey: ["crawlUrls"],
     queryFn: skipToken,
-    initialData: CRAWL_INPUT,
+    initialData: "",
     gcTime: Infinity,
   });
-  const setInput = (update: (draft: CrawlInput) => CrawlInput) =>
-    client.setQueryData<CrawlInput>(["crawlInput"], (previous) => update(previous ?? CRAWL_INPUT));
-  const [estimate, setEstimate] = useState(false);
-  const plan = useQuery({ queryKey: ["planCrawl", input], queryFn: () => call("planCrawl", input), enabled: estimate });
+  const setUrls = (value: string) => client.setQueryData(["crawlUrls"], value);
+  const validation = useQuery({
+    queryKey: ["checkCrawlUrls", urls],
+    queryFn: () => call("checkCrawlUrls", { urls }),
+    retry: false,
+  });
+  const models = useQuery({ queryKey: ["listModelConfigs"], queryFn: () => call("listModelConfigs", {}) });
+  const chosen = models.data?.find((m) => m.isDefault);
+  const cost =
+    chosen && (chosen.inputPrice !== null || chosen.outputPrice !== null)
+      ? ((chosen.inputPrice ?? 0) * 4000 + (chosen.outputPrice ?? 0) * 1000) / 1_000_000
+      : null;
   const records = useQuery({
     queryKey: ["listCrawls", s.page],
     queryFn: () => call("listCrawls", { page: s.page }),
@@ -96,14 +104,12 @@ function Crawls() {
   });
   const start = useMutation({
     mutationFn: () => {
-      const modelId = plan.data?.modelId;
-      if (modelId == null) throw new Error("请先预计用量后再开始");
-      return call("startCrawl", { urls: input.urls, modelId });
+      if (!chosen) throw new Error("请在设置中添加模型");
+      return call("startCrawl", { urls, modelId: chosen.id });
     },
     onError: () => client.invalidateQueries({ queryKey: ["listModelConfigs"] }),
     onSuccess: (r) => {
-      setEstimate(false);
-      setInput((i) => ({ ...i, urls: "" }));
+      setUrls("");
       refreshCrawls(client);
       void navigate({ search: (old) => ({ ...old, page: 1, detail: r.id }) });
     },
@@ -117,106 +123,48 @@ function Crawls() {
         <Textarea
           id="crawl-urls"
           rows={3}
-          value={input.urls}
+          value={urls}
           placeholder="每行一个网址，也可以填写一位导师的个人页"
-          onChange={(e) => {
-            setInput((i) => ({ ...i, urls: e.target.value }));
-            setEstimate(false);
-          }}
+          onChange={(e) => setUrls(e.target.value)}
+          aria-describedby="crawl-usage crawl-url-error"
+          aria-invalid={!!urls.trim() && validation.isError}
         />
-        <p className="text-sm text-muted-foreground">自动寻找名单和分类，读取个人页后进入候选审核</p>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <label className="flex items-center gap-2">
-            预计名单页
-            <Input
-              type="number"
-              min={1}
-              max={60}
-              className="w-20"
-              value={input.expectedPages}
-              onChange={(e) =>
-                setInput((i) => ({ ...i, expectedPages: Math.min(60, Math.max(1, Number(e.target.value))) }))
-              }
-            />
-          </label>
-          <label className="flex items-center gap-2">
-            预计导师
-            <Input
-              type="number"
-              min={1}
-              max={1000}
-              className="w-24"
-              value={input.expectedMentors}
-              onChange={(e) =>
-                setInput((i) => ({ ...i, expectedMentors: Math.min(1000, Math.max(1, Number(e.target.value))) }))
-              }
-            />
-          </label>
-          <Button variant="quiet" disabled={!input.urls.trim()} onClick={() => setEstimate(true)}>
-            预计用量
-          </Button>
+        <p id="crawl-usage" className="text-sm text-muted-foreground">
+          一位导师约 5000 Token{cost !== null && `，按已填单价约 ¥${cost.toFixed(3)}／位`}
+          。实际用量随人数和网页长度变化，另计寻找名单的用量。
+        </p>
+        <p className="text-xs text-muted-foreground">
+          自动寻找名单和分类，读取个人页后进入候选审核。网页标题、文字、链接文字和公开的导师资料会发给模型服务商。
+        </p>
+        <ModelAction
+          disabled={start.isPending || !validation.data || validation.isFetching}
+          modelId={chosen?.id}
+          onWrite={() => start.mutate()}
+        >
+          <AiIcon />
+          {start.isPending ? "正在开始…" : "开始抓取"}
+        </ModelAction>
+        <div id="crawl-url-error" className="text-sm text-muted-foreground">
+          {!urls.trim()
+            ? "请填写至少一个学院官网或教师名单网址"
+            : validation.error
+              ? errorMessage(validation.error)
+              : validation.isFetching
+                ? "正在检查网址…"
+                : null}
         </div>
-        {estimate && plan.data && (
-          <div className="space-y-3 border-t border-border pt-3">
-            <p className="text-sm">
-              {plan.data.model ?? "尚未添加模型"} · 预计 {plan.data.tokens.toLocaleString()} Token
-              {plan.data.cost !== null && `，约 ¥${plan.data.cost.toFixed(2)}`}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              一位导师约 5000
-              Token，另计名单页的判断；实际用量随网页长度变化。网页标题、文字、链接文字和公开的导师资料会发给模型服务商。
-            </p>
-            <ModelAction disabled={start.isPending} modelId={plan.data.modelId} onWrite={() => start.mutate()}>
-              <AiIcon />
-              {start.isPending ? "正在开始…" : "开始抓取"}
-            </ModelAction>
-          </div>
-        )}
-        <ErrorText error={plan.error ?? start.error} />
+        <ErrorText error={models.error ?? start.error} />
       </section>
+      {s.detail && <OpenedCrawl key={s.detail} id={s.detail} />}
       <h2 className="mb-3 text-lg font-medium">抓取记录</h2>
       <ErrorText error={records.error} />
       {records.data?.length === 0 && <p className="text-muted-foreground">尚无抓取记录，从上方填写网址开始</p>}
       <div className="space-y-3">
-        {records.data?.map((c) => (
-          <section key={c.id} className="rounded-lg border border-border p-4">
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                className="mr-auto min-w-0 text-left"
-                onClick={() =>
-                  void navigate({ search: (old) => ({ ...old, detail: old.detail === c.id ? undefined : c.id }) })
-                }
-              >
-                <strong className="break-all">{c.url ?? `抓取 #${c.id}`}</strong>
-                <span className="ml-3 text-sm text-muted-foreground">{STATES[c.state]}</span>
-                <span className="mt-1 block text-sm text-muted-foreground">
-                  {STATES[c.stage]} · 已处理 {c.pages} 页 · 已读 {c.profiles} 个个人页 · {c.candidates} 位候选
-                  {c.remaining > 0 && ` · 待处理 ${c.remaining} 页`}
-                </span>
-              </button>
-              <CrawlControls crawl={c} />
-              <Button
-                variant="ghost"
-                onClick={() =>
-                  void navigate({
-                    search: (old) => ({ ...old, tab: "candidates", crawl: c.id, page: 1, processed: false }),
-                  })
-                }
-              >
-                查看候选
-              </Button>
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {new Date(c.createdAt).toLocaleString()} ·{" "}
-              {c.tokens === null ? "服务商尚未报告用量" : `已用 ${c.tokens.toLocaleString()} Token`}
-            </p>
-            {c.error && <p className="mt-2 text-sm text-warning">{c.error}</p>}
-            {c.failed > 0 && (
-              <p className="mt-2 text-sm text-warning">名单可能不完整：{c.failed} 个页面未打开或需要浏览器</p>
-            )}
-            {s.detail === c.id && <CrawlDetails id={c.id} modelId={c.modelConfigId} />}
-          </section>
-        ))}
+        {records.data
+          ?.filter((c) => c.id !== s.detail)
+          .map((c) => (
+            <CrawlRecord key={c.id} crawl={c} expanded={false} />
+          ))}
       </div>
       <Pager
         page={s.page}
@@ -224,6 +172,56 @@ function Crawls() {
         onPage={(page) => void navigate({ search: (old) => ({ ...old, page }) })}
       />
     </div>
+  );
+}
+function OpenedCrawl({ id }: { id: number }) {
+  const detail = useQuery({
+    queryKey: ["getCrawl", id, 1],
+    queryFn: () => call("getCrawl", { id, page: 1 }),
+    refetchInterval: 2000,
+  });
+  return (
+    <div className="mb-6">
+      <ErrorText error={detail.error} />
+      {detail.data && <CrawlRecord crawl={detail.data.summary} expanded />}
+    </div>
+  );
+}
+function CrawlRecord({ crawl: c, expanded }: { crawl: CrawlSummary; expanded: boolean }) {
+  const navigate = useNavigate({ from: "/find" });
+  return (
+    <section className="rounded-lg border border-border p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          className="mr-auto min-h-10 min-w-0 text-left"
+          onClick={() => void navigate({ search: (s) => ({ ...s, detail: expanded ? undefined : c.id }) })}
+          aria-expanded={expanded}
+        >
+          <strong className="break-all">{c.url ?? `抓取 #${c.id}`}</strong>
+          <span className="ml-3 text-sm text-muted-foreground">{STATES[c.state]}</span>
+          <span className="mt-1 block text-sm text-muted-foreground">
+            {STATES[c.stage]} · 已处理 {c.pages} 页 · 已读 {c.profiles} 个个人页 · {c.candidates} 位候选
+            {c.remaining > 0 && ` · 待处理 ${c.remaining} 页`}
+          </span>
+        </button>
+        <CrawlControls crawl={c} />
+        <Button
+          variant="ghost"
+          onClick={() =>
+            void navigate({ search: (s) => ({ ...s, tab: "candidates", crawl: c.id, page: 1, processed: false }) })
+          }
+        >
+          查看候选
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {day(c.createdAt)} {time(c.createdAt)} ·{" "}
+        {c.tokens === null ? "服务商尚未报告用量" : `已用 ${c.tokens.toLocaleString()} Token`}
+      </p>
+      {c.error && <p className="mt-2 text-sm text-warning">{c.error}</p>}
+      {c.failed > 0 && <p className="mt-2 text-sm text-warning">名单可能不完整：{c.failed} 个页面未打开或需要浏览器</p>}
+      {expanded && <CrawlDetails id={c.id} modelId={c.modelConfigId} />}
+    </section>
   );
 }
 function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
@@ -326,7 +324,7 @@ function CrawlDetails({ id, modelId }: { id: number; modelId: number | null }) {
             <summary className="cursor-pointer text-muted-foreground">运行记录</summary>
             {detail.data.runs.map((r, n) => (
               <p key={n} className="mt-2 text-xs text-muted-foreground">
-                {new Date(r.startedAt).toLocaleString()} — {r.endedAt ? new Date(r.endedAt).toLocaleString() : "进行中"}{" "}
+                {day(r.startedAt)} {time(r.startedAt)} — {r.endedAt ? `${day(r.endedAt)} ${time(r.endedAt)}` : "进行中"}{" "}
                 · {r.appVersion}
               </p>
             ))}
@@ -343,13 +341,18 @@ function Candidates() {
   const [selected, setSelected] = useState<number[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [review, setReview] = useState<number[] | null>(null);
+  const [choices, setChoices] = useState<Record<number, Decisions>>({});
   const q = { crawlId: s.crawl ?? null, filter: s.filter, processed: s.processed, page: s.page };
   const list = useQuery({
     queryKey: ["listCandidates", q],
     queryFn: () => call("listCandidates", q),
     refetchInterval: 3000,
   });
-  const crawls = useQuery({ queryKey: ["listCrawls", 1], queryFn: () => call("listCrawls", { page: 1 }) });
+  const [crawlPage, setCrawlPage] = useState(1);
+  const crawls = useQuery({
+    queryKey: ["listCrawls", crawlPage],
+    queryFn: () => call("listCrawls", { page: crawlPage }),
+  });
   const reject = useMutation({
     mutationFn: (ids: number[]) => call("rejectCandidates", { ids }),
     onSuccess: () => {
@@ -366,9 +369,9 @@ function Candidates() {
     <>
       <div className="shrink-0 space-y-3 px-6 pb-4 phone:px-4">
         <div className="flex flex-wrap items-center gap-2">
-          <select
+          <NativeSelect
             aria-label="按抓取筛选"
-            className={SELECT}
+            className="max-w-full"
             value={s.crawl ?? ""}
             onChange={(e) => change({ crawl: Number(e.target.value) || undefined })}
           >
@@ -379,7 +382,13 @@ function Candidates() {
               </option>
             ))}
             {s.crawl && !crawls.data?.some((c) => c.id === s.crawl) && <option value={s.crawl}>抓取 #{s.crawl}</option>}
-          </select>
+          </NativeSelect>
+          <Button variant="ghost" disabled={crawlPage <= 1} onClick={() => setCrawlPage((p) => p - 1)}>
+            较新抓取
+          </Button>
+          <Button variant="ghost" disabled={crawls.data?.length !== 50} onClick={() => setCrawlPage((p) => p + 1)}>
+            更早抓取
+          </Button>
           <Button
             variant={s.processed ? "quiet" : "ghost"}
             aria-pressed={s.processed}
@@ -400,17 +409,16 @@ function Candidates() {
             </Button>
           ))}
         </div>
-        <ErrorText error={list.error ?? reject.error} />
+        <ErrorText error={list.error ?? crawls.error ?? reject.error} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-24 phone:px-4">
         {!s.processed && items.length > 0 && (
           <label className="mb-3 flex min-h-10 items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={items.every((c) => selected.includes(c.id))}
-              onChange={(e) =>
+              onCheckedChange={(checked) =>
                 setSelected(
-                  e.target.checked
+                  checked
                     ? [...new Set([...selected, ...items.map((c) => c.id)])]
                     : selected.filter((id) => !items.some((c) => c.id === id)),
                 )
@@ -429,18 +437,18 @@ function Candidates() {
             <section key={c.id} className="rounded-lg bg-muted p-4">
               <div className="flex flex-wrap items-start gap-3">
                 {!s.processed && (
-                  <input
-                    type="checkbox"
-                    className="mt-1.5"
-                    aria-label={`选择${c.name}`}
-                    checked={selected.includes(c.id)}
-                    onChange={(e) =>
-                      setSelected((ids) => (e.target.checked ? [...ids, c.id] : ids.filter((id) => id !== c.id)))
-                    }
-                  />
+                  <label className="flex min-h-10 min-w-10 cursor-pointer items-center justify-center">
+                    <Checkbox
+                      aria-label={`选择${c.name}`}
+                      checked={selected.includes(c.id)}
+                      onCheckedChange={(checked) =>
+                        setSelected((ids) => (checked ? [...ids, c.id] : ids.filter((id) => id !== c.id)))
+                      }
+                    />
+                  </label>
                 )}
                 <button
-                  className="min-w-0 flex-1 text-left"
+                  className="min-h-10 min-w-0 flex-1 text-left"
                   onClick={() => setExpanded(expanded === c.id ? null : c.id)}
                   aria-expanded={expanded === c.id}
                 >
@@ -459,7 +467,7 @@ function Candidates() {
                   )}
                 </button>
                 {!s.processed && (
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 phone:w-full phone:justify-end">
                     <Button size="sm" disabled={!!c.issue} onClick={() => setReview([c.id])}>
                       {c.category === "supplement" ? "补充" : "接受"}
                     </Button>
@@ -476,7 +484,18 @@ function Candidates() {
               </div>
               {c.sourceUrl && <SourceLink url={c.sourceUrl} />}
               {c.issue && <p className="mt-2 text-sm text-warning">{c.issue}</p>}
-              {expanded === c.id && <CandidateDetails candidate={c} />}
+              {expanded === c.id && (
+                <CandidateDetails
+                  candidate={c}
+                  decisions={choices[c.id] ?? EMPTY}
+                  onChange={(next) =>
+                    setChoices((previous) => ({
+                      ...previous,
+                      [c.id]: typeof next === "function" ? next(previous[c.id] ?? EMPTY) : next,
+                    }))
+                  }
+                />
+              )}
             </section>
           ))}
         </div>
@@ -499,6 +518,7 @@ function Candidates() {
       {review && (
         <ReviewDialog
           ids={review}
+          initialDecisions={review.length === 1 && review[0] !== undefined ? (choices[review[0]] ?? EMPTY) : EMPTY}
           onClose={() => setReview(null)}
           onDone={() => {
             setSelected([]);
@@ -511,11 +531,25 @@ function Candidates() {
     </>
   );
 }
-function CandidateDetails({ candidate: c }: { candidate: CandidateRow }) {
+function CandidateDetails({
+  candidate: c,
+  decisions,
+  onChange,
+}: {
+  candidate: CandidateRow;
+  decisions: Decisions;
+  onChange: (next: Decisions | ((previous: Decisions) => Decisions)) => void;
+}) {
   const detail = useQuery({ queryKey: ["getCandidate", c.id], queryFn: () => call("getCandidate", { id: c.id }) });
+  const preview = useQuery({
+    queryKey: ["previewCandidates", [c.id], decisions],
+    queryFn: () => call("previewCandidates", { ids: [c.id], decisions }),
+    enabled: c.review === "pending",
+  });
   return (
     <div className="mt-4 space-y-3 border-t border-border pt-3 text-sm">
-      <ErrorText error={detail.error} />
+      <ErrorText error={detail.error ?? preview.error} />
+      {preview.data && <IntakeChoices preview={preview.data} decisions={decisions} onChange={onChange} source="候选" />}
       {detail.data && (
         <>
           <ProfileDetails profile={detail.data.fields} />
@@ -551,8 +585,18 @@ function CandidateDetails({ candidate: c }: { candidate: CandidateRow }) {
     </div>
   );
 }
-function ReviewDialog({ ids, onClose, onDone }: { ids: number[]; onClose: () => void; onDone: () => void }) {
-  const [decisions, setDecisions] = useState<Decisions>(EMPTY);
+function ReviewDialog({
+  ids,
+  initialDecisions,
+  onClose,
+  onDone,
+}: {
+  ids: number[];
+  initialDecisions: Decisions;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [decisions, setDecisions] = useState<Decisions>(initialDecisions);
   const preview = useQuery({
     queryKey: ["previewCandidates", ids, decisions],
     queryFn: () => call("previewCandidates", { ids, decisions }),

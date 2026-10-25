@@ -133,7 +133,8 @@ macro_rules! operations {
 }
 
 operations! {
-    "planCrawl" => plan_crawl(crawl::queue::CrawlInput) -> crawl::queue::CrawlEstimate;
+    "checkCrawlUrls" => check_crawl_urls(CrawlUrls) -> Vec<String>;
+    "crawlWork" => crawl_work(CrawlWorkQuery) -> Vec<crawl::queue::CrawlSummary>;
     "startCrawl" => start_crawl(CrawlStart) -> CrawlId;
     "listCrawls" => list_crawls(CrawlQuery) -> Vec<crawl::queue::CrawlSummary>;
     "getCrawl" => get_crawl(CrawlDetailQuery) -> crawl::queue::CrawlDetail;

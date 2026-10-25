@@ -1,9 +1,11 @@
 //! Shared identity matching, non-destructive supplementation, and transactional application.
 use crate::export::{Profile, profiles};
 use crate::import::{
-    Decisions, Difference, Field, ImportCandidate, Imported, MaybeSame, Preview, RowError, Trashed,
+    AddedFields, Addition, AffiliationAddition, Decisions, Difference, Field, ImportCandidate,
+    Imported, MaybeSame, Preview, RowError, Trashed,
 };
-use crate::supplement::{add_missing, append, comparable, same};
+pub use crate::supplement::comparable;
+use crate::supplement::{add_missing, append, same};
 use crate::{SaveError, create, trash, update};
 use sqlx::{SqliteConnection, types::Json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -11,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub struct Row {
     pub number: u32,
     /// A prior user-approved association, never supplied by an external extractor.
-    pub target: Option<i64>,
+    pub targets: Vec<i64>,
     pub profile: Profile,
 }
 pub struct Change {
@@ -51,7 +53,7 @@ async fn candidates(conn: &mut SqliteConnection, rows: &[Row]) -> Result<Candida
         .flat_map(|r| std::iter::once(&r.profile.fields.name).chain(&r.profile.fields.aliases))
         .map(|name| comparable(name))
         .collect();
-    ids.extend(rows.iter().filter_map(|r| r.target));
+    ids.extend(rows.iter().flat_map(|r| r.targets.iter().copied()));
     let mut by_name = HashMap::<String, Vec<i64>>::new();
     if !names.is_empty() {
         let names = Json(names);
@@ -185,6 +187,79 @@ fn supplement(original: &Profile, incoming: &Profile, row: u32) -> (Profile, Vec
     (after, differences)
 }
 
+fn additions(original: &Profile, after: &Profile, rows: &[Row]) -> Addition {
+    let added = |before: &[String], after: &[String]| {
+        after
+            .iter()
+            .filter(|s| !before.contains(s))
+            .cloned()
+            .collect()
+    };
+    let affiliations = after
+        .fields
+        .affiliations
+        .iter()
+        .enumerate()
+        .filter_map(|(n, a)| {
+            let Some(before) = original.fields.affiliations.get(n) else {
+                return Some(AffiliationAddition {
+                    before: None,
+                    added: a.clone(),
+                });
+            };
+            let delta = crate::Affiliation {
+                university: before
+                    .university
+                    .is_none()
+                    .then(|| a.university.clone())
+                    .flatten(),
+                school: before.school.is_none().then(|| a.school.clone()).flatten(),
+                department: before
+                    .department
+                    .is_none()
+                    .then(|| a.department.clone())
+                    .flatten(),
+                title: before.title.is_none().then(|| a.title.clone()).flatten(),
+            };
+            (delta != crate::Affiliation::default()).then(|| AffiliationAddition {
+                before: Some(before.clone()),
+                added: delta,
+            })
+        })
+        .collect();
+    Addition {
+        rows: rows.iter().map(|r| r.number).collect(),
+        target: ImportCandidate {
+            id: original.id,
+            profile: original.into(),
+        },
+        fields: AddedFields {
+            emails: added(&original.fields.emails, &after.fields.emails),
+            aliases: added(&original.fields.aliases, &after.fields.aliases),
+            homepages: added(&original.fields.homepages, &after.fields.homepages),
+            affiliations,
+            research: original
+                .fields
+                .research
+                .is_none()
+                .then(|| after.fields.research.clone())
+                .flatten(),
+        },
+        papers: added(&original.papers, &after.papers),
+        tags: added(&original.tags, &after.tags),
+        source_url: original
+            .source_url
+            .is_none()
+            .then(|| after.source_url.clone())
+            .flatten(),
+        note: original
+            .note
+            .is_none()
+            .then(|| after.note.clone())
+            .flatten(),
+    }
+}
+
 pub async fn calculate(
     conn: &mut SqliteConnection,
     rows: Vec<Row>,
@@ -242,7 +317,7 @@ pub async fn calculate(
             .iter()
             .flat_map(|r| &r.profile.fields.emails)
             .filter_map(|e| emails.get(&e.to_lowercase()).copied())
-            .chain(rows.iter().filter_map(|r| r.target))
+            .chain(rows.iter().flat_map(|r| r.targets.iter().copied()))
             .collect();
         if owners.len() > 1 {
             let names = owners
@@ -362,6 +437,7 @@ pub async fn calculate(
         };
         let (mut after, differences) = supplement(original, &incoming, first.number);
         let supplemented = &after != original;
+        preview.additions.push(additions(original, &after, &rows));
         for d in &differences {
             if !decisions.take.iter().any(|choice| {
                 choice.id == d.id

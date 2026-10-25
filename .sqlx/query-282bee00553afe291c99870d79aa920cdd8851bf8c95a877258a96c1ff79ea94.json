@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO candidate (crawl_id,list_page_id,profile_page_id,profile_url,review,enrich,name,aliases,emails,affiliations,homepages,research,papers,source_url,evidence,profile_fields,match_names,match_schools) VALUES (?,?,?,?,'pending','none',?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "282bee00553afe291c99870d79aa920cdd8851bf8c95a877258a96c1ff79ea94"
+}

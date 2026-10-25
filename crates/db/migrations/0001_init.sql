@@ -151,6 +151,7 @@ CREATE TABLE mentor_affiliation (
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   position INTEGER NOT NULL,
   university TEXT CHECK (university <> ''),
+  university_match TEXT,
   school TEXT CHECK (school <> ''),
   department TEXT CHECK (department <> ''),
   title TEXT CHECK (title <> ''),
@@ -428,6 +429,9 @@ CREATE TABLE candidate (
   list_page_id INTEGER REFERENCES crawl_page(id) ON DELETE SET NULL,
   profile_page_id INTEGER REFERENCES crawl_page(id) ON DELETE SET NULL,
   profile_url TEXT,
+  profile_fields TEXT CHECK (profile_fields IS NULL OR json_valid(profile_fields)),
+  match_names TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(match_names)),
+  match_schools TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(match_schools)),
   evidence TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence)),
   review TEXT NOT NULL CHECK (review IN ('pending', 'accepted', 'rejected', 'merged')),
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
@@ -457,6 +461,14 @@ CREATE INDEX candidate_crawl ON candidate (crawl_id, review);
 CREATE INDEX candidate_list_page ON candidate (list_page_id) WHERE list_page_id IS NOT NULL;
 CREATE INDEX candidate_profile_page ON candidate (profile_page_id) WHERE profile_page_id IS NOT NULL;
 CREATE INDEX candidate_mentor ON candidate (mentor_id) WHERE mentor_id IS NOT NULL;
+
+CREATE TABLE candidate_profile (
+  candidate_id INTEGER NOT NULL REFERENCES candidate(id) ON DELETE CASCADE,
+  crawl_id INTEGER REFERENCES crawl(id) ON DELETE SET NULL,
+  url TEXT NOT NULL,
+  PRIMARY KEY (candidate_id, url)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX candidate_profile_url ON candidate_profile (crawl_id, url);
 
 CREATE TRIGGER crawl_delete_candidates BEFORE DELETE ON crawl BEGIN
   DELETE FROM candidate WHERE crawl_id = old.id AND review = 'pending' AND mentor_id IS NULL;
