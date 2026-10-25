@@ -104,11 +104,17 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     let at = now();
     email::schedule::rollover(db, at, zone, random).await?;
     let due = sqlx::query!(
-        r#"SELECT e.id, CASE WHEN e.kind IN ('reply','follow_up') THEN coalesce(m.mailbox_id,
-             (SELECT p.mailbox_id FROM email p WHERE p.mentor_id=e.mentor_id AND (p.message_id=e.reply_to OR p.copy_message_id=e.reply_to)),
-             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id=r.id
-              WHERE mm.mentor_id=e.mentor_id AND r.message_id=e.reply_to AND r.kind=CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
-             ELSE m.mailbox_id END AS own, e.kind IN ('reply','follow_up') AS "reply!: bool"
+        r#"SELECT e.id,
+             CASE WHEN e.kind IN ('reply', 'follow_up') THEN coalesce(m.mailbox_id,
+               (SELECT p.mailbox_id FROM email p
+                WHERE p.mentor_id = e.mentor_id
+                  AND (p.message_id = e.reply_to OR p.copy_message_id = e.reply_to)),
+               (SELECT r.mailbox_id FROM message r
+                JOIN message_mentor mm ON mm.message_id = r.id
+                WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to
+                  AND r.kind = CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
+             ELSE m.mailbox_id END AS own,
+             e.kind IN ('reply', 'follow_up') AS "reply!: bool"
            FROM email e
            JOIN mentor m ON m.id = e.mentor_id
            WHERE e.state = 'approved'
@@ -148,22 +154,22 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     let rotation = profile::rotation(db).await?;
     let mailboxes = usage_on(&mut *db.acquire().await?, at).await?;
     for e in due {
-        if e.reply && e.own.is_none() {
-            email::failed(
-                &mut *db.acquire().await?,
-                e.id,
-                "没有能发信的邮箱，去设置里添加或在导师资料里指定负责邮箱后重试。",
-                at,
-            )
-            .await?;
-            return Ok(Next::Now);
-        }
-        match choose(rotation, e.own, &mailboxes, at) {
+        match choose(rotation, e.own, e.reply, &mailboxes, at) {
             Some((mailbox, ready)) if ready <= at => {
                 send(db, net, materials, e.id, mailbox, &now).await?;
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
+            None if e.reply => {
+                email::failed(
+                    &mut *db.acquire().await?,
+                    e.id,
+                    "没有能发信的邮箱，去设置里添加或在导师资料里指定负责邮箱后重试。",
+                    at,
+                )
+                .await?;
+                return Ok(Next::Now);
+            }
             // Waits for a mailbox to be added.
             None => {}
         }
@@ -230,11 +236,13 @@ async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usa
 fn choose(
     rotation: Rotation,
     own: Option<i64>,
+    reply: bool,
     mailboxes: &[Usage],
     now: i64,
 ) -> Option<(i64, i64)> {
     let chosen = match own {
         Some(id) => mailboxes.iter().find(|m| m.id == id),
+        None if reply => None,
         None => {
             // Ties go to the mailbox that has gone longest without sending, then to rotation order.
             let soonest = mailboxes.iter().min_by_key(|m| (m.ready_at(now), m.last));
@@ -535,11 +543,14 @@ mod tests {
     fn failover_keeps_to_the_first_open_mailbox() {
         let waiting = [mailbox(1, 1, Some(NOW - 1000)), mailbox(2, 0, None)];
         assert_eq!(
-            choose(Rotation::Failover, None, &waiting, NOW),
+            choose(Rotation::Failover, None, false, &waiting, NOW),
             Some((1, NOW - 1000 + MINUTE))
         );
         let full = [mailbox(1, 2, Some(NOW - 1000)), mailbox(2, 0, None)];
-        assert_eq!(choose(Rotation::Failover, None, &full, NOW), Some((2, NOW)));
+        assert_eq!(
+            choose(Rotation::Failover, None, false, &full, NOW),
+            Some((2, NOW))
+        );
         let paused = [
             Usage {
                 paused_until: Some(NOW + MINUTE),
@@ -548,7 +559,7 @@ mod tests {
             mailbox(2, 0, None),
         ];
         assert_eq!(
-            choose(Rotation::Failover, None, &paused, NOW),
+            choose(Rotation::Failover, None, false, &paused, NOW),
             Some((2, NOW))
         );
         let all_full = [
@@ -562,7 +573,7 @@ mod tests {
             },
         ];
         assert_eq!(
-            choose(Rotation::Failover, None, &all_full, NOW),
+            choose(Rotation::Failover, None, false, &all_full, NOW),
             Some((2, NOW - 9 * MINUTE + DAY))
         );
     }
@@ -571,20 +582,23 @@ mod tests {
     fn per_email_takes_the_mailbox_that_has_waited_longest() {
         let unused = [mailbox(1, 1, Some(NOW - 2 * MINUTE)), mailbox(2, 0, None)];
         assert_eq!(
-            choose(Rotation::PerEmail, None, &unused, NOW),
+            choose(Rotation::PerEmail, None, false, &unused, NOW),
             Some((2, NOW))
         );
         let used = [
             mailbox(1, 1, Some(NOW - 2 * MINUTE)),
             mailbox(2, 1, Some(NOW - 3 * MINUTE)),
         ];
-        assert_eq!(choose(Rotation::PerEmail, None, &used, NOW), Some((2, NOW)));
+        assert_eq!(
+            choose(Rotation::PerEmail, None, false, &used, NOW),
+            Some((2, NOW))
+        );
         let busy = [
             mailbox(1, 1, Some(NOW - 1000)),
             mailbox(2, 1, Some(NOW - 2000)),
         ];
         assert_eq!(
-            choose(Rotation::PerEmail, None, &busy, NOW),
+            choose(Rotation::PerEmail, None, false, &busy, NOW),
             Some((2, NOW - 2000 + MINUTE))
         );
     }
@@ -594,10 +608,10 @@ mod tests {
         let mailboxes = [mailbox(1, 2, Some(NOW - 1000)), mailbox(2, 0, None)];
         for rotation in [Rotation::Failover, Rotation::PerEmail] {
             assert_eq!(
-                choose(rotation, Some(1), &mailboxes, NOW),
+                choose(rotation, Some(1), false, &mailboxes, NOW),
                 Some((1, NOW - 1000 + DAY))
             );
         }
-        assert_eq!(choose(Rotation::Failover, None, &[], NOW), None);
+        assert_eq!(choose(Rotation::Failover, None, false, &[], NOW), None);
     }
 }

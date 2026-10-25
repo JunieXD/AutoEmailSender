@@ -147,11 +147,17 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
     let rows = sqlx::query!(
         r#"SELECT e.id, e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state
              AS "state: DraftState", e.planned_at, e.latest_at, e.sent_at, e.from_address,
-             e.error, e.cancel_reason, e.resend_of, t.state AS task_state, t.generation_paused_at, CASE WHEN e.kind IN ('reply','follow_up') THEN coalesce(m.mailbox_id,
-             (SELECT p.mailbox_id FROM email p WHERE p.mentor_id=e.mentor_id AND (p.message_id=e.reply_to OR p.copy_message_id=e.reply_to)),
-             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id=r.id
-              WHERE mm.mentor_id=e.mentor_id AND r.message_id=e.reply_to AND r.kind=CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
-             ELSE m.mailbox_id END AS own
+             e.error, e.cancel_reason, e.resend_of, t.state AS task_state, t.generation_paused_at,
+             CASE WHEN e.kind IN ('reply', 'follow_up') THEN coalesce(m.mailbox_id,
+               (SELECT p.mailbox_id FROM email p
+                WHERE p.mentor_id = e.mentor_id
+                  AND (p.message_id = e.reply_to OR p.copy_message_id = e.reply_to)),
+               (SELECT r.mailbox_id FROM message r
+                JOIN message_mentor mm ON mm.message_id = r.id
+                WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to
+                  AND r.kind = CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
+             ELSE m.mailbox_id END AS own,
+             e.kind IN ('reply', 'follow_up') AS "reply!: bool"
            FROM json_each(?1) j
            JOIN email e ON e.id = j.value
            JOIN mentor m ON m.id = e.mentor_id
@@ -180,7 +186,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
             } else if r.planned_at.is_some_and(|t| t > now) {
                 Some(Waiting::Time)
             } else {
-                Some(match choose(rotation, r.own, &mailboxes, now) {
+                Some(match choose(rotation, r.own, r.reply, &mailboxes, now) {
                     None => Waiting::NoMailbox,
                     Some((id, at)) if at > now => {
                         if mailboxes

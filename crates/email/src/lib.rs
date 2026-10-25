@@ -192,6 +192,7 @@ pub enum Approved {
     MaterialGone,
     ReplyGone,
     ReplyChanged,
+    FollowUpReplied,
     NoAddress,
     TimePassed,
 }
@@ -526,10 +527,13 @@ pub async fn cancel(
              generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ?2
            WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4))
                OR mentor_id IN (SELECT value FROM json_each(?5))
-               OR (mentor_id=?6 AND kind='follow_up' AND (?7 IS NULL OR reply_to=?7
-                 OR EXISTS (SELECT 1 FROM email parent
-                   WHERE parent.mentor_id=email.mentor_id AND (parent.message_id=?7 OR parent.copy_message_id=?7)
-                     AND (parent.message_id=email.reply_to OR parent.copy_message_id=email.reply_to)))))
+               OR (mentor_id = ?6 AND kind = 'follow_up'
+                 AND (?7 IS NULL OR reply_to = ?7
+                   OR EXISTS (SELECT 1 FROM email parent
+                     WHERE parent.mentor_id = email.mentor_id
+                       AND (parent.message_id = ?7 OR parent.copy_message_id = ?7)
+                       AND (parent.message_id = email.reply_to
+                         OR parent.copy_message_id = email.reply_to)))))
              AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending',
                'maybe_sent', 'failed')"#,
         reason,
@@ -550,6 +554,28 @@ pub async fn cancel(
 /// again already, or the mentor is in the trash.
 pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx::Error> {
     let mut tx = db.begin().await?;
+    // Serialize eligibility with receiving a reply and canceling pending follow-ups.
+    let source = sqlx::query!(
+        "UPDATE email SET updated_at = updated_at WHERE id = ? AND state = 'bounced'
+         RETURNING mentor_id, kind",
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(source) = source else {
+        return Ok(Approved::Refused);
+    };
+    if source.kind == "follow_up"
+        && sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM mentor_contact
+               WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS "replied!: bool""#,
+            source.mentor_id
+        )
+        .fetch_one(&mut *tx)
+        .await?
+    {
+        return Ok(Approved::FollowUpReplied);
+    }
     let Some(again) = sqlx::query_scalar!(
         "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,
            created_at, updated_at, subject, body_md, html, text, refs)
@@ -557,8 +583,10 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
            e.subject, e.body_md, e.html, e.text, e.refs
          FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL
-           AND (e.kind = 'reply' OR NOT EXISTS (SELECT 1 FROM email pending WHERE pending.mentor_id=e.mentor_id
-             AND pending.kind IN ('first','follow_up') AND pending.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')))
+           AND (e.kind = 'reply' OR NOT EXISTS (SELECT 1 FROM email pending
+             WHERE pending.mentor_id = e.mentor_id AND pending.kind IN ('first', 'follow_up')
+               AND pending.state IN ('generating', 'generation_failed', 'review', 'approved',
+                 'cloud', 'sending', 'maybe_sent', 'failed')))
          ON CONFLICT (resend_of) DO NOTHING
          RETURNING id AS \"id!\"",
         id,

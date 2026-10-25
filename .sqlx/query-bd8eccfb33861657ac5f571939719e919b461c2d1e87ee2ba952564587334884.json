@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM mentor_contact\n               WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS \"replied!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "replied!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bd8eccfb33861657ac5f571939719e919b461c2d1e87ee2ba952564587334884"
+}

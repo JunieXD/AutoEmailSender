@@ -342,7 +342,16 @@ pub struct TaskDraft {
     pub cancel_reason: Option<String>,
     pub planned_at: Option<i64>,
     pub latest_at: Option<i64>,
-    pub previous: Option<email::thread::ThreadMessage>,
+    pub previous: Option<PreviousPreview>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousPreview {
+    pub subject: Option<String>,
+    pub sent_at: i64,
+    pub attribution: String,
+    pub body_text: Option<String>,
 }
 pub async fn draft(
     db: &SqlitePool,
@@ -364,12 +373,23 @@ pub async fn draft(
     else {
         return Ok(None);
     };
+    let previous = if r.kind == Kind::FollowUp {
+        email::thread::previous(&mut tx, r.mentor_id, r.reply_to.as_deref(), true)
+            .await?
+            .map(|p| {
+                Ok::<_, sqlx::Error>(PreviousPreview {
+                    attribution: p.attribution(&chrono::Local)?,
+                    subject: p.subject,
+                    sent_at: p.sent_at,
+                    body_text: p.body_text,
+                })
+            })
+            .transpose()?
+    } else {
+        None
+    };
     Ok(Some(TaskDraft {
-        previous: if r.kind == Kind::FollowUp {
-            email::thread::previous(&mut tx, r.mentor_id, r.reply_to.as_deref(), true).await?
-        } else {
-            None
-        },
+        previous,
         id: r.id,
         mentor_id: r.mentor_id,
         subject: r.subject,
@@ -595,7 +615,9 @@ where
             )
             .await?
             .ok_or_else(|| Error::Invalid("上一封已不在往来里，请移出任务后重新创建。".into()))?;
-            email::thread::freeze(&mut tx, r.id, &parent, &r.html, &r.text, zone).await?
+            let frozen =
+                email::thread::freeze(&mut tx, r.id, &parent, &r.html, &r.text, zone).await?;
+            (frozen.html, frozen.text)
         } else {
             (r.html.clone(), r.text.clone())
         };

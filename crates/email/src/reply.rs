@@ -3,7 +3,7 @@ use serde::Serialize;
 use sqlx::{SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
-use super::{Approval, Approved, attach, attached, snapshot};
+use super::{Approval, Approved, attach, attached, snapshot, thread};
 
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +171,7 @@ pub async fn approve_reply(
     }
     let row = sqlx::query!(
         r#"SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,
+             m.message_id,
              (SELECT address FROM mentor_email WHERE mentor_id = t.id ORDER BY position LIMIT 1) AS address
            FROM mentor t JOIN message_mentor mm ON mm.mentor_id = t.id
            JOIN message m ON m.id = mm.message_id
@@ -186,30 +187,35 @@ pub async fn approve_reply(
     if row.address.is_none() {
         return Ok(Approved::NoAddress);
     }
-    let subject = reply_subject(row.subject.as_deref().unwrap_or_default());
-    let at = DateTime::from_timestamp_millis(row.sent_at)
-        .ok_or_else(|| sqlx::Error::Decode("invalid message timestamp".into()))?;
-    let (html, text) = quote(
+    let parent = thread::ThreadMessage {
+        message_id: row.message_id,
+        from_name: row.from_name,
+        from_address: row.from_address,
+        subject: row.subject,
+        sent_at: row.sent_at,
+        body_text: row.body_text,
+        refs: row.refs,
+        bounced: false,
+        uncertain: false,
+    };
+    let content = thread::freeze(
+        &mut tx,
+        draft_id,
+        &parent,
         approval.html,
         approval.text,
-        &at.with_timezone(&Local),
-        row.from_name.as_deref(),
-        &row.from_address,
-        row.body_text.as_deref().unwrap_or_default(),
-    );
+        &Local,
+    )
+    .await?;
     let frozen = Approval {
-        subject: &subject,
-        html: &html,
-        text: &text,
+        subject: &content.subject,
+        html: &content.html,
+        text: &content.text,
         ..*approval
     };
     if !snapshot(&mut tx, draft_id, &frozen, now).await? {
         return Ok(Approved::MaterialGone);
     }
-    let refs = references(row.refs.as_deref(), reply_to);
-    sqlx::query!("UPDATE email SET refs = ? WHERE id = ?", refs, draft_id,)
-        .execute(&mut *tx)
-        .await?;
     tx.commit().await?;
     Ok(Approved::Yes)
 }
@@ -226,6 +232,18 @@ pub fn reply_subject(subject: &str) -> String {
     }
 }
 
+pub(super) fn attribution<T: TimeZone>(
+    at: &DateTime<T>,
+    name: Option<&str>,
+    address: &str,
+) -> String
+where
+    T::Offset: std::fmt::Display,
+{
+    let sender = name.map_or_else(|| address.to_owned(), |n| format!("{n} <{address}>"));
+    format!("在 {}，{sender} 写道：", at.format("%Y年%-m月%-d日 %H:%M"))
+}
+
 pub(super) fn quote<T: TimeZone>(
     html: &str,
     text: &str,
@@ -237,8 +255,7 @@ pub(super) fn quote<T: TimeZone>(
 where
     T::Offset: std::fmt::Display,
 {
-    let sender = name.map_or_else(|| address.to_owned(), |n| format!("{n} <{address}>"));
-    let attribution = format!("在 {}，{sender} 写道：", at.format("%Y年%-m月%-d日 %H:%M"));
+    let attribution = attribution(at, name, address);
     let quoted = body
         .replace("\r\n", "\n")
         .split('\n')

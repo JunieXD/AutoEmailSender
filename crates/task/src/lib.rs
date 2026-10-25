@@ -81,15 +81,26 @@ async fn candidates(
     ids: &[i64],
     kind: Kind,
 ) -> std::result::Result<Vec<Candidate>, sqlx::Error> {
-    let rows = sqlx::query!(r#"SELECT m.id, m.name,
-        CASE WHEN m.trashed_at IS NOT NULL THEN '导师在回收站里'
-          WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id) THEN '导师尚未填写邮箱'
-          WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id AND kind IN ('first','follow_up') AND state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')) THEN '还有一封没发出的首封或追问'
-          ELSE NULL END AS "reason: String",
-        coalesce(c.contact_count, 0) AS "contact_count!: i64", c.last_out_at AS last_contact_at,
-        c.last_reply_at
-        FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-        WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.name, m.id"#, Json(ids)).fetch_all(&mut *conn).await?;
+    let rows = sqlx::query!(
+        r#"SELECT m.id, m.name,
+             CASE WHEN m.trashed_at IS NOT NULL THEN '导师在回收站里'
+               WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id)
+                 THEN '导师尚未填写邮箱'
+               WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
+                 AND kind IN ('first', 'follow_up')
+                 AND state IN ('generating', 'generation_failed', 'review', 'approved',
+                   'cloud', 'sending', 'maybe_sent', 'failed'))
+                 THEN '还有一封没发出的首封或追问'
+               ELSE NULL END AS "reason: String",
+             coalesce(c.contact_count, 0) AS "contact_count!: i64",
+             c.last_out_at AS last_contact_at, c.last_reply_at
+           FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+           WHERE m.id IN (SELECT value FROM json_each(?))
+           ORDER BY m.name, m.id"#,
+        Json(ids)
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     let mut candidates = Vec::new();
     for row in rows {
         let previous = if kind == Kind::FollowUp {
@@ -109,7 +120,7 @@ async fn candidates(
                     previous
                         .as_ref()
                         .is_none_or(|p| p.message_id.is_none())
-                        .then(|| "没有可追问的已发邮件（需要 Message-ID）".into())
+                        .then(|| "上一封缺少邮件编号，无法在原线程追问".into())
                 })
             }
         } else {
@@ -142,12 +153,24 @@ pub async fn history(
     conn: &mut SqliteConnection,
     mentor: i64,
 ) -> std::result::Result<Vec<writing::Letter>, sqlx::Error> {
-    sqlx::query_as!(writing::Letter, r#"SELECT coalesce(subject,'') AS "subject!: String", coalesce(body,'') AS "body_md!: String" FROM (
-        SELECT subject,substr(text,1,10000) AS body,sent_at,id,1 AS source FROM email
-          WHERE mentor_id=?1 AND kind IN ('first','follow_up') AND state IN ('sent','bounced')
-        UNION ALL SELECT m.subject,substr(m.body_text,1,10000),m.sent_at,m.id,0 FROM message m JOIN message_mentor mm ON mm.message_id=m.id
-          WHERE mm.mentor_id=?1 AND m.kind='sent'
-    ) ORDER BY sent_at DESC,source DESC,id DESC LIMIT 20"#, mentor).fetch_all(conn).await
+    sqlx::query_as!(
+        writing::Letter,
+        r#"SELECT coalesce(subject, '') AS "subject!: String",
+             coalesce(body, '') AS "body_md!: String"
+           FROM (
+             SELECT subject, substr(text, 1, 10000) AS body, sent_at, id, 1 AS source
+             FROM email
+             WHERE mentor_id = ?1 AND kind IN ('first', 'follow_up')
+               AND state IN ('sent', 'bounced')
+             UNION ALL
+             SELECT m.subject, substr(m.body_text, 1, 10000), m.sent_at, m.id, 0
+             FROM message m JOIN message_mentor mm ON mm.message_id = m.id
+             WHERE mm.mentor_id = ?1 AND m.kind = 'sent'
+           ) ORDER BY sent_at DESC, source DESC, id DESC LIMIT 20"#,
+        mentor
+    )
+    .fetch_all(conn)
+    .await
 }
 
 pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {

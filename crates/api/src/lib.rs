@@ -1330,6 +1330,9 @@ fn approved(
             "所选时间已过，请选择未来的日期和时间。".into(),
         )),
         email::Approved::Refused => Err(CallError::not_found(refused)),
+        email::Approved::FollowUpReplied => {
+            Err(CallError::invalid("导师已回信，请到往来里回复".into()))
+        }
         email::Approved::MaterialGone => Err(CallError::invalid(material_gone.into())),
         email::Approved::ReplyGone => Err(CallError::not_found(
             "回的那封信已不在这位导师的往来里。请选择另一封回信后再发送。",

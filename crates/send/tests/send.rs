@@ -424,7 +424,7 @@ async fn attachments_are_read_from_their_files_as_the_email_goes(db: SqlitePool)
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_bounced_email_goes_again_once_as_another_letter(db: SqlitePool) {
+async fn a_bounced_first_email_can_resend_once_even_after_a_reply(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let dir = tempfile::tempdir().unwrap();
     let resume = material(&db, dir.path(), "简历.pdf", b"%PDF-1.7").await;
@@ -442,6 +442,23 @@ async fn a_bounced_email_goes_again_once_as_another_letter(db: SqlitePool) {
         ..MentorFields::default()
     };
     assert!(mentor::update(&db, wang, &fields, T).await.unwrap());
+
+    let reply = sqlx::query(
+        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id,
+           sent_at, from_address, truncated)
+         VALUES (1, 'INBOX', 1, 1, 'reply', '<reply@example.com>', ?, 'wangwei@gmail.com', 0)",
+    )
+    .bind(T)
+    .execute(&db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, ?)")
+        .bind(wang)
+        .bind(reply)
+        .execute(&db)
+        .await
+        .unwrap();
 
     // A second click sends nothing more.
     for outcome in [email::Approved::Yes, email::Approved::Refused] {
@@ -566,6 +583,21 @@ async fn a_reply_never_rotates_to_an_unrelated_mailbox_after_its_sender_is_delet
         .await
         .unwrap();
     let (replacement_net, other_inbox) = mailbox(&db, SECRET).await;
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::NoMailbox)
+    ));
     assert_eq!(
         send::step(&db, &net, nowhere(), || T).await.unwrap(),
         Next::Now

@@ -8,7 +8,7 @@ export type Affiliation = { university: string | null, school: string | null, de
 
 export type AffiliationAddition = { before: Affiliation | null, added: Affiliation, };
 
-export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: ThreadMessage | null, };
+export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
 
@@ -423,6 +423,8 @@ export type PreviewImport = { decisions?: Decisions, fileName: string, data: str
 
 export type PreviousLetter = { subject: string | null, sentAt: number, };
 
+export type PreviousPreview = { subject: string | null, sentAt: number, attribution: string, bodyText: string | null, };
+
 export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "no_mail_server", domain: string, };
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
@@ -514,7 +516,7 @@ export type TagName = { id: number, name: string, };
 
 export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
 
-export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: ThreadMessage | null, };
+export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type TaskEmail = { taskId: number, id: number, };
 
@@ -549,8 +551,6 @@ export type TemplateSummary = { id: number, name: string, subject: string,
  * The one a first email starts from.
  */
 isDefault: boolean, };
-
-export type ThreadMessage = { messageId: string | null, subject: string | null, sentAt: number, fromAddress: string, fromName: string | null, bodyText: string | null, };
 
 export type TrashQuery = {
 /**
