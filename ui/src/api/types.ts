@@ -449,7 +449,7 @@ export type PreviousPreview = { subject: string | null, sentAt: number, attribut
 
 export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "no_mail_server", domain: string, };
 
-export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
+export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, onboarded: boolean, };
 
 export type ProfileForm = { name: string, researchInterests: string, rewritePreference: string, };
 
@@ -503,6 +503,8 @@ export type ScheduledWork = { pending: number, nextAt: number | null, today: num
 export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
+
+export type SendTestLetter = { mailboxId: number, subject: string, html: string, text: string, attachments: Array<number>, };
 
 export type Server = { host: string, port: number, security: Security, };
 
@@ -579,6 +581,8 @@ export type TemplateSummary = { id: number, name: string, subject: string,
  * The one a first email starts from.
  */
 isDefault: boolean, };
+
+export type TestLetter = { templateName: string, subject: string, bodyMd: string, attachments: Array<number>, };
 
 export type TrashQuery = {
 /**
@@ -690,6 +694,9 @@ export interface Operations {
   sendTestMail: { input: MailboxId; output: null };
   getProfile: { input: Nothing; output: Profile };
   updateProfile: { input: ProfileForm; output: null };
+  finishOnboarding: { input: Nothing; output: null };
+  testLetter: { input: Nothing; output: TestLetter | null };
+  sendTestLetter: { input: SendTestLetter; output: null };
   getLetterStyle: { input: Nothing; output: LetterStyle };
   updateLetterStyle: { input: LetterStyle; output: null };
   listMaterials: { input: Nothing; output: Array<Material> };

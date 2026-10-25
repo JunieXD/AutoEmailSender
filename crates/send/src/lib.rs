@@ -321,13 +321,16 @@ async fn send(
 }
 
 /// The files to attach, read now: a material may be attached to emails for days before they go.
-async fn files(dir: &Path, attachments: &[email::Attached]) -> Result<Vec<mailbox::File>, String> {
+pub async fn files(
+    dir: &Path,
+    attachments: &[email::Attached],
+) -> Result<Vec<mailbox::File>, String> {
     let mut files = Vec::with_capacity(attachments.len());
     for a in attachments {
         let data = tokio::fs::read(material::file(dir, a.material_id)).await.map_err(|e| {
             tracing::warn!("reading attachment {}: {e}", a.file_name);
             format!(
-                "附件“{}”的文件读不到了。在“设置 › 个人 › 材料”里重新添加它，改回草稿换上新的附件后再发送。",
+                "附件“{}”的文件读不到了。在“设置 › 个人 › 材料”里重新添加它，换上新的附件后再发送。",
                 a.file_name
             )
         })?;

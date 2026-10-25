@@ -11,6 +11,7 @@ pub struct Profile {
     pub name: Option<String>,
     pub research_interests: Option<String>,
     pub rewrite_preference: Option<String>,
+    pub onboarded: bool,
 }
 
 /// The profile as typed; blank fields are cleared.
@@ -29,10 +30,18 @@ fn filled(text: &str) -> Option<&str> {
 pub async fn get(db: &SqlitePool) -> Result<Profile, sqlx::Error> {
     sqlx::query_as!(
         Profile,
-        "SELECT name, research_interests, rewrite_preference FROM profile"
+        r#"SELECT name, research_interests, rewrite_preference, onboarded AS "onboarded: bool"
+           FROM profile"#
     )
     .fetch_one(db)
     .await
+}
+
+pub async fn finish_onboarding(db: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET onboarded = 1")
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 pub async fn update(db: &SqlitePool, form: &ProfileForm, now: i64) -> Result<(), sqlx::Error> {

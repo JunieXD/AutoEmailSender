@@ -1398,8 +1398,9 @@ async fn change_during_commit<F: Future<Output = ()>>(
             });
     });
     let calls = Cell::new(0);
+    // Only catches a hang; a loaded machine may take seconds to finish the step.
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(60),
         send::step_in_zone(
             db,
             net,
