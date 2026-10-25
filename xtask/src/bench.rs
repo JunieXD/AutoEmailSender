@@ -155,6 +155,7 @@ pub async fn run(path: &Path) -> Result {
         Duration::from_millis(1),
     );
 
+    sqlx::query("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom','http://127.0.0.1:1','fixture','',0,1)").execute(&db).await?;
     let crawl: i64 = sqlx::query_scalar(
         "INSERT INTO crawl (kind, state, created_at) VALUES ('agent', 'running', ?) RETURNING id",
     )
@@ -173,7 +174,7 @@ pub async fn run(path: &Path) -> Result {
     .await?;
     sqlx::query(
         "WITH RECURSIVE people(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM people WHERE n<10000)
-         INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,source_url,match_names,match_schools)
+         INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,source_url,match_names,match_schools,profile_url)
          SELECT ?,'pending','none',CASE WHEN n%4 IN (0,3) THEN '新候选'||n ELSE m.name END,
            CASE WHEN n%4=0 THEN json_array('candidate'||n||'@example.edu.cn')
                 WHEN n%4=1 THEN (SELECT json_group_array(address) FROM mentor_email WHERE mentor_id=m.id)
@@ -181,7 +182,8 @@ pub async fn run(path: &Path) -> Result {
            (SELECT json_group_array(json_object('university',university,'school',school,'department',department,'title',title)) FROM mentor_affiliation WHERE mentor_id=m.id),
            'https://school.edu.cn/faculty',
            CASE WHEN n%4 IN (0,3) THEN json_array('新候选'||n) ELSE (SELECT json_group_array(name) FROM mentor_name WHERE mentor_id=m.id) END,
-           (SELECT json_group_array(university_match) FROM mentor_affiliation WHERE mentor_id=m.id AND university_match IS NOT NULL)
+           (SELECT json_group_array(university_match) FROM mentor_affiliation WHERE mentor_id=m.id AND university_match IS NOT NULL),
+           'https://school.edu.cn/people/'||n
            FROM people JOIN mentor m ON m.id=n"
     ).bind(crawl).execute(&db).await?;
     let candidates = crawl::review::CandidateQuery {
@@ -213,6 +215,20 @@ pub async fn run(path: &Path) -> Result {
             );
         }
     }
+    let enrich_ids: Vec<_> = sqlx::query_scalar("SELECT id FROM candidate ORDER BY id LIMIT 50")
+        .fetch_all(&db)
+        .await?;
+    report(
+        "预览补全 50 位候选（1 万候选）",
+        median(async || crawl::enrich::preview(&db, &enrich_ids).await.map(drop)).await?,
+        home,
+    );
+    crawl::enrich::start(&db, &enrich_ids, NOW).await?;
+    report(
+        "后台抓取与补全进度（10 万页、1 万候选）",
+        median(async || crawl::queue::work(&db, NOW, NOW + 1).await.map(drop)).await?,
+        home,
+    );
     let url = crawl::PageUrl::parse("https://school.edu.cn/people/99999")?;
     report(
         "查已访问的抓取页面（10 万页，不读正文）",
