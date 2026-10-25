@@ -500,7 +500,6 @@ function ReplyOutcomeMenu({
     onSettled: () => refreshReplyOutcomes(queryClient),
   });
   if (readOnly) return outcome && <OutcomeChip outcome={outcome} />;
-  if (!outcome && marking) return <span className="text-faint">AI 正在标记…</span>;
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
@@ -509,12 +508,12 @@ function ReplyOutcomeMenu({
             outcome ? (
               <button type="button" aria-label={`回信结果：${OUTCOMES[outcome]}，点击修改`} className="flex" />
             ) : (
-              <Button variant="quiet" size="sm" />
+              <Button variant={marking ? "ghost" : "quiet"} size="sm" />
             )
           }
           disabled={set.isPending}
         >
-          {outcome ? <OutcomeChip outcome={outcome} /> : "标记结果"}
+          {outcome ? <OutcomeChip outcome={outcome} /> : marking ? "AI 正在标记…" : "标记结果"}
         </PopoverTrigger>
         <PopoverContent align="start" className="w-36 p-1.5">
           {OUTCOME_ORDER.map((o) => (
