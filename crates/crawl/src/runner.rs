@@ -327,9 +327,7 @@ async fn read(
             let mut owned = Vec::new();
             for email in m.units.iter().flat_map(|unit| &unit.emails) {
                 if !owned.contains(&email.address)
-                    && target_names
-                        .iter()
-                        .any(|name| crate::owns_email(&m, &names, name, &email.address))
+                    && crate::owns_email(&m, &names, &target_names, &email.address)
                 {
                     owned.push(email.address.clone());
                 }

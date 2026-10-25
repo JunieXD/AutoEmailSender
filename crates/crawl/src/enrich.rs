@@ -161,10 +161,14 @@ pub(crate) fn matches(
     incoming: &MentorFields,
     material: &crate::Material,
 ) -> bool {
-    let text: String = comparable(&material.text())
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let text: String = comparable(&format!(
+        "{}\n{}",
+        material.title.as_deref().unwrap_or_default(),
+        material.text()
+    ))
+    .chars()
+    .filter(|c| !c.is_whitespace())
+    .collect();
     std::iter::once(&fields.name)
         .chain(&fields.aliases)
         .any(|a| {

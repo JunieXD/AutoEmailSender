@@ -658,13 +658,13 @@ fn inline_elements_do_not_invent_email_characters_or_spaces() {
         assert!(crawl::owns_email(
             &page,
             &["Alice"],
-            "Alice",
+            &["Alice"],
             "alice@pku.edu.cn"
         ));
         assert!(!crawl::owns_email(
             &page,
             &["Alice"],
-            "Alice",
+            &["Alice"],
             "ice@pku.edu.cn"
         ));
         let unit = page.units.iter().find(|u| !u.emails.is_empty()).unwrap();

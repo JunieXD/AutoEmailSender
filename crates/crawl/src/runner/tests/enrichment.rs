@@ -840,6 +840,87 @@ async fn enrichment_child_checks_identity_before_filling_any_field(db: SqlitePoo
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_child_accepts_identity_in_page_title(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三</p><a href='/papers'>代表论文</a>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    for (title, success) in [("张三的代表论文", true), ("李四的代表论文", false)] {
+        site.page("/papers", &format!("<title>{title}</title><h1>代表论文</h1><p>Reliable Learning, 2025</p><p>办公室 office@example.edu</p>"));
+        let (crawl, id) = candidate(&db, &site, "/p").await;
+        enrich::start(&db, &[id], 2).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([1]))).await;
+        save(&db, &c, &result).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let mut a = empty_answer(json!([]));
+        a["papers"] = json!(["Reliable Learning, 2025"]);
+        a["emails"] = json!(["office@example.edu"]);
+        let result = process_answer(&db, &site, &mut provider, &c, a).await;
+        save(&db, &c, &result).await.unwrap();
+        let d = detail(&db, id).await;
+        assert_eq!(
+            d.candidate.papers,
+            if success {
+                vec!["Reliable Learning, 2025"]
+            } else {
+                vec![]
+            }
+        );
+        assert!(d.candidate.fields.emails.is_empty());
+        assert_eq!(d.evidence.len(), if success { 2 } else { 1 });
+        let pages = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
+        let child = pages
+            .pages
+            .iter()
+            .find(|p| p.kind == PageKind::EnrichChild)
+            .unwrap();
+        assert_eq!(child.status == PageStatus::Success, success);
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_child_treats_bilingual_names_as_one_person(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三（Zhang San）</p><a href='/contact'>联系</a>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    for html in [
+        "<h1>张三（Zhang San）</h1><p>电子邮箱：a@example.edu</p>",
+        "<h1>Zhang San（张三）</h1><p>电子邮箱：a@example.edu</p>",
+        "<div><h1>张三（Zhang San）</h1><p>a@example.edu</p></div><div><h1>李四</h1><p>b@example.edu</p></div>",
+    ] {
+        site.page("/contact", html);
+        let (_, id) = candidate(&db, &site, "/p").await;
+        sqlx::query("UPDATE candidate SET aliases='[]' WHERE id=?")
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        enrich::start(&db, &[id], 2).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let mut a = empty_answer(json!([1]));
+        a["aliases"] = json!(["Zhang San"]);
+        let result = process_answer(&db, &site, &mut provider, &c, a).await;
+        save(&db, &c, &result).await.unwrap();
+        assert_eq!(
+            detail(&db, id).await.candidate.fields.aliases,
+            vec!["Zhang San"]
+        );
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let mut a = empty_answer(json!([]));
+        a["names"] = json!(["张三", "Zhang San", "李四"]);
+        a["aliases"] = json!(["Zhang San"]);
+        a["emails"] = json!(["a@example.edu", "b@example.edu"]);
+        let result = process_answer(&db, &site, &mut provider, &c, a).await;
+        save(&db, &c, &result).await.unwrap();
+        let d = detail(&db, id).await;
+        assert_eq!(d.candidate.fields.emails, vec!["a@example.edu"]);
+        assert_eq!(d.evidence.last().unwrap().emails, vec!["a@example.edu"]);
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_child_with_same_names_requires_unique_email_evidence(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三</p><a href='/contacts'>联系方式</a>");

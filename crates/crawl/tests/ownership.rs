@@ -13,22 +13,22 @@ fn check(html: &str, people: &[(&str, &[&str])]) {
         for (other, addresses) in people {
             for address in *addresses {
                 assert_eq!(
-                    owns_email(&page, &names, name, address),
+                    owns_email(&page, &names, &[name], address),
                     name == other,
                     "{name}: {address}, {html}"
                 );
             }
         }
-        assert!(!owns_email(&page, &names, name, "absent@pku.edu.cn"));
+        assert!(!owns_email(&page, &names, &[name], "absent@pku.edu.cn"));
         for address in *own {
-            assert!(!owns_email(&page, &names, "Absent", address));
+            assert!(!owns_email(&page, &names, &["Absent"], address));
         }
     }
 }
 
 fn pairings(html: &str, names: [&str; 2], addresses: [&str; 2]) -> [[bool; 2]; 2] {
     let page = parse(&url(), html).unwrap();
-    names.map(|name| addresses.map(|address| owns_email(&page, &names, name, address)))
+    names.map(|name| addresses.map(|address| owns_email(&page, &names, &[name], address)))
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
             let page = parse(&url(), &html).unwrap();
             for name in ["Alice", "Bob"] {
                 assert!(
-                    !owns_email(&page, &["Alice", "Bob"], name, "office@pku.edu.cn"),
+                    !owns_email(&page, &["Alice", "Bob"], &[name], "office@pku.edu.cn"),
                     "{name}: {html}"
                 );
             }
@@ -323,7 +323,7 @@ fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
     assert!(!owns_email(
         &page,
         &["Alice", "Bob"],
-        "Alice",
+        &["Alice"],
         "office@pku.edu.cn"
     ));
 }
@@ -376,7 +376,7 @@ fn shared_name_blocks_without_ordered_contacts_are_rejected() {
         for name in names {
             for address in ["a@pku.edu.cn", "b@pku.edu.cn"] {
                 assert!(
-                    !owns_email(&page, &names, name, address),
+                    !owns_email(&page, &names, &[name], address),
                     "{name}: {address}, {html}"
                 );
             }
@@ -429,7 +429,7 @@ fn every_real_mcgill_person_accepts_own_email_and_rejects_adjacent_emails() {
     let names: Vec<_> = people.iter().map(|(name, _)| *name).collect();
     for (index, (name, address)) in people.iter().enumerate() {
         assert!(
-            owns_email(&page, &names, name, address),
+            owns_email(&page, &names, &[name], address),
             "{name}: {address}"
         );
         for neighbor in [
@@ -437,7 +437,7 @@ fn every_real_mcgill_person_accepts_own_email_and_rejects_adjacent_emails() {
             (index + people.len() - 1) % people.len(),
         ] {
             assert!(
-                !owns_email(&page, &names, name, people[neighbor].1),
+                !owns_email(&page, &names, &[name], people[neighbor].1),
                 "{name}: {}",
                 people[neighbor].1
             );
@@ -456,11 +456,16 @@ fn mcgill_footer_email_does_not_belong_to_the_last_mentor() {
         .lines()
         .map(|line| line.split_once('\t').unwrap().0)
         .collect();
-    assert!(owns_email(&page, &names, "Sue Whitesides", "sue@uvic.ca"));
+    assert!(owns_email(
+        &page,
+        &names,
+        &["Sue Whitesides"],
+        "sue@uvic.ca"
+    ));
     assert!(!owns_email(
         &page,
         &names,
-        "Sue Whitesides",
+        &["Sue Whitesides"],
         "webadmin@cs.mcgill.ca"
     ));
 }
@@ -480,26 +485,26 @@ fn real_profiles_require_both_the_name_and_an_evidenced_address() {
     assert!(owns_email(
         &toronto,
         &names,
-        names[0],
+        &[names[0]],
         "geoffrey.hinton@gmail.com"
     ));
     // The assistant is only identified by role and obfuscated email, not by this name.
     assert!(!owns_email(
         &toronto,
         &names,
-        names[1],
+        &[names[1]],
         "geoffrey.hinton@gmail.com"
     ));
     assert!(!owns_email(
         &toronto,
         &names,
-        names[1],
+        &[names[1]],
         "jennifer.cressman@utoronto.ca"
     ));
     assert!(!owns_email(
         &toronto,
         &names,
-        names[0],
+        &[names[0]],
         "absent@utoronto.ca"
     ));
     for html in [
@@ -511,20 +516,20 @@ fn real_profiles_require_both_the_name_and_an_evidenced_address() {
             assert!(owns_email(
                 &page,
                 &["Zhi-Hua Zhou"],
-                "Zhi-Hua Zhou",
+                &["Zhi-Hua Zhou"],
                 address
             ));
             assert!(!owns_email(
                 &page,
                 &["Zhi-Hua Zhou", "Absent"],
-                "Absent",
+                &["Absent"],
                 address
             ));
         }
         assert!(!owns_email(
             &page,
             &["Zhi-Hua Zhou"],
-            "Zhi-Hua Zhou",
+            &["Zhi-Hua Zhou"],
             "absent@nju.edu.cn"
         ));
     }

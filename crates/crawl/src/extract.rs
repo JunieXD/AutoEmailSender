@@ -178,7 +178,7 @@ pub fn listed(m: &Material, people: Vec<Listed>, scope: &Scope) -> Result<Vec<Pe
                 .emails
                 .iter()
                 .filter_map(|a| address(m, a))
-                .filter(|a| owns_email(m, &names, name, a))
+                .filter(|a| owns_email(m, &names, &[name], a))
                 .collect();
             let profile = p
                 .profile
