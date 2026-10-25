@@ -56,6 +56,57 @@ pub struct TaskPage {
     pub total: i64,
 }
 
+/// A fresh task keeps the original writing inputs, but starts with an immediate schedule.
+pub async fn restart(
+    db: &SqlitePool,
+    id: i64,
+) -> std::result::Result<Option<NewTask>, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    let Some(t) = sqlx::query!(
+        r#"SELECT name, kind AS "kind: Kind", writer AS "writer: Writer",
+        template_id, template_body_md, model_config_id FROM task WHERE id=?"#,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let ids = sqlx::query_scalar!(
+        "SELECT mentor_id FROM email WHERE task_id = ?
+           AND state IN ('canceled', 'failed', 'generation_failed', 'bounced') ORDER BY id",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let refs = sqlx::query_scalar!(
+        "SELECT material_id FROM task_material
+         WHERE task_id = ? AND role = 'reference' ORDER BY material_id",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let attachments = sqlx::query_scalar!(
+        "SELECT material_id FROM task_material
+         WHERE task_id = ? AND role = 'attachment' ORDER BY material_id",
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    Ok(Some(NewTask {
+        kind: t.kind,
+        name: format!("{} · 重新发起", t.name),
+        schedule: email::schedule::Schedule::Now,
+        ids,
+        writer: t.writer,
+        template_id: t.template_id,
+        template_source_id: t.template_body_md.is_some().then_some(id),
+        model_config_id: t.model_config_id,
+        references: refs,
+        attachments,
+    }))
+}
+
 pub async fn list(
     db: &SqlitePool,
     query: &TaskQuery,
@@ -309,19 +360,13 @@ fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
         &r.name, &r.aliases, names, subject, body,
     ));
     if r.kind == Kind::First {
-        recent(&mut p, r.contact_count, r.last_out_at, now);
+        p.extend(check::recent(
+            r.contact_count.unwrap_or(0),
+            r.last_out_at,
+            now,
+        ));
     }
     p
-}
-fn recent(problems: &mut Vec<check::Problem>, count: Option<i64>, last: Option<i64>, now: i64) {
-    if let Some(last_at) = last
-        && now - last_at < 7 * 86_400_000
-    {
-        problems.push(check::Problem::RecentlyContacted {
-            count: count.unwrap_or(0),
-            last_at,
-        });
-    }
 }
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -473,7 +518,7 @@ pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<ch
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(c) = c.filter(|_| row.kind == "first") {
-        recent(&mut p, Some(c.contact_count), c.last_out_at, now);
+        p.extend(check::recent(c.contact_count, c.last_out_at, now));
     }
     Ok(p)
 }

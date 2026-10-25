@@ -86,7 +86,7 @@ export type DraftEdit = { taskId: number, id: number, subject: string, bodyMd: s
 
 export type DraftFilter = "all" | "review" | "problems" | "generation_failed" | "approved";
 
-export type DraftKind = "first" | "reply";
+export type DraftKind = "first" | "follow_up" | "reply";
 
 export type DraftMaterial = { mentorId: number, kind: DraftKind, materialId: number, };
 
@@ -108,7 +108,7 @@ resendOf: number | null,
 /**
  * Whether this bounced email has been sent again, as an email in any state.
  */
-resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
+resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, } | { "state": "canceled", cancelReason: string, });
 
 export type EmailId = { id: number, };
 
@@ -143,6 +143,14 @@ export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: 
  * Materials, by id.
  */
 attachments: Array<number>, };
+
+export type FollowUpDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: FollowUpTarget | null, };
+
+export type FollowUpEdit = { draftId: number, mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
+
+export type FollowUpEntry = { reason: string | null, pending: boolean, previous: FollowUpTarget | null, };
+
+export type FollowUpTarget = { messageId: string | null, subject: string, sentAt: number, fromAddress: string, fromName: string | null, };
 
 export type GroupChoice = { row: number, id: number | null, };
 
@@ -397,7 +405,7 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
-export type NewTask = { kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
+export type NewTask = { kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, templateSourceId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
 
 export type Nothing = Record<symbol, never>;
 
@@ -676,6 +684,14 @@ export interface Operations {
   setDefaultTemplate: { input: DefaultTemplate; output: null };
   applyTemplate: { input: TemplateForMentor; output: FilledTemplate };
   applyDefaultTemplate: { input: MentorId; output: FilledTemplate | null };
+  getFollowUpEntry: { input: MentorId; output: FollowUpEntry };
+  getFollowUpDraft: { input: MentorId; output: FollowUpDraft | null };
+  createFollowUpDraft: { input: MentorId; output: FollowUpDraft };
+  saveFollowUpDraft: { input: FollowUpEdit; output: FollowUpDraft | null };
+  discardFollowUpDraft: { input: EmailId; output: null };
+  approveFollowUp: { input: ReplyEmail; output: null };
+  writeFollowUp: { input: FirstDraftEdit; output: Letter };
+  restartTask: { input: TaskId; output: NewTask };
   getReplyDraft: { input: MentorId; output: ReplyDraft | null };
   getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };

@@ -297,12 +297,17 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     .flat_map(|(state, weight)| std::iter::repeat_n(state, weight))
     .collect();
     let mut sent = Vec::new();
-    let mut drafted = HashSet::new();
+    let mut unfinished = HashSet::new();
     for i in 1..=scale.emails {
         let mentor = *pick(&mut rng, &contacted);
-        let state = *pick(&mut rng, &states);
-        // A mentor has at most one first email being written outside a task.
-        let kind = if rng.f32() < 0.85 && (state != "review" || drafted.insert(mentor)) {
+        let mut state = *pick(&mut rng, &states);
+        // A mentor can have only one unfinished first letter or follow-up.
+        if matches!(state, "review" | "approved" | "failed" | "maybe_sent")
+            && !unfinished.insert(mentor)
+        {
+            state = "sent";
+        }
+        let kind = if rng.f32() < 0.85 {
             "first"
         } else {
             "follow_up"

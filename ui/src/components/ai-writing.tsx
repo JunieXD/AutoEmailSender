@@ -18,13 +18,19 @@ import { letterText } from "@/letter";
  * The model writing a mentor's letter. The request and its answer stay in the mutation cache
  * until forgotten, so that leaving the page neither stops it nor loses what comes back.
  */
-export function useWriting(mentorId: number, task?: { taskId: number; id: number }) {
+export function useWriting(mentorId: number, task?: { taskId: number; id: number }, followUpId?: number) {
   const queryClient = useQueryClient();
-  const mutationKey = task ? ["writeTaskDraft", task.id] : ["writeLetter", mentorId];
+  const mutationKey = task
+    ? ["writeTaskDraft", task.id]
+    : followUpId !== undefined
+      ? ["writeFollowUp", mentorId, followUpId]
+      : ["writeLetter", mentorId];
   const write = useMutation({
     mutationKey,
     mutationFn: (letter: FirstDraftEdit) =>
-      task ? call("writeTaskDraft", { ...letter, ...task }) : call("writeLetter", letter),
+      task
+        ? call("writeTaskDraft", { ...letter, ...task })
+        : call(followUpId !== undefined ? "writeFollowUp" : "writeLetter", letter),
     gcTime: Infinity,
     onError: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });

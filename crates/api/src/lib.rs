@@ -240,6 +240,14 @@ operations! {
     "setDefaultTemplate" => set_default_template(DefaultTemplate) -> ();
     "applyTemplate" => apply_template(TemplateForMentor) -> FilledTemplate;
     "applyDefaultTemplate" => apply_default_template(MentorId) -> Option<FilledTemplate>;
+    "getFollowUpEntry" => get_follow_up_entry(MentorId) -> email::follow_up::FollowUpEntry;
+    "getFollowUpDraft" => get_follow_up_draft(MentorId) -> Option<email::follow_up::FollowUpDraft>;
+    "createFollowUpDraft" => create_follow_up_draft(MentorId) -> email::follow_up::FollowUpDraft;
+    "saveFollowUpDraft" => save_follow_up_draft(FollowUpEdit) -> Option<email::follow_up::FollowUpDraft>;
+    "discardFollowUpDraft" => discard_follow_up_draft(EmailId) -> ();
+    "approveFollowUp" => approve_follow_up(ReplyEmail) -> ();
+    "writeFollowUp" => write_follow_up(FirstDraftEdit) -> writing::Letter;
+    "restartTask" => restart_task(TaskId) -> task::NewTask;
     "getReplyDraft" => get_reply_draft(MentorId) -> Option<email::ReplyDraft>;
     "getReplyTarget" => get_reply_target(ReplyTargetQuery) -> Option<email::ReplyTarget>;
     "saveReplyDraft" => save_reply_draft(ReplyDraftEdit) -> Option<email::ReplyDraft>;
@@ -1183,13 +1191,23 @@ async fn check_first_draft(
 ) -> Result<Vec<check::Problem>, CallError> {
     let id = input.mentor_id;
     let m = get_mentor(ctx, MentorId { id }).await?;
-    Ok(check::letter(
+    let mut problems = check::letter(
         &m.name,
         &m.aliases,
         &input.subject,
         &input.body_md,
         !input.attachments.is_empty(),
-    ))
+    );
+    let (count, last) = match m.contact {
+        mentor::Contact::None => (0, None),
+        mentor::Contact::Contacted { count, last_out_at }
+        | mentor::Contact::Bounced { count, last_out_at } => (count, Some(last_out_at)),
+        mentor::Contact::Replied {
+            count, last_out_at, ..
+        } => (count, last_out_at),
+    };
+    problems.extend(check::recent(count, last, now()));
+    Ok(problems)
 }
 
 /// Drafts the letter when it is blank and rewrites it otherwise.
@@ -1461,6 +1479,123 @@ async fn approve_reply(ctx: &Context, input: ReplyEmail) -> Result<(), CallError
     )
 }
 
+impl From<email::follow_up::Error> for CallError {
+    fn from(e: email::follow_up::Error) -> Self {
+        match e {
+            email::follow_up::Error::Invalid(s) => Self::invalid(s),
+            email::follow_up::Error::Db(e) => e.into(),
+        }
+    }
+}
+async fn get_follow_up_entry(
+    ctx: &Context,
+    key: MentorId,
+) -> Result<email::follow_up::FollowUpEntry, CallError> {
+    Ok(email::follow_up::entry(&ctx.db, key.id).await?)
+}
+async fn get_follow_up_draft(
+    ctx: &Context,
+    key: MentorId,
+) -> Result<Option<email::follow_up::FollowUpDraft>, CallError> {
+    Ok(email::follow_up::draft(&ctx.db, key.id).await?)
+}
+async fn create_follow_up_draft(
+    ctx: &Context,
+    key: MentorId,
+) -> Result<email::follow_up::FollowUpDraft, CallError> {
+    Ok(email::follow_up::create(&ctx.db, key.id, now()).await?)
+}
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowUpEdit {
+    pub draft_id: i64,
+    #[serde(flatten)]
+    pub letter: ReplyDraftEdit,
+}
+async fn save_follow_up_draft(
+    ctx: &Context,
+    input: FollowUpEdit,
+) -> Result<Option<email::follow_up::FollowUpDraft>, CallError> {
+    let d = input.letter;
+    let saved = email::follow_up::save(
+        &ctx.db,
+        d.mentor_id,
+        input.draft_id,
+        &d.reply_to,
+        &d.body_md,
+        &d.attachments,
+        now(),
+    )
+    .await?;
+    if saved.is_none() {
+        return Err(CallError::invalid(
+            "追问已取消或已发送，请刷新往来后查看。".into(),
+        ));
+    }
+    Ok(saved)
+}
+async fn approve_follow_up(ctx: &Context, input: ReplyEmail) -> Result<(), CallError> {
+    if input.body_md.trim().is_empty() {
+        return Err(CallError::invalid("请先填写追问正文。".into()));
+    }
+    let approval = email::Approval {
+        subject: "",
+        body_md: &input.body_md,
+        html: &input.html,
+        text: &input.text,
+        attachments: &input.attachments,
+    };
+    approved(
+        ctx,
+        email::follow_up::approve(
+            &ctx.db,
+            input.mentor_id,
+            input.draft_id,
+            &input.reply_to,
+            &approval,
+            now(),
+        )
+        .await?,
+        "追问已取消、已发送，或导师已无法追问，请刷新往来后查看。",
+        "有附件的材料已被删除。重新选择附件后再发送。",
+    )
+}
+async fn write_follow_up(
+    ctx: &Context,
+    input: FirstDraftEdit,
+) -> Result<writing::Letter, CallError> {
+    let chosen = model::chosen(&ctx.db)
+        .await?
+        .ok_or(writing::Error::NoModel)?;
+    let references = material::for_writing(&ctx.db).await?;
+    let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
+    let _permit = ctx.model_limit.acquire().await;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        input.mentor_id,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        &input.attachments,
+        now(),
+        writing::Basis {
+            chosen: &chosen,
+            references: &references,
+            previous: Some(&previous),
+        },
+    )
+    .await?)
+}
+
+async fn discard_follow_up_draft(ctx: &Context, key: EmailId) -> Result<(), CallError> {
+    require_applied(
+        email::follow_up::discard(&ctx.db, key.id, now()).await?,
+        "追问已取消或已发送，请刷新往来后查看。",
+    )
+}
+
 /// An email the app sent, or mail seen in the mailbox, in the correspondence with a mentor.
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1482,7 +1617,8 @@ async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry
                 | email::Delivery::Bounced { sent_at, .. } => sent_at,
                 email::Delivery::Approved
                 | email::Delivery::Sending { .. }
-                | email::Delivery::Failed { .. } => i64::MAX,
+                | email::Delivery::Failed { .. }
+                | email::Delivery::Canceled { .. } => i64::MAX,
             };
             (at, Entry::Email(e))
         })

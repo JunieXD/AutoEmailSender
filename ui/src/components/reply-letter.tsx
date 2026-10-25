@@ -9,7 +9,11 @@ import {
 } from "@tanstack/react-query";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Material, MentorDetail, ReplyDraft, ReplyDraftEdit, ReplyTarget } from "@/api/types";
+import type { Material, MentorDetail, ReplyDraft, ReplyDraftEdit, ReplyTarget, FollowUpDraft } from "@/api/types";
+import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
+import { TemplateMenu } from "@/components/first-letter";
+import { Confirm } from "@/components/batch-bar";
+import { Button } from "@/components/ui/button";
 import { Attachments } from "@/components/attachments";
 import { AttachMenu, LetterProblems, LetterSend, useDraftSave, useUploading } from "@/components/letter-composer";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
@@ -62,6 +66,36 @@ export function ReplyLetter({
   );
 }
 
+/** Follow-ups keep a fixed outgoing target while sharing the reply editor and save lifecycle. */
+export function FollowUpLetter({ mentor }: { mentor: MentorDetail }) {
+  const draft = useQuery({
+    queryKey: ["getFollowUpDraft", mentor.id],
+    queryFn: () => call("getFollowUpDraft", { id: mentor.id }),
+  });
+  const materials = useQuery({ queryKey: ["listMaterials"], queryFn: () => call("listMaterials", {}) });
+  const placeholders = usePlaceholders();
+  const error = draft.error ?? materials.error ?? placeholders.error;
+  if (error) return <p className="px-5 py-4 text-sm text-destructive">追问草稿未能加载：{errorMessage(error)}</p>;
+  return (
+    draft.data &&
+    materials.data &&
+    placeholders.data && (
+      <Composer
+        key={draft.data.id}
+        mentor={mentor}
+        draft={draft.data}
+        latest={draft.data.target}
+        selected={null}
+        materials={materials.data}
+        placeholders={placeholders.data}
+        followUpId={draft.data.id}
+      />
+    )
+  );
+}
+
+type ThreadTarget = Omit<ReplyTarget, "id">;
+
 function Composer({
   mentor,
   draft,
@@ -69,26 +103,38 @@ function Composer({
   selected,
   materials,
   placeholders,
+  followUpId = null,
 }: {
   mentor: MentorDetail;
-  draft: ReplyDraft | null;
-  latest: ReplyTarget | null;
+  draft: ReplyDraft | FollowUpDraft | null;
+  latest: ThreadTarget | null;
   selected: { id: number; version: number } | null;
   materials: Material[];
   placeholders: string[];
+  followUpId?: number | null;
 }) {
   const mentorId = mentor.id;
+  const followUp = followUpId !== null;
+  const draftQuery = followUp ? "getFollowUpDraft" : "getReplyDraft";
+  const label = followUp ? "追问" : "回复";
   const queryClient = useQueryClient();
-  const { save, last, scope } = useDraftSave<{ letter: ReplyDraftEdit; target: ReplyTarget | null }, ReplyDraft | null>(
-    "saveReplyDraft",
-    "getReplyDraft",
+  const { save, last, scope } = useDraftSave<
+    { letter: ReplyDraftEdit; target: ThreadTarget | null },
+    ReplyDraft | FollowUpDraft | null
+  >(
+    followUp ? "saveFollowUpDraft" : "saveReplyDraft",
+    draftQuery,
     mentorId,
-    ({ letter }) => call("saveReplyDraft", letter),
+    ({ letter }) =>
+      followUpId !== null
+        ? call("saveFollowUpDraft", { ...letter, draftId: followUpId })
+        : call("saveReplyDraft", letter),
+    followUpId ?? undefined,
   );
   const restored = last?.status !== "success" ? last?.variables : undefined;
   // Saved content comes from the query; only an unfinished save overrides it.
   const [editing, setEditing] = useState(restored);
-  const [choice, setChoice] = useState<ReplyTarget | null>(null);
+  const [choice, setChoice] = useState<ThreadTarget | null>(null);
   const shownTarget = editing ? editing.target : (choice ?? (draft ? draft.target : latest));
   const letter: ReplyDraftEdit = editing?.letter ?? {
     mentorId,
@@ -106,14 +152,40 @@ function Composer({
     // Approval, withdrawal or a reload replaces the content rather than acknowledging a save.
     setBody({ version: body.version + 1, markdown: letter.bodyMd });
   }
-  const approveKey = ["approveReply", mentorId];
+  const approveKey = followUpId !== null ? ["approveFollowUp", mentorId, followUpId] : ["approveReply", mentorId];
   const approvals = useMutationState<MutationState<void, Error, ReplyDraftEdit>>({
     filters: { mutationKey: approveKey },
     select: (m) => m.state,
   });
   const approving = approvals.some((m) => m.status === "pending");
+  const discard = useMutation({
+    scope,
+    mutationFn: () => (followUpId !== null ? call("discardFollowUpDraft", { id: followUpId }) : Promise.resolve()),
+    onSuccess: async () => {
+      writing.forget();
+      await queryClient.invalidateQueries({ queryKey: [draftQuery, mentorId] });
+      await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
+    },
+  });
   const uploading = useUploading(mentorId);
-  const locked = approving || uploading;
+  const writing = useWriting(mentorId, undefined, followUpId ?? undefined);
+  const answer = followUp && writing.latest?.status === "success" ? writing.latest.data : undefined;
+  const busy = followUp && writing.latest?.status === "pending";
+  const fills = answer !== undefined && letter.bodyMd.trim() === "";
+  const review =
+    answer && !fills
+      ? { before: { subject: "", bodyMd: letter.bodyMd }, after: { ...answer, subject: "" } }
+      : undefined;
+  const fill = useEffectEvent(() => {
+    if (answer) {
+      writing.forget();
+      rewrite(answer.bodyMd);
+    }
+  });
+  useEffect(() => {
+    if (answer && fills) fill();
+  }, [answer, fills]);
+  const locked = approving || discard.isPending || uploading || busy || review !== undefined;
   const chosen = useQuery({
     queryKey: ["getReplyTarget", mentorId, selected?.id],
     queryFn: selected ? () => call("getReplyTarget", { mentorId, id: selected.id }) : skipToken,
@@ -152,11 +224,11 @@ function Composer({
     mutationKey: approveKey,
     scope,
     mutationFn: async (current: ReplyDraftEdit) => {
-      const saved = queryClient.getQueryData<ReplyDraft | null>(["getReplyDraft", mentorId]);
+      const saved = queryClient.getQueryData<ReplyDraft | FollowUpDraft | null>([draftQuery, mentorId]);
       if (!saved || saved.replyTo !== current.replyTo || (saved.bodyMd ?? "") !== current.bodyMd)
-        throw new Error("回复尚未保存成功。请修改正文重试保存后再发送。");
+        throw new Error(`${label}尚未保存成功。请修改正文重试保存后再发送。`);
       if (!style.data) throw new Error("信件样式尚未加载，请稍后再试。");
-      await call("approveReply", {
+      await call(followUp ? "approveFollowUp" : "approveReply", {
         mentorId,
         draftId: saved.id,
         replyTo: current.replyTo,
@@ -167,7 +239,8 @@ function Composer({
       });
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["getReplyDraft", mentorId] });
+      await queryClient.invalidateQueries({ queryKey: [draftQuery, mentorId] });
+      if (followUp) writing.forget();
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
     },
   });
@@ -184,7 +257,9 @@ function Composer({
   const blocker = !address
     ? "导师尚未填写邮箱，可在资料里填写。"
     : !shownTarget
-      ? "回的那封信已不在往来里。请点另一封回信旁的“回复”。"
+      ? followUp
+        ? "上一封已不在往来里，请放弃这份追问后重新选择。"
+        : "回的那封信已不在往来里。请点另一封回信旁的“回复”。"
       : !shownTarget.messageId
         ? "这封来信没有 Message-ID，无法在原线程回复。请到邮箱里回复。"
         : null;
@@ -192,7 +267,7 @@ function Composer({
   const sendButton = useRef<HTMLButtonElement>(null);
   return (
     <section
-      aria-label="回复导师"
+      aria-label={`${label}导师`}
       className="mt-auto flex max-h-[65dvh] shrink-0 flex-col gap-2 overflow-y-auto border-t border-border bg-background px-5 py-3 phone:px-3 [&>*]:shrink-0"
       onKeyDown={(e) => {
         if (
@@ -207,16 +282,34 @@ function Composer({
         }
       }}
     >
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium" title={shownTarget?.subject ?? undefined}>
-          回复 {mentor.name}：{shownTarget?.subject ?? "（无主题）"}
-        </p>
-        {shownTarget && (
-          <p className="truncate text-xs text-muted-foreground">
-            {shownTarget.fromAddress} · {day(shownTarget.sentAt)} {time(shownTarget.sentAt)}
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 grow">
+          <p className="truncate text-sm font-medium" title={shownTarget?.subject ?? undefined}>
+            {label} {mentor.name}：{shownTarget?.subject ?? "（无主题）"}
           </p>
+          {shownTarget && (
+            <p className="truncate text-xs text-muted-foreground">
+              {shownTarget.fromAddress} · {day(shownTarget.sentAt)} {time(shownTarget.sentAt)}
+            </p>
+          )}
+        </div>
+        {followUp && (
+          <Confirm
+            trigger={
+              <Button variant="ghost" size="sm" disabled={locked}>
+                放弃追问
+              </Button>
+            }
+            message="放弃这份追问草稿？已保存的正文和取消原因会保留在往来里。"
+            action="放弃追问"
+            onConfirm={() => discard.mutate()}
+          />
         )}
       </div>
+      {followUp && (
+        <p className="text-xs text-muted-foreground">主题自动沿用上一封。AI 起草会将之前发出的信交给所选模型参考。</p>
+      )}
+      {review && <Rewrite {...review} />}
       <LazyLetterEditor
         key={body.version}
         id={`reply-letter-${mentorId}`}
@@ -240,13 +333,36 @@ function Composer({
         onSalutation={(salutation) => rewrite(`${salutation}\n\n${letter.bodyMd}`)}
       />
       <div className="flex flex-wrap items-center gap-2">
-        {/* Future AI actions belong beside the attachment action in this same composer. */}
+        {followUp &&
+          (busy ? (
+            <>
+              <Button variant="quiet" onClick={writing.forget}>
+                取消
+              </Button>
+              <span className="text-sm text-muted-foreground">AI 正在撰写…</span>
+            </>
+          ) : (
+            <AiButton
+              blank={!letter.bodyMd.trim()}
+              disabled={locked}
+              onWrite={() => writing.start({ ...letter, subject: "" })}
+            />
+          ))}
+        {followUp && (
+          <TemplateMenu
+            mentorId={mentorId}
+            disabled={locked}
+            written={!!letter.bodyMd.trim()}
+            bodyOnly
+            onApply={(filled) => rewrite(filled.bodyMd)}
+          />
+        )}
         <AttachMenu
           materials={materials}
           attached={attached}
           disabled={locked}
           mentorId={mentorId}
-          kind="reply"
+          kind={followUp ? "follow_up" : "reply"}
           onPrepare={() => {
             const edited = { letter, target: shownTarget };
             setEditing(edited);
@@ -263,15 +379,35 @@ function Composer({
           }
         />
         <div className="ml-auto flex min-w-0 items-center gap-3">
-          <LetterSend
-            buttonRef={sendButton}
-            problems={problems}
-            blocker={blocker}
-            disabled={locked || !style.data || letter.bodyMd.trim() === "" || chosen.isFetching}
-            onSend={() => approve.mutate({ ...letter, attachments: attached.map((m) => m.id) })}
-          />
+          {review ? (
+            <>
+              <Button variant="quiet" onClick={writing.forget}>
+                保留原文
+              </Button>
+              <Button
+                onClick={() => {
+                  writing.forget();
+                  rewrite(review.after.bodyMd);
+                }}
+              >
+                采用修改
+              </Button>
+            </>
+          ) : (
+            <LetterSend
+              buttonRef={sendButton}
+              problems={problems}
+              blocker={blocker}
+              disabled={locked || !style.data || letter.bodyMd.trim() === "" || chosen.isFetching}
+              onSend={() => approve.mutate({ ...letter, attachments: attached.map((m) => m.id) })}
+            />
+          )}
         </div>
       </div>
+      {discard.error && <p className="text-sm text-destructive">未能放弃追问：{errorMessage(discard.error)}</p>}
+      {followUp && writing.latest?.error && (
+        <p className="text-sm text-destructive">AI 撰写未能完成：{errorMessage(writing.latest.error)}</p>
+      )}
       {last?.status === "error" && <p className="text-sm text-destructive">草稿未能保存：{errorMessage(last.error)}</p>}
       {checks.error && <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error)}</p>}
       {(chosen.error ?? style.error ?? approveError) && (

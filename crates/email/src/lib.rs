@@ -1,5 +1,6 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
+pub mod follow_up;
 pub mod schedule;
 pub mod tasks;
 
@@ -140,6 +141,7 @@ pub async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<
 #[serde(rename_all = "snake_case")]
 pub enum DraftKind {
     First,
+    FollowUp,
     Reply,
 }
 
@@ -153,6 +155,7 @@ pub async fn attach_draft_material(
 ) -> Result<bool, sqlx::Error> {
     let kind = match kind {
         DraftKind::First => "first",
+        DraftKind::FollowUp => "follow_up",
         DraftKind::Reply => "reply",
     };
     let done = sqlx::query!(
@@ -354,11 +357,15 @@ pub enum Delivery {
     Failed {
         error: String,
     },
+    Canceled {
+        cancel_reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, sqlx::Type)]
 #[sqlx(rename_all = "snake_case")]
 enum DeliveryColumn {
+    Canceled,
     Approved,
     Sending,
     MaybeSent,
@@ -385,13 +392,14 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
         });
     }
     sqlx::query!(
-        r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS
-             "body_md!", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)
+        r#"SELECT id, state AS "state: DeliveryColumn", coalesce(subject, '') AS "subject!: String",
+             coalesce(body_md, '') AS "body_md!: String", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)
              AS "resent!: bool", planned_at, latest_at, from_address, to_address, sent_at,
              error, cancel_reason
            FROM email
            WHERE mentor_id = ?
-             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
+             AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
+               OR (state='canceled' AND kind='follow_up' AND task_id IS NULL))
            ORDER BY id"#,
         mentor_id
     )
@@ -401,6 +409,9 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
     .map(|r| {
         use DeliveryColumn as C;
         let delivery = match (r.state, r.from_address, r.to_address, r.sent_at, r.error) {
+            (C::Canceled, ..) => Delivery::Canceled {
+                cancel_reason: r.cancel_reason.ok_or_else(|| sqlx::Error::Decode("canceled email has no reason".into()))?,
+            },
             (C::Approved, ..) => Delivery::Approved,
             (C::Sending, ..) => Delivery::Sending {
                 cancel_reason: r.cancel_reason,

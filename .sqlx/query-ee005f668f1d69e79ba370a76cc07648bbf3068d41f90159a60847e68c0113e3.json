@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'canceled', cancel_reason = '放弃追问', updated_at = ?\n         WHERE id = ? AND kind = 'follow_up' AND task_id IS NULL AND state = 'review'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ee005f668f1d69e79ba370a76cc07648bbf3068d41f90159a60847e68c0113e3"
+}

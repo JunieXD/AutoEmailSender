@@ -77,6 +77,8 @@ export function refreshMentors(queryClient: QueryClient) {
     ["listCorrespondence"],
     ["getReplyTarget"],
     ["getReplyDraft"],
+    ["getFollowUpDraft"],
+    ["getFollowUpEntry"],
     ["listConversations"],
     ["unreadCount"],
   ]) {
@@ -93,6 +95,9 @@ export function dropDrafts(queryClient: QueryClient, ids: number[], kind: "first
   for (const id of ids) {
     if (kind === "all") {
       queryClient.removeQueries({ queryKey: ["getReplyDraft", id] });
+      queryClient.removeQueries({ queryKey: ["getFollowUpDraft", id] });
+      for (const m of mutations.findAll({ mutationKey: ["saveFollowUpDraft", id] })) mutations.remove(m);
+      for (const m of mutations.findAll({ mutationKey: ["writeFollowUp", id] })) mutations.remove(m);
       for (const m of mutations.findAll({ mutationKey: ["saveReplyDraft", id], status: "error" })) mutations.remove(m);
     }
     queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });

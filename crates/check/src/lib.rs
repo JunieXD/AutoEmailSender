@@ -85,6 +85,11 @@ pub fn letter(
     problems
 }
 
+pub fn recent(count: i64, last: Option<i64>, now: i64) -> Option<Problem> {
+    last.filter(|at| now - at < 7 * 86_400_000)
+        .map(|last_at| Problem::RecentlyContacted { count, last_at })
+}
+
 /// Other task mentors' names outside occurrences of the recipient's names or aliases.
 pub fn other_mentors(
     mentor: &str,
@@ -209,6 +214,20 @@ pub async fn mail_domain(address: &str) -> Result<Option<Problem>, NetError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recent_contact_warning_expires_after_seven_days() {
+        let now = 1_800_000_000_000;
+        assert_eq!(super::recent(0, None, now), None);
+        assert_eq!(super::recent(2, Some(now - 7 * 86_400_000), now), None);
+        assert_eq!(
+            super::recent(2, Some(now - 7 * 86_400_000 + 1), now),
+            Some(super::Problem::RecentlyContacted {
+                count: 2,
+                last_at: now - 7 * 86_400_000 + 1
+            })
+        );
+    }
+
     use super::*;
 
     #[test]
