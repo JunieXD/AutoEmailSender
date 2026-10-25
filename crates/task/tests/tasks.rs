@@ -2582,3 +2582,83 @@ async fn restart_refuses_an_original_retry_that_finished_sending(db: SqlitePool)
     }
     assert_eq!(inbox.lock().unwrap().len(), 2);
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restart_refuses_a_deleted_source_after_changing_template(db: SqlitePool) {
+    let (net, _, inbox) = detail_mail(&db).await;
+    for (n, kind) in [(501, Kind::First), (502, Kind::FollowUp)] {
+        let at = T + (n - 501) * 100;
+        let m = mentor(&db, n, true).await;
+        let old = failed_task(&db, vec![m], false, kind).await;
+        let mut next = restart(&db, old).await.unwrap().unwrap();
+        assert!(plan(&db, &next).await.unwrap().mentors[0].reason.is_none());
+        // Choosing a current template must preserve the source constraint.
+        next.template_source_id = None;
+        let letter = items(&db, old).await.remove(0);
+        assert!(email::retry(&db, letter.id, at + 2).await.unwrap());
+        send::step(&db, &net, std::path::Path::new("unused"), || at + 3)
+            .await
+            .unwrap();
+        assert_eq!(items(&db, old).await[0].state, DraftState::Sent);
+        assert!(plan(&db, &next).await.unwrap().mentors[0].reason.is_some());
+        delete(&db, old).await.unwrap();
+        assert!(get(&db, old).await.unwrap().is_none());
+
+        let planned = plan(&db, &next).await;
+        let created = create(&db, &next, at + 4).await;
+        assert!(matches!(created, Err(Error::Invalid(_))));
+        assert!(matches!(planned, Err(Error::Invalid(_))));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM task")
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            0
+        );
+        send::step(&db, &net, std::path::Path::new("unused"), || at + 5)
+            .await
+            .unwrap();
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restart_requires_an_existing_source_and_all_selected_mentors(db: SqlitePool) {
+    let (net, _, inbox) = detail_mail(&db).await;
+    let a = mentor(&db, 511, true).await;
+    let b = mentor(&db, 512, true).await;
+    let c = mentor(&db, 513, true).await;
+    let old = failed_task(&db, vec![a], false, Kind::First).await;
+    let mut next = restart(&db, old).await.unwrap().unwrap();
+    next.ids = vec![a, b];
+    let mut missing = form(&db, vec![c]).await;
+    missing.source_task_id = Some(999999);
+
+    for form in [next, missing] {
+        let planned = plan(&db, &form).await;
+        let created = create(&db, &form, T + 2).await;
+        assert!(matches!(created, Err(Error::Invalid(_))));
+        assert!(matches!(planned, Err(Error::Invalid(_))));
+        let original = items(&db, old).await.remove(0);
+        assert_eq!(original.state, DraftState::Failed);
+        assert!(original.cancel_reason.is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM task")
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM email")
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            1
+        );
+    }
+    send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+        .await
+        .unwrap();
+    assert!(inbox.lock().unwrap().is_empty());
+}

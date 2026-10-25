@@ -78,6 +78,29 @@ pub struct PreviousLetter {
     pub sent_at: i64,
 }
 
+async fn validate_source(conn: &mut SqliteConnection, form: &NewTask) -> Result<()> {
+    if let Some(source) = form.source_task_id {
+        let valid = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM task WHERE id = ?1)
+               AND NOT EXISTS (
+                 SELECT 1 FROM json_each(?2) selected
+                 WHERE NOT EXISTS (SELECT 1 FROM email
+                   WHERE task_id = ?1 AND mentor_id = selected.value)
+               ) AS "valid!: bool""#,
+            source,
+            Json(&form.ids),
+        )
+        .fetch_one(conn)
+        .await?;
+        if !valid {
+            return Err(Error::Invalid(
+                "原任务已删除或已变化，请重新打开“重新发起”。".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn candidates(
     conn: &mut SqliteConnection,
     ids: &[i64],
@@ -205,6 +228,7 @@ async fn template_content(
 
 pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
     let mut tx = db.begin().await?;
+    validate_source(&mut tx, form).await?;
     let mentors = candidates(&mut tx, &form.ids, form.kind, form.source_task_id).await?;
     let refs = references(&mut tx, &form.references).await?;
     let template = template_content(&mut tx, form).await?;
@@ -319,6 +343,7 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     let mut tx = db.begin().await?;
     // Take the write lock before reading template content or checking membership.
     let id = sqlx::query_scalar!("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,?,'ai','now','active',?) RETURNING id AS \"id!\"",form.name.trim(),form.kind,now).fetch_one(&mut *tx).await?;
+    validate_source(&mut tx, form).await?;
     email::schedule::save(&mut tx, id, &form.schedule).await?;
     let template = template_content(&mut tx, form).await?;
     if form.writer == Writer::Template && template.is_none() {
