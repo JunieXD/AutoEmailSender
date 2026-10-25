@@ -24,7 +24,6 @@ pub enum Purpose {
     FactCheck,
     ReplyOutcome,
     ReplyTodos,
-    ReplyDraft,
 }
 
 pub async fn record(

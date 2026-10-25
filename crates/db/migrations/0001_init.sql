@@ -373,7 +373,7 @@ CREATE TABLE usage (
   model_config_id INTEGER REFERENCES model_config(id) ON DELETE SET NULL,
   model TEXT NOT NULL,
   purpose TEXT NOT NULL CHECK (purpose IN ('crawl', 'match', 'draft', 'rewrite', 'fact_check',
-    'reply_outcome', 'reply_todos', 'reply_draft')),
+    'reply_outcome', 'reply_todos')),
   crawl_id INTEGER REFERENCES crawl(id) ON DELETE SET NULL,
   email_id INTEGER REFERENCES email(id) ON DELETE SET NULL,
   input_tokens INTEGER NOT NULL,

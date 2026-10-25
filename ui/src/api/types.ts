@@ -604,7 +604,7 @@ export type Trashed = { rows: Array<number>, id: number, name: string, };
 
 export type Trend = { date: string, sent: number, replies: number, };
 
-export type UsagePurpose = "crawl" | "match" | "draft" | "rewrite" | "fact_check" | "reply_outcome" | "reply_todos" | "reply_draft";
+export type UsagePurpose = "crawl" | "match" | "draft" | "rewrite" | "fact_check" | "reply_outcome" | "reply_todos";
 
 export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "ready";
 

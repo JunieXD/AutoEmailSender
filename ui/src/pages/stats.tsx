@@ -28,7 +28,6 @@ const PURPOSES: Record<UsagePurpose, string> = {
   fact_check: "AI 核对",
   reply_outcome: "回信标记",
   reply_todos: "回信待办",
-  reply_draft: "起草回复",
 };
 const SCHOOLS_PER_PAGE = 10;
 
