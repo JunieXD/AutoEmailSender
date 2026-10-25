@@ -73,6 +73,9 @@ async fn check_errors_are_saved_and_retry_replaces_them(db: SqlitePool) {
         call(&ctx, "getAiFactCheck", json!({})).await.unwrap(),
         false
     );
+    call(&ctx, "setAiFactCheck", json!({"on":true}))
+        .await
+        .unwrap();
     let missing = call(&ctx, "factCheckEmail", json!({"id":id}))
         .await
         .unwrap_err();
@@ -176,6 +179,114 @@ async fn waiting_for_capacity_rechecks_consent_before_reading_configuration(db: 
     assert!(matches!(error.code, ErrorCode::NeedsAgreement));
     assert_eq!(stored(&ctx.db, id).await["reason"], error.message);
     assert!(p.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn disabled_checks_return_null_without_reading_model_or_changing_results(db: SqlitePool) {
+    let ctx = context(db);
+    let id = draft(&ctx.db).await;
+    let previous = json!({"state":"completed","findings":[]});
+    sqlx::query("UPDATE email SET fact_check=? WHERE id=?")
+        .bind(sqlx::types::Json(&previous))
+        .bind(id)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    profile::set_ai_fact_check(&ctx.db, false).await.unwrap();
+    assert_eq!(
+        call(&ctx, "factCheckEmail", json!({"id":id}))
+            .await
+            .unwrap(),
+        Value::Null
+    );
+    assert_eq!(stored(&ctx.db, id).await, previous);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn disabling_while_waiting_for_capacity_skips_the_check(db: SqlitePool) {
+    use std::{future::Future, task::Poll};
+    let ctx = context(db);
+    let mut p = Provider::start().await;
+    config(&ctx.db, &p.address).await;
+    let id = draft(&ctx.db).await;
+    let a = ctx.model_limit.acquire().await;
+    let _b = ctx.model_limit.acquire().await;
+    let _c = ctx.model_limit.acquire().await;
+    let mut checking = std::pin::pin!(call(&ctx, "factCheckEmail", json!({"id":id})));
+    std::future::poll_fn(|cx| {
+        assert!(checking.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    profile::set_ai_fact_check(&ctx.db, false).await.unwrap();
+    drop(a);
+    let result = tokio::select! {
+        result = &mut checking => result,
+        request = p.requests.recv() => {
+            request.unwrap().respond.send(Response::answer("[]")).ok().unwrap();
+            checking.await
+        }
+    };
+    assert_eq!(result.unwrap(), Value::Null);
+    assert_eq!(stored(&ctx.db, id).await, Value::Null);
+    let usage: i64 = sqlx::query_scalar("SELECT count(*) FROM usage")
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(usage, 0);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn manual_checks_cannot_overwrite_a_regenerated_drafts_findings(db: SqlitePool) {
+    let ctx = context(db);
+    let mut p = Provider::start().await;
+    let config = config(&ctx.db, &p.address).await;
+    for answer in ["[]", "不是核对结果"] {
+        let id = draft(&ctx.db).await;
+        let task: i64 = sqlx::query_scalar("INSERT INTO task(name,kind,writer,model_config_id,schedule,state,created_at) VALUES('核对','first','ai',?,'now','active',0) RETURNING id")
+            .bind(config).fetch_one(&ctx.db).await.unwrap();
+        sqlx::query("UPDATE email SET task_id=? WHERE id=?")
+            .bind(task)
+            .bind(id)
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        let fresh = email::fact_check::FactCheck::Completed {
+            findings: vec![email::fact_check::Finding {
+                quote: "新增成果".into(),
+                reason: "材料未提到".into(),
+            }],
+        };
+        let (result, ()) = tokio::join!(call(&ctx, "factCheckEmail", json!({"id":id})), async {
+            let request = p.requests.recv().await.unwrap();
+            assert_eq!(
+                task::regenerate(&ctx.db, task, Some(id), false, T)
+                    .await
+                    .unwrap(),
+                1
+            );
+            let claim = email::tasks::next(&ctx.db).await.unwrap().unwrap();
+            assert!(
+                email::tasks::complete(
+                    &mut ctx.db.acquire().await.unwrap(),
+                    claim,
+                    "新主题",
+                    "王老师：新增成果",
+                    "fixture",
+                    Some(&fresh),
+                    T
+                )
+                .await
+                .unwrap()
+            );
+            request.respond.send(Response::answer(answer)).ok().unwrap();
+        });
+        assert!(matches!(result.unwrap_err().code, ErrorCode::Invalid));
+        assert_eq!(
+            stored(&ctx.db, id).await,
+            serde_json::to_value(&fresh).unwrap()
+        );
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

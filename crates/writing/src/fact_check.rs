@@ -39,7 +39,7 @@ fn message(me: &profile::Profile, references: &[material::Reference], letter: &L
     json!({
         "个人资料": {"姓名": me.name, "意向研究方向": me.research_interests},
         "材料": references.iter().map(|r| json!({
-            "文件名": r.file_name, "文字": material::for_ai(&r.text)
+            "文字": material::for_ai(&r.text)
         })).collect::<Vec<_>>(),
         "信": {"主题": letter.subject, "正文": letter.body_md}
     })

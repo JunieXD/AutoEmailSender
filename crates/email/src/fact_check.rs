@@ -17,18 +17,20 @@ pub enum FactCheck {
     Failed { reason: String },
 }
 
-/// Approval, cancellation and deletion fence off an answer that arrives late.
+/// Only the same draft generation still under review accepts a late answer.
 pub async fn save(
     db: &SqlitePool,
     id: i64,
+    generation_claim: i64,
     result: &FactCheck,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query!(
-        "UPDATE email SET fact_check = ?, updated_at = ? WHERE id = ? AND state = 'review'",
+        "UPDATE email SET fact_check = ?, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'review'",
         Json(result),
         now,
         id,
+        generation_claim,
     )
     .execute(db)
     .await?

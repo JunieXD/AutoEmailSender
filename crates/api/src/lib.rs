@@ -190,7 +190,7 @@ operations! {
     "setBackgroundNotifications" => set_background_notifications(NotificationSetting) -> ();
     "getAiFactCheck" => get_ai_fact_check(Nothing) -> bool;
     "setAiFactCheck" => set_ai_fact_check(NotificationSetting) -> ();
-    "factCheckEmail" => fact_check_email(EmailId) -> email::fact_check::FactCheck;
+    "factCheckEmail" => fact_check_email(EmailId) -> Option<email::fact_check::FactCheck>;
     "getReplyNotifications" => get_reply_notifications(Nothing) -> bool;
     "setReplyNotifications" => set_reply_notifications(NotificationSetting) -> ();
     "planMatching" => plan_matching(MatchBatch) -> matching::MatchEstimate;

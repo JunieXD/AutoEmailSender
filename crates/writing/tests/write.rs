@@ -641,6 +641,10 @@ async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: Sqlit
         assert_eq!(data["个人资料"]["姓名"], "林晓");
         assert_eq!(data["个人资料"]["意向研究方向"], "多模态学习");
         assert_eq!(data["材料"][0]["文字"], "在 ACL 2025 发表论文一篇");
+        assert_eq!(
+            data["材料"][0],
+            serde_json::json!({"文字": "在 ACL 2025 发表论文一篇"})
+        );
         assert_eq!(data["信"]["正文"], letter.body_md);
         assert_eq!(data.as_object().unwrap().len(), 3);
         assert!(!data.to_string().contains("GPA 3.9"));

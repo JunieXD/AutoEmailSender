@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT task_id, kind, mentor_id, subject, body_md FROM email WHERE id = ? AND state = 'review'",
+  "query": "SELECT task_id, kind, mentor_id, subject, body_md, generation_claim FROM email WHERE id = ? AND state = 'review'",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,17 @@
             "name": "body_md"
           }
         }
+      },
+      {
+        "name": "generation_claim",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "generation_claim"
+          }
+        }
       }
     ],
     "parameters": {
@@ -67,8 +78,9 @@
       false,
       false,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "47f41a7203bd5478d3eaff303ffac975adc13e6893bf0c40edad1b4b1868bf3b"
+  "hash": "0b4c9052e3ebeefacd5755f6c06d600e7bd9b4975169da0f1b7ded560f9ffb22"
 }

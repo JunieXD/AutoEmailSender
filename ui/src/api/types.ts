@@ -649,7 +649,7 @@ export interface Operations {
   setBackgroundNotifications: { input: NotificationSetting; output: null };
   getAiFactCheck: { input: Nothing; output: boolean };
   setAiFactCheck: { input: NotificationSetting; output: null };
-  factCheckEmail: { input: EmailId; output: FactCheck };
+  factCheckEmail: { input: EmailId; output: FactCheck | null };
   getReplyNotifications: { input: Nothing; output: boolean };
   setReplyNotifications: { input: NotificationSetting; output: null };
   planMatching: { input: MatchBatch; output: MatchEstimate };

@@ -27,11 +27,12 @@ pub struct DraftsFinished {
     pub failed: i64,
 }
 enum Outcome {
-    Done(
-        writing::Letter,
-        String,
-        Option<email::fact_check::FactCheck>,
-    ),
+    Done {
+        letter: writing::Letter,
+        model: String,
+        fact_check: Option<email::fact_check::FactCheck>,
+        failure: Option<(Failure, Chosen)>,
+    },
     Failed(String),
     Pause(String, Option<Chosen>),
     RateLimit(Duration),
@@ -115,11 +116,16 @@ async fn generate(
             if let Some(subject) = subject {
                 l.subject = subject;
             }
+            // The settings, configuration or consent may have changed while writing the letter.
+            let mut failure = None;
             let fact_check = if profile::ai_fact_check(db).await? {
-                // The configuration or consent may have changed while writing the letter.
-                let result = match model::selected(db, t.model_config_id).await? {
+                if !emails::valid(db, claim).await? {
+                    return Ok(Outcome::Requeue);
+                }
+                let check_config = model::selected(db, t.model_config_id).await?;
+                let result = match &check_config {
                     Some(chosen) => {
-                        writing::fact_check::check(db, net, claim.id, &l, &chosen, &refs, now())
+                        writing::fact_check::check(db, net, claim.id, &l, chosen, &refs, now())
                             .await
                     }
                     None => Err(writing::fact_check::Error::NoModel),
@@ -127,6 +133,16 @@ async fn generate(
                 Some(match result {
                     Ok(findings) => email::fact_check::FactCheck::Completed { findings },
                     Err(writing::fact_check::Error::Db(error)) => return Err(error),
+                    Err(writing::fact_check::Error::Model(error)) => {
+                        let message = error.message();
+                        let classified = model::background::classify(error);
+                        let reason = match &classified {
+                            Failure::Pause(reason) | Failure::Failed(reason) => reason.clone(),
+                            Failure::RateLimit(_) => message,
+                        };
+                        failure = check_config.map(|config| (classified, config));
+                        email::fact_check::FactCheck::Failed { reason }
+                    }
                     Err(error) => email::fact_check::FactCheck::Failed {
                         reason: error.message(),
                     },
@@ -134,7 +150,12 @@ async fn generate(
             } else {
                 None
             };
-            Outcome::Done(l, chosen.model, fact_check)
+            Outcome::Done {
+                letter: l,
+                model: chosen.model,
+                fact_check,
+                failure,
+            }
         }
         Err(writing::Error::Model(error)) => match model::background::classify(error) {
             Failure::Pause(reason) => Outcome::Pause(reason, Some(chosen)),
@@ -163,21 +184,72 @@ pub async fn requeue(
         return Ok(false);
     }
     if let Some((reason, expected)) = pause {
-        let id = sqlx::query_scalar!("SELECT model_config_id FROM task WHERE id = ?", claim.task)
-            .fetch_optional(&mut *tx)
-            .await?
-            .flatten();
-        let current = model::selected(&mut *tx, id).await?;
-        if expected.is_none_or(|e| {
-            current
-                .as_ref()
-                .is_some_and(|c| model::background::same_config(c, e))
-        }) {
-            sqlx::query!("UPDATE task SET state = 'paused', generation_paused_at = ?, generation_pause_reason = ? WHERE id = ? AND state = 'active' AND generation_paused_at IS NULL",at,reason,claim.task).execute(&mut *tx).await?;
-        }
+        pause_task(&mut tx, claim.task, reason, expected, at).await?;
     }
     tx.commit().await?;
     Ok(true)
+}
+
+async fn pause_task(
+    conn: &mut SqliteConnection,
+    task: i64,
+    reason: &str,
+    expected: Option<&Chosen>,
+    at: i64,
+) -> std::result::Result<(), sqlx::Error> {
+    let id = sqlx::query_scalar!("SELECT model_config_id FROM task WHERE id = ?", task)
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten();
+    let current = model::selected(&mut *conn, id).await?;
+    if expected.is_none_or(|e| {
+        current
+            .as_ref()
+            .is_some_and(|c| model::background::same_config(c, e))
+    }) {
+        sqlx::query!("UPDATE task SET state = 'paused', generation_paused_at = ?, generation_pause_reason = ? WHERE id = ? AND state = 'active' AND generation_paused_at IS NULL",at,reason,task).execute(conn).await?;
+    }
+    Ok(())
+}
+
+async fn apply(
+    db: &SqlitePool,
+    claim: emails::Claim,
+    outcome: &Outcome,
+    at: i64,
+) -> std::result::Result<bool, sqlx::Error> {
+    match outcome {
+        Outcome::Done {
+            letter,
+            model,
+            fact_check,
+            failure,
+        } => {
+            let mut tx = db.begin().await?;
+            let applied = emails::complete(
+                &mut tx,
+                claim,
+                &letter.subject,
+                &letter.body_md,
+                model,
+                fact_check.as_ref(),
+                at,
+            )
+            .await?;
+            if applied && let Some((Failure::Pause(reason), config)) = failure {
+                pause_task(&mut tx, claim.task, reason, Some(config), at).await?;
+            }
+            tx.commit().await?;
+            Ok(applied)
+        }
+        Outcome::Failed(reason) => {
+            emails::fail(&mut *connection(db).await, claim, reason, at).await
+        }
+        Outcome::Pause(reason, config) => {
+            requeue(db, claim, Some((reason, config.as_ref())), at).await
+        }
+        Outcome::RateLimit(_) | Outcome::Requeue => requeue(db, claim, None, at).await,
+    }
 }
 
 pub async fn run(
@@ -273,15 +345,13 @@ pub async fn run(
                         let outcome = match result { Ok(o)=>o,Err(e)=>{tracing::error!("draft database: {e}");Outcome::Pause("草稿数据暂时无法读取，请继续或重启应用；仍然出错时，请导出日志。".into(),None)} };
                         let at=now();
                         let applied=loop {
-                            let result=match &outcome {
-                                Outcome::Done(l,model,fact_check)=>emails::complete(&mut *connection(&db).await,claim,&l.subject,&l.body_md,model,fact_check.as_ref(),at).await,
-                                Outcome::Failed(reason)=>emails::fail(&mut *connection(&db).await,claim,reason,at).await,
-                                Outcome::Pause(reason,config)=>requeue(&db,claim,Some((reason,config.as_ref())),at).await,
-                                Outcome::RateLimit(_)|Outcome::Requeue=>requeue(&db,claim,None,at).await,
-                            };
+                            let result=apply(&db,claim,&outcome,at).await;
                             match result {Ok(a)=>break a,Err(e)=>{tracing::error!("save draft: {e}");tokio::time::sleep(RETRY).await;}}
                         };
-                        if applied && let Outcome::RateLimit(wait)=outcome { let at=Instant::now()+wait;retry_at=Some(retry_at.map_or(at,|old|old.max(at))); }
+                        if applied && let Some(wait)=match outcome {
+                            Outcome::RateLimit(wait)|Outcome::Done {failure:Some((Failure::RateLimit(wait),_)),..}=>Some(wait),
+                            _=>None,
+                        } { let at=Instant::now()+wait;retry_at=Some(retry_at.map_or(at,|old|old.max(at))); }
                         changed();
                     }
                     Err(e)=>{

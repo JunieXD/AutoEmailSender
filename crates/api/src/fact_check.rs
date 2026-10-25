@@ -8,11 +8,17 @@ pub async fn set_ai_fact_check(ctx: &Context, input: NotificationSetting) -> Res
     Ok(profile::set_ai_fact_check(&ctx.db, input.on).await?)
 }
 
-pub async fn fact_check_email(ctx: &Context, input: EmailId) -> Result<FactCheck, CallError> {
-    // Configuration and consent can change while waiting for shared model capacity.
+pub async fn fact_check_email(
+    ctx: &Context,
+    input: EmailId,
+) -> Result<Option<FactCheck>, CallError> {
+    // Settings, configuration and consent can change while waiting for shared model capacity.
     let _permit = ctx.model_limit.acquire().await;
+    if !profile::ai_fact_check(&ctx.db).await? {
+        return Ok(None);
+    }
     let row = sqlx::query!(
-        "SELECT task_id, kind, mentor_id, subject, body_md FROM email WHERE id = ? AND state = 'review'",
+        "SELECT task_id, kind, mentor_id, subject, body_md, generation_claim FROM email WHERE id = ? AND state = 'review'",
         input.id,
     ).fetch_optional(&ctx.db).await?.ok_or_else(|| CallError::invalid(
         "这封邮件已不在待审核状态，请刷新后重试。".into()
@@ -75,12 +81,12 @@ pub async fn fact_check_email(ctx: &Context, input: EmailId) -> Result<FactCheck
             reason: error.message.clone(),
         },
     };
-    if !email::fact_check::save(&ctx.db, input.id, &stored, now()).await? {
+    if !email::fact_check::save(&ctx.db, input.id, row.generation_claim, &stored, now()).await? {
         return Err(CallError::invalid(
-            "这封邮件已不在待审核状态，核对结果未保存。".into(),
+            "这封邮件已重新生成或不在待审核状态，核对结果未保存。".into(),
         ));
     }
-    result
+    result.map(Some)
 }
 
 impl From<writing::fact_check::Error> for CallError {

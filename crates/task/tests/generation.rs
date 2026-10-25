@@ -79,7 +79,11 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
     profile::set_ai_fact_check(db, false).await.unwrap();
     let config=sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'fixture','',1,0) RETURNING id").bind(address).fetch_one(db).await.unwrap();
     let mut ids = vec![];
-    for i in 0..n {
+    let offset: i64 = sqlx::query_scalar("SELECT count(*) FROM mentor")
+        .fetch_one(db)
+        .await
+        .unwrap();
+    for i in offset..offset + n {
         ids.push(
             mentor::create(
                 db,
@@ -633,6 +637,11 @@ async fn failed_fact_check_enters_review_and_stale_check_cannot_replace_a_new_cl
     assert!(
         matches!(draft.fact_check,Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty())
     );
+    assert_eq!(
+        task::get(&db, id).await.unwrap().unwrap().state,
+        task::TaskState::Paused
+    );
+    task::resume(&db, id).await.unwrap();
     task::regenerate(&db, id, Some(email), false, 2)
         .await
         .unwrap();
@@ -645,7 +654,15 @@ async fn failed_fact_check_enters_review_and_stale_check_cannot_replace_a_new_cl
         .unwrap();
     let stale = request(&mut p).await;
     email::tasks::recover(&db).await.unwrap();
-    stale.respond.send(Response::answer("[]")).ok().unwrap();
+    stale
+        .respond
+        .send(Response::Refused {
+            status: 402,
+            message: "insufficient balance".into(),
+            retry_after: None,
+        })
+        .ok()
+        .unwrap();
     // The scheduler must regenerate instead of accepting the expired check and draft.
     let fresh = request(&mut p).await;
     assert_eq!(
@@ -734,4 +751,269 @@ async fn fact_check_refreshes_configuration_and_consent_after_writing(db: Sqlite
         Some(email::fact_check::FactCheck::Failed { .. })
     ));
     assert!(checking.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn disabling_fact_checks_while_writing_skips_the_second_call(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let (id, _) = setup(&db, &p.address, 1).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let writing = request(&mut p).await;
+    profile::set_ai_fact_check(&db, false).await.unwrap();
+    writing.respond.send(Response::answer(LETTER)).ok().unwrap();
+    assert_eq!(run.finished().await.generated, 1);
+    let drafts = task::pending(&db, id, 1).await.unwrap();
+    assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
+    assert_eq!(drafts[0].draft.fact_check, None);
+    assert!(p.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
+    for stop in [true, false] {
+        let mut p = Provider::start().await;
+        let (id, _) = setup(&db, &p.address, 1).await;
+        profile::set_ai_fact_check(&db, true).await.unwrap();
+        let mut run = Runner::start(&db, Default::default());
+        let writing = request(&mut p).await;
+        if stop {
+            task::stop(&db, id, 2).await.unwrap();
+        } else {
+            task::pause(&db, id, 2).await.unwrap();
+        }
+        while run.changes.try_recv().is_ok() {}
+        writing.respond.send(Response::answer(LETTER)).ok().unwrap();
+        timeout(Duration::from_secs(10), async {
+            tokio::select! {
+                changed = run.changes.recv() => { changed.unwrap(); }
+                request = p.requests.recv() => {
+                    request.unwrap().respond.send(Response::answer("[]")).ok().unwrap();
+                    panic!("invalidated work started a fact check");
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(p.requests.try_recv().is_err());
+        let row: (String, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT state,fact_check,generation_queued_at FROM email WHERE task_id=?",
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(row.0, if stop { "canceled" } else { "generating" });
+        assert_eq!(row.1, None);
+        if !stop {
+            assert!(row.2.is_some());
+            task::resume(&db, id).await.unwrap();
+            run.handle.wake();
+            request(&mut p)
+                .await
+                .respond
+                .send(Response::answer(LETTER))
+                .ok()
+                .unwrap();
+            request(&mut p)
+                .await
+                .respond
+                .send(Response::answer("[]"))
+                .ok()
+                .unwrap();
+            assert_eq!(run.finished().await.generated, 1);
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn expired_generation_claim_skips_the_old_letters_check(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let (id, _) = setup(&db, &p.address, 1).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let writing = request(&mut p).await;
+    email::tasks::recover(&db).await.unwrap();
+    writing.respond.send(Response::answer(LETTER)).ok().unwrap();
+    let fresh = request(&mut p).await;
+    let message: serde_json::Value =
+        serde_json::from_str(fresh.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(message["导师"]["姓名"], "王0");
+    fresh.respond.send(Response::answer(LETTER)).ok().unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer("[]"))
+        .ok()
+        .unwrap();
+    assert_eq!(run.finished().await.generated, 1);
+    assert_eq!(
+        task::get(&db, id).await.unwrap().unwrap().progress.review,
+        1
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn fact_check_rate_limit_cools_the_queue_without_regenerating_the_letter(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let (id, _) = setup(&db, &p.address, 4).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let first = request(&mut p).await;
+    let second = request(&mut p).await;
+    let third = request(&mut p).await;
+    first.respond.send(Response::answer(LETTER)).ok().unwrap();
+    let check = request(&mut p).await;
+    let guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    while run.changes.try_recv().is_ok() {}
+    check
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "slow down".into(),
+            retry_after: Some(60),
+        })
+        .ok()
+        .unwrap();
+    loop {
+        run.changes.recv().await.unwrap();
+        if task::get(&db, id).await.unwrap().unwrap().progress.review == 1 {
+            break;
+        }
+    }
+    let drafts = task::pending(&db, id, 1).await.unwrap();
+    assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
+    assert!(matches!(&drafts[0].draft.fact_check,
+        Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));
+    profile::set_ai_fact_check(&db, false).await.unwrap();
+    second.respond.send(Response::answer(LETTER)).ok().unwrap();
+    third.respond.send(Response::answer(LETTER)).ok().unwrap();
+    run.until(&db, id, |t| t.progress.review == 3).await;
+    tokio::time::advance(Duration::from_secs(59)).await;
+    let queued: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM email WHERE task_id=? AND generation_queued_at IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(queued, 1);
+    assert!(p.requests.try_recv().is_err());
+    tokio::time::advance(Duration::from_millis(1001)).await;
+    tokio::time::resume();
+    guard.abort();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(LETTER))
+        .ok()
+        .unwrap();
+    let done = run.finished().await;
+    assert_eq!((done.generated, done.failed), (4, 0));
+    let calls: i64 = sqlx::query_scalar("SELECT count(*) FROM usage WHERE purpose='draft'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(calls, 4);
+    assert!(p.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn fact_check_account_errors_pause_remaining_work_and_keep_the_draft(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let (id, _) = setup(&db, &p.address, 4).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let first = request(&mut p).await;
+    let _second = request(&mut p).await;
+    let _third = request(&mut p).await;
+    first.respond.send(Response::answer(LETTER)).ok().unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 402,
+            message: "insufficient balance".into(),
+            retry_after: None,
+        })
+        .ok()
+        .unwrap();
+    run.until(&db, id, |t| t.progress.review == 1).await;
+    let t = task::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(t.state, task::TaskState::Paused);
+    assert!(t.pause_reason.unwrap().contains("额度"));
+    assert_eq!(
+        (
+            t.progress.review,
+            t.progress.generating,
+            t.progress.generation_failed
+        ),
+        (1, 3, 0)
+    );
+    let drafts = task::pending(&db, id, 1).await.unwrap();
+    assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
+    assert!(matches!(&drafts[0].draft.fact_check,
+        Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));
+    assert!(p.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn fact_check_pause_compares_its_own_configuration_with_the_current_one(db: SqlitePool) {
+    for field in ["unchanged", "name", "model", "base_url", "api_key", "id"] {
+        let mut p = Provider::start().await;
+        let (id, _) = setup(&db, &p.address, 1).await;
+        profile::set_ai_fact_check(&db, true).await.unwrap();
+        let mut run = Runner::start(&db, Default::default());
+        let writing = request(&mut p).await;
+        // The check can use a configuration different from the writing request.
+        sqlx::query("UPDATE model_config SET model='check-model' WHERE id=(SELECT model_config_id FROM task WHERE id=?)")
+            .bind(id).execute(&db).await.unwrap();
+        writing.respond.send(Response::answer(LETTER)).ok().unwrap();
+        let check = request(&mut p).await;
+        assert_eq!(check.body["model"], "check-model");
+        let config: i64 = sqlx::query_scalar("SELECT model_config_id FROM task WHERE id=?")
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        if field == "id" {
+            let replacement: i64 = sqlx::query_scalar("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'check-model','',1,0) RETURNING id")
+                .bind(&p.address).fetch_one(&db).await.unwrap();
+            sqlx::query("UPDATE task SET model_config_id=? WHERE id=?")
+                .bind(replacement)
+                .bind(id)
+                .execute(&db)
+                .await
+                .unwrap();
+        } else if field != "unchanged" {
+            sqlx::query("UPDATE model_config SET name=CASE WHEN ?1='name' THEN 'changed' ELSE name END, model=CASE WHEN ?1='model' THEN 'changed' ELSE model END, base_url=CASE WHEN ?1='base_url' THEN 'http://127.0.0.1:1/v1' ELSE base_url END, api_key=CASE WHEN ?1='api_key' THEN 'changed' ELSE api_key END WHERE id=?2")
+                .bind(field).bind(config).execute(&db).await.unwrap();
+        }
+        check
+            .respond
+            .send(Response::Refused {
+                status: 402,
+                message: "insufficient balance".into(),
+                retry_after: None,
+            })
+            .ok()
+            .unwrap();
+        run.finished().await;
+        let t = task::get(&db, id).await.unwrap().unwrap();
+        assert_eq!(
+            t.state,
+            if matches!(field, "unchanged" | "name") {
+                task::TaskState::Paused
+            } else {
+                task::TaskState::Active
+            },
+            "changed {field}"
+        );
+        assert_eq!((t.progress.review, t.progress.generation_failed), (1, 0));
+    }
 }
