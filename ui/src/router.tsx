@@ -1,5 +1,8 @@
+import { StatsPage } from "./pages/stats";
 import { FindPage, findSearch } from "./pages/find";
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
+import { call } from "./api/call";
+import { queryClient } from "./query-client";
 import { TasksPage, TaskReviewPage, tasksSearch, taskSearch } from "./pages/tasks";
 import { ConversationsPage, conversationSearch } from "./pages/conversations";
 import { Shell, MorePage } from "./components/shell";
@@ -13,17 +16,29 @@ import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
 import { AboutSection, ChecksSection, NotificationsSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
+import { BackupSection } from "./pages/backup";
+import { WelcomePage } from "./pages/welcome";
 
 const rootRoute = createRootRoute({ component: Shell });
 
 // The mentor list is the home page. It lives under /mentors so that its navigation entry stays
-// current on a mentor's page.
+// current on a mentor's page. Until the first-run guide is over, the app opens on it instead.
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/mentors" });
+  beforeLoad: async () => {
+    const profile = await queryClient.ensureQueryData({
+      queryKey: ["getProfile"],
+      queryFn: () => call("getProfile", {}),
+    });
+    throw redirect({ to: profile.onboarded ? "/mentors" : "/welcome" });
   },
+});
+
+const welcomeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "welcome",
+  component: WelcomePage,
 });
 
 const mentorsRoute = createRoute({
@@ -63,6 +78,11 @@ const findRoute = createRoute({
   path: "find",
   validateSearch: findSearch,
   component: FindPage,
+});
+const statsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "stats",
+  component: StatsPage,
 });
 const moreRoute = createRoute({ getParentRoute: () => rootRoute, path: "more", component: MorePage });
 const tasksRoute = createRoute({
@@ -139,6 +159,12 @@ const notificationsRoute = createRoute({
   component: NotificationsSection,
 });
 
+const backupRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "backup",
+  component: BackupSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -149,11 +175,13 @@ const aboutRoute = createRoute({
 export const router = createRouter({
   routeTree: rootRoute.addChildren([
     homeRoute,
+    welcomeRoute,
     mentorsRoute,
     trashRoute,
     mentorRoute,
     conversationsRoute,
     moreRoute,
+    statsRoute,
     findRoute,
     tasksRoute,
     taskRoute,
@@ -167,6 +195,7 @@ export const router = createRouter({
       checksRoute,
       modelsRoute,
       notificationsRoute,
+      backupRoute,
       aboutRoute,
     ]),
   ]),

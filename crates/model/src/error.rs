@@ -3,6 +3,7 @@ use std::error::Error;
 /// Why calling a model provider failed. Displays in English for the log; `message` is for the user.
 #[derive(Debug)]
 pub enum ModelError {
+    MissingKey,
     /// No answer at all: the network, the proxy, the address or its certificate.
     Unreachable {
         address: String,
@@ -31,6 +32,7 @@ pub enum ModelError {
 impl std::fmt::Display for ModelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ModelError::MissingKey => write!(f, "API key missing after restore"),
             ModelError::Unreachable { address, source } => {
                 // reqwest's own words are only "error sending request"; the cause is deeper.
                 write!(f, "reach {address}")?;
@@ -60,6 +62,9 @@ impl ModelError {
     /// What happened and what to do about it.
     pub fn message(&self) -> String {
         match self {
+            ModelError::MissingKey => {
+                "恢复后需要重新填写 API Key。请到“设置 › AI › 模型”填写后再试。".into()
+            }
             ModelError::Unreachable { address, source } if net::untrusted(source) => {
                 format!("{address} 的证书不受信任，连接可能被拦截了。换个网络再试。")
             }

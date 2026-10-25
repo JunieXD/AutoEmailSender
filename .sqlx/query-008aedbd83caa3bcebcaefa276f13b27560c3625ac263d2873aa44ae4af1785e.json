@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM mailbox WHERE receive_retry_at IS NULL OR receive_retry_at <= ?\n         ORDER BY rotation_order, id",
+  "query": "SELECT id FROM material WHERE attach_by_default = 1 ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -9,18 +9,18 @@
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "mailbox",
+            "table": "material",
             "name": "id"
           }
         }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false
     ]
   },
-  "hash": "ea1019025a466493a753591032f0a57bed8be60191ec3dc5d10e002b0745ae98"
+  "hash": "008aedbd83caa3bcebcaefa276f13b27560c3625ac263d2873aa44ae4af1785e"
 }

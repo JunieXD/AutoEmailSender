@@ -1,0 +1,42 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH trashed AS MATERIALIZED (SELECT id FROM mentor WHERE trashed_at IS NOT NULL), completeness AS MATERIALIZED (\n SELECT count(CASE WHEN research IS NOT NULL THEN 1 END) AS research,\n count(CASE WHEN json_array_length(papers)>0 THEN 1 END) AS papers FROM mentor_detail\n), trash_completeness AS MATERIALIZED (\n SELECT count(CASE WHEN research IS NOT NULL THEN 1 END) AS research,\n count(CASE WHEN json_array_length(papers)>0 THEN 1 END) AS papers FROM mentor_detail WHERE mentor_id IN (SELECT id FROM trashed)\n)\nSELECT ((SELECT count(DISTINCT mentor_id) FROM mentor_email)-(SELECT count(DISTINCT mentor_id) FROM mentor_email WHERE mentor_id IN (SELECT id FROM trashed))) AS \"email!: i64\",\n ((SELECT research FROM completeness)-(SELECT research FROM trash_completeness)) AS \"research!: i64\",\n ((SELECT papers FROM completeness)-(SELECT papers FROM trash_completeness)) AS \"papers!: i64\",\n ((SELECT count(DISTINCT mentor_id) FROM mentor_homepage)-(SELECT count(DISTINCT mentor_id) FROM mentor_homepage WHERE mentor_id IN (SELECT id FROM trashed))) AS \"homepage!: i64\"\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "email!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "research!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "papers!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "homepage!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "1f7b5f98f459e888d6f5b585b8be77e91ff32939a9f6cc131e635498991aad18"
+}

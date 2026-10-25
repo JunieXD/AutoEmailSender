@@ -7,7 +7,7 @@ CREATE TABLE model_config (
   provider TEXT NOT NULL,
   base_url TEXT,
   model TEXT NOT NULL,
-  api_key TEXT NOT NULL,        -- never sent to the UI
+  api_key TEXT,        -- never sent to the UI
   input_price REAL,
   output_price REAL,
   -- The user was told what AI features send to this provider and agreed.
@@ -37,7 +37,7 @@ CREATE TABLE mailbox (
   imap_port INTEGER NOT NULL,
   imap_security TEXT NOT NULL CHECK (imap_security IN ('tls', 'starttls')),
   auth TEXT NOT NULL CHECK (auth IN ('password', 'oauth')),
-  secret TEXT NOT NULL,         -- password, app password or OAuth token; never sent to the UI
+  secret TEXT,         -- password, app password or OAuth token; never sent to the UI
   daily_limit INTEGER NOT NULL,
   min_interval_s INTEGER NOT NULL,
   rotation_order INTEGER NOT NULL,
@@ -55,6 +55,7 @@ CREATE TABLE profile (
   name TEXT,
   research_interests TEXT,
   rewrite_preference TEXT,
+  onboarded INTEGER NOT NULL DEFAULT 0 CHECK (onboarded IN (0, 1)),
   font TEXT CHECK (font IN ('song', 'hei')), -- NULL = the recipient's default font
   font_size_pt REAL NOT NULL,
   line_height REAL NOT NULL,
@@ -373,7 +374,7 @@ CREATE TABLE usage (
   model_config_id INTEGER REFERENCES model_config(id) ON DELETE SET NULL,
   model TEXT NOT NULL,
   purpose TEXT NOT NULL CHECK (purpose IN ('crawl', 'match', 'draft', 'rewrite', 'fact_check',
-    'reply_outcome', 'reply_todos', 'reply_draft')),
+    'reply_outcome', 'reply_todos')),
   crawl_id INTEGER REFERENCES crawl(id) ON DELETE SET NULL,
   email_id INTEGER REFERENCES email(id) ON DELETE SET NULL,
   input_tokens INTEGER NOT NULL,

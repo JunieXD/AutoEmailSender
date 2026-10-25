@@ -12,14 +12,18 @@ pub struct Usage {
 }
 
 /// What a call was for.
-#[derive(Debug, Clone, Copy, sqlx::Type)]
+#[derive(Debug, Clone, Copy, serde::Serialize, sqlx::Type, ts_rs::TS)]
 #[sqlx(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[ts(rename = "UsagePurpose")]
 pub enum Purpose {
     Crawl,
     Match,
     Draft,
     Rewrite,
     FactCheck,
+    ReplyOutcome,
+    ReplyTodos,
 }
 
 pub async fn record(

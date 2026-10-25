@@ -1,0 +1,35 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH trashed AS MATERIALIZED (SELECT id FROM mentor WHERE trashed_at IS NOT NULL), buckets AS (\n SELECT value->>'date' AS date, value->>'start' AS start, value->>'end' AS end FROM json_each(?1)\n)\nSELECT b.date AS \"date!: String\",\n  ((SELECT count(*) FROM contact_email e WHERE e.mentor_id NOT IN (SELECT id FROM trashed) AND e.sent_at>=b.start AND e.sent_at<b.end)\n  + (SELECT count(DISTINCT e.id) FROM contact_message e JOIN message_mentor mm ON mm.message_id=e.id WHERE e.kind='sent' AND mm.mentor_id NOT IN (SELECT id FROM trashed) AND e.sent_at>=b.start AND e.sent_at<b.end)) AS \"sent!: i64\",\n  (SELECT count(DISTINCT e.id) FROM contact_message e JOIN message_mentor mm ON mm.message_id=e.id WHERE e.kind='reply' AND mm.mentor_id NOT IN (SELECT id FROM trashed) AND e.sent_at>=b.start AND e.sent_at<b.end) AS \"replies!: i64\"\nFROM buckets b ORDER BY b.start\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "date!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "sent!: i64",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "replies!: i64",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "bb80e8da0b3db719714c45c71d5135f17d71a7532e5068fed49e78bb356a8af0"
+}

@@ -2,7 +2,7 @@ import { crawlName, refreshCrawls, findSearch } from "@/pages/find";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search } from "lucide-react";
+import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search, ChartNoAxesColumn } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
@@ -15,12 +15,14 @@ import { refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
+import { useResume } from "@/pages/mailboxes";
 
 const NAV = [
   { to: "/mentors", label: "导师", icon: Users },
   { to: "/conversations", label: "往来", icon: MessagesSquare },
   { to: "/tasks", label: "任务", icon: ListTodo },
   { to: "/find", label: "找导师", icon: Search },
+  { to: "/stats", label: "统计", icon: ChartNoAxesColumn },
 ] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
@@ -47,6 +49,8 @@ export function Shell() {
       refreshMentors(queryClient);
       setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
     });
+    // A sent email changes its mentor's correspondence and contact status as well as its task.
+    const sendingChanged = listen("sending-changed", () => refreshMentors(queryClient));
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
     const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
       refreshTasks(queryClient);
@@ -55,6 +59,7 @@ export function Shell() {
     return () => {
       void crawlChanged.then((f) => f());
       void crawlFinished.then((f) => f());
+      void sendingChanged.then((f) => f());
       void tasksChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());
@@ -110,7 +115,7 @@ export function Shell() {
         )}
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
-        {[...NAV.filter((n) => n.to !== "/find"), MORE].map(({ to, label, icon: Icon }) => (
+        {[...NAV.filter((n) => n.to !== "/find" && n.to !== "/stats"), MORE].map(({ to, label, icon: Icon }) => (
           <Link
             key={to}
             to={to}
@@ -187,10 +192,16 @@ function useBackground() {
     queryFn: () => call("scheduledWork", {}),
     refetchInterval: 3000,
   });
+  const mailboxes = useQuery({
+    queryKey: ["listMailboxes"],
+    queryFn: () => call("listMailboxes", {}),
+    refetchInterval: 3000,
+  });
   const today = new Date(crawls.dataUpdatedAt).toDateString();
   const work = {
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
     emails: scheduled.data?.pending ?? 0,
+    mailboxes: mailboxes.data?.flatMap(({ id, address, pause }) => (pause ? [{ id, address, pause }] : [])) ?? [],
     paused: tasks.data?.filter((t) => t.state === "paused") ?? [],
     crawlsPending: crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [],
     crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
@@ -200,12 +211,12 @@ function useBackground() {
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
     next: scheduled.data?.nextAt ?? null,
     nextToday: scheduled.data?.today ?? 0,
-    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error,
+    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? mailboxes.error,
   };
   return {
     ...work,
     running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0),
-    waiting: (work.emails > 0 ? 1 : 0) + work.paused.length + work.crawlsPending.length,
+    waiting: (work.emails > 0 ? 1 : 0) + work.mailboxes.length + work.paused.length + work.crawlsPending.length,
   };
 }
 
@@ -226,7 +237,8 @@ function Background({ className }: { className?: string }) {
     mutationFn: (id: number) => call("pauseCrawl", { id }),
     onSuccess: () => refreshCrawls(queryClient),
   });
-  const error = work.error ?? pauseCrawl.error;
+  const resume = useResume();
+  const error = work.error ?? pauseCrawl.error ?? resume.error;
   return (
     <Popover>
       <PopoverTrigger
@@ -258,6 +270,16 @@ function Background({ className }: { className?: string }) {
                 <Entry title={`${work.emails} 封邮件待处理`} detail="去发送计划里处理" />
               </Link>
             )}
+            {work.mailboxes.map((m) => (
+              <div key={m.id} className="flex items-center gap-2">
+                <Link to="/settings/mailboxes" className={ITEM}>
+                  <Entry title={m.address} detail={`发信暂停到 ${scheduledAt(m.pause.until)}：${m.pause.reason}`} />
+                </Link>
+                <Button variant="quiet" size="sm" disabled={resume.isPending} onClick={() => resume.mutate(m.id)}>
+                  恢复
+                </Button>
+              </div>
+            ))}
             {work.paused.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
                 <Entry title={t.name} detail={t.pauseReason ?? "已暂停"} />
@@ -361,6 +383,10 @@ export function MorePage() {
       <Link to="/find" search={findSearch({})} className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Search className="size-5" />
         找导师
+      </Link>
+      <Link to="/stats" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
+        <ChartNoAxesColumn className="size-5" />
+        统计
       </Link>
       <Link to="/settings" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Settings className="size-5" />

@@ -28,9 +28,10 @@ function filled(text: string): string | null {
 
 /**
  * Saves as the user types. Saves run one at a time and outlive this page, so the last text wins
- * even after leaving and coming back quickly, and unsaved text is shown again on return.
+ * even after leaving and coming back quickly, and unsaved text is shown again on return. `basic`
+ * leaves out the rewrite preference, as the first-run guide does.
  */
-function ProfileFields({ profile }: { profile: Profile }) {
+export function ProfileFields({ profile, basic = false }: { profile: Profile; basic?: boolean }) {
   const queryClient = useQueryClient();
   const save = useMutation({
     mutationKey,
@@ -39,11 +40,16 @@ function ProfileFields({ profile }: { profile: Profile }) {
     // A load still under way may have read the profile before this save, so it must not land afterwards.
     onSuccess: async (_, f) => {
       await queryClient.cancelQueries({ queryKey: ["getProfile"] });
-      queryClient.setQueryData<Profile>(["getProfile"], {
-        name: filled(f.name),
-        researchInterests: filled(f.researchInterests),
-        rewritePreference: filled(f.rewritePreference),
-      });
+      queryClient.setQueryData<Profile>(
+        ["getProfile"],
+        (p) =>
+          p && {
+            ...p,
+            name: filled(f.name),
+            researchInterests: filled(f.researchInterests),
+            rewritePreference: filled(f.rewritePreference),
+          },
+      );
     },
   });
   const last = useMutationState<MutationState<null, Error, ProfileForm>>({
@@ -83,16 +89,18 @@ function ProfileFields({ profile }: { profile: Profile }) {
         />
         <p className="mt-1.5 text-sm text-muted-foreground">分析匹配度时，和材料一起作为依据。</p>
       </Field>
-      <Field label="草稿改写偏好" id="profile-rewrite">
-        <Textarea
-          id="profile-rewrite"
-          rows={3}
-          placeholder="比如：语气正式但不生硬，300 字以内，不用感叹号"
-          value={form.rewritePreference}
-          onChange={(e) => edit({ ...form, rewritePreference: e.target.value })}
-        />
-        <p className="mt-1.5 text-sm text-muted-foreground">AI 写草稿和改写时照着做。</p>
-      </Field>
+      {!basic && (
+        <Field label="草稿改写偏好" id="profile-rewrite">
+          <Textarea
+            id="profile-rewrite"
+            rows={3}
+            placeholder="比如：语气正式但不生硬，300 字以内，不用感叹号"
+            value={form.rewritePreference}
+            onChange={(e) => edit({ ...form, rewritePreference: e.target.value })}
+          />
+          <p className="mt-1.5 text-sm text-muted-foreground">AI 写草稿和改写时照着做。</p>
+        </Field>
+      )}
       {last?.status === "error" && (
         <p className="text-sm text-destructive">个人资料未能保存：{errorMessage(last.error)}</p>
       )}
