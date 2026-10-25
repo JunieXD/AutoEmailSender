@@ -35,15 +35,17 @@ pub enum Kind {
     FollowUp,
 }
 
-#[derive(Debug, Deserialize, TS)]
+#[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct NewTask {
+    pub source_task_id: Option<i64>,
     pub kind: Kind,
     pub name: String,
     pub schedule: email::schedule::Schedule,
     pub ids: Vec<i64>,
     pub writer: Writer,
     pub template_id: Option<i64>,
+    pub template_source_id: Option<i64>,
     pub model_config_id: Option<i64>,
     pub references: Vec<i64>,
     pub attachments: Vec<i64>,
@@ -76,10 +78,34 @@ pub struct PreviousLetter {
     pub sent_at: i64,
 }
 
+async fn validate_source(conn: &mut SqliteConnection, form: &NewTask) -> Result<()> {
+    if let Some(source) = form.source_task_id {
+        let valid = sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM task WHERE id = ?1)
+               AND NOT EXISTS (
+                 SELECT 1 FROM json_each(?2) selected
+                 WHERE NOT EXISTS (SELECT 1 FROM email
+                   WHERE task_id = ?1 AND mentor_id = selected.value)
+               ) AS "valid!: bool""#,
+            source,
+            Json(&form.ids),
+        )
+        .fetch_one(conn)
+        .await?;
+        if !valid {
+            return Err(Error::Invalid(
+                "原任务已删除或已变化，请重新打开“重新发起”。".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn candidates(
     conn: &mut SqliteConnection,
     ids: &[i64],
     kind: Kind,
+    source_task: Option<i64>,
 ) -> std::result::Result<Vec<Candidate>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.name,
@@ -87,44 +113,33 @@ async fn candidates(
                WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id)
                  THEN '导师尚未填写邮箱'
                WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
+                 AND task_id = ?2 AND state = 'sent')
+                 THEN '原任务中的邮件已发出'
+               WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
                  AND kind IN ('first', 'follow_up')
                  AND state IN ('generating', 'generation_failed', 'review', 'approved',
-                   'cloud', 'sending', 'maybe_sent', 'failed'))
+                   'cloud', 'sending', 'maybe_sent', 'failed')
+                 AND NOT (task_id IS ?2 AND ?2 IS NOT NULL
+                   AND state IN ('failed', 'generation_failed')))
                  THEN '还有一封没发出的首封或追问'
                ELSE NULL END AS "reason: String",
              coalesce(c.contact_count, 0) AS "contact_count!: i64",
-             c.last_out_at AS last_contact_at, c.last_reply_at
+             c.last_out_at AS last_contact_at
            FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           WHERE m.id IN (SELECT value FROM json_each(?))
+           WHERE m.id IN (SELECT value FROM json_each(?1))
            ORDER BY m.name, m.id"#,
-        Json(ids)
+        Json(ids),
+        source_task,
     )
     .fetch_all(&mut *conn)
     .await?;
     let mut candidates = Vec::new();
     for row in rows {
-        let previous = if kind == Kind::FollowUp {
-            email::thread::previous(conn, row.id, None, false).await?
+        let (previous, reason) = if kind == Kind::FollowUp {
+            let e = email::follow_up::eligibility(conn, row.id, source_task).await?;
+            (e.previous, e.reason.or(row.reason))
         } else {
-            None
-        };
-        let reason = if kind == Kind::FollowUp {
-            if row.last_reply_at.is_some() {
-                Some("导师已回信，请到往来里回复".into())
-            } else if previous.as_ref().is_some_and(|p| p.bounced) {
-                Some("上一封被退回，请先核对邮箱".into())
-            } else if previous.as_ref().is_some_and(|p| p.uncertain) {
-                Some("上一封说不清发没发出，请先在往来里确认".into())
-            } else {
-                row.reason.or_else(|| {
-                    previous
-                        .as_ref()
-                        .is_none_or(|p| p.message_id.is_none())
-                        .then(|| "上一封缺少邮件编号，无法在原线程追问".into())
-                })
-            }
-        } else {
-            row.reason
+            (None, row.reason)
         };
         candidates.push(Candidate {
             id: row.id,
@@ -173,10 +188,50 @@ pub async fn history(
     .await
 }
 
+struct TemplateContent {
+    template_id: Option<i64>,
+    subject: String,
+    body_md: String,
+}
+async fn template_content(
+    conn: &mut SqliteConnection,
+    form: &NewTask,
+) -> Result<Option<TemplateContent>> {
+    if let Some(id) = form.template_source_id {
+        let t = sqlx::query!(
+            "SELECT template_id,template_subject,template_body_md FROM task WHERE id=?",
+            id
+        )
+        .fetch_optional(conn)
+        .await?
+        .ok_or_else(|| Error::Invalid("原任务已被删除，请重新选择模板。".into()))?;
+        return Ok(t.template_body_md.map(|body_md| TemplateContent {
+            template_id: t.template_id,
+            subject: t.template_subject.unwrap_or_default(),
+            body_md,
+        }));
+    }
+    match form.template_id {
+        Some(id) => Ok(Some(
+            sqlx::query_as!(
+                TemplateContent,
+                "SELECT id AS \"template_id?\",subject,body_md FROM template WHERE id=?",
+                id
+            )
+            .fetch_optional(conn)
+            .await?
+            .ok_or_else(|| Error::Invalid("模板已被删除，请重新选择。".into()))?,
+        )),
+        None => Ok(None),
+    }
+}
+
 pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
     let mut tx = db.begin().await?;
-    let mentors = candidates(&mut tx, &form.ids, form.kind).await?;
+    validate_source(&mut tx, form).await?;
+    let mentors = candidates(&mut tx, &form.ids, form.kind, form.source_task_id).await?;
     let refs = references(&mut tx, &form.references).await?;
+    let template = template_content(&mut tx, form).await?;
     let chosen = model::selected(&mut *tx, form.model_config_id).await?;
     tx.commit().await?;
     let me = profile::get(db).await?;
@@ -186,10 +241,6 @@ pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
         .filter(|m| form.attachments.contains(&m.id))
         .map(|m| m.file_name)
         .collect::<Vec<_>>();
-    let template = match form.template_id {
-        Some(id) => template::get(db, id).await?,
-        None => None,
-    };
     let (mut input_tokens, mut output_tokens) = (0, 0);
     if form.writer == Writer::Ai {
         for m in mentors.iter().filter(|m| m.reason.is_none()) {
@@ -292,16 +343,9 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     let mut tx = db.begin().await?;
     // Take the write lock before reading template content or checking membership.
     let id = sqlx::query_scalar!("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,?,'ai','now','active',?) RETURNING id AS \"id!\"",form.name.trim(),form.kind,now).fetch_one(&mut *tx).await?;
+    validate_source(&mut tx, form).await?;
     email::schedule::save(&mut tx, id, &form.schedule).await?;
-    let template = match form.template_id {
-        Some(id) => Some(
-            sqlx::query!("SELECT subject,body_md FROM template WHERE id = ?", id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or_else(|| Error::Invalid("模板已被删除，请重新选择。".into()))?,
-        ),
-        None => None,
-    };
+    let template = template_content(&mut tx, form).await?;
     if form.writer == Writer::Template && template.is_none() {
         return Err(Error::Invalid("请选择模板".into()));
     }
@@ -309,8 +353,56 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         template.as_ref().map(|t| t.subject.as_str()),
         template.as_ref().map(|t| t.body_md.as_str()),
     );
-    sqlx::query!("UPDATE task SET writer=?,template_id=?,template_subject=?,template_body_md=?,model_config_id=? WHERE id=?",writer,form.template_id,subject,body,form.model_config_id,id).execute(&mut *tx).await?;
-    let mentors = candidates(&mut tx, &form.ids, form.kind).await?;
+    let template_id = template.as_ref().and_then(|t| t.template_id);
+    let chosen = if form.writer == Writer::Ai || form.model_config_id.is_some() {
+        model::selected(&mut *tx, form.model_config_id).await?
+    } else {
+        None
+    };
+    if form.writer == Writer::Ai {
+        let chosen = chosen
+            .as_ref()
+            .ok_or_else(|| Error::Invalid("尚未添加模型，请先在设置中添加。".into()))?;
+        if !chosen.agreed {
+            return Err(Error::Invalid("请先确认发给模型服务商的内容。".into()));
+        }
+    }
+    let model_config_id = chosen.as_ref().map(|c| c.id);
+    sqlx::query!(
+        "UPDATE task SET writer = ?, template_id = ?, template_subject = ?,
+           template_body_md = ?, model_config_id = ? WHERE id = ?",
+        writer,
+        template_id,
+        subject,
+        body,
+        model_config_id,
+        id
+    )
+    .execute(&mut *tx)
+    .await?;
+    if let Some(source) = form.source_task_id {
+        let failures = sqlx::query_scalar!(
+            "SELECT id FROM email WHERE task_id = ? AND mentor_id IN (SELECT value FROM json_each(?))
+               AND state IN ('failed', 'generation_failed') ORDER BY id",
+            source,
+            Json(&form.ids),
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for failure in failures {
+            email::cancel(
+                &mut tx,
+                email::CancelScope::Task {
+                    task: source,
+                    email: Some(failure),
+                },
+                "已在新任务重新发起",
+                now,
+            )
+            .await?;
+        }
+    }
+    let mentors = candidates(&mut tx, &form.ids, form.kind, form.source_task_id).await?;
     let mut ids = form.ids.clone();
     ids.sort_unstable();
     ids.dedup();
@@ -318,21 +410,6 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         return Err(Error::Invalid(
             "有导师无法加入任务，请重新核对导师列表。".into(),
         ));
-    }
-    if form.writer == Writer::Ai {
-        let chosen = model::selected(&mut *tx, form.model_config_id)
-            .await?
-            .ok_or_else(|| Error::Invalid("尚未添加模型，请先在设置中添加。".into()))?;
-        if !chosen.agreed {
-            return Err(Error::Invalid("请先确认发给模型服务商的内容。".into()));
-        }
-        sqlx::query!(
-            "UPDATE task SET model_config_id = ? WHERE id = ?",
-            chosen.id,
-            id
-        )
-        .execute(&mut *tx)
-        .await?;
     }
     for (role, materials) in [
         ("reference", &form.references),

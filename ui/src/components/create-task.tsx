@@ -17,7 +17,9 @@ export function CreateTaskDialog({
   ids,
   kind = "first",
   onClose,
+  initial,
 }: {
+  initial?: NewTask;
   ids: number[];
   kind?: Kind;
   onClose: () => void;
@@ -40,6 +42,7 @@ export function CreateTaskDialog({
   if (!materials.data || !templates.data || !models.data) return null;
   return (
     <TaskSteps
+      initial={initial}
       ids={ids}
       kind={kind}
       materials={materials.data}
@@ -56,7 +59,9 @@ function TaskSteps({
   templates,
   modelId,
   onClose,
+  initial,
 }: {
+  initial?: NewTask;
   ids: number[];
   kind: Kind;
   materials: Material[];
@@ -70,14 +75,17 @@ function TaskSteps({
   const [openedAt] = useState(() => Date.now());
   const [excluded, setExcluded] = useState<number[]>([]);
   const [form, setForm] = useState<NewTask>(() => {
+    if (initial) return initial;
     const date = new Date();
     return {
+      sourceTaskId: null,
       kind,
       schedule: { kind: "now" },
       name: `${kind === "follow_up" ? "追问" : "首封"} ${date.getMonth() + 1}月${date.getDate()}日`,
       ids,
       writer: "ai",
       templateId: null,
+      templateSourceId: null,
       modelConfigId: modelId,
       references: materials.filter((m) => m.forWriting).map((m) => m.id),
       attachments: materials
@@ -98,6 +106,8 @@ function TaskSteps({
       kind,
       form.writer,
       form.templateId,
+      form.templateSourceId,
+      form.sourceTaskId,
       form.references,
       form.attachments,
       form.modelConfigId,
@@ -123,7 +133,9 @@ function TaskSteps({
   function toggle(key: "references" | "attachments", id: number, on: boolean) {
     setForm({ ...form, [key]: on ? [...form[key], id] : form[key].filter((i) => i !== id) });
   }
-  const valid = eligible.length > 0 && (step !== 1 || form.writer === "ai" || form.templateId !== null);
+  const valid =
+    eligible.length > 0 &&
+    (step !== 1 || form.writer === "ai" || form.templateId !== null || form.templateSourceId !== null);
   return (
     <Dialog open onOpenChange={formClose(true, create.isPending, onClose)}>
       <DialogContent className="w-[620px]">
@@ -139,6 +151,11 @@ function TaskSteps({
           {step === 0 && (
             <>
               <p className="text-base font-medium">将联系 {eligible.length} 位导师</p>
+              {form.sourceTaskId !== null && (
+                <p className="text-muted-foreground">
+                  创建新任务时，所选导师在原任务中仍为发送失败或生成失败的邮件会取消。关闭此窗口不会改变原任务。
+                </p>
+              )}
               {unavailable.length > 0 && (
                 <details className="rounded-lg bg-muted p-3">
                   <summary className="cursor-pointer">有 {unavailable.length} 位不能加入</summary>
@@ -213,9 +230,17 @@ function TaskSteps({
               <Field id="task-template" label={form.writer === "ai" ? "底稿模板（可以不选）" : "模板"}>
                 <NativeSelect
                   id="task-template"
-                  value={form.templateId ?? ""}
-                  onChange={(e) => setForm({ ...form, templateId: e.target.value ? Number(e.target.value) : null })}
+                  value={form.templateSourceId !== null ? "snapshot" : (form.templateId ?? "")}
+                  onChange={(e) => {
+                    if (e.target.value !== "snapshot")
+                      setForm({
+                        ...form,
+                        templateSourceId: null,
+                        templateId: e.target.value ? Number(e.target.value) : null,
+                      });
+                  }}
                 >
+                  {form.templateSourceId !== null && <option value="snapshot">原任务保存的模板</option>}
                   <option value="">{form.writer === "ai" ? "从头起草" : "请选择模板"}</option>
                   {templates.map((t) => (
                     <option key={t.id} value={t.id}>
@@ -295,8 +320,12 @@ function TaskSteps({
                   {eligible.length} 位导师 · {form.writer === "ai" ? "AI 逐一撰写" : "使用模板"}
                 </p>
                 <p>
-                  {form.templateId ? templates.find((t) => t.id === form.templateId)?.name : "从头起草"} ·{" "}
-                  {form.references.length} 份参考材料 · {attached.length} 个附件
+                  {form.templateSourceId !== null
+                    ? "原任务保存的模板"
+                    : form.templateId
+                      ? templates.find((t) => t.id === form.templateId)?.name
+                      : "从头起草"}{" "}
+                  · {form.references.length} 份参考材料 · {attached.length} 个附件
                 </p>
 
                 <p className="text-muted-foreground">

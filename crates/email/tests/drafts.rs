@@ -224,12 +224,12 @@ async fn uploading_a_material_only_changes_the_current_drafts_attachments(db: Sq
     for kind in [email::DraftKind::First, email::DraftKind::Reply] {
         let kind_name = match kind {
             email::DraftKind::First => "first",
-            email::DraftKind::Reply => "reply",
+            email::DraftKind::Reply | email::DraftKind::FollowUp => "reply",
         };
         let id: i64 = sqlx::query_scalar(
             "INSERT INTO email (mentor_id, kind, state, subject, body_md, reply_to, created_at, updated_at)
              VALUES (?, ?, 'review', '新主题', '上传前的正文', ?, 1, 1) RETURNING id",
-        ).bind(mentor).bind(kind_name).bind(match kind { email::DraftKind::First => None, email::DraftKind::Reply => Some("<current@example.edu>") }).fetch_one(&db).await.unwrap();
+        ).bind(mentor).bind(kind_name).bind(match kind { email::DraftKind::First => None, email::DraftKind::Reply | email::DraftKind::FollowUp => Some("<current@example.edu>") }).fetch_one(&db).await.unwrap();
         sqlx::query(
             "INSERT INTO email_attachment (email_id, material_id, file_name, size)
           SELECT ?, id, file_name, size FROM material WHERE id IN (?, ?)",
@@ -269,7 +269,8 @@ async fn uploading_a_material_only_changes_the_current_drafts_attachments(db: Sq
                 "返回后保存的新正文".into(),
                 match kind {
                     email::DraftKind::First => None,
-                    email::DraftKind::Reply => Some("<current@example.edu>".into()),
+                    email::DraftKind::Reply | email::DraftKind::FollowUp =>
+                        Some("<current@example.edu>".into()),
                 }
             )
         );

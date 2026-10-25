@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS\n             \"body_md!\", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)\n             AS \"resent!: bool\", planned_at, latest_at, from_address, to_address, sent_at,\n             error, cancel_reason\n           FROM email\n           WHERE mentor_id = ?\n             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
+  "query": "SELECT id, state AS \"state: DeliveryColumn\", coalesce(subject, '') AS \"subject!: String\",\n             coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)\n             AS \"resent!: bool\", planned_at, latest_at, from_address, to_address, sent_at,\n             error, cancel_reason\n           FROM email\n           WHERE mentor_id = ?\n             AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n               OR (state='canceled' AND kind='follow_up' AND task_id IS NULL))\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -26,26 +26,16 @@
         }
       },
       {
-        "name": "subject!",
+        "name": "subject!: String",
         "ordinal": 2,
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "email",
-            "name": "subject"
-          }
-        }
+        "origin": "Expression"
       },
       {
-        "name": "body_md!",
+        "name": "body_md!: String",
         "ordinal": 3,
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "email",
-            "name": "body_md"
-          }
-        }
+        "origin": "Expression"
       },
       {
         "name": "resend_of",
@@ -148,8 +138,8 @@
     "nullable": [
       false,
       false,
-      true,
-      true,
+      false,
+      false,
       true,
       false,
       true,
@@ -161,5 +151,5 @@
       true
     ]
   },
-  "hash": "bcc953b44f41f2c76d9d23e84d371e2bfacd090b43c408ac688d74bb5df2518f"
+  "hash": "3bcbd7a59aa5def651aae23311e362b9053f5f6742cb479e675b4e3a8a0ec161"
 }

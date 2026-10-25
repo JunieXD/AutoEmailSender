@@ -3,9 +3,10 @@ import { Link, useNavigate, useSearch, useParams, useBlocker } from "@tanstack/r
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ChevronLeft, MoreHorizontal } from "lucide-react";
 import { call, errorMessage } from "@/api/call";
-import type { DraftFilter, DraftState, PlanColumn, Progress, TaskSummary } from "@/api/types";
+import type { DraftFilter, DraftState, PlanColumn, Progress, TaskSummary, NewTask } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
+import { CreateTaskDialog } from "@/components/create-task";
 import { TaskLetter, type TaskComposerHandle } from "@/components/task-letter";
 import { waitForSaves } from "@/components/letter-composer";
 import { Avatar } from "@/components/mentor";
@@ -57,6 +58,7 @@ export function refreshTasks(client: ReturnType<typeof useQueryClient>) {
     "listTaskDrafts",
     "getTaskDraft",
     "planTask",
+    "restartTask",
     "sendingPlan",
     "scheduledWork",
   ])
@@ -218,6 +220,22 @@ export function TaskReviewPage() {
   const [bulk, setBulk] = useState(false);
   const [changingSchedule, setChangingSchedule] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [restarting, setRestarting] = useState<NewTask | null>(null);
+  const restart = useQuery({
+    queryKey: ["restartTask", id],
+    queryFn: () => call("restartTask", { id }),
+    enabled: moreOpen,
+  });
+  const prepareRestart = useMutation({
+    mutationFn: async () => {
+      await flush();
+      return call("restartTask", { id });
+    },
+    onSuccess: (form) => {
+      setMoreOpen(false);
+      setRestarting(form);
+    },
+  });
   const filter = search.filter ?? "all";
   const page = search.page ?? 1;
   const task = useQuery({ queryKey: ["getTask", id], queryFn: () => call("getTask", { id }), refetchInterval: 3000 });
@@ -320,6 +338,14 @@ export function TaskReviewPage() {
   if (!t) return null;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {restarting && (
+        <CreateTaskDialog
+          ids={restarting.ids}
+          kind={restarting.kind}
+          initial={restarting}
+          onClose={() => setRestarting(null)}
+        />
+      )}
       <header className="space-y-3 border-b border-border px-5 py-4 phone:px-3">
         <div className="flex items-center gap-2">
           <Link to="/tasks" aria-label="返回任务列表" className="rounded-md p-2 hover:bg-muted">
@@ -350,6 +376,19 @@ export function TaskReviewPage() {
               <MoreHorizontal />
             </PopoverTrigger>
             <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-2">
+              <Button
+                variant="ghost"
+                disabled={!restart.data?.ids.length || prepareRestart.isPending}
+                onClick={() => prepareRestart.mutate()}
+              >
+                重新发起没成功的
+              </Button>
+              {restart.data?.ids.length === 0 && (
+                <p className="px-2 text-xs text-muted-foreground">没有已取消、发送失败、生成失败或退信的导师。</p>
+              )}
+              {(restart.error ?? prepareRestart.error) && (
+                <p className="px-2 text-sm text-destructive">{errorMessage(restart.error ?? prepareRestart.error)}</p>
+              )}
               {t.state !== "stopped" && (
                 <Button
                   variant="ghost"

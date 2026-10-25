@@ -3,10 +3,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Email, Entry, MentorDetail, Message } from "@/api/types";
+import type { Email, Entry, MentorDetail, Message, FollowUpEntry } from "@/api/types";
 import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
-import { ReplyLetter } from "@/components/reply-letter";
+import { FollowUpLetter, ReplyLetter } from "@/components/reply-letter";
 import { FirstLetter } from "@/components/first-letter";
 import { contactDetail, dropDrafts, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
@@ -15,11 +15,24 @@ import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
 import { toHtml } from "@/markdown";
 
+/** Pending mail hides both entry buttons, while a blocked thread still explains why. */
+export function followUpActions(entry: FollowUpEntry, now: number) {
+  return {
+    message:
+      entry.reason ??
+      `已发出 ${Math.max(0, Math.floor((now - (entry.previous?.sentAt ?? now)) / 86_400_000))} 天，还没回复`,
+    followUp: !entry.pending && entry.reason === null,
+    newLetter: !entry.pending,
+  };
+}
+
 /** The middle of a mentor's page: the correspondence, or the first email being written (docs/ui.md#交互). */
 export function Correspondence({ mentor }: { mentor: MentorDetail }) {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<{ id: number; version: number } | null>(null);
   const [replyVersion, setReplyVersion] = useState(0);
+  const [openedAt] = useState(() => Date.now());
+  const [openedFirst, setOpenedFirst] = useState<{ mentorId: number; count: number | undefined } | null>(null);
   const entries = useQuery({
     queryKey: ["listCorrespondence", mentor.id],
     queryFn: () => call("listCorrespondence", { id: mentor.id }),
@@ -31,6 +44,8 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
   const out = entries.data?.filter(
     (e) => "email" in e && (e.email.state === "sent" || e.email.state === "maybe_sent" || e.email.state === "bounced"),
   ).length;
+  const emailCount = entries.data?.filter((e) => "email" in e).length;
+  const newLetter = openedFirst?.mentorId === mentor.id && openedFirst.count === emailCount;
   const wasOut = useRef(out);
   useEffect(() => {
     if (wasOut.current !== undefined && out !== wasOut.current) refreshMentors(queryClient);
@@ -49,6 +64,33 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
     queryFn: () => call("getReplyDraft", { id: mentor.id }),
     enabled: !mentor.trashed,
   });
+  const followUpDraft = useQuery({
+    queryKey: ["getFollowUpDraft", mentor.id],
+    queryFn: () => call("getFollowUpDraft", { id: mentor.id }),
+    enabled: !mentor.trashed,
+  });
+  const followUpEntry = useQuery({
+    queryKey: ["getFollowUpEntry", mentor.id],
+    queryFn: () => call("getFollowUpEntry", { id: mentor.id }),
+    enabled: !mentor.trashed,
+  });
+  const follow = useMutation({
+    mutationFn: () => call("createFollowUpDraft", { id: mentor.id }),
+    onSuccess: (saved) => {
+      queryClient.setQueryData(["getFollowUpDraft", mentor.id], saved);
+      void queryClient.invalidateQueries({ queryKey: ["getFollowUpEntry", mentor.id] });
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ["getFollowUpEntry", mentor.id] });
+    },
+  });
+  useEffect(() => {
+    if (emailCount !== undefined) {
+      void queryClient.invalidateQueries({ queryKey: ["getFollowUpDraft", mentor.id] });
+      void queryClient.invalidateQueries({ queryKey: ["getFollowUpEntry", mentor.id] });
+    }
+  }, [emailCount, mentor.id, queryClient]);
+  const actions = followUpEntry.data ? followUpActions(followUpEntry.data, openedAt) : null;
   const lastReplySave = useMutationState({
     filters: { mutationKey: ["saveReplyDraft", mentor.id] },
     select: (m) => m.state.status,
@@ -103,11 +145,41 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
       </div>
       {/* Shown here, as the composer would load the draft again each time it came up. */}
       {!mentor.trashed &&
-        (begun ? (
+        (begun || newLetter ? (
           <FirstLetter mentor={mentor} />
         ) : (
           draft.error && <p className="px-5 py-4 text-sm text-destructive">草稿未能加载：{errorMessage(draft.error)}</p>
         ))}
+      {!mentor.trashed && !begun && !newLetter && followUpDraft.data && <FollowUpLetter mentor={mentor} />}
+      {!mentor.trashed &&
+        !begun &&
+        !newLetter &&
+        !followUpDraft.data &&
+        mentor.contact.status !== "replied" &&
+        actions &&
+        actions.newLetter && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-3 phone:px-3">
+            <p className="mr-auto text-sm text-muted-foreground">{actions.message}</p>
+            {actions.followUp && (
+              <Button variant="quiet" disabled={follow.isPending} onClick={() => follow.mutate()}>
+                追问
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              disabled={follow.isPending}
+              onClick={() => setOpenedFirst({ mentorId: mentor.id, count: emailCount })}
+            >
+              写新的一封
+            </Button>
+            {follow.error && <p className="text-sm text-destructive">未能追问：{errorMessage(follow.error)}</p>}
+          </div>
+        )}
+      {(followUpDraft.error ?? followUpEntry.error) && (
+        <p className="px-5 py-3 text-sm text-destructive">
+          追问未能加载：{errorMessage(followUpDraft.error ?? followUpEntry.error)}
+        </p>
+      )}
       {!mentor.trashed && (replying || entries.data.some((e) => "message" in e && e.message.kind === "reply")) && (
         <ReplyLetter key={`${mentor.id} ${replyVersion}`} mentor={mentor} selected={selected} />
       )}
@@ -295,6 +367,7 @@ function status(e: Email, several: boolean): [string, string] {
         : `已取消：${e.cancelReason}。确认没发出后，不再发送。`;
     return [`可能已发出${to}：${e.error}${next}`, "text-warning"];
   }
+  if (e.state === "canceled") return [`已取消：${e.cancelReason}`, "text-muted-foreground"];
   if (e.state === "failed") return [`发送失败：${e.error}`, "text-destructive"];
   return [`退信（发到 ${e.toAddress}）：${e.error}`, "text-warning"];
 }
