@@ -1,0 +1,49 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH cohort AS MATERIALIZED (\n SELECT o.mentor_id, o.first_at, o.reply_at FROM mentor_contact_first o JOIN mentor m ON m.id=o.mentor_id\n WHERE m.trashed_at IS NULL AND (?1 IS NULL OR o.first_at>=?1) AND o.first_at<?2\n), waits AS MATERIALIZED (\n  SELECT (reply_at-first_at)/86400000.0 AS days FROM cohort WHERE reply_at >= first_at\n), ranked AS (\n  SELECT days, row_number() OVER (ORDER BY days) AS n, count(*) OVER () AS total FROM waits\n)\nSELECT (SELECT count(*) FROM cohort) AS \"contacted!: i64\",\n  (SELECT count(reply_at) FROM cohort) AS \"replied!: i64\",\n  (SELECT avg(days) FROM ranked WHERE n IN ((total+1)/2, (total+2)/2)) AS \"median_days?: f64\",\n  (SELECT count(*) FROM (\n    SELECT e.mentor_id FROM contact_email e JOIN mentor m ON m.id=e.mentor_id\n    WHERE e.state='bounced' AND m.trashed_at IS NULL AND (?1 IS NULL OR e.sent_at>=?1) AND e.sent_at<?2\n    UNION ALL\n    SELECT DISTINCT e.id FROM contact_message e JOIN message_mentor mm ON mm.message_id=e.id JOIN mentor m ON m.id=mm.mentor_id\n    WHERE e.kind='sent' AND mm.bounce_reason IS NOT NULL AND m.trashed_at IS NULL AND (?1 IS NULL OR e.sent_at>=?1) AND e.sent_at<?2\n  )) AS \"bounced!: i64\",\n  (SELECT json_array(count(CASE WHEN days<=1 THEN 1 END), count(CASE WHEN days>1 AND days<=3 THEN 1 END),\n    count(CASE WHEN days>3 AND days<=7 THEN 1 END), count(CASE WHEN days>7 AND days<=14 THEN 1 END),\n    count(CASE WHEN days>14 THEN 1 END)) FROM waits) AS \"waiting!: String\"\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "contacted!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "replied!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "median_days?: f64",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "bounced!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "waiting!: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "d83a25ed3fdd42f24012deec47e16be3603a8499f9a965e11b3421ab618993f7"
+}

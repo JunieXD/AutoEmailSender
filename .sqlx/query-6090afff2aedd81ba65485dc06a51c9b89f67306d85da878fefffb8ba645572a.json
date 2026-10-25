@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mailbox SET address = ?, sender_name = ?, provider = ?, smtp_host = ?, smtp_port = ?,\n           smtp_security = ?, imap_host = ?, imap_port = ?, imap_security = ?,\n           secret = ?, daily_limit = ?, min_interval_s = ?, receive_error = NULL, receive_retry_at = NULL,\n           paused_until = NULL, pause_reason = NULL\n         WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "6090afff2aedd81ba65485dc06a51c9b89f67306d85da878fefffb8ba645572a"
+}

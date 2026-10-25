@@ -1,5 +1,7 @@
+use super::fact_check::FactCheck;
 use chrono::{DateTime, Local, TimeZone};
 use serde::Serialize;
+use sqlx::types::Json;
 use sqlx::{SqliteConnection, SqlitePool};
 use ts_rs::TS;
 
@@ -19,6 +21,7 @@ pub struct ReplyTarget {
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplyDraft {
+    pub fact_check: Option<FactCheck>,
     // Approval consumes this draft, so repeating it cannot send another email.
     pub id: i64,
     pub reply_to: String,
@@ -64,7 +67,7 @@ pub async fn reply_draft(
 ) -> Result<Option<ReplyDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query!(
-        r#"SELECT id, reply_to AS "reply_to!", body_md FROM email
+        r#"SELECT id, reply_to AS "reply_to!", body_md, fact_check AS "fact_check: Json<FactCheck>" FROM email
            WHERE mentor_id = ? AND kind = 'reply' AND state = 'review'"#,
         mentor_id
     )
@@ -74,6 +77,7 @@ pub async fn reply_draft(
         return Ok(None);
     };
     Ok(Some(ReplyDraft {
+        fact_check: row.fact_check.map(|v| v.0),
         id: row.id,
         target: target(&mut tx, mentor_id, None, Some(&row.reply_to)).await?,
         reply_to: row.reply_to,

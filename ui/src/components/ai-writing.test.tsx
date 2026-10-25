@@ -43,6 +43,7 @@ it("requires consent to both providers before resuming mixed crawl and enrichmen
     inputPrice: null,
     outputPrice: null,
     agreed: false,
+    needsApiKey: false,
     isDefault: id === 2,
   }));
   let resumed = false;

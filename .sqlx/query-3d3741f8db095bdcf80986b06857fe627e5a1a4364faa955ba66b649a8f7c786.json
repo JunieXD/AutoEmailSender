@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mailbox SET paused_until = NULL, pause_reason = NULL WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "3d3741f8db095bdcf80986b06857fe627e5a1a4364faa955ba66b649a8f7c786"
+}

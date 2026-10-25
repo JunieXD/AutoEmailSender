@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+email.workspace = true
 hickory-resolver = "0.26"
 serde.workspace = true
 template.workspace = true

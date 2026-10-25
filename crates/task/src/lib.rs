@@ -241,6 +241,7 @@ pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
         .filter(|m| form.attachments.contains(&m.id))
         .map(|m| m.file_name)
         .collect::<Vec<_>>();
+    let fact_check = profile::ai_fact_check(db).await?;
     let (mut input_tokens, mut output_tokens) = (0, 0);
     if form.writer == Writer::Ai {
         for m in mentors.iter().filter(|m| m.reason.is_none()) {
@@ -270,6 +271,11 @@ pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
                 );
                 input_tokens += i;
                 output_tokens += o;
+                if fact_check {
+                    let (i, o) = writing::fact_check::estimate(&me, &refs, o);
+                    input_tokens += i;
+                    output_tokens += o;
+                }
             }
         }
     }

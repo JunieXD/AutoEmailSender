@@ -112,7 +112,10 @@ export function MailboxDialog({
   const usable = form.provider === CUSTOM || setup?.kind === "password";
   // The core only uses the saved secret with the servers it was saved for, as it compares them.
   const secretSaved =
-    mailbox !== null && sameHost(form.smtp.host, mailbox.smtp.host) && sameHost(form.imap.host, mailbox.imap.host);
+    mailbox !== null &&
+    !mailbox.needsSecret &&
+    sameHost(form.smtp.host, mailbox.smtp.host) &&
+    sameHost(form.imap.host, mailbox.imap.host);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const numbers =
     whole(form.dailyLimit, 1, U32) &&
@@ -201,7 +204,9 @@ export function MailboxDialog({
                       id="mailbox-secret"
                       type="password"
                       autoComplete="off"
-                      placeholder={secretSaved ? "不修改就留空" : undefined}
+                      placeholder={
+                        secretSaved ? "不修改就留空" : mailbox?.needsSecret ? "从备份恢复后需要重新填写" : undefined
+                      }
                       value={form.secret}
                       onChange={(e) => edit({ ...form, secret: e.target.value })}
                     />

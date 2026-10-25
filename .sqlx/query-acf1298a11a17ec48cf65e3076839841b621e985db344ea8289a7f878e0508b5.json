@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT subject FROM email WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "acf1298a11a17ec48cf65e3076839841b621e985db344ea8289a7f878e0508b5"
+}

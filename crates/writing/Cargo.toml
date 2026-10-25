@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+email.workspace = true
 material.workspace = true
 mentor.workspace = true
 model.workspace = true

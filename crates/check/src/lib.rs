@@ -30,6 +30,10 @@ pub enum Problem {
         count: i64,
         last_at: i64,
     },
+    UnsupportedClaim {
+        quote: String,
+        reason: String,
+    },
     /// The domain of the mentor's address names no server to take mail.
     NoMailServer {
         domain: String,
@@ -230,6 +234,25 @@ pub async fn mail_domain(address: &str) -> Result<Option<Problem>, NetError> {
     Ok((!servers).then(|| Problem::NoMailServer {
         domain: domain.to_owned(),
     }))
+}
+
+/// Editing away the exact quote resolves a stored finding without another model call.
+pub fn fact_check(
+    result: Option<&email::fact_check::FactCheck>,
+    subject: &str,
+    body_md: &str,
+) -> Vec<Problem> {
+    let Some(email::fact_check::FactCheck::Completed { findings }) = result else {
+        return vec![];
+    };
+    findings
+        .iter()
+        .filter(|f| subject.contains(&f.quote) || body_md.contains(&f.quote))
+        .map(|f| Problem::UnsupportedClaim {
+            quote: f.quote.clone(),
+            reason: f.reason.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

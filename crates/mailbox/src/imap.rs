@@ -283,9 +283,10 @@ impl Imap {
                 } if *done == tag => {
                     return match status {
                         Status::Ok => Ok(()),
-                        _ => Err(MailError::Refused(
-                            information.as_deref().unwrap_or_default().to_owned(),
-                        )),
+                        _ => Err(MailError::Refused {
+                            reply: information.as_deref().unwrap_or_default().to_owned(),
+                            smtp_code: None,
+                        }),
                     };
                 }
                 response => each(response),
@@ -325,7 +326,7 @@ async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStre
         .login(account.address.to_string(), &account.secret)
         .await
         .map_err(|(e, _)| match refused(e) {
-            MailError::Refused(reply) => MailError::Login(reply),
+            MailError::Refused { reply, smtp_code } => MailError::Login { reply, smtp_code },
             e => e,
         })?;
     // Some servers, such as 163's, refuse to open folders for clients that do not say who they are.
@@ -412,7 +413,10 @@ fn quoted(s: &str) -> String {
 fn refused(e: async_imap::error::Error) -> MailError {
     match e {
         async_imap::error::Error::No(reply) | async_imap::error::Error::Bad(reply) => {
-            MailError::Refused(server_words(reply))
+            MailError::Refused {
+                reply: server_words(reply),
+                smtp_code: None,
+            }
         }
         e => MailError::Broken(e.to_string()),
     }

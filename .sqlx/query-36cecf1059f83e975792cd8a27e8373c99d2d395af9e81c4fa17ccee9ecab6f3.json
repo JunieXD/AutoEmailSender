@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mailbox_id FROM email WHERE message_id = ?1 OR copy_message_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "mailbox_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mailbox_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "36cecf1059f83e975792cd8a27e8373c99d2d395af9e81c4fa17ccee9ecab6f3"
+}

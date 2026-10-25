@@ -773,8 +773,8 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             .is_err()
     );
     tokio::time::resume();
-    let (mut matches, mut drafts, mut routes, mut profiles) = (0, 0, 0, 0);
-    for _ in 0..21 {
+    let (mut matches, mut drafts, mut routes, mut profiles, mut checks) = (0, 0, 0, 0, 0);
+    for _ in 0..27 {
         // A route's next call needs its response first; do not hold that response while
         // waiting for a replacement call after the other two queues have drained.
         let r = if active.is_empty() {
@@ -797,6 +797,9 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             answer["names"] = json!(["张三"]);
             answer["next"] = json!([]);
             answer.to_string()
+        } else if system.starts_with("核对学生") {
+            checks += 1;
+            "[]".into()
         } else if system.contains("分数不是录取") {
             matches += 1;
             r#"{"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]}"#.into()
@@ -806,7 +809,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         };
         r.respond.send(Response::answer(&answer)).ok().unwrap();
     }
-    assert_eq!((matches, drafts, routes, profiles), (6, 6, 3, 3));
+    assert_eq!((matches, drafts, routes, profiles, checks), (6, 6, 3, 3, 6));
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let completed = sqlx::query_scalar::<_, i64>(
@@ -3033,3 +3036,37 @@ async fn candidate_categories_do_not_depend_on_other_rows_on_the_page(db: Sqlite
 }
 
 mod enrichment;
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restored_key_pauses_crawl_instead_of_failing_pages(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/", "<title>学院</title><p>师资介绍</p>");
+    let config = config(&db, "http://127.0.0.1:1/v1").await;
+    sqlx::query("UPDATE model_config SET api_key = NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    let id = queue::start(&db, &[site.url("/")], config, 1)
+        .await
+        .unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let result = process(
+        &db,
+        &net::Net::new(vec![]).unwrap(),
+        &Fetcher::local(site.port),
+        &Limit::default(),
+        &claim,
+        &Cooldown::default(),
+    )
+    .await
+    .unwrap();
+    save(&db, &claim, &result).await.unwrap();
+    let row =
+        sqlx::query_as::<_, (String, Option<String>)>("SELECT state,error FROM crawl WHERE id=?")
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "paused");
+    assert!(row.1.unwrap().contains("重新填写"));
+}
