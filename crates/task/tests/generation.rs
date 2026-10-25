@@ -476,3 +476,22 @@ async fn pause_keeps_completed_drafts_and_stop_discards_in_flight_results(db: Sq
         0
     );
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restored_key_pauses_generation_without_failing_each_letter(db: SqlitePool) {
+    let (id, _) = setup(&db, "http://127.0.0.1:1/v1", 4).await;
+    sqlx::query("UPDATE model_config SET api_key = NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    let mut runner = Runner::start(&db, Default::default());
+    runner
+        .until(&db, id, |t| t.state == task::TaskState::Paused)
+        .await;
+    let task = task::get(&db, id).await.unwrap().unwrap();
+    assert!(task.pause_reason.unwrap().contains("重新填写"));
+    assert_eq!(
+        (task.progress.generating, task.progress.generation_failed),
+        (4, 0)
+    );
+}

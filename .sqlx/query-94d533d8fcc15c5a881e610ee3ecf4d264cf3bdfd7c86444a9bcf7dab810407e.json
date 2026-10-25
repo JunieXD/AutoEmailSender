@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, provider, base_url, model, input_price, output_price,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\",\n             agreed AS \"agreed: bool\"\n           FROM model_config ORDER BY id",
+  "query": "SELECT id, name, provider, base_url, model, input_price, output_price,\n             id = coalesce((SELECT default_model_config_id FROM profile),\n                           (SELECT min(id) FROM model_config)) AS \"is_default!: bool\",\n             agreed AS \"agreed: bool\", api_key IS NULL AS \"needs_api_key!: bool\"\n           FROM model_config ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -96,6 +96,12 @@
             "name": "agreed"
           }
         }
+      },
+      {
+        "name": "needs_api_key!: bool",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -110,8 +116,9 @@
       true,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "a98544eb93b59b91f842d3a40fc556033291bafcb379cb2b45aa614084584cd5"
+  "hash": "94d533d8fcc15c5a881e610ee3ecf4d264cf3bdfd7c86444a9bcf7dab810407e"
 }

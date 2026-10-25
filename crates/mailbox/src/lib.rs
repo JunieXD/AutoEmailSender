@@ -38,6 +38,7 @@ pub struct Mailbox {
     /// Why the last round of receiving failed.
     pub receive_error: Option<String>,
     pub pause: Option<pause::Pause>,
+    pub needs_secret: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -183,7 +184,8 @@ pub async fn list(db: &SqlitePool, now: i64) -> Result<Vec<Mailbox>, sqlx::Error
              smtp_host, smtp_port AS "smtp_port: u16", smtp_security AS "smtp_security: Security",
              imap_host, imap_port AS "imap_port: u16", imap_security AS "imap_security: Security",
              daily_limit AS "daily_limit: u32", min_interval_s AS "min_interval_s: u32", receive_error,
-             paused_until, pause_reason
+             paused_until, pause_reason,
+             secret IS NULL AS "needs_secret!: bool"
            FROM mailbox ORDER BY rotation_order, id"#
     )
     .fetch_all(db)
@@ -213,6 +215,7 @@ pub async fn list(db: &SqlitePool, now: i64) -> Result<Vec<Mailbox>, sqlx::Error
                 .zip(r.pause_reason)
                 .filter(|(until, _)| *until > now)
                 .map(|(until, reason)| pause::Pause { until, reason }),
+            needs_secret: r.needs_secret,
         })
         .collect())
 }
@@ -309,15 +312,16 @@ pub async fn secret(
     )
     .fetch_optional(db)
     .await
+    .map(Option::flatten)
 }
 
 /// What logging in to a saved mailbox takes.
 pub async fn account(db: &SqlitePool, id: i64) -> Result<Option<Account>, sqlx::Error> {
     let Some(r) = sqlx::query!(
-        r#"SELECT address, sender_name, secret,
+        r#"SELECT address, sender_name, secret AS "secret!",
              smtp_host, smtp_port AS "smtp_port: u16", smtp_security AS "smtp_security: Security",
              imap_host, imap_port AS "imap_port: u16", imap_security AS "imap_security: Security"
-           FROM mailbox WHERE id = ?"#,
+           FROM mailbox WHERE id = ? AND secret IS NOT NULL"#,
         id
     )
     .fetch_optional(db)
@@ -349,7 +353,8 @@ pub async fn account(db: &SqlitePool, id: i64) -> Result<Option<Account>, sqlx::
 /// refused.
 pub async fn receivable(db: &SqlitePool, now: i64) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
-        "SELECT id FROM mailbox WHERE receive_retry_at IS NULL OR receive_retry_at <= ?
+        "SELECT id FROM mailbox WHERE secret IS NOT NULL
+           AND (receive_retry_at IS NULL OR receive_retry_at <= ?)
          ORDER BY rotation_order, id",
         now
     )

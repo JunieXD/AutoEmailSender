@@ -1914,8 +1914,9 @@ async fn change_during_commit<F: Future<Output = ()>>(
             });
     });
     let calls = Cell::new(0);
+    // Only catches a hang; a loaded machine may take seconds to finish the step.
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(60),
         send::step_in_zone(
             db,
             net,
@@ -3041,4 +3042,62 @@ async fn cancellation_of_uncertain_mail_finishes_without_retry_after_mentor_rest
         Next::Idle
     );
     assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restored_mailbox_waits_without_sending_or_receiving_until_secret_is_filled(
+    db: SqlitePool,
+) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "wang@example.com", &[], T).await;
+    mentor::assign_mailbox(&mut db.acquire().await.unwrap(), mentor, 1)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mailbox SET secret = NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO email(mentor_id,kind,reply_to,state,planned_at,subject,body_md,html,text,created_at,updated_at) VALUES (?, 'reply','<parent@example.invalid>','approved',?,'Re: test','reply','<p>reply</p>','reply',?,?), (?, 'follow_up','<parent@example.invalid>','approved',?,'Re: test','follow up','<p>follow up</p>','follow up',?,?)")
+        .bind(mentor).bind(T).bind(T).bind(T).bind(mentor).bind(T).bind(T).bind(T).execute(&db).await.unwrap();
+    assert!(mailbox::list(&db, T).await.unwrap()[0].needs_secret);
+    assert!(mailbox::account(&db, 1).await.unwrap().is_none());
+    assert!(mailbox::receivable(&db, T).await.unwrap().is_empty());
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T).await.unwrap(),
+        Next::Idle
+    );
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: 1.try_into().unwrap(),
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.emails.len(), 3);
+    assert!(
+        plan.emails
+            .iter()
+            .all(|e| matches!(e.waiting, Some(send::plan::Waiting::MailboxSecret)))
+    );
+    assert!(matches!(
+        first_email(&db, mentor).await.delivery,
+        Delivery::Approved
+    ));
+    assert!(inbox.lock().unwrap().is_empty());
+    sqlx::query("UPDATE mailbox SET secret = ?")
+        .bind(SECRET)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T).await.unwrap(),
+        Next::Now
+    );
+    assert!(matches!(
+        first_email(&db, mentor).await.delivery,
+        Delivery::Sent { .. }
+    ));
 }

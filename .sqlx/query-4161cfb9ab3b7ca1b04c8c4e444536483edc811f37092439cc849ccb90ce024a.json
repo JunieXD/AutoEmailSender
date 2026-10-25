@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT name, research_interests, rewrite_preference FROM profile",
+  "query": "SELECT name, research_interests, rewrite_preference, onboarded AS \"onboarded: bool\"\n           FROM profile",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "rewrite_preference"
           }
         }
+      },
+      {
+        "name": "onboarded: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "onboarded"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "2564fec415baab6f2a52b15d877872dc521fe416c1af2a5dfa0f8205b5f506e9"
+  "hash": "4161cfb9ab3b7ca1b04c8c4e444536483edc811f37092439cc849ccb90ce024a"
 }

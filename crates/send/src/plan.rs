@@ -28,6 +28,7 @@ pub enum Waiting {
     TaskPaused,
     MailboxInterval,
     NoMailbox,
+    MailboxSecret,
     Ready,
 }
 
@@ -188,6 +189,12 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
                 Some(Waiting::Time)
             } else {
                 Some(match choose(rotation, r.own, r.reply, &mailboxes, now) {
+                    None if mailboxes
+                        .iter()
+                        .any(|m| m.needs_secret && r.own.is_none_or(|id| m.id == id)) =>
+                    {
+                        Waiting::MailboxSecret
+                    }
                     None => Waiting::NoMailbox,
                     Some((id, at)) if at > now => {
                         if mailboxes

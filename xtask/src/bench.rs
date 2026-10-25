@@ -134,6 +134,81 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
+    let stats_budget = Duration::from_millis(50);
+    let mut stats_conn = db.acquire().await?;
+    for (label, range) in [
+        ("7 天", stats::Range::Week),
+        ("30 天", stats::Range::Month),
+        ("90 天", stats::Range::Quarter),
+        ("全部", stats::Range::All),
+    ] {
+        let first = stats::first_event(&db).await?;
+        let window = stats::Window::new(range, "Asia/Shanghai", NOW, first)
+            .map_err(sqlx::Error::Protocol)?;
+        report(
+            &format!("统计，联系数字与回复用时，{label}"),
+            median(async || {
+                stats::contact_numbers(&mut stats_conn, &window)
+                    .await
+                    .map(drop)
+            })
+            .await?,
+            stats_budget,
+        );
+        for page in [1, 3] {
+            report(
+                &format!("统计，院校对比，{label}，第 {page} 页"),
+                median(async || {
+                    stats::contact_schools(
+                        &mut stats_conn,
+                        &window,
+                        NonZeroU32::MIN.saturating_add(page - 1),
+                    )
+                    .await
+                    .map(drop)
+                })
+                .await?,
+                stats_budget,
+            );
+        }
+        report(
+            &format!("统计，往来趋势，{label}"),
+            median(async || {
+                stats::contact_trend(&mut stats_conn, &window)
+                    .await
+                    .map(drop)
+            })
+            .await?,
+            stats_budget,
+        );
+        report(
+            &format!("统计，Token 用量，{label}"),
+            median(async || stats::tokens(&db, &window).await.map(drop)).await?,
+            stats_budget,
+        );
+    }
+    report(
+        "统计，全部趋势的起点",
+        median(async || stats::first_event(&db).await.map(drop)).await?,
+        stats_budget,
+    );
+    report(
+        "统计，导师匹配分布",
+        median(async || stats::mentor_matching(&mut stats_conn).await.map(drop)).await?,
+        stats_budget,
+    );
+    report(
+        "统计，导师资料完整度",
+        median(async || stats::mentor_completeness(&mut stats_conn).await.map(drop)).await?,
+        stats_budget,
+    );
+    report(
+        "统计，导师学校分布",
+        median(async || stats::mentor_schools(&mut stats_conn).await.map(drop)).await?,
+        stats_budget,
+    );
+    drop(stats_conn);
+
     // Each write runs the contact-summary triggers for the mentor.
     let email: i64 = sqlx::query_scalar("SELECT id FROM email WHERE state = 'sent' LIMIT 1")
         .fetch_one(&db)

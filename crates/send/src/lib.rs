@@ -17,6 +17,8 @@ const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
 /// How long to wait before trying the database again.
 const RETRY: Duration = Duration::from_secs(5);
+/// How often at most the window hears about emails going out back to back.
+const TELL_EVERY: Duration = Duration::from_secs(5);
 
 /// Wakes the sender, so that an email approved or retried goes out without waiting.
 #[derive(Clone, Default)]
@@ -29,32 +31,55 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`.
-pub async fn run(db: SqlitePool, net: Net, materials: PathBuf, sender: Sender) {
+/// attached from `materials`. `changed` runs once emails have been sent or failed.
+pub async fn run(
+    db: SqlitePool,
+    net: Net,
+    materials: PathBuf,
+    sender: Sender,
+    changed: impl Fn() + Send + 'static,
+) {
     while let Err(e) = recover(&db, now()).await {
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
-    loop {
-        let wait = match step(&db, &net, &materials, now).await {
-            Ok(Next::Now) => continue,
-            Ok(Next::At(at)) => Some(at - now()),
-            Ok(Next::Idle) => None,
-            // Nobody to tell but the log; the database is likely to work again in a while.
-            Err(e) => {
-                tracing::error!("send: {e}");
-                Some(MINUTE)
+    let dealt = Notify::new();
+    let sending = async {
+        loop {
+            let wait = match step(&db, &net, &materials, now).await {
+                Ok(Next::Now) => {
+                    dealt.notify_one();
+                    continue;
+                }
+                Ok(Next::At(at)) => Some(at - now()),
+                Ok(Next::Idle) => None,
+                // Nobody to tell but the log; the database is likely to work again in a while.
+                Err(e) => {
+                    tracing::error!("send: {e}");
+                    Some(MINUTE)
+                }
+            };
+            match wait {
+                // Looks again within a minute: the timer stands still while the computer sleeps.
+                Some(ms) => tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
+                    () = sender.0.notified() => {}
+                },
+                None => sender.0.notified().await,
             }
-        };
-        match wait {
-            // Looks again within a minute: the timer stands still while the computer sleeps.
-            Some(ms) => tokio::select! {
-                () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
-                () = sender.0.notified() => {}
-            },
-            None => sender.0.notified().await,
         }
-    }
+    };
+    // Each telling makes the window read its lists and statistics again, so emails dealt with back
+    // to back, such as many failing at once, are told of together: the first at once, the rest
+    // when a few seconds have passed, however long the email being sent then takes.
+    let telling = async {
+        loop {
+            dealt.notified().await;
+            changed();
+            tokio::time::sleep(TELL_EVERY).await;
+        }
+    };
+    tokio::join!(sending, telling);
 }
 
 /// Emails the last run left being sent may have gone out, so they are marked maybe sent, and their
@@ -161,7 +186,11 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
-            None if e.reply => {
+            None if e.reply
+                && !mailboxes
+                    .iter()
+                    .any(|m| Some(m.id) == e.own && m.needs_secret) =>
+            {
                 email::failed(
                     &mut *db.acquire().await?,
                     e.id,
@@ -182,6 +211,7 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
 #[derive(Debug)]
 struct Usage {
     id: i64,
+    needs_secret: bool,
     daily_limit: i64,
     min_interval_ms: i64,
     paused_until: Option<i64>,
@@ -215,7 +245,7 @@ impl Usage {
 async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
     sqlx::query_as!(
         Usage,
-        r#"SELECT b.id, b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
+        r#"SELECT b.id, b.secret IS NULL AS "needs_secret!: bool", b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
              (SELECT count(*) FROM email e
               WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
                 AND e.sent_at > ?1) AS "recent!: i64",
@@ -242,13 +272,19 @@ fn choose(
     now: i64,
 ) -> Option<(i64, i64)> {
     let chosen = match own {
-        Some(id) => mailboxes.iter().find(|m| m.id == id),
+        Some(id) => mailboxes.iter().find(|m| m.id == id && !m.needs_secret),
         None if reply => None,
         None => {
             // Ties go to the mailbox that has gone longest without sending, then to rotation order.
-            let soonest = mailboxes.iter().min_by_key(|m| (m.ready_at(now), m.last));
+            let soonest = mailboxes
+                .iter()
+                .filter(|m| !m.needs_secret)
+                .min_by_key(|m| (m.ready_at(now), m.last));
             match rotation {
-                Rotation::Failover => mailboxes.iter().find(|m| m.open(now)).or(soonest),
+                Rotation::Failover => mailboxes
+                    .iter()
+                    .find(|m| !m.needs_secret && m.open(now))
+                    .or(soonest),
                 Rotation::PerEmail => soonest,
             }
         }
@@ -329,13 +365,16 @@ async fn send<T: chrono::TimeZone>(
 }
 
 /// The files to attach, read now: a material may be attached to emails for days before they go.
-async fn files(dir: &Path, attachments: &[email::Attached]) -> Result<Vec<mailbox::File>, String> {
+pub async fn files(
+    dir: &Path,
+    attachments: &[email::Attached],
+) -> Result<Vec<mailbox::File>, String> {
     let mut files = Vec::with_capacity(attachments.len());
     for a in attachments {
         let data = tokio::fs::read(material::file(dir, a.material_id)).await.map_err(|e| {
             tracing::warn!("reading attachment {}: {e}", a.file_name);
             format!(
-                "附件“{}”的文件读不到了。在“设置 › 个人 › 材料”里重新添加它，改回草稿换上新的附件后再发送。",
+                "附件“{}”的文件读不到了。在“设置 › 个人 › 材料”里重新添加它，换上新的附件后再发送。",
                 a.file_name
             )
         })?;
@@ -556,12 +595,32 @@ mod tests {
     fn mailbox(id: i64, recent: i64, last: Option<i64>) -> Usage {
         Usage {
             id,
+            needs_secret: false,
             daily_limit: 2,
             min_interval_ms: MINUTE,
             paused_until: None,
             recent,
             earliest_recent: last,
             last,
+        }
+    }
+
+    #[test]
+    fn rotation_skips_missing_secrets_but_keeps_the_assigned_mailbox() {
+        let mailboxes = [
+            Usage {
+                needs_secret: true,
+                ..mailbox(1, 0, None)
+            },
+            mailbox(2, 0, None),
+        ];
+        for rotation in [Rotation::Failover, Rotation::PerEmail] {
+            assert_eq!(
+                choose(rotation, None, false, &mailboxes, NOW),
+                Some((2, NOW))
+            );
+            assert_eq!(choose(rotation, Some(1), false, &mailboxes, NOW), None);
+            assert_eq!(choose(rotation, Some(1), true, &mailboxes, NOW), None);
         }
     }
 

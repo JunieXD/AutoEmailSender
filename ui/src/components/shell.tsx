@@ -2,7 +2,7 @@ import { crawlName, refreshCrawls, findSearch } from "@/pages/find";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search } from "lucide-react";
+import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search, ChartNoAxesColumn } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
@@ -22,6 +22,7 @@ const NAV = [
   { to: "/conversations", label: "往来", icon: MessagesSquare },
   { to: "/tasks", label: "任务", icon: ListTodo },
   { to: "/find", label: "找导师", icon: Search },
+  { to: "/stats", label: "统计", icon: ChartNoAxesColumn },
 ] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
@@ -48,6 +49,8 @@ export function Shell() {
       refreshMentors(queryClient);
       setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
     });
+    // A sent email changes its mentor's correspondence and contact status as well as its task.
+    const sendingChanged = listen("sending-changed", () => refreshMentors(queryClient));
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
     const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
       refreshTasks(queryClient);
@@ -56,6 +59,7 @@ export function Shell() {
     return () => {
       void crawlChanged.then((f) => f());
       void crawlFinished.then((f) => f());
+      void sendingChanged.then((f) => f());
       void tasksChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());
@@ -111,7 +115,7 @@ export function Shell() {
         )}
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
-        {[...NAV.filter((n) => n.to !== "/find"), MORE].map(({ to, label, icon: Icon }) => (
+        {[...NAV.filter((n) => n.to !== "/find" && n.to !== "/stats"), MORE].map(({ to, label, icon: Icon }) => (
           <Link
             key={to}
             to={to}
@@ -379,6 +383,10 @@ export function MorePage() {
       <Link to="/find" search={findSearch({})} className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Search className="size-5" />
         找导师
+      </Link>
+      <Link to="/stats" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
+        <ChartNoAxesColumn className="size-5" />
+        统计
       </Link>
       <Link to="/settings" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Settings className="size-5" />

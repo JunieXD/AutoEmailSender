@@ -1,6 +1,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backup;
 mod logs;
 mod save;
 
@@ -101,6 +102,7 @@ fn main() -> tauri::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .manage(backup::Commands::default())
         .setup(|app| {
             match tauri::async_runtime::block_on(start(app.handle())) {
                 Ok(ctx) => app.manage(ctx),
@@ -116,6 +118,10 @@ fn main() -> tauri::Result<()> {
             startup_failure,
             export_logs,
             export_mentors,
+            backup::export_backup,
+            backup::prepare_restore,
+            backup::cancel_restore,
+            backup::restore_backup,
             data_location,
             open_data_location
         ])
@@ -151,11 +157,17 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         generator,
         model_limit,
     } = &ctx;
+    let ui = app.clone();
     tauri::async_runtime::spawn(send::run(
         db.clone(),
         net.clone(),
         materials.clone(),
         sender.clone(),
+        move || {
+            if let Err(e) = ui.emit("sending-changed", ()) {
+                tracing::warn!("refresh sending: {e}");
+            }
+        },
     ));
     let ui = app.clone();
     let notifications_db = db.clone();

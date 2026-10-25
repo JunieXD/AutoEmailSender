@@ -81,6 +81,7 @@ export function refreshMentors(queryClient: QueryClient) {
     ["getFollowUpEntry"],
     ["listConversations"],
     ["unreadCount"],
+    ["stats"],
   ]) {
     void queryClient.invalidateQueries({ queryKey });
   }

@@ -59,6 +59,7 @@ function ModelRow({ config: c, providers }: { config: ModelConfig; providers: Mo
             {c.isDefault && <DefaultMark />}
           </p>
           <p className="truncate text-sm text-muted-foreground">{c.name ? `${source}，${c.model}` : source}</p>
+          {c.needsApiKey && <p className="text-sm text-warning">恢复后需要重新填写 API Key，填好之前不能用。</p>}
         </div>
         <div className="flex flex-wrap gap-1">
           <Button variant="quiet" disabled={test.isPending} onClick={() => test.mutate()}>
