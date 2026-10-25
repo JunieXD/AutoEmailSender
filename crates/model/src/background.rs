@@ -14,6 +14,8 @@ impl Default for Limit {
     }
 }
 impl Limit {
+    /// A turn among the calls running at once. Take it before reading the model configuration, so
+    /// a call that waited in line uses the configuration as it is when its turn comes.
     pub async fn acquire(&self) -> OwnedSemaphorePermit {
         self.0
             .clone()

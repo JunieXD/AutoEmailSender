@@ -232,6 +232,9 @@ operations! {
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
     "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "finishOnboarding" => finish_onboarding(Nothing) -> ();
+    "testLetter" => test_letter(Nothing) -> Option<TestLetter>;
+    "sendTestLetter" => send_test_letter(SendTestLetter) -> ();
     "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
     "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
     "listMaterials" => list_materials(Nothing) -> Vec<material::Material>;
@@ -754,6 +757,76 @@ async fn send_test_mail(ctx: &Context, input: MailboxId) -> Result<(), CallError
     Ok(mailbox::send_test(&ctx.net, &account).await?)
 }
 
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SendTestLetter {
+    pub mailbox_id: i64,
+    pub subject: String,
+    pub html: String,
+    pub text: String,
+    pub attachments: Vec<i64>,
+}
+
+async fn send_test_letter(ctx: &Context, input: SendTestLetter) -> Result<(), CallError> {
+    let account = mailbox::account(&ctx.db, input.mailbox_id)
+        .await?
+        .ok_or_else(|| CallError::not_found(NO_MAILBOX))?;
+    let ids = sqlx::types::Json(&input.attachments);
+    let rows = sqlx::query!(
+        r#"SELECT m.id AS "id?", m.file_name FROM json_each(?) j
+           LEFT JOIN material m ON m.id = j.value ORDER BY j.key"#,
+        ids,
+    )
+    .fetch_all(&ctx.db)
+    .await?;
+    let mut attached: Vec<email::Attached> = Vec::new();
+    for row in rows {
+        let (Some(material_id), Some(file_name)) = (row.id, row.file_name) else {
+            return Err(CallError::invalid(
+                "附件材料已被删除。请重新选择附件后再发送。".into(),
+            ));
+        };
+        // As with an approved letter, the first selected file with each name is kept.
+        if !attached.iter().any(|a| a.file_name == file_name) {
+            attached.push(email::Attached {
+                material_id,
+                file_name,
+            });
+        }
+    }
+    let files = send::files(&ctx.materials, &attached)
+        .await
+        .map_err(CallError::invalid)?;
+    let message_id = mailbox::message_id(&account);
+    let outgoing = mailbox::compose(
+        &account,
+        &mailbox::Letter {
+            message_id: &message_id,
+            in_reply_to: None,
+            references: None,
+            to_name: &account.sender_name,
+            to: account.address.as_ref(),
+            subject: &input.subject,
+            html: &input.html,
+            text: &input.text,
+            attachments: &files,
+        },
+    )?;
+    mailbox::login(&ctx.net, &account)
+        .await?
+        .send(&outgoing, || false)
+        .await
+        .map_err(|e| {
+            tracing::warn!("test letter from mailbox {}: {e}", input.mailbox_id);
+            CallError {
+                code: ErrorCode::External,
+                message: e.message(),
+            }
+        })?;
+    tracing::info!("test letter sent from mailbox {}", input.mailbox_id);
+    Ok(())
+}
+
 impl From<mailbox::SaveError> for CallError {
     fn from(e: mailbox::SaveError) -> Self {
         match e {
@@ -937,6 +1010,44 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
 
 async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
     Ok(profile::update(&ctx.db, &form, now()).await?)
+}
+
+async fn finish_onboarding(ctx: &Context, _: Nothing) -> Result<(), CallError> {
+    Ok(profile::finish_onboarding(&ctx.db).await?)
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TestLetter {
+    pub template_name: String,
+    pub subject: String,
+    pub body_md: String,
+    pub attachments: Vec<i64>,
+}
+
+async fn test_letter(ctx: &Context, _: Nothing) -> Result<Option<TestLetter>, CallError> {
+    let mut tx = ctx.db.begin().await?;
+    let Some(t) = template::default_or_first(&mut tx).await? else {
+        return Ok(None);
+    };
+    let name = sqlx::query_scalar!("SELECT name FROM profile")
+        .fetch_one(&mut *tx)
+        .await?;
+    let attachments =
+        sqlx::query_scalar!("SELECT id FROM material WHERE attach_by_default = 1 ORDER BY id")
+            .fetch_all(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    let fill = template::Fill {
+        my_name: name.as_deref(),
+        ..template::EXAMPLE_MENTOR
+    };
+    Ok(Some(TestLetter {
+        template_name: t.name,
+        subject: fill.subject(&t.subject),
+        body_md: fill.body(&t.body_md),
+        attachments,
+    }))
 }
 
 async fn get_letter_style(ctx: &Context, _: Nothing) -> Result<profile::LetterStyle, CallError> {
@@ -1221,6 +1332,7 @@ async fn check_first_draft(
 
 /// Drafts the letter when it is blank and rewrites it otherwise.
 async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let current = writing::Letter {
         subject: input.subject,
         body_md: input.body_md,
@@ -1230,7 +1342,6 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    let _permit = ctx.model_limit.acquire().await;
     Ok(writing::write(
         &ctx.db,
         &ctx.net,
@@ -1573,12 +1684,12 @@ async fn write_follow_up(
     ctx: &Context,
     input: FirstDraftEdit,
 ) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
-    let _permit = ctx.model_limit.acquire().await;
     Ok(writing::write(
         &ctx.db,
         &ctx.net,
@@ -1610,11 +1721,11 @@ impl From<writing::reply::Error> for CallError {
 }
 
 async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    let _permit = ctx.model_limit.acquire().await;
     let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
     Ok(writing::write(
         &ctx.db,
@@ -1954,8 +2065,125 @@ mod table_tests {
 }
 
 #[cfg(test)]
+#[path = "../../model/tests/common/provider.rs"]
+mod provider;
+
+#[cfg(test)]
 mod writing_tests {
     use super::*;
+    use std::{
+        future::{Future, poll_fn},
+        sync::Arc,
+        task::Poll,
+    };
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn queued_letter_uses_the_model_address_saved_before_its_turn(db: SqlitePool) {
+        let mentor = mentor::create(
+            &db,
+            &mentor::MentorFields {
+                name: "王伟".into(),
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        let ctx = Context {
+            db,
+            net: net::Net::new(vec![]).unwrap(),
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            crawler: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+            materials: Default::default(),
+        };
+        let (old_address, old_received) = provider::scripted(vec![(
+            "<subject>申请</subject><body>旧地址的信</body>",
+            "stop",
+        )])
+        .await;
+        let (new_address, new_received) = provider::scripted(vec![(
+            "<subject>申请</subject><body>新地址的信</body>",
+            "stop",
+        )])
+        .await;
+        let form = |address: &str| model::ModelForm {
+            name: String::new(),
+            provider: model::providers::CUSTOM.into(),
+            base_url: address.into(),
+            model: "m".into(),
+            input_price: None,
+            output_price: None,
+        };
+        let id = model::create(&ctx.db, &form(&old_address).check().unwrap(), "", 0)
+            .await
+            .unwrap();
+        assert!(
+            model::agree(&ctx.db, id, "custom", Some(&old_address))
+                .await
+                .unwrap()
+        );
+
+        let mut permits = Vec::new();
+        for _ in 0..model::background::CONCURRENCY {
+            permits.push(ctx.model_limit.acquire().await);
+        }
+        let owners = Arc::strong_count(permits[0].semaphore());
+        let mut writing = std::pin::pin!(call(
+            &ctx,
+            "writeLetter",
+            serde_json::json!({
+                "mentorId": mentor, "subject": "", "bodyMd": "", "attachments": []
+            }),
+        ));
+        // An owned acquire retains the semaphore while queued. Wait for that so the edit
+        // cannot race with database reads that precede acquiring capacity.
+        poll_fn(|cx| {
+            assert!(writing.as_mut().poll(cx).is_pending());
+            if Arc::strong_count(permits[0].semaphore()) > owners {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+
+        update_model_config(
+            &ctx,
+            ModelConfigEdit {
+                id,
+                form: form(&new_address),
+                api_key: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+        agree_model(
+            &ctx,
+            ModelAgreement {
+                id,
+                provider: "custom".into(),
+                base_url: Some(new_address),
+            },
+        )
+        .await
+        .unwrap();
+        drop(permits);
+        let letter = writing.await.unwrap();
+
+        assert!(
+            old_received.lock().unwrap().is_empty(),
+            "queued request reached the old model address"
+        );
+        assert_eq!(new_received.lock().unwrap().len(), 1);
+        assert_eq!(
+            letter,
+            serde_json::json!({"subject": "申请", "bodyMd": "新地址的信"})
+        );
+    }
 
     #[sqlx::test(migrator = "db::MIGRATOR")]
     async fn first_follow_up_and_reply_checks_report_student_decisions(db: SqlitePool) {

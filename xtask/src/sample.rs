@@ -172,6 +172,9 @@ fn mentor(rng: &mut Rng, i: usize) -> MentorFields {
 pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     let mut rng = Rng::with_seed(7);
     let mut tx = db.begin().await?;
+    sqlx::query("UPDATE profile SET onboarded = 1")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         // A domain with no mail servers, so testing this mailbox reaches no one.
         "INSERT INTO mailbox VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
