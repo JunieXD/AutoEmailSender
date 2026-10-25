@@ -12,7 +12,7 @@ use model::{
     background::{CONCURRENCY, Failure, Limit},
 };
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{SqlitePool, types::Json};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -343,26 +343,49 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     if !queue::valid(&mut tx, c).await? {
         return Ok(false);
     }
-    let redirect_failure = Outcome::Failed("个人页跳到了别的页面，可能已经改版".into());
+    let redirect_failure;
     let outcome = if let Outcome::Done(p) = outcome
         && c.kind == "profile"
-        && p.material.url.as_str() != c.url
+        && !p.material.url.is_normalization_of(
+            &PageUrl::parse(&c.url).map_err(|e| sqlx::Error::Protocol(e.to_string()))?,
+        )
         && let Some(person) = p.people.first()
     {
-        let name = mentor::intake::comparable(&person.fields.name);
-        let matched = sqlx::query_scalar!(
-            r#"SELECT EXISTS (
-                 SELECT 1 FROM candidate_profile p JOIN candidate c ON c.id = p.candidate_id
-                 WHERE p.crawl_id = ? AND p.url = ?
-                   AND ? IN (SELECT value FROM json_each(c.match_names))
-               ) AS "matched!: bool""#,
+        let names = Json(
+            std::iter::once(&person.fields.name)
+                .chain(&person.fields.aliases)
+                .map(|name| mentor::intake::comparable(name))
+                .collect::<Vec<_>>(),
+        );
+        let candidates = sqlx::query!(
+            r#"SELECT c.name, EXISTS (
+                 SELECT 1 FROM json_each(c.match_names) a JOIN json_each(?) b
+                 ON a.value = b.value
+               ) AS "matched!: bool"
+               FROM candidate_profile p JOIN candidate c ON c.id = p.candidate_id
+               WHERE p.crawl_id = ? AND p.url = ? ORDER BY c.id"#,
+            names,
             c.crawl,
             c.url,
-            name,
         )
-        .fetch_one(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
-        if matched { outcome } else { &redirect_failure }
+        if candidates.iter().any(|c| c.matched) {
+            outcome
+        } else {
+            let original_names = candidates
+                .into_iter()
+                .map(|c| c.name)
+                .collect::<Vec<_>>()
+                .join("、");
+            redirect_failure = Outcome::Failed(format!(
+                "个人页跳到了 {}，读到的姓名是「{}」，和名单上的「{}」对不上，没有补入",
+                p.material.url.as_str(),
+                person.fields.name,
+                original_names,
+            ));
+            &redirect_failure
+        }
     } else {
         outcome
     };

@@ -280,6 +280,7 @@ impl Fetcher {
             builder
                 .no_proxy()
                 .resolve("school.example.edu", ([127, 0, 0, 1], port).into())
+                .resolve("www.school.example.edu", ([127, 0, 0, 1], port).into())
                 .resolve("outside.example.org", ([127, 0, 0, 1], port).into())
                 .build()
                 .unwrap()

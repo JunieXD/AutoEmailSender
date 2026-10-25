@@ -27,43 +27,49 @@ impl Drop for Site {
 }
 impl Site {
     async fn new() -> Self {
+        Self::start(false).await
+    }
+    async fn start(tls: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let pages = Arc::new(Mutex::new(HashMap::<String, (u16, String)>::new()));
         let visits = Arc::new(Mutex::new(Vec::new()));
+        let acceptor = tls.then(|| {
+            let cert =
+                rcgen::generate_simple_self_signed(vec!["school.example.edu".into()]).unwrap();
+            let key =
+                net::rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der())
+                    .into();
+            let config = net::rustls::ServerConfig::builder_with_provider(Arc::new(
+                net::rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.cert.der().clone()], key)
+            .unwrap();
+            tokio_rustls::TlsAcceptor::from(Arc::new(config))
+        });
         let (p, v) = (pages.clone(), visits.clone());
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 let (p, v) = (p.clone(), v.clone());
+                let acceptor = acceptor.clone();
                 tokio::spawn(async move {
-                    let mut io = BufReader::new(stream);
-                    let mut line = String::new();
-                    io.read_line(&mut line).await.unwrap();
-                    let path = line.split_whitespace().nth(1).unwrap().to_owned();
-                    loop {
-                        let mut h = String::new();
-                        io.read_line(&mut h).await.unwrap();
-                        if h == "\r\n" {
-                            break;
+                    if let Some(acceptor) = acceptor {
+                        let mut first = [0];
+                        if stream.peek(&mut first).await.unwrap() == 0 {
+                            return;
+                        }
+                        if first[0] == 22 {
+                            // The trusted client rejects the fixture certificate before retrying.
+                            if let Ok(stream) = acceptor.accept(stream).await {
+                                Self::serve(stream, p, v, true).await;
+                            }
+                            return;
                         }
                     }
-                    v.lock().unwrap().push(path.clone());
-                    let (status, body) = p
-                        .lock()
-                        .unwrap()
-                        .get(&path)
-                        .cloned()
-                        .unwrap_or((404, "not found".into()));
-                    let response = format!(
-                        "HTTP/1.1 {status} Reply\r\nConnection: close\r\n{}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
-                        if status == 302 {
-                            format!("Location: {body}\r\n")
-                        } else {
-                            String::new()
-                        },
-                        body.len()
-                    );
-                    let _ = io.write_all(response.as_bytes()).await;
+                    Self::serve(stream, p, v, false).await;
                 });
             }
         });
@@ -73,6 +79,55 @@ impl Site {
             visits,
             task,
         }
+    }
+    async fn serve<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+        stream: S,
+        pages: Arc<Mutex<HashMap<String, (u16, String)>>>,
+        visits: Arc<Mutex<Vec<String>>>,
+        tls: bool,
+    ) {
+        let mut io = BufReader::new(stream);
+        let mut line = String::new();
+        io.read_line(&mut line).await.unwrap();
+        let path = line.split_whitespace().nth(1).unwrap().to_owned();
+        let mut host = String::new();
+        loop {
+            let mut h = String::new();
+            io.read_line(&mut h).await.unwrap();
+            if h == "\r\n" {
+                break;
+            }
+            if let Some((key, value)) = h.split_once(':')
+                && key.eq_ignore_ascii_case("host")
+            {
+                host = value.trim().into();
+            }
+        }
+        let scheme = if tls { "https" } else { "http" };
+        let url = format!("{scheme}://{host}{path}");
+        visits.lock().unwrap().push(if tls {
+            format!("https:{path}")
+        } else {
+            path.clone()
+        });
+        let (status, body) = {
+            let pages = pages.lock().unwrap();
+            pages
+                .get(&url)
+                .or_else(|| pages.get(&path))
+                .cloned()
+                .unwrap_or((404, "not found".into()))
+        };
+        let response = format!(
+            "HTTP/1.1 {status} Reply\r\nConnection: close\r\n{}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+            if status == 302 {
+                format!("Location: {body}\r\n")
+            } else {
+                String::new()
+            },
+            body.len()
+        );
+        let _ = io.write_all(response.as_bytes()).await;
     }
     fn page(&self, path: &str, body: &str) {
         self.pages
@@ -1378,7 +1433,13 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
     assert_eq!(page.status, "failed");
     assert_eq!(
         page.error.as_deref(),
-        Some("个人页跳到了别的页面，可能已经改版")
+        Some(
+            format!(
+                "个人页跳到了 {}，读到的姓名是「李四」，和名单上的「张三」对不上，没有补入",
+                site.url("/li").as_str()
+            )
+            .as_str()
+        )
     );
     let identities: Vec<String> =
         sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=? ORDER BY url")
@@ -1496,7 +1557,13 @@ async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {
     assert_eq!(page.status, "failed");
     assert_eq!(
         page.error.as_deref(),
-        Some("个人页跳到了别的页面，可能已经改版")
+        Some(
+            format!(
+                "个人页跳到了 {}，读到的姓名是「张三」，和名单上的「李四」对不上，没有补入",
+                site.url("/directory").as_str()
+            )
+            .as_str()
+        )
     );
     server.abort();
 }
@@ -1564,7 +1631,13 @@ async fn b3_same_request_changed_destination_must_not_merge(db: SqlitePool) {
     assert_eq!(page.status, "failed");
     assert_eq!(
         page.error.as_deref(),
-        Some("个人页跳到了别的页面，可能已经改版")
+        Some(
+            format!(
+                "个人页跳到了 {}，读到的姓名是「李四」，和名单上的「张三」对不上，没有补入",
+                site.url("/li").as_str()
+            )
+            .as_str()
+        )
     );
     server.abort();
 }
@@ -1770,6 +1843,229 @@ async fn non_redirected_profile_keeps_queue_candidate_when_name_changes(db: Sqli
     );
     server.abort();
 }
+
+async fn profile_from_list(
+    db: &SqlitePool,
+    site: &Site,
+    name: &str,
+    profile: Value,
+) -> (Claim, tokio::task::JoinHandle<()>) {
+    site.page(
+        "/list",
+        &format!("<title>教师名单</title><a href='/profile'>{name}</a>"),
+    );
+    let mut provider = Provider::start().await;
+    let model = config(db, &provider.address).await;
+    let list = json!({"people":[listed(name, Some(1), vec![])]});
+    let server = tokio::spawn(async move {
+        while let Some(r) = provider.requests.recv().await {
+            let system = r.body["messages"][0]["content"].as_str().unwrap();
+            let answer = if system.starts_with("你整理学院") {
+                json!({"kind":"list","next":[]})
+            } else if system.starts_with("你从教师") {
+                list.clone()
+            } else {
+                profile.clone()
+            };
+            r.respond.send(Response::answer(&answer.to_string())).ok();
+        }
+    });
+    queue::start(db, &[site.url("/list")], model, 1)
+        .await
+        .unwrap();
+    let list = queue::next(db).await.unwrap().unwrap();
+    process_claim(db, site, &list).await;
+    let ids = candidate_ids(db).await;
+    assert_eq!(ids.len(), 1);
+    let before = review::detail(db, ids[0]).await.unwrap().unwrap();
+    assert_eq!(before.candidate.fields.name, name);
+    assert!(before.candidate.fields.aliases.is_empty());
+    assert!(before.candidate.fields.emails.is_empty());
+    (queue::next(db).await.unwrap().unwrap(), server)
+}
+
+async fn expect_completed_profile(
+    db: &SqlitePool,
+    claim: &Claim,
+    destination: &PageUrl,
+    name: &str,
+    email: &str,
+) {
+    let crawl = queue::detail(db, claim.crawl, 1).await.unwrap().unwrap();
+    let page = crawl.pages.iter().find(|p| p.id == claim.id).unwrap();
+    assert_eq!(page.status, "success", "{:?}", page.error);
+    let ids = candidate_ids(db).await;
+    assert_eq!(ids.len(), 1);
+    let detail = review::detail(db, ids[0]).await.unwrap().unwrap();
+    assert_eq!(detail.candidate.fields.name, name);
+    assert_eq!(detail.candidate.fields.emails, vec![email]);
+    assert_eq!(detail.evidence.len(), 2);
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
+            .fetch_all(db)
+            .await
+            .unwrap();
+    let mut expected = vec![claim.url.as_str(), destination.as_str()];
+    expected.sort();
+    assert_eq!(identities, expected);
+    assert!(queue::next(db).await.unwrap().is_none());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b4_slash_english_from_real_sample_should_complete(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/profile", "/profile/");
+    site.page("/profile/", include_str!("../../tests/pages/nju.html"));
+    let (claim, server) = profile_from_list(
+        &db,
+        &site,
+        "周志华",
+        person("Zhi-Hua Zhou", "zhouzh@nju.edu.cn"),
+    )
+    .await;
+    process_claim(&db, &site, &claim).await;
+    expect_completed_profile(
+        &db,
+        &claim,
+        &site.url("/profile/"),
+        "Zhi-Hua Zhou",
+        "zhouzh@nju.edu.cn",
+    )
+    .await;
+    server.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b4_www_profile_with_chinese_alias_should_complete(db: SqlitePool) {
+    let site = Site::new().await;
+    let destination = PageUrl::parse(
+        &site
+            .url("/profile")
+            .as_str()
+            .replace("school.", "www.school."),
+    )
+    .unwrap();
+    site.redirect("/profile", destination.as_str());
+    site.page(
+        destination.as_str(),
+        "<title>Zhang San</title><p>Zhang San（张三） zhang@example.edu</p>",
+    );
+    let mut profile = person("Zhang San", "zhang@example.edu");
+    profile["aliases"] = json!(["张三"]);
+    let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
+    process_claim(&db, &site, &claim).await;
+    expect_completed_profile(&db, &claim, &destination, "Zhang San", "zhang@example.edu").await;
+    server.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b4_https_profile_with_chinese_alias_should_complete(db: SqlitePool) {
+    let site = Site::start(true).await;
+    let destination =
+        PageUrl::parse(&site.url("/profile").as_str().replacen("http:", "https:", 1)).unwrap();
+    site.redirect("/profile", destination.as_str());
+    site.page(
+        destination.as_str(),
+        "<title>Zhang San</title><p>Zhang San（张三） zhang@example.edu</p>",
+    );
+    let mut profile = person("Zhang San", "zhang@example.edu");
+    profile["aliases"] = json!(["张三"]);
+    let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
+    process_claim(&db, &site, &claim).await;
+    expect_completed_profile(&db, &claim, &destination, "Zhang San", "zhang@example.edu").await;
+    assert!(
+        site.visits
+            .lock()
+            .unwrap()
+            .contains(&"https:/profile".into())
+    );
+    server.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b4_slash_profile_with_title_should_complete(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/profile", "/profile/");
+    site.page(
+        "/profile/",
+        "<title>张三 教授</title><p>张三 教授 zhang@example.edu</p>",
+    );
+    let (claim, server) =
+        profile_from_list(&db, &site, "张三", person("张三 教授", "zhang@example.edu")).await;
+    process_claim(&db, &site, &claim).await;
+    expect_completed_profile(
+        &db,
+        &claim,
+        &site.url("/profile/"),
+        "张三 教授",
+        "zhang@example.edu",
+    )
+    .await;
+    server.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b4_changed_path_matches_page_alias_should_complete(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/profile", "/renamed");
+    site.page(
+        "/renamed",
+        "<title>Zhang San</title><p>Zhang San（张三） zhang@example.edu</p>",
+    );
+    let mut profile = person("Zhang San", "zhang@example.edu");
+    profile["aliases"] = json!(["　张三　"]);
+    let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
+    process_claim(&db, &site, &claim).await;
+    expect_completed_profile(
+        &db,
+        &claim,
+        &site.url("/renamed"),
+        "Zhang San",
+        "zhang@example.edu",
+    )
+    .await;
+    server.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b4_changed_path_english_without_alias_still_fails(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/profile", "/renamed");
+    site.page(
+        "/renamed",
+        "<title>Zhang San</title><p>Zhang San zhang@example.edu</p>",
+    );
+    let (claim, server) =
+        profile_from_list(&db, &site, "张三", person("Zhang San", "zhang@example.edu")).await;
+    let ids = candidate_ids(&db).await;
+    let before = serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap();
+    process_claim(&db, &site, &claim).await;
+    assert_eq!(candidate_ids(&db).await, ids);
+    assert_eq!(
+        serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap(),
+        before
+    );
+    let detail = queue::detail(&db, claim.crawl, 1).await.unwrap().unwrap();
+    let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
+    assert_eq!(page.status, "failed");
+    assert_eq!(
+        page.error.as_deref(),
+        Some(
+            format!(
+                "个人页跳到了 {}，读到的姓名是「Zhang San」，和名单上的「张三」对不上，没有补入",
+                site.url("/renamed").as_str(),
+            )
+            .as_str()
+        )
+    );
+    let identities: Vec<String> = sqlx::query_scalar("SELECT url FROM candidate_profile")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(identities, vec![claim.url.as_str()]);
+    server.abort();
+}
+
 async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
     let site = Site::new().await;
     site.redirect("/old", "/canonical");

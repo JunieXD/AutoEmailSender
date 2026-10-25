@@ -54,6 +54,22 @@ impl PageUrl {
         self.0.as_str()
     }
 
+    pub(crate) fn is_normalization_of(&self, requested: &Self) -> bool {
+        let (from, to) = (&requested.0, &self.0);
+        let from_host = from
+            .host_str()
+            .map(|host| host.strip_prefix("www.").unwrap_or(host));
+        let to_host = to
+            .host_str()
+            .map(|host| host.strip_prefix("www.").unwrap_or(host));
+        (from.scheme() == to.scheme() || (from.scheme() == "http" && to.scheme() == "https"))
+            && from_host == to_host
+            && from.port() == to.port()
+            && from.path().strip_suffix('/').unwrap_or(from.path())
+                == to.path().strip_suffix('/').unwrap_or(to.path())
+            && from.query() == to.query()
+    }
+
     pub(crate) fn website(&self) -> String {
         match self.0.host() {
             Some(Host::Domain(host)) => psl::domain_str(host).unwrap_or(host).to_owned(),
@@ -142,5 +158,82 @@ impl Scope {
             return Err(CrawlError::OutsideSite);
         }
         Ok(PageTarget { url: url.clone() })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalization_keeps_the_same_page() {
+        for (requested, destination) in [
+            (
+                "http://school.example.edu/profile",
+                "https://school.example.edu/profile",
+            ),
+            (
+                "https://school.example.edu/profile",
+                "https://www.school.example.edu/profile",
+            ),
+            (
+                "https://www.school.example.edu/profile",
+                "https://school.example.edu/profile",
+            ),
+            (
+                "https://SCHOOL.EXAMPLE.EDU/profile",
+                "https://school.example.edu/profile",
+            ),
+            (
+                "http://school.example.edu:80/profile",
+                "http://school.example.edu/profile",
+            ),
+            (
+                "https://school.example.edu:443/profile",
+                "https://school.example.edu/profile",
+            ),
+            (
+                "https://school.example.edu/profile",
+                "https://school.example.edu/profile/",
+            ),
+            (
+                "https://school.example.edu/profile/",
+                "https://school.example.edu/profile",
+            ),
+            (
+                "http://SCHOOL.EXAMPLE.EDU:80/profile?id=1",
+                "https://www.school.example.edu:443/profile/?id=1",
+            ),
+        ] {
+            assert!(
+                PageUrl::parse(destination)
+                    .unwrap()
+                    .is_normalization_of(&PageUrl::parse(requested).unwrap()),
+                "{requested} -> {destination}",
+            );
+        }
+    }
+
+    #[test]
+    fn normalization_does_not_hide_other_url_changes() {
+        let requested = PageUrl::parse("https://school.example.edu/profile?id=1").unwrap();
+        for destination in [
+            "http://school.example.edu/profile?id=1",
+            "https://school.example.edu/another?id=1",
+            "https://school.example.edu/Profile?id=1",
+            "https://school.example.edu/profile//?id=1",
+            "https://school.example.edu/profile?id=2",
+            "https://school.example.edu/profile",
+            "https://other.school.example.edu/profile?id=1",
+            "https://www.www.school.example.edu/profile?id=1",
+            "https://school.example.edu:8443/profile?id=1",
+        ] {
+            assert!(
+                !PageUrl::parse(destination)
+                    .unwrap()
+                    .is_normalization_of(&requested),
+                "{destination}",
+            );
+        }
     }
 }
