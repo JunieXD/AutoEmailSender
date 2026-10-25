@@ -11,7 +11,7 @@ import { startupFailure } from "@/api/app";
 import type { MatchFinished, DraftsFinished, CrawlFinished } from "@/api/types";
 import { refreshTasks } from "@/pages/tasks";
 import { scheduledAt } from "@/components/schedule";
-import { refreshMentors } from "@/components/mentor";
+import { refreshMentors, refreshReplyOutcomes } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
@@ -48,6 +48,7 @@ export function Shell() {
       setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
     });
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
+    const repliesChanged = listen("reply-processing-changed", () => refreshReplyOutcomes(queryClient));
     const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
       refreshTasks(queryClient);
       setCompleted(`任务“${p.name}”的草稿写好了：${p.generated} 封，失败 ${p.failed} 封`);
@@ -56,6 +57,7 @@ export function Shell() {
       void crawlChanged.then((f) => f());
       void crawlFinished.then((f) => f());
       void tasksChanged.then((f) => f());
+      void repliesChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());
       void done.then((f) => f());
@@ -187,6 +189,11 @@ function useBackground() {
     queryFn: () => call("scheduledWork", {}),
     refetchInterval: 3000,
   });
+  const replies = useQuery({
+    queryKey: ["replyProcessing"],
+    queryFn: () => call("replyProcessing", {}),
+    refetchInterval: 3000,
+  });
   const today = new Date(crawls.dataUpdatedAt).toDateString();
   const work = {
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
@@ -196,16 +203,18 @@ function useBackground() {
     crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
     generating: tasks.data?.filter((t) => t.progress.generating > 0) ?? [],
     matching: matching.data?.remaining ?? 0,
+    repliesPaused: replies.data?.pause ?? null,
+    marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
     crawled:
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
     next: scheduled.data?.nextAt ?? null,
     nextToday: scheduled.data?.today ?? 0,
-    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error,
+    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? replies.error,
   };
   return {
     ...work,
-    running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0),
-    waiting: (work.emails > 0 ? 1 : 0) + work.paused.length + work.crawlsPending.length,
+    running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0) + (work.marking > 0 ? 1 : 0),
+    waiting: (work.emails > 0 ? 1 : 0) + work.paused.length + work.crawlsPending.length + (work.repliesPaused ? 1 : 0),
   };
 }
 
@@ -226,7 +235,11 @@ function Background({ className }: { className?: string }) {
     mutationFn: (id: number) => call("pauseCrawl", { id }),
     onSuccess: () => refreshCrawls(queryClient),
   });
-  const error = work.error ?? pauseCrawl.error;
+  const resumeReplies = useMutation({
+    mutationFn: () => call("resumeReplyProcessing", {}),
+    onSuccess: () => refreshReplyOutcomes(queryClient),
+  });
+  const error = work.error ?? pauseCrawl.error ?? resumeReplies.error;
   return (
     <Popover>
       <PopoverTrigger
@@ -271,6 +284,21 @@ function Background({ className }: { className?: string }) {
                 />
               </Link>
             ))}
+            {work.repliesPaused && (
+              <div className="flex items-center gap-2">
+                <Link to="/conversations" className={ITEM}>
+                  <Entry title="回信处理已暂停" detail={work.repliesPaused.reason} />
+                </Link>
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  disabled={resumeReplies.isPending}
+                  onClick={() => resumeReplies.mutate()}
+                >
+                  继续
+                </Button>
+              </div>
+            )}
           </Group>
         )}
         {work.running > 0 && (
@@ -305,6 +333,11 @@ function Background({ className }: { className?: string }) {
             {work.matching > 0 && (
               <Link to="/mentors" className={ITEM}>
                 <Entry title="匹配度分析" detail={`还剩 ${work.matching} 位`} />
+              </Link>
+            )}
+            {work.marking > 0 && (
+              <Link to="/conversations" className={ITEM}>
+                <Entry title="标记回信结果" detail={`还剩 ${work.marking} 封`} />
               </Link>
             )}
           </Group>

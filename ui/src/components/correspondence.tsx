@@ -1,15 +1,24 @@
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { RotateCcw, Send, Undo2 } from "lucide-react";
+import { Check, RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Email, Entry, MentorDetail, Message, FollowUpEntry } from "@/api/types";
+import type { Email, Entry, MentorDetail, Message, FollowUpEntry, ReplyOutcome } from "@/api/types";
 import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
 import { FollowUpLetter, ReplyLetter } from "@/components/reply-letter";
 import { FirstLetter } from "@/components/first-letter";
-import { contactDetail, dropDrafts, refreshMentors } from "@/components/mentor";
+import {
+  contactDetail,
+  dropDrafts,
+  OUTCOME_ORDER,
+  OUTCOMES,
+  OutcomeChip,
+  refreshMentors,
+  refreshReplyOutcomes,
+} from "@/components/mentor";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScheduleActions, refreshSchedule, scheduledAt } from "@/components/schedule";
 import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
@@ -441,6 +450,14 @@ function Seen({
           {day(m.sentAt)} {time(m.sentAt)}
           {mine ? " 在别处发出" : from}
         </span>
+        {m.kind === "reply" && (
+          <ReplyOutcomeMenu
+            messageId={m.id}
+            outcome={m.outcome}
+            marking={m.marking?.state === "marking"}
+            readOnly={mentor.trashed}
+          />
+        )}
         {m.kind === "reply" && !mentor.trashed && (
           <Button variant="quiet" size="sm" disabled={!m.canReply} onClick={onReply}>
             回复
@@ -452,12 +469,89 @@ function Seen({
           </Button>
         )}
       </p>
+      {m.kind === "reply" && m.marking?.state === "failed" && !mentor.trashed && (
+        <MarkingFailed messageId={m.id} reason={m.marking.reason} />
+      )}
       {m.kind === "reply" && !m.canReply && !mentor.trashed && (
         <p className="text-sm text-muted-foreground">这封信缺少邮件编号，无法在原线程里回复，请到邮箱里回复</p>
       )}
       {add.error && <p className="text-sm text-destructive">未能加为导师的邮箱：{errorMessage(add.error)}</p>}
       {m.kind === "sent" && m.bounce && <p className="text-sm text-warning">退信：{m.bounce}</p>}
     </article>
+  );
+}
+
+/** What a reply said, which the user can set or change (docs/ui.md#交互). */
+function ReplyOutcomeMenu({
+  messageId,
+  outcome,
+  marking,
+  readOnly,
+}: {
+  messageId: number;
+  outcome: ReplyOutcome | null;
+  marking: boolean;
+  readOnly: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const set = useMutation({
+    mutationFn: (o: ReplyOutcome) => call("setReplyOutcome", { messageId, outcome: o }),
+    onSettled: () => refreshReplyOutcomes(queryClient),
+  });
+  if (readOnly) return outcome && <OutcomeChip outcome={outcome} />;
+  if (!outcome && marking) return <span className="text-faint">AI 正在标记…</span>;
+  return (
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            outcome ? (
+              <button type="button" aria-label={`回信结果：${OUTCOMES[outcome]}，点击修改`} className="flex" />
+            ) : (
+              <Button variant="quiet" size="sm" />
+            )
+          }
+          disabled={set.isPending}
+        >
+          {outcome ? <OutcomeChip outcome={outcome} /> : "标记结果"}
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-36 p-1.5">
+          {OUTCOME_ORDER.map((o) => (
+            <Button
+              key={o}
+              variant="ghost"
+              className="w-full justify-between"
+              onClick={() => {
+                setOpen(false);
+                if (o !== outcome) set.mutate(o);
+              }}
+            >
+              {OUTCOMES[o]}
+              {o === outcome && <Check className="size-4" strokeWidth={1.8} />}
+            </Button>
+          ))}
+        </PopoverContent>
+      </Popover>
+      {set.error && <span className="text-destructive">未能保存：{errorMessage(set.error)}</span>}
+    </>
+  );
+}
+
+function MarkingFailed({ messageId, reason }: { messageId: number; reason: string }) {
+  const queryClient = useQueryClient();
+  const retry = useMutation({
+    mutationFn: () => call("retryReplyOutcome", { messageId }),
+    onSettled: () => refreshReplyOutcomes(queryClient),
+  });
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+      AI 未能标出回信结果：{reason}
+      <Button variant="quiet" size="sm" disabled={retry.isPending} onClick={() => retry.mutate()}>
+        重试
+      </Button>
+      {retry.error && <span className="text-destructive">{errorMessage(retry.error)}</span>}
+    </p>
   );
 }
 

@@ -148,6 +148,8 @@ const received: Entry = {
     truncated: false,
     unread: false,
     canReply: true,
+    outcome: null,
+    marking: null,
   },
 };
 
