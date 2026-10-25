@@ -2130,6 +2130,124 @@ async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
+    for (offset, state) in ["canceled", "maybe_sent", "sent"].into_iter().enumerate() {
+        let at = T + offset as i64 * 2 * DAY;
+        let (net, inbox) = mailbox(&db, SECRET).await;
+        let address = format!(
+            "{}@case{offset}.edu.cn",
+            if state == "sent" { "sent" } else { "hangup" }
+        );
+        let mentor = approve(&db, &address, &[], at).await;
+        let id = first_email(&db, mentor).await.id;
+        if state == "canceled" {
+            let task = immediate_task(&db, &[id]).await;
+            cancel_task_retry(&db, &net, task, id, at).await;
+            task::delete(&db, task).await.unwrap();
+        } else {
+            send::step(&db, &net, nowhere(), || at).await.unwrap();
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            state
+        );
+        let original = {
+            let inbox = inbox.lock().unwrap();
+            assert_eq!(inbox.len(), 1);
+            inbox[0].clone()
+        };
+        let message_id = header(&original, "Message-ID: ");
+        let previous = mailbox::list(&db).await.unwrap().remove(0);
+        mailbox::delete(&db, previous.id).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<i64>>("SELECT mailbox_id FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            None
+        );
+        let form = MailboxForm {
+            address: ADDRESS.into(),
+            sender_name: previous.sender_name,
+            provider: previous.provider,
+            smtp: previous.smtp,
+            imap: previous.imap,
+            daily_limit: previous.daily_limit,
+            min_interval_s: previous.min_interval_s,
+        };
+        let readded = mailbox::create(&db, &form.check().unwrap(), SECRET, at + DAY)
+            .await
+            .unwrap();
+        assert_ne!(readded, previous.id);
+        let (receiving, store) = bounce_mailbox(&db).await;
+        store.create("Sent", true);
+        // A new folder starts at its end, so sync it before the late copy arrives.
+        receive::round(&db, &receiving, at + DAY).await.unwrap();
+        let copy_id = format!("<provider-copy-{offset}@example.com>");
+        let copy = original
+            .replace(
+                &format!("Message-ID: {message_id}"),
+                &format!("Message-ID: {copy_id}"),
+            )
+            .replace("\r\n", "\n");
+        store.deliver("Sent", at, &copy);
+        let received = receive::round(&db, &receiving, at + DAY).await.unwrap();
+        assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+        if state != "sent" {
+            assert!(received.changed, "the {state} email must become sent");
+        }
+        assert_eq!(
+            sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+                "SELECT state, message_id, copy_message_id, cancel_reason FROM email WHERE id = ?"
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            ("sent".into(), message_id.into(), Some(copy_id), None),
+            "the {state} email must recognize its copy after the mailbox is readded"
+        );
+        for deleted in [false, true] {
+            if deleted {
+                mailbox::delete(&db, readded).await.unwrap();
+            }
+            let emails = email::list(&db, mentor).await.unwrap();
+            assert_eq!(emails.len(), 1);
+            assert_eq!(emails[0].id, id);
+            assert_eq!(
+                emails[0].delivery,
+                Delivery::Sent {
+                    from_address: ADDRESS.into(),
+                    to_address: address.clone(),
+                    sent_at: at,
+                }
+            );
+            assert!(receive::list(&db, mentor).await.unwrap().is_empty());
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM message")
+                    .fetch_one(&db)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                mentor::get(&db, mentor).await.unwrap().unwrap().contact,
+                mentor::Contact::Contacted {
+                    count: 1,
+                    last_out_at: at,
+                }
+            );
+        }
+        assert_eq!(inbox.lock().unwrap().len(), 1);
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let receiving = bounce_mailbox(&db).await;

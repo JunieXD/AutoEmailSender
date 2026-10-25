@@ -798,9 +798,9 @@ pub struct Candidate {
 const COPY_WINDOW: i64 = 60 * 60 * 1000;
 
 /// Some providers (QQ) keep the copy of an email under a Message-ID of their own. The emails it may
-/// be a copy of, nearest in time first: sent, or tried, from the same mailbox about the same time
-/// to the same address, with the same subject, and no copy turned up yet. Which one it is, if any,
-/// the text and attachments tell.
+/// be a copy of, nearest in time first: sent, or tried, from the same sender address about the same
+/// time to the same address, with the same subject, and no copy turned up yet. Which one it is, if
+/// any, the text and attachments tell.
 pub async fn copy_candidates(
     conn: &mut SqliteConnection,
     copy: &Copy<'_>,
@@ -810,7 +810,7 @@ pub async fn copy_candidates(
              (SELECT json_group_array(json_array(file_name, size)) FROM email_attachment
               WHERE email_id = email.id) AS "attachments!: Json<Vec<(String, i64)>>"
            FROM email
-           WHERE mailbox_id = ?1
+           WHERE from_address = (SELECT address FROM mailbox WHERE id = ?1) COLLATE NOCASE
              AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
                OR (state = 'canceled' AND sent_at IS NOT NULL))
              AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL
