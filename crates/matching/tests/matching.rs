@@ -761,3 +761,17 @@ async fn cancelled_invalid_answer_does_not_start_a_format_retry(db: SqlitePool) 
     assert_eq!((progress.remaining, progress.failed), (0, 0));
     assert!(progress.pause.is_none());
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restored_key_pauses_matching_without_failing_each_mentor(db: SqlitePool) {
+    setup(&db, "http://127.0.0.1:1/v1", 4).await;
+    sqlx::query("UPDATE model_config SET api_key = NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    let mut runner = Runner::start(&db);
+    runner.progress(&db, |p| p.pause.is_some()).await;
+    let progress = queue::progress(&db).await.unwrap();
+    assert_eq!((progress.remaining, progress.failed), (4, 0));
+    assert!(progress.pause.unwrap().reason.unwrap().contains("重新填写"));
+}

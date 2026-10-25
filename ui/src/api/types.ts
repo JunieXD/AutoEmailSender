@@ -208,7 +208,7 @@ minIntervalS: number,
 /**
  * Why the last round of receiving failed.
  */
-receiveError: string | null, };
+receiveError: string | null, needsSecret: boolean, };
 
 export type MailboxEdit = { id: number,
 /**
@@ -353,7 +353,7 @@ isDefault: boolean,
 /**
  * The user agreed to what AI features send to its provider.
  */
-agreed: boolean, inputPrice: number | null, outputPrice: number | null, };
+agreed: boolean, needsApiKey: boolean, inputPrice: number | null, outputPrice: number | null, };
 
 export type ModelConfigEdit = { id: number,
 /**
@@ -480,6 +480,12 @@ export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
 export type RescheduleEmail = { id: number, plannedAt: number, };
 
+export type RestoreInfo = {
+/**
+ * UTC milliseconds.
+ */
+exportedAt: number, appVersion: string, mentorCount: number, emailCount: number, backupDirectory: string, };
+
 export type ReviewInput = { ids: Array<number>, decisions: Decisions, };
 
 export type Reviewed = { accepted: number, skipped: number, };
@@ -582,7 +588,7 @@ page: number, };
 
 export type Trashed = { rows: Array<number>, id: number, name: string, };
 
-export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "ready";
+export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "mailbox_secret" | "ready";
 
 export type Window = { dates: Array<string>, start: string, end: string, perWindow: number, };
 

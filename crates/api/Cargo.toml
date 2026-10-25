@@ -33,6 +33,5 @@ receive.workspace = true
 task.workspace = true
 crawl.workspace = true
 db.workspace = true
-
-[dev-dependencies]
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 tempfile = "3.27.0"

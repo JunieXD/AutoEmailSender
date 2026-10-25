@@ -160,7 +160,11 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
-            None if e.reply => {
+            None if e.reply
+                && !mailboxes
+                    .iter()
+                    .any(|m| Some(m.id) == e.own && m.needs_secret) =>
+            {
                 email::failed(
                     &mut *db.acquire().await?,
                     e.id,
@@ -181,6 +185,7 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
 #[derive(Debug)]
 struct Usage {
     id: i64,
+    needs_secret: bool,
     daily_limit: i64,
     min_interval_ms: i64,
     paused_until: Option<i64>,
@@ -214,7 +219,7 @@ impl Usage {
 async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
     sqlx::query_as!(
         Usage,
-        r#"SELECT b.id, b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
+        r#"SELECT b.id, b.secret IS NULL AS "needs_secret!: bool", b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
              (SELECT count(*) FROM email e
               WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
                 AND e.sent_at > ?1) AS "recent!: i64",
@@ -241,13 +246,19 @@ fn choose(
     now: i64,
 ) -> Option<(i64, i64)> {
     let chosen = match own {
-        Some(id) => mailboxes.iter().find(|m| m.id == id),
+        Some(id) => mailboxes.iter().find(|m| m.id == id && !m.needs_secret),
         None if reply => None,
         None => {
             // Ties go to the mailbox that has gone longest without sending, then to rotation order.
-            let soonest = mailboxes.iter().min_by_key(|m| (m.ready_at(now), m.last));
+            let soonest = mailboxes
+                .iter()
+                .filter(|m| !m.needs_secret)
+                .min_by_key(|m| (m.ready_at(now), m.last));
             match rotation {
-                Rotation::Failover => mailboxes.iter().find(|m| m.open(now)).or(soonest),
+                Rotation::Failover => mailboxes
+                    .iter()
+                    .find(|m| !m.needs_secret && m.open(now))
+                    .or(soonest),
                 Rotation::PerEmail => soonest,
             }
         }
@@ -530,12 +541,32 @@ mod tests {
     fn mailbox(id: i64, recent: i64, last: Option<i64>) -> Usage {
         Usage {
             id,
+            needs_secret: false,
             daily_limit: 2,
             min_interval_ms: MINUTE,
             paused_until: None,
             recent,
             earliest_recent: last,
             last,
+        }
+    }
+
+    #[test]
+    fn rotation_skips_missing_secrets_but_keeps_the_assigned_mailbox() {
+        let mailboxes = [
+            Usage {
+                needs_secret: true,
+                ..mailbox(1, 0, None)
+            },
+            mailbox(2, 0, None),
+        ];
+        for rotation in [Rotation::Failover, Rotation::PerEmail] {
+            assert_eq!(
+                choose(rotation, None, false, &mailboxes, NOW),
+                Some((2, NOW))
+            );
+            assert_eq!(choose(rotation, Some(1), false, &mailboxes, NOW), None);
+            assert_eq!(choose(rotation, Some(1), true, &mailboxes, NOW), None);
         }
     }
 
