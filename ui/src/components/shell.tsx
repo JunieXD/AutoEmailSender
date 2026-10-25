@@ -39,11 +39,7 @@ export function Shell() {
     const crawlChanged = listen("crawl-changed", () => refreshCrawls(queryClient));
     const crawlFinished = listen<CrawlFinished>("crawl-finished", ({ payload: p }) => {
       refreshCrawls(queryClient);
-      const messages = [];
-      if (p.crawled) messages.push(`抓取完成：找到 ${p.candidates} 位候选，${p.failed} 个页面未打开`);
-      if (p.enriched + p.unenriched > 0)
-        messages.push(`信息补全完成：补到 ${p.enriched} 位，没补到 ${p.unenriched} 位`);
-      setCompleted(messages.join("；"));
+      setCompleted(p.message);
     });
     const stop = listen("matching-changed", () => refreshMentors(queryClient));
     const done = listen<MatchFinished>("matching-finished", ({ payload: p }) => {

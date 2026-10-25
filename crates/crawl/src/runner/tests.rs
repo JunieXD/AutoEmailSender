@@ -278,8 +278,8 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
     ));
     changed_until(&db, crawl, &mut events, "done").await;
     let result = finished.recv().await.unwrap();
-    assert_eq!(result.candidates, 3);
-    assert_eq!(result.failed, 2);
+    assert!(result.message.contains("3 位候选"));
+    assert!(result.message.contains("2 个页面未打开"));
     let candidates = review::list(
         &db,
         &CandidateQuery {
@@ -1111,7 +1111,11 @@ async fn a_run_with_only_failed_pages_can_retry_without_losing_its_page(db: Sqli
     save(&db, &claim, &Outcome::Failed("读取网页超时，请重试".into()))
         .await
         .unwrap();
-    assert_eq!(finish(&db).await.unwrap()[0].failed, 1);
+    assert!(
+        finish(&db, now()).await.unwrap()[0]
+            .message
+            .contains("1 个页面未打开")
+    );
     assert_eq!(
         queue::list(&db, 1).await.unwrap()[0].state,
         queue::CrawlState::Failed
@@ -2603,7 +2607,7 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
             assert!(matches!(outcome, Outcome::Failed(ref reason) if reason.contains("姓名")));
         }
         save(&db, &c, &outcome).await.unwrap();
-        finish(&db).await.unwrap();
+        finish(&db, now()).await.unwrap();
         let detail = queue::detail(&db, id, 1).await.unwrap().unwrap();
         assert_eq!(
             detail.pages[0].status,
@@ -2730,7 +2734,7 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
         };
         let (outcome, ()) = tokio::join!(read, answer);
         save(&db, &fresh, &outcome.unwrap()).await.unwrap();
-        finish(&db).await.unwrap();
+        finish(&db, now()).await.unwrap();
     }
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]

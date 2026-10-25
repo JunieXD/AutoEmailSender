@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.candidate_id,c.enrich AS \"enrich?: enrich::EnrichState\"\n            FROM crawl_page p LEFT JOIN candidate c ON c.id=p.candidate_id\n            JOIN crawl ON crawl.id=p.crawl_id\n            WHERE p.crawl_id=? AND p.work_state='done'\n            AND (crawl.reported_at IS NULL OR p.fetched_at>crawl.reported_at)\n            GROUP BY p.candidate_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "candidate_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "candidate_id"
+          }
+        }
+      },
+      {
+        "name": "enrich?: enrich::EnrichState",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "b82189e427fa5077519e4a4b694bdb2640a2970060d5573a5479ad268bc8ca37"
+}

@@ -87,7 +87,7 @@ async fn enrichment_personal_page_fills_only_empty_fields(db: SqlitePool) {
             .iter()
             .any(|c| c.field == EnrichField::Email && c.value == json!(["a@example.edu"]))
     );
-    finish(&db).await.unwrap();
+    finish(&db, now()).await.unwrap();
     // Re-enrichment is allowed for a missing direction, but cannot replace existing email.
     sqlx::query("UPDATE candidate SET research=NULL WHERE id=?")
         .bind(id)
@@ -305,7 +305,7 @@ async fn enrichment_failure_reasons_and_single_page_retry(db: SqlitePool) {
     .await
     .unwrap();
     save(&db, &c, &result).await.unwrap();
-    finish(&db).await.unwrap();
+    finish(&db, now()).await.unwrap();
     assert!(
         detail(&db, id)
             .await
@@ -486,7 +486,7 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
         let outcome =
             process_answer(&db, &site, provider, &c, answer("a@example.edu", json!([]))).await;
         save(&db, &c, &outcome).await.unwrap();
-        finish(&db).await.unwrap();
+        finish(&db, now()).await.unwrap();
         assert_eq!(
             detail(&db, id).await.candidate.fields.emails,
             vec!["a@example.edu"]
@@ -1153,7 +1153,7 @@ async fn enrichment_review_removes_unfinished_pages_without_failures(db: SqliteP
             if let Some((c, result)) = late {
                 assert!(!save(&db, &c, &result).await.unwrap());
             }
-            finish(&db).await.unwrap();
+            finish(&db, now()).await.unwrap();
             let d = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
             assert_eq!(d.summary.failed, 0, "{action}/{stage}");
             assert_eq!(d.summary.remaining, 0);
@@ -1203,7 +1203,7 @@ async fn enrichment_profile_retry_keeps_first_children(db: SqlitePool) {
         let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([]))).await;
         save(&db, &c, &result).await.unwrap();
     }
-    finish(&db).await.unwrap();
+    finish(&db, now()).await.unwrap();
     assert_eq!(queue::retry(&db, crawl, Some(profile), 3).await.unwrap(), 1);
     let c = queue::next(&db).await.unwrap().unwrap();
     let result = process_answer(
@@ -1259,11 +1259,13 @@ async fn enrichment_cancel_discards_fetched_but_unfinished_page(db: SqlitePool) 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn enrichment_completion_counts_current_run_and_distinguishes_crawling(db: SqlitePool) {
+async fn enrichment_completion_counts_unreported_candidates_and_distinguishes_crawling(
+    db: SqlitePool,
+) {
     let site = Site::new().await;
     for crawling in [false, true] {
         let (crawl, old) = candidate(&db, &site, "/old").await;
-        sqlx::query("UPDATE crawl SET state='running',finished_at=NULL WHERE id=?")
+        sqlx::query("UPDATE crawl SET state='running',finished_at=NULL,reported_at=100 WHERE id=?")
             .bind(crawl)
             .execute(&db)
             .await
@@ -1286,32 +1288,153 @@ async fn enrichment_completion_counts_current_run_and_distinguishes_crawling(db:
                 sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,kind,mode,status,text,error,work_state,fetched_at) VALUES(?,?,?,?, 'http',?,'张三',?,'done',110)").bind(crawl).bind(id).bind(format!("https://example.edu{path}/{kind}")).bind(kind).bind(status).bind(if status=="success" {None} else {Some("页面读取失败")}).execute(&db).await.unwrap();
             }
         }
-        sqlx::query("INSERT INTO crawl_page(crawl_id,url,kind,mode,status,text,work_state,fetched_at) VALUES(?,'https://example.edu/list','list','http','success','张三','done',?)").bind(crawl).bind(if crawling {110} else {50}).execute(&db).await.unwrap();
-        let results = finish(&db).await.unwrap();
-        let result = serde_json::to_value(&results[0]).unwrap();
-        assert_eq!(result["crawled"], json!(crawling));
-        assert_eq!(result["enriched"], json!(1));
-        assert_eq!(result["unenriched"], json!(1));
+        let page: i64 = sqlx::query_scalar("INSERT INTO crawl_page(crawl_id,url,scope_url,kind,mode,status,error,work_state,fetched_at) VALUES(?,'https://example.edu/list','https://example.edu/list','list','http','failed','读取失败','done',?) RETURNING id").bind(crawl).bind(if crawling {110} else {50}).fetch_one(&db).await.unwrap();
+        let results = finish(&db, 150).await.unwrap();
+        assert_eq!(results[0].message.contains("抓取完成"), crawling);
+        assert!(results[0].message.contains("信息补全完成：2 位"));
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<i64>>("SELECT reported_at FROM crawl WHERE id=?")
+                .bind(crawl)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            Some(150)
+        );
         // A later crawl-only run must not report those enrichment results again.
-        sqlx::query("UPDATE crawl SET state='running',finished_at=NULL WHERE id=?")
-            .bind(crawl)
+        assert_eq!(queue::retry(&db, crawl, Some(page), 200).await.unwrap(), 1);
+        let c = queue::next(&db).await.unwrap().unwrap();
+        assert_eq!(c.id, page);
+        save(&db, &c, &Outcome::Failed("读取失败".into()))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE crawl_page SET fetched_at=210 WHERE id=?")
+            .bind(page)
             .execute(&db)
             .await
             .unwrap();
-        queue::open_run(&mut db.acquire().await.unwrap(), crawl, 200)
-            .await
-            .unwrap();
-        sqlx::query("UPDATE crawl_page SET fetched_at=210 WHERE crawl_id=? AND kind='list'")
-            .bind(crawl)
-            .execute(&db)
-            .await
-            .unwrap();
-        let results = finish(&db).await.unwrap();
-        let result = serde_json::to_value(&results[0]).unwrap();
-        assert_eq!(result["crawled"], json!(true));
-        assert_eq!(result["enriched"], json!(0));
-        assert_eq!(result["unenriched"], json!(0));
+        let results = finish(&db, 250).await.unwrap();
+        assert!(results[0].message.contains("抓取完成"));
+        assert!(!results[0].message.contains("信息补全"));
     }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_completion_includes_work_before_pause(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/first", "<p>张三 机器学习</p>");
+    site.page("/second", "<p>张三</p>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let (crawl, first) = candidate(&db, &site, "/first").await;
+    let (other, second) = candidate(&db, &site, "/second").await;
+    sqlx::query("UPDATE candidate SET crawl_id=? WHERE id=?")
+        .bind(crawl)
+        .bind(second)
+        .execute(&db)
+        .await
+        .unwrap();
+    queue::delete(&db, other).await.unwrap();
+    enrich::start(&db, &[first, second], 10).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let mut a = empty_answer(json!([]));
+    a["research"] = json!("机器学习");
+    let result = process_answer(&db, &site, &mut provider, &c, a).await;
+    save(&db, &c, &result).await.unwrap();
+    sqlx::query("UPDATE crawl_page SET fetched_at=20 WHERE id=?")
+        .bind(c.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(finish(&db, 25).await.unwrap().is_empty());
+    assert!(queue::control(&db, crawl, "pause", 30).await.unwrap());
+    assert!(queue::next(&db).await.unwrap().is_none());
+    assert!(queue::control(&db, crawl, "resume", 40).await.unwrap());
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([]))).await;
+    save(&db, &c, &result).await.unwrap();
+    sqlx::query("UPDATE crawl_page SET fetched_at=50 WHERE id=?")
+        .bind(c.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let events = finish(&db, 60).await.unwrap();
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert!(event.message.contains("信息补全完成：2 位"));
+    assert!(!event.message.contains("抓取完成"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_completion_survives_restart_after_final_save(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三 机器学习</p>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let (_, id) = candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 10).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let mut a = empty_answer(json!([]));
+    a["research"] = json!("机器学习");
+    let result = process_answer(&db, &site, &mut provider, &c, a).await;
+    save(&db, &c, &result).await.unwrap();
+    sqlx::query("UPDATE crawl_page SET fetched_at=20 WHERE id=?")
+        .bind(c.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    queue::recover(&db).await.unwrap();
+    let events = finish(&db, 30).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(events[0].message.contains("信息补全完成：1 位"));
+    assert!(finish(&db, 40).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_completion_retry_does_not_claim_previous_changes(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三 机器学习</p><button>下一页</button>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let (crawl, id) = candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 10).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let mut a = empty_answer(json!([]));
+    a["research"] = json!("机器学习");
+    let result = process_answer(&db, &site, &mut provider, &c, a).await;
+    save(&db, &c, &result).await.unwrap();
+    let before = detail(&db, id).await;
+    assert_eq!(
+        before.candidate.fields.research.as_deref(),
+        Some("机器学习")
+    );
+    assert_eq!(before.candidate.enrichment.enrich_changes.len(), 1);
+    sqlx::query("UPDATE crawl_page SET fetched_at=20 WHERE id=?")
+        .bind(c.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let first = finish(&db, 30).await.unwrap();
+    assert_eq!(first.len(), 1);
+    assert!(first[0].message.contains("信息补全完成：1 位"));
+    assert_eq!(queue::retry(&db, crawl, Some(c.id), 40).await.unwrap(), 1);
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([]))).await;
+    save(&db, &c, &result).await.unwrap();
+    sqlx::query("UPDATE crawl_page SET fetched_at=50 WHERE id=?")
+        .bind(c.id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let after = detail(&db, id).await;
+    assert_eq!(
+        serde_json::to_value(&after.candidate.enrichment.enrich_changes).unwrap(),
+        serde_json::to_value(&before.candidate.enrichment.enrich_changes).unwrap()
+    );
+    let events = finish(&db, 60).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(events[0].message.contains("信息补全完成：1 位"));
+    assert!(!events[0].message.contains("补到"));
+    assert_eq!(events[0].message, first[0].message);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

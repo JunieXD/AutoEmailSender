@@ -395,6 +395,7 @@ CREATE TABLE crawl (
   error TEXT,
   created_at INTEGER NOT NULL,
   finished_at INTEGER,
+  reported_at INTEGER,
   CHECK ((kind = 'site') = (start_urls IS NOT NULL)),
   CHECK (start_urls IS NULL OR (json_valid(start_urls) AND json_type(start_urls) = 'array')),
   CHECK ((state IN ('done', 'failed', 'canceled')) = (finished_at IS NOT NULL)),

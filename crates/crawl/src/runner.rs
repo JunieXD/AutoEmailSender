@@ -33,11 +33,7 @@ impl Crawler {
 #[serde(rename_all = "camelCase")]
 pub struct CrawlFinished {
     pub id: i64,
-    pub candidates: i64,
-    pub failed: i64,
-    pub crawled: bool,
-    pub enriched: i64,
-    pub unenriched: i64,
+    pub message: String,
 }
 struct Page {
     material: Material,
@@ -604,9 +600,8 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     tx.commit().await?;
     Ok(true)
 }
-async fn finish(db: &SqlitePool) -> Result<Vec<CrawlFinished>, sqlx::Error> {
+async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let at = now();
     let ids=sqlx::query_scalar!("UPDATE crawl SET state = 'done',finished_at = ? WHERE state = 'running' AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = crawl.id AND work_state != 'done') RETURNING id",at).fetch_all(&mut *tx).await?;
     let mut result = Vec::new();
     for id in ids {
@@ -631,31 +626,37 @@ async fn finish(db: &SqlitePool) -> Result<Vec<CrawlFinished>, sqlx::Error> {
             sqlx::query!("UPDATE crawl SET state = 'failed',error = '本次抓取未能处理任何页面，请查看页面原因后重试' WHERE id = ? AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND status = 'success')",id,id).execute(&mut *tx).await?;
         }
         let activity = sqlx::query!(
-            r#"SELECT p.candidate_id,c.enrich AS "enrich?: enrich::EnrichState",
-            coalesce(json_array_length(c.enrich_changes),0)>0 AS "changed!: bool"
+            r#"SELECT p.candidate_id,c.enrich AS "enrich?: enrich::EnrichState"
             FROM crawl_page p LEFT JOIN candidate c ON c.id=p.candidate_id
-            WHERE p.crawl_id=?1 GROUP BY p.candidate_id
-            HAVING max(p.fetched_at)>=(SELECT started_at FROM crawl_run WHERE crawl_id=?1 ORDER BY id DESC LIMIT 1)"#,
+            JOIN crawl ON crawl.id=p.crawl_id
+            WHERE p.crawl_id=? AND p.work_state='done'
+            AND (crawl.reported_at IS NULL OR p.fetched_at>crawl.reported_at)
+            GROUP BY p.candidate_id"#,
             id
-        ).fetch_all(&mut *tx).await?;
-        let mut enriched = 0;
-        let mut unenriched = 0;
-        for page in &activity {
-            if page.enrich == Some(enrich::EnrichState::Done) {
-                if page.changed {
-                    enriched += 1;
-                } else {
-                    unenriched += 1;
-                }
-            }
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut messages = Vec::new();
+        if activity.iter().any(|p| p.candidate_id.is_none()) {
+            messages.push(format!(
+                "抓取完成：找到 {candidates} 位候选，{failed} 个页面未打开"
+            ));
+        }
+        let enriched = activity
+            .iter()
+            .filter(|p| p.enrich == Some(enrich::EnrichState::Done))
+            .count();
+        if enriched > 0 {
+            messages.push(format!("信息补全完成：{enriched} 位，去候选里查看结果"));
+        }
+        if !messages.is_empty() {
+            sqlx::query!("UPDATE crawl SET reported_at=? WHERE id=?", at, id)
+                .execute(&mut *tx)
+                .await?;
         }
         result.push(CrawlFinished {
             id,
-            candidates,
-            failed,
-            crawled: activity.iter().any(|p| p.candidate_id.is_none()),
-            enriched,
-            unenriched,
+            message: messages.join("；"),
         });
     }
     tx.commit().await?;
@@ -697,7 +698,7 @@ async fn run_with_fetcher(
     let mut claims = HashMap::new();
     let cooldown = Cooldown::default();
     loop {
-        match finish(&db).await {
+        match finish(&db, now()).await {
             Ok(results) => {
                 for r in results {
                     changed();

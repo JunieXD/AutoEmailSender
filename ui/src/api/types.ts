@@ -48,7 +48,7 @@ export type CrawlDetail = { summary: CrawlSummary, urls: Array<string>, limits: 
 
 export type CrawlDetailQuery = { id: number, page: number, };
 
-export type CrawlFinished = { id: number, candidates: number, failed: number, crawled: boolean, enriched: number, unenriched: number, };
+export type CrawlFinished = { id: number, message: string, };
 
 export type CrawlId = { id: number, };
 
