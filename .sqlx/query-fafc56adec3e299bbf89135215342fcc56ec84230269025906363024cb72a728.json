@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, kind AS \"kind: PageKind\", mode AS \"method: PageMethod\",\n             status AS \"status: PageStatus\", error, fetched_at AS \"fetched_at!\"\n           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND fetched_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "kind: PageKind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "method: PageMethod",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "mode"
+          }
+        }
+      },
+      {
+        "name": "status: PageStatus",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "name": "fetched_at!",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "fetched_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "fafc56adec3e299bbf89135215342fcc56ec84230269025906363024cb72a728"
+}

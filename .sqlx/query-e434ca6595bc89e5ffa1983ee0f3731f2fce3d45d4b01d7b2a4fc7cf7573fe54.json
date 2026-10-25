@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id,url,kind,work_state AS state,status,error FROM crawl_page WHERE crawl_id = ? ORDER BY status = 'success', id LIMIT 50 OFFSET ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "url",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "work_state"
+          }
+        }
+      },
+      {
+        "name": "status",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "e434ca6595bc89e5ffa1983ee0f3731f2fce3d45d4b01d7b2a4fc7cf7573fe54"
+}

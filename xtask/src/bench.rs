@@ -119,6 +119,27 @@ pub async fn run(path: &Path) -> Result {
     .bind(NOW)
     .execute(&db)
     .await?;
+    sqlx::query(
+        "WITH RECURSIVE people(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM people WHERE n<10000)
+         INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,source_url)
+         SELECT ?,'pending','none',CASE WHEN n%4 IN (0,3) THEN '新候选'||n ELSE m.name END,
+           CASE WHEN n%4=0 THEN json_array('candidate'||n||'@example.edu.cn')
+                WHEN n%4=1 THEN (SELECT json_group_array(address) FROM mentor_email WHERE mentor_id=m.id)
+                ELSE '[]' END,
+           (SELECT json_group_array(json_object('university',university,'school',school,'department',department,'title',title)) FROM mentor_affiliation WHERE mentor_id=m.id),
+           'https://school.edu.cn/faculty' FROM people JOIN mentor m ON m.id=n"
+    ).bind(crawl).execute(&db).await?;
+    let candidates = crawl::review::CandidateQuery {
+        crawl_id: None,
+        processed: false,
+        filter: crawl::review::CandidateFilter::All,
+        page: 1,
+    };
+    report(
+        "候选列表一页（1 万候选、10 万导师）",
+        median(async || crawl::review::list(&db, &candidates).await.map(drop)).await?,
+        home,
+    );
     let url = crawl::PageUrl::parse("https://school.edu.cn/people/99999")?;
     report(
         "查已访问的抓取页面（10 万页，不读正文）",

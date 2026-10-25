@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_run SET ended_at = ? WHERE ended_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "70d257c0f4e209cac516eaea5e9348c8bf7ffb4ef6ff004fea8f618384d3de9b"
+}

@@ -271,3 +271,23 @@ pub fn response_material(
     }
     Ok(material)
 }
+
+#[cfg(test)]
+impl Fetcher {
+    pub(crate) fn local(port: u16) -> Self {
+        let net = net::Net::new(vec![]).unwrap();
+        let client = |builder: reqwest::ClientBuilder| {
+            builder
+                .no_proxy()
+                .resolve("school.example.edu", ([127, 0, 0, 1], port).into())
+                .resolve("outside.example.org", ([127, 0, 0, 1], port).into())
+                .build()
+                .unwrap()
+        };
+        Self {
+            trusted: client(net.page_http_builder()),
+            untrusted: client(net.untrusted_page_http_builder()),
+            sites: Mutex::new(BTreeMap::new()),
+        }
+    }
+}

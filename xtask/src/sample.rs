@@ -424,3 +424,29 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     tx.commit().await?;
     Ok(())
 }
+
+pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
+    let mut tx = db.begin().await?;
+    let id:i64=sqlx::query_scalar("INSERT INTO crawl (kind,start_urls,state,created_at,finished_at) VALUES ('site','[\"https://example.edu.cn/faculty\"]','done',?,?) RETURNING id").bind(at-600000).bind(at-300000).fetch_one(&mut *tx).await?;
+    sqlx::query(
+        "INSERT INTO crawl_run (crawl_id,app_version,started_at,ended_at) VALUES (?,?,?,?)",
+    )
+    .bind(id)
+    .bind(env!("CARGO_PKG_VERSION"))
+    .bind(at - 600000)
+    .bind(at - 300000)
+    .execute(&mut *tx)
+    .await?;
+    let known:(String,String)=sqlx::query_as("SELECT m.name,e.address FROM mentor m JOIN mentor_email e ON e.mentor_id=m.id WHERE m.trashed_at IS NULL LIMIT 1").fetch_one(&mut *tx).await?;
+    for (name, emails) in [
+        ("新发现的导师".into(), vec!["new@example.edu.cn".to_owned()]),
+        (known.0.clone(), vec![known.1]),
+        (known.0, vec![]),
+        ("尚无邮箱的导师".into(), vec![]),
+    ] {
+        sqlx::query("INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,research,source_url) VALUES (?,'pending','none',?,?,'[]','机器学习与智能系统','https://example.edu.cn/faculty')").bind(id).bind(name).bind(sqlx::types::Json(emails)).execute(&mut *tx).await?;
+    }
+    sqlx::query("INSERT INTO crawl (kind,start_urls,state,created_at,error) VALUES ('site','[\"https://example.edu.cn/teachers\"]','paused',?,'模型额度不足，请补充额度后继续')").bind(at).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(())
+}

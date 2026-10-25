@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT model_config_id FROM crawl WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "model_config_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "model_config_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "575b149d0a3e471b3cfa3d5e506425e7498bd07329be2eecd2a89276bae8dffa"
+}

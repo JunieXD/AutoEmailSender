@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: PageKind\", mode AS \"method: PageMethod\",\n             status AS \"status: PageStatus\", error, fetched_at\n           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ?",
+  "query": "UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url,scope_url,depth,kind",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,63 @@
         }
       },
       {
-        "name": "kind: PageKind",
+        "name": "crawl_id",
         "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "claim",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "claim"
+          }
+        }
+      },
+      {
+        "name": "url",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "scope_url",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "scope_url"
+          }
+        }
+      },
+      {
+        "name": "depth",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "depth"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 6,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -24,54 +79,10 @@
             "name": "kind"
           }
         }
-      },
-      {
-        "name": "method: PageMethod",
-        "ordinal": 2,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "crawl_page",
-            "name": "mode"
-          }
-        }
-      },
-      {
-        "name": "status: PageStatus",
-        "ordinal": 3,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "crawl_page",
-            "name": "status"
-          }
-        }
-      },
-      {
-        "name": "error",
-        "ordinal": 4,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "crawl_page",
-            "name": "error"
-          }
-        }
-      },
-      {
-        "name": "fetched_at",
-        "ordinal": 5,
-        "type_info": "Integer",
-        "origin": {
-          "Table": {
-            "table": "crawl_page",
-            "name": "fetched_at"
-          }
-        }
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 0
     },
     "nullable": [
       false,
@@ -79,8 +90,9 @@
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "c32975712a3cfb9f109ce5134ab395c6c2d9cf5de0c8aba5664b8e9d54a8daa1"
+  "hash": "1824733740325df1c4136051aa19423efb93eaa92c9bc9c589944580105cde7c"
 }

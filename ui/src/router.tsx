@@ -1,3 +1,4 @@
+import { FindPage, findSearch } from "./pages/find";
 import { createHashHistory, createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { TasksPage, TaskReviewPage, tasksSearch, taskSearch } from "./pages/tasks";
 import { ConversationsPage, conversationSearch } from "./pages/conversations";
@@ -57,6 +58,12 @@ const conversationsRoute = createRoute({
   component: ConversationsPage,
 });
 
+const findRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "find",
+  validateSearch: findSearch,
+  component: FindPage,
+});
 const moreRoute = createRoute({ getParentRoute: () => rootRoute, path: "more", component: MorePage });
 const tasksRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -141,6 +148,7 @@ export const router = createRouter({
     mentorRoute,
     conversationsRoute,
     moreRoute,
+    findRoute,
     tasksRoute,
     taskRoute,
     settingsRoute.addChildren([

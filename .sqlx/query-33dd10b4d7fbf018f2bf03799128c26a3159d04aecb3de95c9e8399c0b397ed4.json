@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) FROM candidate WHERE (?1 IS NULL OR crawl_id = ?1) AND (review != 'pending') = ?2 AND (NOT ?3 OR coalesce(json_array_length(emails),0)=0)",
+  "describe": {
+    "columns": [
+      {
+        "name": "count(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "33dd10b4d7fbf018f2bf03799128c26a3159d04aecb3de95c9e8399c0b397ed4"
+}

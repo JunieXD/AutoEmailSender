@@ -120,6 +120,8 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "base64 0.22.1",
  "check",
+ "crawl",
+ "db",
  "email",
  "mailbox",
  "matching",
@@ -417,6 +419,7 @@ name = "auto-email-sender"
 version = "3.0.0-alpha.0"
 dependencies = [
  "api",
+ "crawl",
  "db",
  "matching",
  "model",
@@ -977,7 +980,9 @@ dependencies = [
  "db",
  "ego-tree",
  "encoding_rs",
+ "matching",
  "mentor",
+ "model",
  "net",
  "percent-encoding",
  "psl",
@@ -986,10 +991,13 @@ dependencies = [
  "reqwest",
  "scraper",
  "serde",
+ "serde_json",
  "sqlx",
+ "task",
  "tokio",
  "tokio-rustls",
  "tracing",
+ "ts-rs",
  "url",
 ]
 

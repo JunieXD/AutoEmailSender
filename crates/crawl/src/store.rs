@@ -108,8 +108,8 @@ pub async fn visited_page(
     sqlx::query_as!(
         PageVisit,
         r#"SELECT id, kind AS "kind: PageKind", mode AS "method: PageMethod",
-             status AS "status: PageStatus", error, fetched_at
-           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ?"#,
+             status AS "status: PageStatus", error, fetched_at AS "fetched_at!"
+           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND fetched_at IS NOT NULL"#,
         crawl_id,
         url,
         steps

@@ -1,3 +1,4 @@
+import { IntakeChoices } from "@/components/intake-choices";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { exportMentors } from "@/api/app";
@@ -6,14 +7,13 @@ import type {
   Decisions,
   Field,
   Imported,
-  ImportProfile,
   PreviewImport,
   Preview,
   ImportSetup as Setup,
   TableFormat,
 } from "@/api/types";
-import { Differences, FIELD_NAMES } from "@/components/differences";
-import { placeOf, refreshMentors } from "@/components/mentor";
+import { FIELD_NAMES } from "@/components/differences";
+import { refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { base64 } from "@/file";
@@ -247,139 +247,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
                       没有变化 <strong>{preview.unchanged}</strong> 位
                     </span>
                   </div>
-                  {preview.differences.length > 0 && (
-                    <section>
-                      <h3 className="mb-2 font-medium">资料不同</h3>
-                      <Differences
-                        items={preview.differences}
-                        take={decisions.take}
-                        onChange={(take) => choose((d) => ({ ...d, take }))}
-                      />
-                    </section>
-                  )}
-                  {preview.maybeSame.length > 0 && (
-                    <section>
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <h3 className="mr-auto font-medium">可能是同一位 · {preview.maybeSame.length} 组</h3>
-                        <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, matches: [] }))}>
-                          全部按默认
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            choose((d) => ({ ...d, matches: preview.maybeSame.map((m) => ({ row: m.row, id: null })) }))
-                          }
-                        >
-                          全部新建
-                        </Button>
-                      </div>
-                      <div className="space-y-2">
-                        {preview.maybeSame.map((m) => (
-                          <div key={m.row} className="rounded-lg border border-border p-3 text-sm">
-                            <div className="grid grid-cols-2 gap-4 phone:grid-cols-1">
-                              <div>
-                                <span className="mb-1 block text-xs text-muted-foreground">
-                                  表格 · 第 {m.rows.join("、")} 行
-                                </span>
-                                <ProfileDetails profile={m.incoming} />
-                              </div>
-                              <fieldset className="min-w-0 space-y-3">
-                                <legend className="mb-1 text-xs text-muted-foreground">选择并入哪一位，或新建</legend>
-                                {m.candidates.map((candidate) => (
-                                  <label key={candidate.id} className="flex items-start gap-2">
-                                    <input
-                                      type="radio"
-                                      name={`same-${m.row}`}
-                                      className="mt-1"
-                                      checked={m.selected === candidate.id}
-                                      onChange={() =>
-                                        choose((d) => ({
-                                          ...d,
-                                          matches: [
-                                            ...d.matches.filter((c) => c.row !== m.row),
-                                            { row: m.row, id: candidate.id },
-                                          ],
-                                        }))
-                                      }
-                                    />
-                                    <span className="min-w-0">
-                                      <span className="mb-1 block text-xs text-muted-foreground">
-                                        并入 · 编号 {candidate.id}
-                                      </span>
-                                      <ProfileDetails profile={candidate.profile} />
-                                    </span>
-                                  </label>
-                                ))}
-                                <label className="flex items-center gap-2">
-                                  <input
-                                    type="radio"
-                                    name={`same-${m.row}`}
-                                    checked={m.selected === null}
-                                    onChange={() =>
-                                      choose((d) => ({
-                                        ...d,
-                                        matches: [
-                                          ...d.matches.filter((c) => c.row !== m.row),
-                                          { row: m.row, id: null },
-                                        ],
-                                      }))
-                                    }
-                                  />
-                                  新建
-                                </label>
-                              </fieldset>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-                  {preview.trashed.length > 0 && (
-                    <section>
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <h3 className="mr-auto font-medium">在回收站里 · {preview.trashed.length} 位</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => choose((d) => ({ ...d, restore: preview.trashed.map((m) => m.id) }))}
-                        >
-                          全部恢复并更新
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, restore: [] }))}>
-                          全部不导入
-                        </Button>
-                      </div>
-                      <div className="space-y-2">
-                        {preview.trashed.map((m) => (
-                          <div
-                            key={m.id}
-                            className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm"
-                          >
-                            <p className="mr-auto">
-                              {m.name} · 第 {m.rows.join("、")} 行
-                            </p>
-                            {[false, true].map((restore) => (
-                              <label key={String(restore)} className="flex items-center gap-2">
-                                <input
-                                  type="radio"
-                                  name={`restore-${m.id}`}
-                                  checked={decisions.restore.includes(m.id) === restore}
-                                  onChange={() =>
-                                    choose((d) => ({
-                                      ...d,
-                                      restore: [...d.restore.filter((id) => id !== m.id), ...(restore ? [m.id] : [])],
-                                    }))
-                                  }
-                                />
-                                {restore ? "恢复并更新" : "不导入"}
-                              </label>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                  <IntakeChoices preview={preview} decisions={decisions} onChange={choose} />
                   {preview.errors.length > 0 && (
                     <section>
                       <h3 className="mb-2 font-medium">有问题的行 · {preview.errors.length} 行</h3>
@@ -414,27 +282,5 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function ProfileDetails({ profile }: { profile: ImportProfile }) {
-  return (
-    <span className="block break-words">
-      {profile.name}
-      <span className="block text-muted-foreground">
-        {profile.affiliations.map((a, n) => (
-          <span key={n} className="block">
-            {placeOf(a)}
-          </span>
-        ))}
-        <span className="block">{profile.emails.join("、") || "未填写邮箱"}</span>
-        {profile.research && <span className="block whitespace-pre-wrap">{profile.research}</span>}
-        {profile.homepages.map((url) => (
-          <span key={url} className="block">
-            {url}
-          </span>
-        ))}
-      </span>
-    </span>
   );
 }

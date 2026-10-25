@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM candidate WHERE (?1 IS NULL OR crawl_id = ?1) AND (review != 'pending') = ?2 AND (NOT ?3 OR coalesce(json_array_length(emails),0)=0) ORDER BY id LIMIT ?4 OFFSET ?5",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cd6ba27d06e384e514a30d230ce0cb7fc95484e10c28fdecbbb44ba0625bbf57"
+}

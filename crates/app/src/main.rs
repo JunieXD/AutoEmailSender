@@ -232,7 +232,29 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
+    let crawler = crawl::runner::Crawler::default();
+    let (ui, done_ui, crawl_db) = (app.clone(), app.clone(), db.clone());
+    tauri::async_runtime::spawn(crawl::runner::run(
+        db.clone(),
+        net.clone(),
+        crawler.clone(),
+        model_limit.clone(),
+        move || {
+            if let Err(e) = ui.emit("crawl-changed", ()) {
+                tracing::warn!("refresh crawl: {e}");
+            }
+        },
+        move |result| {
+            let (app, db) = (done_ui.clone(), crawl_db.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = finish_crawl(&app, &db, result).await {
+                    tracing::warn!("crawl completion notification: {e}");
+                }
+            });
+        },
+    ));
     Ok(api::Context {
+        crawler,
         db,
         net,
         sender,
@@ -244,6 +266,26 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
     })
 }
 
+async fn finish_crawl(
+    app: &AppHandle,
+    db: &sqlx::SqlitePool,
+    result: crawl::runner::CrawlFinished,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(window) = app.get_webview_window("main")
+        && window.is_focused()?
+    {
+        app.emit("crawl-finished", result)?;
+    } else if profile::background_notifications(db).await? {
+        app.notification()
+            .builder()
+            .title(format!(
+                "抓取完成：找到 {} 位候选，{} 个页面未打开",
+                result.candidates, result.failed
+            ))
+            .show()?;
+    }
+    Ok(())
+}
 async fn finish_drafts(
     app: &AppHandle,
     db: &sqlx::SqlitePool,

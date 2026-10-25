@@ -57,10 +57,10 @@ it("clears group choices on sheet changes and checks candidate identity after re
   const candidate = {
     row: 2,
     rows: [2, 3],
-    incoming: { name: "王明", affiliations: [], emails: [], research: null, homepages: [] },
+    incoming: { name: "王明", aliases: [], affiliations: [], emails: [], research: null, homepages: [] },
     candidates: [
-      { id: 7, profile: { name: "王明", affiliations: [], emails: [], research: null, homepages: [] } },
-      { id: 8, profile: { name: "王明", affiliations: [], emails: [], research: null, homepages: [] } },
+      { id: 7, profile: { name: "王明", aliases: [], affiliations: [], emails: [], research: null, homepages: [] } },
+      { id: 8, profile: { name: "王明", aliases: [], affiliations: [], emails: [], research: null, homepages: [] } },
     ],
     selected: 7,
   };
@@ -101,7 +101,7 @@ it("clears group choices on sheet changes and checks candidate identity after re
 });
 
 it("retains restore approval for a non-default target when unrelated columns change", () => {
-  const profile = { name: "王伟", affiliations: [], emails: [], research: "数论", homepages: [] };
+  const profile = { name: "王伟", aliases: [], affiliations: [], emails: [], research: "数论", homepages: [] };
   const group = {
     row: 2,
     rows: [2],

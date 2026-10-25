@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT app_version,started_at,ended_at FROM crawl_run WHERE crawl_id = ? ORDER BY id DESC LIMIT 50",
+  "describe": {
+    "columns": [
+      {
+        "name": "app_version",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_run",
+            "name": "app_version"
+          }
+        }
+      },
+      {
+        "name": "started_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_run",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "name": "ended_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_run",
+            "name": "ended_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "3c7dced9cc87a8ca2bad4ae835349effde0cc3388e94edaf0e928a5964e16278"
+}

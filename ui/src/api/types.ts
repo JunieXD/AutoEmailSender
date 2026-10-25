@@ -10,6 +10,18 @@ export type CallError = { code: ErrorCode, message: string, };
 
 export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, };
 
+export type CandidateDetail = { evidence: Array<Evidence>, id: number, crawlId: number | null, review: string, mentorId: number | null, fields: MentorFields, papers: Array<string>, sourceUrl: string | null, };
+
+export type CandidateFilter = "all" | "new" | "supplement" | "maybe" | "missing_email";
+
+export type CandidateIds = { ids: Array<number>, };
+
+export type CandidatePage = { candidates: Array<CandidateRow>, total: number, };
+
+export type CandidateQuery = { crawlId: number | null, processed: boolean, filter: CandidateFilter, page: number, };
+
+export type CandidateRow = { id: number, crawlId: number | null, name: string, emails: Array<string>, affiliation: Affiliation | null, research: string | null, sourceUrl: string | null, review: string, mentorId: number | null, category: CandidateFilter, issue: string | null, };
+
 export type Column = { header: string, field: Field | null, };
 
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
@@ -21,6 +33,30 @@ export type Conversation = { mentorId: number, name: string, subject: string | n
 export type ConversationPage = { conversations: Array<Conversation>, total: number, };
 
 export type ConversationQuery = { unread: boolean, page: number, };
+
+export type CrawlDetail = { urls: Array<string>, limits: Array<string>, pages: Array<CrawlPage>, runs: Array<CrawlRun>, pageTotal: number, };
+
+export type CrawlDetailQuery = { id: number, page: number, };
+
+export type CrawlEstimate = { urls: Array<string>, modelId: number | null, model: string | null, tokens: number, cost: number | null, };
+
+export type CrawlFinished = { id: number, candidates: number, failed: number, };
+
+export type CrawlId = { id: number, };
+
+export type CrawlInput = { urls: string, expectedPages: number, expectedMentors: number, };
+
+export type CrawlPage = { id: number, url: string, kind: string, state: string, status: string, error: string | null, };
+
+export type CrawlQuery = { page: number, };
+
+export type CrawlRetry = { id: number, page: number | null, };
+
+export type CrawlRun = { appVersion: string, startedAt: number, endedAt: number | null, };
+
+export type CrawlStart = { urls: string, modelId: number, };
+
+export type CrawlSummary = { id: number, url: string | null, modelConfigId: number | null, state: string, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, profiles: number, candidates: number, failed: number, tokens: number | null, stage: string, };
 
 export type Decisions = { take: Array<Difference>, matches: Array<GroupChoice>, restore: Array<number>, };
 
@@ -64,6 +100,8 @@ export type Entry = { "email": Email } | { "message": Message };
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "needs_agreement" | "internal";
 
+export type Evidence = { url: string, name: string, emails: Array<string>, research: string | null, };
+
 export type ExportMentors = { scope: Scope, format: TableFormat, note: boolean, };
 
 export type Field = "name" | "email" | "university" | "school" | "department" | "title" | "homepage" | "alias" | "research" | "papers" | "sourceUrl" | "tags" | "note";
@@ -96,7 +134,7 @@ export type ImportCandidate = { id: number, profile: ImportProfile, };
 
 export type ImportMentors = { decisions: Decisions, fileName: string, data: string, setup: ImportSetup, };
 
-export type ImportProfile = { name: string, affiliations: Array<Affiliation>, emails: Array<string>, research: string | null, homepages: Array<string>, };
+export type ImportProfile = { name: string, aliases: Array<string>, affiliations: Array<Affiliation>, emails: Array<string>, research: string | null, homepages: Array<string>, };
 
 export type ImportSetup = { sheet: number | null, columns: Array<Field | null> | null, };
 
@@ -198,6 +236,8 @@ affiliations: Array<Affiliation>, homepages: Array<string>,
 sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchAnalysis, contact: Contact, tags: Array<Tag>, trashed: boolean, };
 
 export type MentorEdit = { id: number, name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
+
+export type MentorFields = { name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string | null, };
 
 export type MentorForm = { name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
 
@@ -380,6 +420,10 @@ export type ReplyTarget = { id: number, messageId: string | null, fromAddress: s
 
 export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
+export type ReviewInput = { ids: Array<number>, decisions: Decisions, };
+
+export type Reviewed = { accepted: number, skipped: number, };
+
 export type RowError = { row: number, reason: string, };
 
 export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
@@ -475,6 +519,20 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  planCrawl: { input: CrawlInput; output: CrawlEstimate };
+  startCrawl: { input: CrawlStart; output: CrawlId };
+  listCrawls: { input: CrawlQuery; output: Array<CrawlSummary> };
+  getCrawl: { input: CrawlDetailQuery; output: CrawlDetail };
+  pauseCrawl: { input: CrawlId; output: null };
+  resumeCrawl: { input: CrawlId; output: null };
+  cancelCrawl: { input: CrawlId; output: null };
+  retryCrawl: { input: CrawlRetry; output: number };
+  deleteCrawl: { input: CrawlId; output: null };
+  listCandidates: { input: CandidateQuery; output: CandidatePage };
+  getCandidate: { input: CrawlId; output: CandidateDetail };
+  previewCandidates: { input: ReviewInput; output: Preview };
+  acceptCandidates: { input: ReviewInput; output: Reviewed };
+  rejectCandidates: { input: CandidateIds; output: number };
   planTask: { input: NewTask; output: TaskPlan };
   createTask: { input: NewTask; output: TaskId };
   taskWork: { input: Nothing; output: Array<TaskSummary> };
