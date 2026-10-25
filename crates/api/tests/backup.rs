@@ -425,6 +425,19 @@ async fn before_restore_retention_does_not_touch_upgrade_backups(db: SqlitePool)
             .join(format!("backups/before-restore-{NOW}.zip"))
             .exists()
     );
+
+    // The clock put back since: the backup of the data being replaced still stays.
+    backup::prepare(dir.path(), &target).await.unwrap();
+    backup::confirm(&db, dir.path(), NOW - 10).await.unwrap();
+    backup::apply_pending(dir.path()).unwrap();
+    for at in [NOW - 10, NOW + 2, NOW + 3] {
+        assert!(
+            dir.path()
+                .join(format!("backups/before-restore-{at}.zip"))
+                .exists()
+        );
+    }
+    assert_eq!(fs::read_dir(dir.path().join("backups")).unwrap().count(), 4);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

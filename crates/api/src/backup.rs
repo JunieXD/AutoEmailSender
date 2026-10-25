@@ -353,7 +353,7 @@ pub async fn confirm(db: &SqlitePool, dir: &Path, now: i64) -> Result<()> {
     export(db, &dir.join("materials"), &target, now).await?;
     let dir = dir.to_owned();
     tokio::task::spawn_blocking(move || {
-        prune(&dir.join("backups"))?;
+        prune(&dir.join("backups"), &target)?;
         // Sync every staged file before making the recovery intent durable.
         sync_stage(&dir.join("restore"))?;
         let mut marker = tempfile::NamedTempFile::new_in(&dir)?;
@@ -368,11 +368,14 @@ pub async fn confirm(db: &SqlitePool, dir: &Path, now: i64) -> Result<()> {
     Ok(())
 }
 
-fn prune(dir: &Path) -> Result<()> {
+/// Keeps `latest` and the two newest others. `latest` is kept by name, as the clock may have been
+/// put back since the others were made.
+fn prune(dir: &Path, latest: &Path) -> Result<()> {
     let mut backups = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
-        if let Some(name) = entry.file_name().to_str()
+        if entry.path() != latest
+            && let Some(name) = entry.file_name().to_str()
             && let Some(at) = name
                 .strip_prefix(BACKUP_PREFIX)
                 .and_then(|n| n.strip_suffix(".zip"))
@@ -383,7 +386,7 @@ fn prune(dir: &Path) -> Result<()> {
         }
     }
     backups.sort_by_key(|(at, _)| *at);
-    let discard = backups.len().saturating_sub(3);
+    let discard = backups.len().saturating_sub(2);
     for (_, path) in backups.into_iter().take(discard) {
         fs::remove_file(path)?;
     }
