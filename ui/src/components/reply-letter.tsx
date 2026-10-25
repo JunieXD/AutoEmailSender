@@ -291,12 +291,13 @@ function Composer({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 grow">
-          <p className="truncate text-sm font-medium" title={shownTarget?.subject ?? undefined}>
-            {label} {mentor.name}：{shownTarget?.subject ?? "（无主题）"}
+          <p className="truncate text-sm font-medium">
+            {label} {mentor.name}
           </p>
           {shownTarget && (
-            <p className="truncate text-xs text-muted-foreground">
-              {shownTarget.fromAddress} · {day(shownTarget.sentAt)} {time(shownTarget.sentAt)}
+            <p className="truncate text-xs text-muted-foreground" title={shownTarget.subject ?? undefined}>
+              “{shownTarget.subject ?? "无主题"}” · {shownTarget.fromAddress} · {day(shownTarget.sentAt)}{" "}
+              {time(shownTarget.sentAt)}
             </p>
           )}
         </div>
