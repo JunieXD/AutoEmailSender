@@ -19,9 +19,6 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
   const mentors = useQueries({
     queries: ids.map((id) => ({ queryKey: ["getMentor", id], queryFn: () => call("getMentor", { id }) })),
   });
-  const drafts = useQueries({
-    queries: ids.map((id) => ({ queryKey: ["getFirstDraft", id], queryFn: () => call("getFirstDraft", { id }) })),
-  });
   const preview = useQuery({
     queryKey: ["previewMerge", keep, other],
     queryFn: () => call("previewMerge", { keep, other }),
@@ -40,9 +37,9 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
     },
   });
   const [a, b] = mentors.map((q) => q.data);
-  const failed = [...mentors, ...drafts, preview].find((q) => q.error)?.error;
+  const failed = [...mentors, preview].find((q) => q.error)?.error;
   // Which draft goes must be known before anything is merged.
-  const ready = a && b && drafts.every((q) => q.isSuccess) && preview.data;
+  const ready = a && b && preview.data;
   const byId = (id: number) => (a?.id === id ? a : b);
   const kept = byId(keep);
   const gone = byId(other);
@@ -68,7 +65,12 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
               </div>
               <ul className="list-disc pl-5 text-sm leading-relaxed">
                 <li>{outcome(kept, gone, ready)}</li>
-                {drafts.every((q) => q.data) && <li>两位都有没写完的首封，删掉{gone.name}的那封。</li>}
+                {ready.discardedDrafts.map((kind) => (
+                  <li key={kind}>
+                    两位都有没写完的{kind === "reply" ? "回复" : "首封或追问"}，删掉{gone.name}的那封
+                    {{ first: "首封", follow_up: "追问", reply: "回复" }[kind]}。
+                  </li>
+                ))}
                 <li>合并后{gone.name}从导师列表里删除，不进回收站。</li>
               </ul>
             </div>

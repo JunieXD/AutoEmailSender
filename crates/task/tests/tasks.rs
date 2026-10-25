@@ -1724,6 +1724,88 @@ fn detail_approval() -> email::Approval<'static> {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn merging_first_and_follow_up_drafts_keeps_only_the_retained_mentors(db: SqlitePool) {
+    let (net, _, inbox) = detail_mail(&db).await;
+    for (n, keep_follow_up) in [(201, false), (203, true)] {
+        let keep = mentor(&db, n, true).await;
+        let other = mentor(&db, n + 1, true).await;
+        let (first, follow) = if keep_follow_up {
+            (other, keep)
+        } else {
+            (keep, other)
+        };
+        previous(&db, follow, false, T - 1000).await;
+        email::save_first_draft(&db, first, "新的一封", "新信正文", &[], T)
+            .await
+            .unwrap()
+            .unwrap();
+        let d = email::follow_up::create(&db, follow, T).await.unwrap();
+        let preview = mentor::merge::preview(&db, keep, other).await.unwrap();
+        assert!(
+            matches!(
+                preview.discarded_drafts.as_slice(),
+                [email::DraftKind::First]
+            ) && keep_follow_up
+                || matches!(
+                    preview.discarded_drafts.as_slice(),
+                    [email::DraftKind::FollowUp]
+                ) && !keep_follow_up
+        );
+        mentor::merge::merge(&db, keep, other, T + 1).await.unwrap();
+        let pending: Vec<(i64, String)> = sqlx::query_as("SELECT id,kind FROM email WHERE mentor_id=? AND state='review' AND kind IN ('first','follow_up')")
+            .bind(keep).fetch_all(&db).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].1,
+            if keep_follow_up { "follow_up" } else { "first" }
+        );
+        let result = if keep_follow_up {
+            email::follow_up::approve(&db, keep, d.id, &d.reply_to, &detail_approval(), T + 2)
+                .await
+                .unwrap()
+        } else {
+            assert_eq!(
+                email::follow_up::approve(&db, keep, d.id, &d.reply_to, &detail_approval(), T + 2)
+                    .await
+                    .unwrap(),
+                email::Approved::Refused
+            );
+            email::approve_first(&db, keep, &detail_approval(), None, T + 2)
+                .await
+                .unwrap()
+        };
+        assert_eq!(result, email::Approved::Yes);
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+            .await
+            .unwrap();
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 4)
+            .await
+            .unwrap();
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn merging_two_follow_up_drafts_keeps_only_the_retained_mentors(db: SqlitePool) {
+    let _ = detail_mail(&db).await;
+    let keep = mentor(&db, 211, true).await;
+    let other = mentor(&db, 212, true).await;
+    previous(&db, keep, false, T - 1000).await;
+    previous(&db, other, false, T - 1000).await;
+    let kept = email::follow_up::create(&db, keep, T).await.unwrap();
+    email::follow_up::create(&db, other, T).await.unwrap();
+    let preview = mentor::merge::preview(&db, keep, other).await.unwrap();
+    assert!(matches!(
+        preview.discarded_drafts.as_slice(),
+        [email::DraftKind::FollowUp]
+    ));
+    mentor::merge::merge(&db, keep, other, T + 1).await.unwrap();
+    let drafts: Vec<i64> = sqlx::query_scalar("SELECT id FROM email WHERE mentor_id=? AND kind IN ('first','follow_up') AND state='review'")
+        .bind(keep).fetch_all(&db).await.unwrap();
+    assert_eq!(drafts, [kept.id]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn merging_replied_mentors_cancels_follow_up_in_either_direction(db: SqlitePool) {
     let (net, store, inbox) = detail_mail(&db).await;
     for (n, reply_on_keep) in [(221, true), (223, false)] {

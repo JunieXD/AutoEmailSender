@@ -301,7 +301,7 @@ affiliation: Affiliation | null, affiliationCount: number,
  */
 research: string | null, matchState: MatchSummary, contact: Contact, tags: Array<Tag>, };
 
-export type MergePreview = { emails: number, affiliations: number, };
+export type MergePreview = { emails: number, affiliations: number, discardedDrafts: Array<DraftKind>, };
 
 export type Message = { id: number, fromAddress: string, subject: string | null, sentAt: number,
 /**

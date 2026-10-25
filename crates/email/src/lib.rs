@@ -77,7 +77,7 @@ pub async fn save_first_draft(
            AND NOT EXISTS (SELECT 1 FROM email e WHERE e.mentor_id=m.id AND e.kind IN ('first','follow_up')
              AND e.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')
              AND NOT (e.kind='first' AND e.task_id IS NULL AND e.state='review'))
-         ON CONFLICT (mentor_id) WHERE kind = 'first' AND task_id IS NULL AND state = 'review'
+         ON CONFLICT (mentor_id) WHERE kind IN ('first', 'follow_up') AND task_id IS NULL AND state = 'review'
          DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
          RETURNING id AS \"id!\", subject, body_md",
         mentor_id,
@@ -137,8 +137,9 @@ pub async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<
 }
 
 /// The standalone draft an attachment picker belongs to.
-#[derive(Debug, Clone, Copy, Deserialize, TS)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
 pub enum DraftKind {
     First,
     FollowUp,
