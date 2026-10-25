@@ -65,7 +65,23 @@ function highlightPlaceholders(names: string[], className: string, unfilled: boo
   });
 }
 
-const quoted = new PluginKey<string[]>("quoted");
+/**
+ * The lines a quote of the Markdown source shows as in the editor: a quote can take in formatting,
+ * links and several paragraphs, which the editor shows without their syntax.
+ */
+function shownLines(quote: string): string[] {
+  return quote.split("\n").flatMap((line) => {
+    const text = new DOMParser().parseFromString(toHtml(line), "text/html").body.textContent?.trim();
+    return text ? [text] : [];
+  });
+}
+
+type Quoted = { quotes: string[]; lines: string[] };
+const quoted = new PluginKey<Quoted>("quoted");
+
+function quoting(quotes: string[]): Quoted {
+  return { quotes, lines: quotes.flatMap(shownLines) };
+}
 
 /** Marks what AI 核对 found no support for; a transaction with `quoted` meta replaces the quotes. */
 function highlightQuotes(initial: string[]) {
@@ -75,11 +91,11 @@ function highlightQuotes(initial: string[]) {
       return [
         new Plugin({
           key: quoted,
-          state: { init: () => initial, apply: (tr, quotes: string[]) => tr.getMeta(quoted) ?? quotes },
+          state: { init: () => quoting(initial), apply: (tr, value: Quoted) => tr.getMeta(quoted) ?? value },
           props: {
             decorations: (state) =>
               decorate(state.doc, "rounded-sm bg-warning-soft", (text) =>
-                (quoted.getState(state) ?? []).flatMap((q) => {
+                (quoted.getState(state)?.lines ?? []).flatMap((q) => {
                   const at: [number, number][] = [];
                   for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + q.length)) at.push([i, i + q.length]);
                   return at;
@@ -147,8 +163,8 @@ export function LetterEditor({
   useEffect(() => editor.setEditable(!disabled, false), [editor, disabled]);
   useEffect(() => {
     // Derived anew on each render, the quotes redraw only when they change.
-    if (quotes.join("\n") !== quoted.getState(editor.state)?.join("\n")) {
-      editor.view.dispatch(editor.state.tr.setMeta(quoted, quotes));
+    if (quotes.join("\n") !== quoted.getState(editor.state)?.quotes.join("\n")) {
+      editor.view.dispatch(editor.state.tr.setMeta(quoted, quoting(quotes)));
     }
   }, [editor, quotes]);
   const [tools, setTools] = useState(false);

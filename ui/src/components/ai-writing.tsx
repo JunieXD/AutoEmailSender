@@ -1,5 +1,12 @@
 import type { ReactNode } from "react";
-import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type MutationState,
+  type QueryClient,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
 import { call, errorMessage } from "@/api/call";
@@ -212,12 +219,13 @@ export function useFactCheck(draftKey: readonly unknown[], checks: string, flush
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  /** Drops the checks of a letter sent meanwhile; their answers are not shown. */
-  function forget() {
-    const cache = queryClient.getMutationCache();
-    for (const m of cache.findAll({ mutationKey })) cache.remove(m);
-  }
-  return { latest, start: () => check.mutate(), forget };
+  return { latest, start: () => check.mutate(), forget: () => dropFactChecks(queryClient, draftKey) };
+}
+
+/** Drops the checks of a draft sent or written anew meanwhile; their answers are not shown. */
+export function dropFactChecks(queryClient: QueryClient, draftKey: readonly unknown[]) {
+  const cache = queryClient.getMutationCache();
+  for (const m of cache.findAll({ mutationKey: ["factCheckEmail", ...draftKey] })) cache.remove(m);
 }
 
 /** AI 核对 underway, or why it failed, with the way to try again (docs/ui.md#交互). */
@@ -231,8 +239,9 @@ export function FactCheckStatus({
   // A failure kept from before the setting was turned off is of no more use.
   const on = useQuery(aiFactCheck);
   if (check.latest?.status === "pending") return <p className="text-sm text-muted-foreground">AI 正在核对…</p>;
+  // A result kept since, such as that of a draft written anew, outdates an earlier failure.
   const reason =
-    check.latest?.status === "error"
+    check.latest?.status === "error" && stored?.state !== "completed"
       ? errorMessage(check.latest.error)
       : on.data && stored?.state === "failed"
         ? stored.reason
