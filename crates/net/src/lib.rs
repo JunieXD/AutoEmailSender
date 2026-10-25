@@ -30,13 +30,8 @@ impl Net {
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
-        let http = reqwest::Client::builder()
+        let http = http_builder()
             .tls_backend_preconfigured(tls.clone())
-            // Asked for each new connection, so a changed system proxy applies from the next one.
-            .proxy(reqwest::Proxy::custom(|url| {
-                proxy::for_host(url.host_str()?).map(|p| p.url())
-            }))
-            .user_agent(concat!("AutoEmailSender/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Net {
             tls: Arc::new(tls),
@@ -57,6 +52,82 @@ impl Net {
     /// For HTTP requests, through the system proxy.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
+    }
+
+    /// Crawlers must check every redirect before following it.
+    pub fn page_http_builder(&self) -> reqwest::ClientBuilder {
+        http_builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .tls_backend_preconfigured((*self.tls).clone())
+    }
+
+    /// Only for retrying public pages after a certificate error, never for credentials.
+    pub fn untrusted_page_http_builder(&self) -> reqwest::ClientBuilder {
+        let mut tls = (*self.tls).clone();
+        tls.dangerous()
+            .set_certificate_verifier(Arc::new(PageCertificate));
+        http_builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .tls_backend_preconfigured(tls)
+    }
+}
+
+fn http_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        // Asked for each new connection, so changed system settings apply from the next one.
+        .proxy(reqwest::Proxy::custom(|url| {
+            proxy::for_host(url.host_str()?).map(|p| p.url())
+        }))
+        .user_agent(concat!("AutoEmailSender/", env!("CARGO_PKG_VERSION")))
+}
+
+#[derive(Debug)]
+struct PageCertificate;
+
+impl rustls::client::danger::ServerCertVerifier for PageCertificate {
+    fn verify_server_cert(
+        &self,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        signature: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            signature,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        signature: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            signature,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO candidate\n        (crawl_id, list_page_id, review, mentor_id, enrich, name, emails, affiliations, homepages, aliases)\n        VALUES (?, ?, 'accepted', ?, 'done', '已接受', '[\"a@pku.edu.cn\",\"b@pku.edu.cn\"]',\n        '[{\"university\":\"北京大学\",\"title\":\"教授\"}]', '[\"https://cs.pku.edu.cn/a\"]', '[\"Alice\"]') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4ee8ec85b8f601c2e86872ce13c7de6b4631f96b2ed2e03618394797c3013b92"
+}

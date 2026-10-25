@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO candidate (crawl_id, profile_url, review, enrich, name)\n        VALUES (?, 'https://cs.pku.edu.cn/alice', 'pending', 'none', 'Alice')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "8b92896dbe34420cd11db8c521020a9e8f218a3646a1d8b7fb88e900eeec974a"
+}

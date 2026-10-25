@@ -155,6 +155,34 @@ pub async fn run(path: &Path) -> Result {
         Duration::from_millis(1),
     );
 
+    let crawl: i64 = sqlx::query_scalar(
+        "INSERT INTO crawl (kind, state, created_at) VALUES ('agent', 'running', ?) RETURNING id",
+    )
+    .bind(NOW)
+    .fetch_one(&db)
+    .await?;
+    sqlx::query(
+        "WITH RECURSIVE pages(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM pages WHERE n < 100000)
+         INSERT INTO crawl_page (crawl_id, url, kind, steps, mode, status, fetched_at, text)
+         SELECT ?, 'https://school.edu.cn/people/' || n, 'profile', '[]', 'http', 'success', ?,
+           '导师的页面文字' FROM pages",
+    )
+    .bind(crawl)
+    .bind(NOW)
+    .execute(&db)
+    .await?;
+    let url = crawl::PageUrl::parse("https://school.edu.cn/people/99999")?;
+    report(
+        "查已访问的抓取页面（10 万页，不读正文）",
+        median(async || {
+            crawl::store::visited_page(&db, crawl, &url, &[])
+                .await
+                .map(drop)
+        })
+        .await?,
+        Duration::from_millis(1),
+    );
+
     // Every task/mentor pair is unique even when a mentor has several historical letters.
     sqlx::query(
         r#"UPDATE email SET planned_at = coalesce(planned_at, ?1), latest_at = NULL, task_id =
