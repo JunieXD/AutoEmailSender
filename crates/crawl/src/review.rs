@@ -263,16 +263,17 @@ pub(crate) async fn save(
 ) -> Result<(), sqlx::Error> {
     let f = &person.fields;
     let profile = person.profile.as_ref().map(crate::PageUrl::as_str);
-    let ids=sqlx::query_scalar!(r#"SELECT id FROM candidate WHERE crawl_id = ?1 AND ((?2 IS NOT NULL AND id IN (SELECT candidate_id FROM candidate_profile WHERE crawl_id = ?1 AND url = ?2)) OR (name = ?3 AND EXISTS(SELECT 1 FROM json_each(emails) a JOIN json_each(?4) b ON a.value = b.value COLLATE NOCASE))) ORDER BY id"#,crawl,profile,f.name,Json(&f.emails)).fetch_all(&mut *conn).await?;
+    // Only the fetched profile's validated destination is an identity, not its homepage links.
+    let identities: Vec<_> = profile
+        .into_iter()
+        .chain((kind == "profile").then_some(url))
+        .collect();
+    let ids=sqlx::query_scalar!(r#"SELECT id FROM candidate WHERE crawl_id = ?1 AND (id IN (SELECT candidate_id FROM candidate_profile WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2))) OR (name = ?3 AND EXISTS(SELECT 1 FROM json_each(emails) a JOIN json_each(?4) b ON a.value = b.value COLLATE NOCASE))) ORDER BY id"#,crawl,Json(&identities),f.name,Json(&f.emails)).fetch_all(&mut *conn).await?;
     let mut old = read(conn, &ids).await?;
     old.sort_by_key(|c| (c.mentor_id.is_none(), c.id));
     let targets: std::collections::BTreeSet<_> = old.iter().filter_map(|c| c.mentor_id).collect();
     if targets.len() > 1 {
-        let primary = if let Some(profile) = profile {
-            sqlx::query_scalar!(r#"SELECT candidate_id AS "candidate_id!: i64" FROM candidate_profile WHERE crawl_id = ? AND url = ? ORDER BY candidate_id LIMIT 1"#, crawl, profile).fetch_optional(&mut *conn).await?
-        } else {
-            None
-        };
+        let primary = sqlx::query_scalar!(r#"SELECT candidate_id AS "candidate_id!: i64" FROM candidate_profile WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2)) ORDER BY url IS ?3 DESC,candidate_id LIMIT 1"#, crawl, Json(&identities), profile).fetch_optional(&mut *conn).await?;
         let keep = primary.or_else(|| old.first().map(|c| c.id));
         old.retain(|c| Some(c.id) == keep);
     }
@@ -358,7 +359,7 @@ pub(crate) async fn save(
         let id = sqlx::query_scalar!("INSERT INTO candidate (crawl_id,list_page_id,profile_page_id,profile_url,review,enrich,name,aliases,emails,affiliations,homepages,research,papers,source_url,evidence,profile_fields,match_names,match_schools) VALUES (?,?,?,?,'pending','none',?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",crawl,if kind=="list"{Some(page)}else{None},if kind=="profile"{Some(page)}else{None},profile,fields.name,Json(&fields.aliases),Json(&fields.emails),Json(&fields.affiliations),Json(&fields.homepages),fields.research,Json(&papers),url,Json(&sources),profile_fields,names,schools).fetch_one(&mut *conn).await?;
         (id, profile.map(str::to_owned))
     };
-    for url in known_profiles.iter().map(String::as_str).chain(profile) {
+    for url in known_profiles.iter().map(String::as_str).chain(identities) {
         sqlx::query!(
             "INSERT OR IGNORE INTO candidate_profile(candidate_id,crawl_id,url) VALUES(?,?,?)",
             id,

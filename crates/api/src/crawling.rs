@@ -75,6 +75,12 @@ pub(super) async fn list_crawls(
 ) -> Result<Vec<queue::CrawlSummary>, CallError> {
     Ok(queue::list(&ctx.db, input.page).await?)
 }
+pub(super) async fn crawl_options(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Vec<queue::CrawlOption>, CallError> {
+    Ok(queue::options(&ctx.db).await?)
+}
 pub(super) async fn get_crawl(
     ctx: &Context,
     input: CrawlDetailQuery,

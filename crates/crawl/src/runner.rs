@@ -318,10 +318,7 @@ async fn read(
                 .ask::<extract::Profile>(extract::PROFILE, extract::data(&m, 0..m.units.len()))
                 .await?;
             let mut p = extract::profile(&m, p).map_err(ReadError::Failed)?;
-            if c.kind == "profile" {
-                p.profile =
-                    Some(PageUrl::parse(&c.url).map_err(|e| ReadError::Failed(e.message()))?);
-            }
+            p.profile = Some(PageUrl::parse(&c.url).map_err(|e| ReadError::Failed(e.message()))?);
             vec![p]
         }
         _ => vec![],

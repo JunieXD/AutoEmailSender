@@ -137,6 +137,7 @@ operations! {
     "crawlWork" => crawl_work(CrawlWorkQuery) -> Vec<crawl::queue::CrawlSummary>;
     "startCrawl" => start_crawl(CrawlStart) -> CrawlId;
     "listCrawls" => list_crawls(CrawlQuery) -> Vec<crawl::queue::CrawlSummary>;
+    "crawlOptions" => crawl_options(Nothing) -> Vec<crawl::queue::CrawlOption>;
     "getCrawl" => get_crawl(CrawlDetailQuery) -> crawl::queue::CrawlDetail;
     "pauseCrawl" => pause_crawl(CrawlId) -> ();
     "resumeCrawl" => resume_crawl(CrawlId) -> ();

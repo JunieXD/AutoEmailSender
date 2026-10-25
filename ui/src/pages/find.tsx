@@ -47,7 +47,15 @@ export function findSearch(s: Record<string, unknown>) {
   };
 }
 export function refreshCrawls(client: ReturnType<typeof useQueryClient>) {
-  for (const key of ["listCrawls", "crawlWork", "getCrawl", "listCandidates", "getCandidate", "previewCandidates"])
+  for (const key of [
+    "listCrawls",
+    "crawlOptions",
+    "crawlWork",
+    "getCrawl",
+    "listCandidates",
+    "getCandidate",
+    "previewCandidates",
+  ])
     void client.invalidateQueries({ queryKey: [key] });
 }
 export function FindPage() {
@@ -348,10 +356,9 @@ function Candidates() {
     queryFn: () => call("listCandidates", q),
     refetchInterval: 3000,
   });
-  const [crawlPage, setCrawlPage] = useState(1);
   const crawls = useQuery({
-    queryKey: ["listCrawls", crawlPage],
-    queryFn: () => call("listCrawls", { page: crawlPage }),
+    queryKey: ["crawlOptions"],
+    queryFn: () => call("crawlOptions", {}),
   });
   const reject = useMutation({
     mutationFn: (ids: number[]) => call("rejectCandidates", { ids }),
@@ -378,17 +385,16 @@ function Candidates() {
             <option value="">全部抓取</option>
             {crawls.data?.map((c) => (
               <option key={c.id} value={c.id}>
-                抓取 #{c.id}
+                {c.url
+                  ? c.url
+                      .replace(/^https?:\/\//, "")
+                      .replace(/\/$/, "")
+                      .slice(0, 48)
+                  : "Agent 提交"}{" "}
+                · {day(c.createdAt)} {time(c.createdAt)}
               </option>
             ))}
-            {s.crawl && !crawls.data?.some((c) => c.id === s.crawl) && <option value={s.crawl}>抓取 #{s.crawl}</option>}
           </NativeSelect>
-          <Button variant="ghost" disabled={crawlPage <= 1} onClick={() => setCrawlPage((p) => p - 1)}>
-            较新抓取
-          </Button>
-          <Button variant="ghost" disabled={crawls.data?.length !== 50} onClick={() => setCrawlPage((p) => p + 1)}>
-            更早抓取
-          </Button>
           <Button
             variant={s.processed ? "quiet" : "ghost"}
             aria-pressed={s.processed}

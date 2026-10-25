@@ -224,6 +224,16 @@ pub struct CrawlSummary {
     pub tokens: Option<i64>,
     pub stage: String,
 }
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CrawlOption {
+    pub id: i64,
+    pub url: Option<String>,
+    pub created_at: i64,
+}
+pub async fn options(db: &SqlitePool) -> Result<Vec<CrawlOption>, sqlx::Error> {
+    sqlx::query_as!(CrawlOption, r#"SELECT id,json_extract(start_urls,'$[0]') AS "url: String",created_at FROM crawl ORDER BY created_at DESC,id DESC"#).fetch_all(db).await
+}
 pub async fn list(db: &SqlitePool, page: u32) -> Result<Vec<CrawlSummary>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let offset = i64::from(page.saturating_sub(1)) * 50;

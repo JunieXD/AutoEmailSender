@@ -205,7 +205,7 @@ export function IntakeAdditions({ additions }: { additions: Addition[] }) {
         return (
           <div key={a.target.id} className="space-y-2 rounded-lg border border-border p-3 text-sm">
             <p>
-              补给 <strong>{a.target.profile.name}</strong> · 编号 {a.target.id}
+              补给 <strong>{a.target.profile.name}</strong>
             </p>
             {a.target.profile.affiliations.length > 0 && (
               <p className="text-muted-foreground">{a.target.profile.affiliations.map(placeOf).join("；")}</p>

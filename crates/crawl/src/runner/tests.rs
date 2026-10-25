@@ -55,7 +55,12 @@ impl Site {
                         .cloned()
                         .unwrap_or((404, "not found".into()));
                     let response = format!(
-                        "HTTP/1.1 {status} Reply\r\nConnection: close\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+                        "HTTP/1.1 {status} Reply\r\nConnection: close\r\n{}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\n\r\n{body}",
+                        if status == 302 {
+                            format!("Location: {body}\r\n")
+                        } else {
+                            String::new()
+                        },
                         body.len()
                     );
                     let _ = io.write_all(response.as_bytes()).await;
@@ -77,6 +82,12 @@ impl Site {
     }
     fn url(&self, path: &str) -> PageUrl {
         PageUrl::parse(&format!("http://school.example.edu:{}{path}", self.port)).unwrap()
+    }
+    fn redirect(&self, path: &str, to: &str) {
+        self.pages
+            .lock()
+            .unwrap()
+            .insert(path.into(), (302, to.into()));
     }
 }
 async fn config(db: &SqlitePool, address: &str) -> i64 {
@@ -452,12 +463,13 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
         ("张三", vec![], None),
         ("冲突", vec!["zhao@example.edu", "wang@example.edu"], None),
     ] {
+        let url = profile.map_or_else(|| site.url(&format!("/people/{name}")), |p| site.url(p));
         review::save(
             &mut tx,
             crawl,
             claim.id,
             "profile",
-            site.url("/").as_str(),
+            url.as_str(),
             Person {
                 fields: MentorFields {
                     name: name.into(),
@@ -520,7 +532,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
             crawl,
             claim.id,
             "profile",
-            site.url("/").as_str(),
+            site.url(&format!("/limit/{n}")).as_str(),
             Person {
                 fields: MentorFields {
                     name: format!("候选{n}"),
@@ -886,7 +898,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
             crawl,
             page.id,
             "profile",
-            site.url("/").as_str(),
+            site.url(&format!("/people/{name}")).as_str(),
             Person {
                 fields: MentorFields {
                     name: name.into(),
@@ -950,7 +962,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
             crawl,
             page.id,
             "profile",
-            site.url("/").as_str(),
+            site.url(&format!("/same/{n}")).as_str(),
             Person {
                 fields: MentorFields {
                     name: "同名导师".into(),
@@ -1284,6 +1296,194 @@ async fn review_fixture(db: &SqlitePool) -> (Site, Claim) {
     queue::start(db, &[site.url("/")], model, 1).await.unwrap();
     let claim = queue::next(db).await.unwrap().unwrap();
     (site, claim)
+}
+async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
+    let site = Site::new().await;
+    site.redirect("/old", "/canonical");
+    site.page(
+        "/canonical",
+        "<title>张三</title><p>张三</p><a href='/other'>其他主页</a>",
+    );
+    let mut provider = Provider::start().await;
+    let model = config(db, &provider.address).await;
+    queue::start(db, &[site.url("/")], model, 1).await.unwrap();
+    let root = queue::next(db).await.unwrap().unwrap();
+    save(db, &root, &Outcome::Failed("fixture root".into()))
+        .await
+        .unwrap();
+    for path in paths {
+        observation(db, &root, &site, path, "list", observed("张三", &[], None)).await;
+    }
+    assert_eq!(candidate_ids(db).await.len(), 2);
+    let server = tokio::spawn(async move {
+        while let Some(r) = provider.requests.recv().await {
+            r.respond.send(Response::answer(&json!({"name":"张三","aliases":[],"emails":[],"affiliations":[],"homepages":[1],"research":null,"papers":[]}).to_string())).ok();
+        }
+    });
+    let mut claims = Vec::new();
+    if in_flight {
+        for _ in 0..2 {
+            claims.push(queue::next(db).await.unwrap().unwrap());
+        }
+        claims.reverse();
+    }
+    let mut reads = 0;
+    while let Some(c) = if in_flight {
+        claims.pop()
+    } else {
+        queue::next(db).await.unwrap()
+    } {
+        let outcome = process(
+            db,
+            &net::Net::new(vec![]).unwrap(),
+            &Fetcher::local(site.port),
+            &Limit::default(),
+            &c,
+            &Cooldown::default(),
+        )
+        .await
+        .unwrap();
+        let Outcome::Done(p) = &outcome else {
+            panic!("profile did not finish")
+        };
+        assert_eq!(p.material.url, site.url("/canonical"));
+        assert!(save(db, &c, &outcome).await.unwrap());
+        reads += 1;
+    }
+    assert_eq!(candidate_ids(db).await.len(), 1);
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
+            .fetch_all(db)
+            .await
+            .unwrap();
+    assert_eq!(
+        identities,
+        vec![site.url("/canonical").as_str(), site.url("/old").as_str()]
+    );
+    let expected = if in_flight || paths[0] == "/canonical" {
+        2
+    } else {
+        1
+    };
+    assert_eq!(reads, expected);
+    assert_eq!(
+        site.visits
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| *p == "/canonical")
+            .count(),
+        expected
+    );
+    for path in ["/old", "/canonical"] {
+        observation(db, &root, &site, path, "list", observed("张三", &[], None)).await;
+    }
+    assert_eq!(candidate_ids(db).await.len(), 1);
+    assert!(queue::next(db).await.unwrap().is_none());
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn audit_redirected_profile_alias_does_not_duplicate_a_person(db: SqlitePool) {
+    redirected_profiles(&db, &["/old", "/canonical"], false).await;
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn redirected_profile_after_canonical_keeps_one_candidate(db: SqlitePool) {
+    redirected_profiles(&db, &["/canonical", "/old"], false).await;
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn redirected_profile_in_flight_result_uses_retained_identity(db: SqlitePool) {
+    redirected_profiles(&db, &["/old", "/canonical"], true).await;
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool) {
+    let (site, c) = review_fixture(&db).await;
+    for path in ["/old", "/canonical"] {
+        observation(&db, &c, &site, path, "list", observed("张三", &[], None)).await;
+        review::accept(
+            &db,
+            &ReviewInput {
+                ids: vec![*candidate_ids(&db).await.last().unwrap()],
+                decisions: Decisions {
+                    matches: vec![mentor::import::GroupChoice { row: 1, id: None }],
+                    ..Default::default()
+                },
+            },
+            2,
+        )
+        .await
+        .unwrap();
+    }
+    let targets: Vec<(i64, Option<i64>)> =
+        sqlx::query_as("SELECT id,mentor_id FROM candidate ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    review::save(
+        &mut tx,
+        c.crawl,
+        c.id,
+        "profile",
+        site.url("/canonical").as_str(),
+        Person {
+            fields: observed("张三", &[], None),
+            papers: vec![],
+            profile: Some(site.url("/old")),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (i64, Option<i64>)>("SELECT id,mentor_id FROM candidate ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap(),
+        targets
+    );
+    for id in candidate_ids(&db).await {
+        sqlx::query("UPDATE candidate SET review='pending' WHERE id=?")
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        let input = ReviewInput {
+            ids: vec![id],
+            decisions: Decisions::default(),
+        };
+        assert_eq!(review::preview(&db, &input).await.unwrap().errors.len(), 1);
+        assert_eq!(review::accept(&db, &input, 3).await.unwrap().accepted, 0);
+    }
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn crawl_options_include_all_runs_in_start_time_order(db: SqlitePool) {
+    for at in (1..=52).rev() {
+        sqlx::query(
+            "INSERT INTO crawl(kind,start_urls,state,created_at,finished_at) VALUES('site',?1,'done',?2,?2)",
+        )
+        .bind(json!([format!("https://school.example.edu/{at}")]).to_string())
+        .bind(at)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',53,53)",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let options = queue::options(&db).await.unwrap();
+    assert_eq!(options.len(), 53);
+    assert!(options[0].url.is_none());
+    assert_eq!(
+        options.iter().map(|c| c.created_at).collect::<Vec<_>>(),
+        (1..=53).rev().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        options.last().unwrap().url.as_deref(),
+        Some("https://school.example.edu/1")
+    );
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn regression_distinct_confirmed_targets_survive_new_shared_email(db: SqlitePool) {
