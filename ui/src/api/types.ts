@@ -2,9 +2,13 @@
 
 export type Affiliation = { university: string | null, school: string | null, department: string | null, title: string | null, };
 
+export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, };
+
 export type Attachment = { fileName: string, size: number, };
 
 export type CallError = { code: ErrorCode, message: string, };
+
+export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, };
 
 export type Column = { header: string, field: Field | null, };
 
@@ -26,9 +30,23 @@ export type Difference = { row: number, id: number, name: string, field: Field, 
 
 export type Direction = "up" | "down";
 
+export type DraftEdit = { taskId: number, id: number, subject: string, bodyMd: string, attachments: Array<number>, };
+
+export type DraftFilter = "all" | "review" | "problems" | "generation_failed" | "approved";
+
 export type DraftKind = "first" | "reply";
 
 export type DraftMaterial = { mentorId: number, kind: DraftKind, materialId: number, };
+
+export type DraftPage = { drafts: Array<DraftSummary>, total: number, };
+
+export type DraftQuery = { taskId: number, filter: DraftFilter, page: number, };
+
+export type DraftState = "generating" | "generation_failed" | "review" | "approved" | "cloud" | "sending" | "maybe_sent" | "sent" | "bounced" | "failed" | "canceled";
+
+export type DraftSummary = { id: number, mentorId: number, name: string, state: DraftState, problems: number, };
+
+export type DraftsFinished = { taskId: number, name: string, generated: number, failed: number, };
 
 export type Email = { id: number, subject: string, bodyMd: string, attachments: Array<Attachment>, 
 /**
@@ -321,6 +339,8 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
+export type NewTask = { name: string, ids: Array<number>, writer: Writer, templateId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
+
 export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
@@ -329,11 +349,13 @@ export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Col
 
 export type PreviewImport = { decisions?: Decisions, fileName: string, data: string, setup: ImportSetup, };
 
-export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "no_mail_server", domain: string, };
+export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "no_mail_server", domain: string, };
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
 
 export type ProfileForm = { name: string, researchInterests: string, rewritePreference: string, };
+
+export type Progress = { generating: number, review: number, generationFailed: number, approved: number, sent: number, failed: number, canceled: number, };
 
 export type Provider = { id: string, name: string, 
 /**
@@ -345,6 +367,8 @@ domains: Array<string>, setup: Setup, };
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type ReceiveStatus = { receivedAt: number | null, };
+
+export type RenderedApproval = { attachments: Array<number>, id: number, html: string, text: string, subject: string, bodyMd: string, };
 
 export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
 
@@ -400,6 +424,28 @@ export type TagMove = { id: number, direction: Direction, };
 
 export type TagName = { id: number, name: string, };
 
+export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
+
+export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, };
+
+export type TaskEmail = { taskId: number, id: number, };
+
+export type TaskId = { id: number, };
+
+export type TaskMaterial = { materialId: number, taskId: number, id: number, };
+
+export type TaskPage = { tasks: Array<TaskSummary>, total: number, };
+
+export type TaskPlan = { mentors: Array<Candidate>, model: string | null, modelConfigId: number | null, inputTokens: number, outputTokens: number, cost: number | null, };
+
+export type TaskQuery = { page: number, };
+
+export type TaskRetry = { taskId: number, id: number | null, };
+
+export type TaskState = "active" | "paused" | "stopped" | "completed";
+
+export type TaskSummary = { id: number, name: string, writer: Writer, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, };
+
 export type Template = { id: number, name: string, subject: string, bodyMd: string, };
 
 export type TemplateEdit = { id: number, name: string, subject: string, bodyMd: string, };
@@ -424,9 +470,32 @@ page: number, };
 
 export type Trashed = { rows: Array<number>, id: number, name: string, };
 
+export type Writer = "ai" | "template";
+
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  planTask: { input: NewTask; output: TaskPlan };
+  createTask: { input: NewTask; output: TaskId };
+  taskWork: { input: Nothing; output: Array<TaskSummary> };
+  listTasks: { input: TaskQuery; output: TaskPage };
+  getTask: { input: TaskId; output: TaskSummary };
+  listTaskDrafts: { input: DraftQuery; output: DraftPage };
+  getTaskDraft: { input: TaskEmail; output: TaskDraft };
+  attachTaskMaterial: { input: TaskMaterial; output: boolean };
+  saveTaskDraft: { input: DraftEdit; output: null };
+  checkTaskDraft: { input: DraftEdit; output: Array<Problem> };
+  writeTaskDraft: { input: DraftEdit; output: Letter };
+  prepareTaskApproval: { input: TaskId; output: Array<ApprovalCandidate> };
+  approveTaskEmails: { input: TaskApprovals; output: number };
+  pauseTask: { input: TaskId; output: null };
+  resumeTask: { input: TaskId; output: null };
+  stopTask: { input: TaskId; output: null };
+  deleteTask: { input: TaskId; output: null };
+  removeTaskEmail: { input: TaskEmail; output: null };
+  regenerateTaskEmail: { input: TaskEmail; output: number };
+  reapplyTaskTemplate: { input: TaskEmail; output: null };
+  retryTaskGeneration: { input: TaskRetry; output: number };
   listConversations: { input: ConversationQuery; output: ConversationPage };
   unreadCount: { input: Nothing; output: number };
   receiveNow: { input: Nothing; output: ReceiveStatus };

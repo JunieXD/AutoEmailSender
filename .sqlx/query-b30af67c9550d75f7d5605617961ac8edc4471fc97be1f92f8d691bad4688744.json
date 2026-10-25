@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id FROM email WHERE id = ? AND generation_claim = ? AND state = 'generating' AND task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b30af67c9550d75f7d5605617961ac8edc4471fc97be1f92f8d691bad4688744"
+}

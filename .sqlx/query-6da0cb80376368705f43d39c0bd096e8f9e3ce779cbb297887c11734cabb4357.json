@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,\n           to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,\n           html = NULL, text = NULL, refs = NULL, updated_at = ?\n         WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL\n           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "6da0cb80376368705f43d39c0bd096e8f9e3ce779cbb297887c11734cabb4357"
+}

@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET generation_claim = generation_claim + 1, generation_queued_at = NULL\n        WHERE id = (SELECT id FROM email WHERE state = 'generating' AND generation_queued_at IS NOT NULL\n          AND task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL)\n          AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)\n          ORDER BY generation_queued_at, id LIMIT 1)\n        RETURNING id, task_id AS \"task!\", mentor_id AS mentor, generation_claim AS version",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "task!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "mentor",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "version",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "generation_claim"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "1e4df1838c400cfdad66bd32b3247691ca8970f5728ebc090a22555d5ca4ec41"
+}

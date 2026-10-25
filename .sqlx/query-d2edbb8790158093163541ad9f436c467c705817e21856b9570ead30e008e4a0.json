@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.file_name,m.extracted_text AS \"text!\" FROM material m JOIN task_material t ON t.material_id = m.id WHERE t.task_id = ? AND t.role = 'reference' ORDER BY m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "text!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "extracted_text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "d2edbb8790158093163541ad9f436c467c705817e21856b9570ead30e008e4a0"
+}

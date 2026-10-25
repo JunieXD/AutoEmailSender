@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT material_id FROM task_material WHERE task_id = ? AND role = 'reference'",
+  "describe": {
+    "columns": [
+      {
+        "name": "material_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task_material",
+            "name": "material_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1a4834d0c4899cacf386936667ecee8e52fbc8240cdda38161a4ab4b4f218236"
+}

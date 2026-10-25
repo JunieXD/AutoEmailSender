@@ -37,6 +37,26 @@ impl From<sqlx::Error> for Error {
     }
 }
 
+pub struct Basis<'a> {
+    pub chosen: &'a model::Chosen,
+    pub references: &'a [material::Reference],
+}
+
+/// Token estimate uses the same prompt as generation.
+pub fn estimate(
+    me: &profile::Profile,
+    references: &[material::Reference],
+    attached: &[String],
+    mentor: &MentorDetail,
+    current: Option<&Letter>,
+) -> (i64, i64) {
+    (
+        model::background::tokens(&system(me))
+            + model::background::tokens(&message(me, references, attached, mentor, current)),
+        1200,
+    )
+}
+
 /// Drafts a letter to the mentor when `current` is blank, and otherwise rewrites it; the letter
 /// may mention the materials attached.
 pub async fn write(
@@ -46,14 +66,14 @@ pub async fn write(
     current: &Letter,
     attachments: &[i64],
     now: i64,
+    basis: Basis<'_>,
 ) -> Result<Letter, Error> {
-    let chosen = model::chosen(db).await?.ok_or(Error::NoModel)?;
+    let Basis { chosen, references } = basis;
     if !chosen.agreed {
         return Err(Error::NotAgreed);
     }
     let mentor = mentor::get(db, mentor_id).await?.ok_or(Error::NoMentor)?;
     let me = profile::get(db).await?;
-    let references = material::for_writing(db).await?;
     let attached: Vec<String> = material::list(db)
         .await?
         .into_iter()
@@ -62,14 +82,8 @@ pub async fn write(
         .collect();
     let blank = current.subject.trim().is_empty() && current.body_md.trim().is_empty();
     let current = (!blank).then_some(current);
-    // The user's own wishes are instructions, which the material must not be able to pass for.
-    let system = match &me.rewrite_preference {
-        Some(preference) => {
-            format!("{SYSTEM}\n\n学生的写信偏好，优先于第 5 条的篇幅和语气：\n{preference}")
-        }
-        None => SYSTEM.to_owned(),
-    };
-    let message = message(&me, &references, &attached, &mentor, current);
+    let system = system(&me);
+    let message = message(&me, references, &attached, &mentor, current);
     let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
         .await
         .map_err(Error::Model)?;
@@ -97,6 +111,16 @@ pub async fn write(
         return Err(Error::NotALetter { finish_reason });
     }
     letter(&answer.text).ok_or(Error::NotALetter { finish_reason })
+}
+
+// The user's own wishes are instructions, which the material must not be able to pass for.
+fn system(me: &profile::Profile) -> String {
+    match &me.rewrite_preference {
+        Some(preference) => {
+            format!("{SYSTEM}\n\n学生的写信偏好，优先于第 5 条的篇幅和语气：\n{preference}")
+        }
+        None => SYSTEM.to_owned(),
+    }
 }
 
 /// The rules, from what V2 learned: letters made up or overstated did the student harm.

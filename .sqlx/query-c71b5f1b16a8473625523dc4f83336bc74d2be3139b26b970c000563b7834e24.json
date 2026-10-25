@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id,\n             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id\n              WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply'))\n           ELSE m.mailbox_id END AS own,\n           e.kind = 'reply' AS \"reply!: bool\" FROM email e JOIN mentor m ON m.id = e.mentor_id\n         WHERE e.state = 'approved' AND e.planned_at <= ?\n           AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))\n         ORDER BY e.planned_at, e.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "own",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "reply!: bool",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "c71b5f1b16a8473625523dc4f83336bc74d2be3139b26b970c000563b7834e24"
+}

@@ -1,0 +1,64 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.name,\n        CASE WHEN m.trashed_at IS NOT NULL THEN '导师在回收站里'\n          WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id) THEN '导师尚未填写邮箱'\n          WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id AND kind = 'first' AND task_id IS NOT NULL AND state IN ('generating','generation_failed','review','approved','cloud','sending','failed')) THEN '别的任务里有未发出的首封'\n          WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id AND kind = 'first' AND task_id IS NULL AND state = 'review') THEN '导师详情里有未完成的首封草稿'\n          ELSE NULL END AS \"reason: String\",\n        coalesce(c.contact_count, 0) AS \"contact_count!: i64\", c.last_out_at AS last_contact_at\n        FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.name, m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "reason: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "contact_count!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "last_contact_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_out_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "7359bee8c8281742f14a6b7d9f3331523785b3ec886a7389b9e253f8f8fb08bd"
+}

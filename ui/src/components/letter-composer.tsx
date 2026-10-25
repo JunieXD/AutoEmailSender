@@ -1,9 +1,15 @@
-import { type MutationState, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  type MutationState,
+  useMutation,
+  useMutationState,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Paperclip, Send, TriangleAlert } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useEffectEvent, useRef } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { DraftKind, FirstDraft, Material, Problem, ReplyDraft } from "@/api/types";
+import type { DraftKind, FirstDraft, Material, Problem, ReplyDraft, TaskEmail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -33,8 +39,27 @@ export function useDraftSave<Edit, Saved>(
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  return { save, last, scope };
+  return { save, last, scope, flush: () => waitForSaves(queryClient, mutationKey) };
 }
+
+/** A failed save keeps batch navigation on the current draft. */
+export function waitForSaves(client: QueryClient, mutationKey: readonly unknown[], rejectError = true): Promise<void> {
+  const cache = client.getMutationCache();
+  return new Promise((resolve, reject) => {
+    function check() {
+      const mutations = cache.findAll({ mutationKey });
+      if (mutations.some((m) => m.state.status === "pending")) return;
+      stop();
+      const last = mutations.at(-1);
+      if (rejectError && last?.state.status === "error") reject(last.state.error);
+      else resolve();
+    }
+    const stop = cache.subscribe(check);
+    check();
+  });
+}
+
+export type ComposerHandle = { flush: () => Promise<void>; approve: () => void };
 
 /** Uploads belong to the mentor, so a remounted editor stays locked until attachment is saved. */
 export function useUploading(mentorId: number) {
@@ -86,17 +111,19 @@ export function LetterSend({
   disabled,
   onSend,
   buttonRef,
+  label = "发送",
 }: {
   blocker: ReactNode;
   problems: Problem[];
   disabled: boolean;
   onSend: () => void;
   buttonRef?: Ref<HTMLButtonElement>;
+  label?: string;
 }) {
   const button = (
     <Button ref={buttonRef} disabled={disabled || !!blocker} onClick={problems.length === 0 ? onSend : undefined}>
       <Send strokeWidth={1.8} />
-      发送
+      {label}
     </Button>
   );
   return (
@@ -119,6 +146,8 @@ export function LetterSend({
 function problemText(p: Problem): string {
   if (p.kind === "placeholder") return `“{${p.name}}”没有替换，请改成具体内容或删掉。`;
   if (p.kind === "no_salutation") return "正文里没有称呼导师。";
+  if (p.kind === "other_mentor") return `草稿里出现了任务中另一位导师的姓名“${p.name}”，请核对。`;
+  if (p.kind === "recently_contacted") return "最近 7 天内已经联系过这位导师，请核对是否需要再次联系。";
   if (p.kind === "no_attachment") return "正文提到了附件，但还没有添加附件。";
   return `查不到 ${p.domain} 的收信服务器，请核对导师的邮箱地址。`;
 }
@@ -133,6 +162,7 @@ export function AttachMenu({
   kind,
   onPrepare,
   onUploaded,
+  task,
 }: {
   materials: Material[];
   attached: Material[];
@@ -142,10 +172,13 @@ export function AttachMenu({
   kind: DraftKind;
   onPrepare: () => Promise<FirstDraft | ReplyDraft | null>;
   onUploaded?: () => void;
+  task?: TaskEmail;
 }) {
   const queryClient = useQueryClient();
   const picker = useRef<HTMLInputElement>(null);
-  const mutationKey = ["uploadLetterMaterial", mentorId, kind];
+  const mutationKey = task
+    ? ["uploadLetterMaterial", mentorId, "task", task.id]
+    : ["uploadLetterMaterial", mentorId, kind];
   const add = useMutation({
     mutationKey,
     mutationFn: async (file: File) => {
@@ -156,9 +189,11 @@ export function AttachMenu({
       const updated = queryClient.getQueryData<Material[]>(["listMaterials"]);
       const material = updated?.find((m) => m.id === id);
       if (!material) throw new Error("材料已添加，但列表未能刷新。请重新打开附件菜单后选择它。");
-      const applied = await call("attachDraftMaterial", { mentorId, kind, materialId: id });
+      const applied = task
+        ? await call("attachTaskMaterial", { ...task, materialId: id })
+        : await call("attachDraftMaterial", { mentorId, kind, materialId: id });
       await queryClient.invalidateQueries({
-        queryKey: [kind === "first" ? "getFirstDraft" : "getReplyDraft", mentorId],
+        queryKey: task ? ["getTaskDraft", task.id] : [kind === "first" ? "getFirstDraft" : "getReplyDraft", mentorId],
         refetchType: "all",
       });
       if (!applied && prepared) throw new Error("草稿或材料已发生变化。请重新打开草稿，从附件菜单选择材料。");

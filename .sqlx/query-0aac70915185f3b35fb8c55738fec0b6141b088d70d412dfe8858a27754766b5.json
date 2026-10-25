@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET subject = ?, body_md = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND task_id IN (SELECT id FROM task WHERE writer = 'template' AND state <> 'stopped')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "0aac70915185f3b35fb8c55738fec0b6141b088d70d412dfe8858a27754766b5"
+}

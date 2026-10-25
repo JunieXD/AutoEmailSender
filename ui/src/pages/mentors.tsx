@@ -13,6 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { dropDrafts, refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton, useAddTag } from "@/components/tags";
+import { CreateTaskDialog } from "@/components/create-task";
 import { MatchingDialog, MatchingProgress } from "@/components/matching";
 import { AiIcon } from "@/components/ai-writing";
 import { Notice } from "@/components/notice";
@@ -46,6 +47,7 @@ export function MentorsPage() {
   });
   const total = query.data?.total ?? 0;
   const queryClient = useQueryClient();
+  const [task, setTask] = useState<number[] | null>(null);
   const [matching, setMatching] = useState<number[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [addMenu, setAddMenu] = useState(false);
@@ -186,6 +188,17 @@ export function MentorsPage() {
             for (const action of [addTag, trash]) if (!action.isPending) action.reset();
           }}
         >
+          <Button
+            variant="ghost"
+            onClick={() => {
+              const id = [...selected][0];
+              if (selected.size === 1 && id !== undefined)
+                void navigate({ to: "/mentors/$mentorId", params: { mentorId: id } });
+              else setTask([...selected]);
+            }}
+          >
+            写信
+          </Button>
           <Button variant="ghost" onClick={() => setMatching([...selected])}>
             <AiIcon />
             分析匹配度
@@ -216,6 +229,7 @@ export function MentorsPage() {
             onConfirm={() => trash.mutate([...selected])}
           />
         </BatchBar>
+        {task && <CreateTaskDialog ids={task} onClose={() => setTask(null)} />}
         {matching && <MatchingDialog ids={matching} onClose={() => setMatching(null)} />}
         {merging && <MergeDialog ids={merging} onClose={() => setMerging(null)} />}
       </div>

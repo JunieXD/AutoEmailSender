@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM task_material WHERE material_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "de5c808865d4a57cf84b3e252d8989d52427cb94879477a1f4a45ab99ddeac40"
+}

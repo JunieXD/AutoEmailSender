@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET generation_queued_at = created_at WHERE id = ? AND generation_claim = ? AND state = 'generating'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "1c6d77dcc3378881ace59e7ca2565ef31de54903a0765c67c531e722f5b0a494"
+}

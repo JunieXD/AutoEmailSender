@@ -57,6 +57,10 @@ pub enum Error {
     Unreadable(String),
     /// Attached to an email that may still go out.
     InUse,
+    /// A task still needs the reference for queued or running generation.
+    TaskInUse {
+        name: String,
+    },
     Db(sqlx::Error),
     File(io::Error),
 }
@@ -294,6 +298,28 @@ pub async fn set_purpose(
 /// emails it is attached to.
 pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bool, Error> {
     let mut tx = db.begin().await?;
+    // Lock before checking references so generation cannot be queued between the check and deletion.
+    let exists = sqlx::query!("UPDATE material SET id = id WHERE id = ?", id)
+        .execute(&mut *tx)
+        .await?;
+    if exists.rows_affected() == 0 {
+        return Ok(false);
+    }
+    let task = sqlx::query!(
+        "SELECT t.name FROM task t JOIN task_material m ON m.task_id = t.id
+         WHERE m.material_id = ? AND m.role = 'reference'
+           AND EXISTS (SELECT 1 FROM email e WHERE e.task_id = t.id AND e.state = 'generating')
+         ORDER BY t.id LIMIT 1",
+        id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(task) = task {
+        return Err(Error::TaskInUse { name: task.name });
+    }
+    sqlx::query!("DELETE FROM task_material WHERE material_id = ?", id)
+        .execute(&mut *tx)
+        .await?;
     let row = sqlx::query!(
         "DELETE FROM material WHERE id = ?1 AND NOT EXISTS (
            SELECT 1 FROM email_attachment a JOIN email e ON e.id = a.email_id
@@ -303,14 +329,7 @@ pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bo
     .fetch_optional(&mut *tx)
     .await?;
     if row.is_none() {
-        let exists = sqlx::query_scalar!("SELECT 1 AS found FROM material WHERE id = ?", id)
-            .fetch_optional(&mut *tx)
-            .await?;
-        return if exists.is_some() {
-            Err(Error::InUse)
-        } else {
-            Ok(false)
-        };
+        return Err(Error::InUse);
     }
     if row.is_some_and(|r| r.for_matching != 0) {
         sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)

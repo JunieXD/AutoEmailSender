@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT subject,body_md FROM template WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "template",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "template",
+            "name": "body_md"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "621681118e5e202cdee459e52c3d2942ca6ceb8d7cfff90bdd0074321e821c7b"
+}
