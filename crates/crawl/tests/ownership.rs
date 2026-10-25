@@ -183,11 +183,23 @@ fn same_block_mailto_positions_handle_whitespace_and_repeated_names() {
 }
 
 #[test]
-fn shared_name_blocks_without_ordered_contacts_are_rejected() {
+fn names_that_are_mailto_links_keep_ownership() {
     for html in [
+        r#"<p><a href="mailto:a@pku.edu.cn">Alice</a>，<a href="mailto:b@pku.edu.cn">Bob</a></p>"#,
         "<p><a href='mailto:a@pku.edu.cn'>Alice</a> <a href='mailto:b@pku.edu.cn'>Bob</a></p>",
-        "<main><div><h2>Alice</h2><h2>Bob</h2></div><p>a@pku.edu.cn b@pku.edu.cn</p></main>",
     ] {
+        check(
+            html,
+            &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+        );
+    }
+}
+
+#[test]
+fn shared_name_blocks_without_ordered_contacts_are_rejected() {
+    for html in
+        ["<main><div><h2>Alice</h2><h2>Bob</h2></div><p>a@pku.edu.cn b@pku.edu.cn</p></main>"]
+    {
         let page = parse(&url(), html).unwrap();
         let names = ["Alice", "Bob"];
         for name in names {

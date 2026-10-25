@@ -77,7 +77,7 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                     return true;
                 }
                 if found.unit == unit {
-                    return offset >= found.end
+                    return offset >= found.start
                         && !occurrences.iter().any(|other| {
                             other.unit == unit
                                 && other.name != name
