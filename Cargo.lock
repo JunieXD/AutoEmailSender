@@ -145,6 +145,7 @@ dependencies = [
  "tracing",
  "ts-rs",
  "writing",
+ "zip",
 ]
 
 [[package]]

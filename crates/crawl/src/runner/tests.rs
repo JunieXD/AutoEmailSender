@@ -3033,3 +3033,37 @@ async fn candidate_categories_do_not_depend_on_other_rows_on_the_page(db: Sqlite
 }
 
 mod enrichment;
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restored_key_pauses_crawl_instead_of_failing_pages(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/", "<title>学院</title><p>师资介绍</p>");
+    let config = config(&db, "http://127.0.0.1:1/v1").await;
+    sqlx::query("UPDATE model_config SET api_key = NULL")
+        .execute(&db)
+        .await
+        .unwrap();
+    let id = queue::start(&db, &[site.url("/")], config, 1)
+        .await
+        .unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let result = process(
+        &db,
+        &net::Net::new(vec![]).unwrap(),
+        &Fetcher::local(site.port),
+        &Limit::default(),
+        &claim,
+        &Cooldown::default(),
+    )
+    .await
+    .unwrap();
+    save(&db, &claim, &result).await.unwrap();
+    let row =
+        sqlx::query_as::<_, (String, Option<String>)>("SELECT state,error FROM crawl WHERE id=?")
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(row.0, "paused");
+    assert!(row.1.unwrap().contains("重新填写"));
+}

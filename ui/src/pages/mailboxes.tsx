@@ -56,6 +56,7 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
           <p className="text-sm text-muted-foreground">
             {provider}，每天最多发 {m.dailyLimit} 封
           </p>
+          {m.needsSecret && <p className="text-sm text-warning">恢复后需要重新填写授权码，填好之前不收发信。</p>}
           {m.receiveError && <p className="text-sm text-destructive">收信失败：{m.receiveError}</p>}
         </div>
         <div className="flex gap-1">

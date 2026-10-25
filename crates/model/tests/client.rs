@@ -69,7 +69,7 @@ async fn provider(status: u16, reply: &'static str) -> (String, Received) {
 fn access(base_url: String, no_thinking: Option<NoThinking>) -> Access {
     Access {
         base_url,
-        api_key: "sk-test".into(),
+        api_key: Some("sk-test".into()),
         no_thinking,
     }
 }
