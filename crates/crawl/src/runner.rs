@@ -350,7 +350,18 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
         && let Some(person) = p.people.first()
     {
         let name = mentor::intake::comparable(&person.fields.name);
-        let matched = sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM candidate_profile p JOIN candidate c ON c.id = p.candidate_id WHERE p.crawl_id = ? AND p.url = ? AND ? IN (SELECT value FROM json_each(c.match_names))) AS "matched!: bool""#, c.crawl, c.url, name).fetch_one(&mut *tx).await?;
+        let matched = sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                 SELECT 1 FROM candidate_profile p JOIN candidate c ON c.id = p.candidate_id
+                 WHERE p.crawl_id = ? AND p.url = ?
+                   AND ? IN (SELECT value FROM json_each(c.match_names))
+               ) AS "matched!: bool""#,
+            c.crawl,
+            c.url,
+            name,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
         if matched { outcome } else { &redirect_failure }
     } else {
         outcome
