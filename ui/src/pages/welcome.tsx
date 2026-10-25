@@ -24,6 +24,8 @@ const SAMPLE_TEMPLATE = {
     "{导师姓名}老师：\n\n您好！我是{我的姓名}，一直关注您在{学校}的研究工作，希望有机会报考您的研究生，加入您的课题组。\n\n随信附上我的简历，请您审阅。期待您的回复！\n\n此致\n敬礼\n\n{我的姓名}",
 };
 
+const SEND_TEST_LETTER = ["sendTestLetter"];
+
 /**
  * The first-run guide (docs/ui.md#交互). Whether a step is done is read from the data; the test
  * letter, which leaves none, counts as done once sent in this run of the app.
@@ -39,7 +41,7 @@ export function WelcomePage() {
   const mentors = useQuery({ queryKey: ["listMentors", {}], queryFn: () => call("listMentors", { page: 1 }) });
   const tasks = useQuery({ queryKey: ["listTasks", 1], queryFn: () => call("listTasks", { page: 1 }) });
   const sent = useMutationState<MutationState<null, Error, { to: string }>>({
-    filters: { mutationKey: ["sendTestLetter"], status: "success" },
+    filters: { mutationKey: SEND_TEST_LETTER, status: "success" },
     select: (m) => m.state,
   }).at(-1)?.variables?.to;
   const finish = useMutation({
@@ -49,7 +51,6 @@ export function WelcomePage() {
       await navigate({ to: "/mentors" });
     },
   });
-  const [open, setOpen] = useState<number | null>();
   const error =
     profile.error ??
     mailboxes.error ??
@@ -132,8 +133,6 @@ export function WelcomePage() {
       ),
     },
   ];
-  // Until the user picks one, the first step not done is open.
-  const shown = open === undefined ? steps.findIndex((s) => !s.done) : open;
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="flex max-w-[760px] flex-col px-7 pt-6 pb-10 phone:px-4">
@@ -148,18 +147,7 @@ export function WelcomePage() {
             跳过引导
           </Button>
         </header>
-        <ol className="divide-y divide-border border-y border-border">
-          {steps.map((s, i) => (
-            <StepRow
-              key={s.title}
-              step={s}
-              number={i + 1}
-              open={shown === i}
-              onToggle={() => setOpen(shown === i ? null : i)}
-              onNext={i + 1 < steps.length ? () => setOpen(i + 1) : undefined}
-            />
-          ))}
-        </ol>
+        <Steps steps={steps} />
         <div className="mt-6 flex items-center justify-end gap-3">
           {finish.error && <p className="text-sm text-destructive">{errorMessage(finish.error)}</p>}
           <Button disabled={finish.isPending} onClick={() => finish.mutate()}>
@@ -168,6 +156,25 @@ export function WelcomePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+function Steps({ steps }: { steps: Step[] }) {
+  // The first step not done when the page opens stays open while it is being done.
+  const [open, setOpen] = useState(() => steps.findIndex((s) => !s.done));
+  return (
+    <ol className="divide-y divide-border border-y border-border">
+      {steps.map((s, i) => (
+        <StepRow
+          key={s.title}
+          step={s}
+          number={i + 1}
+          open={open === i}
+          onToggle={() => setOpen(open === i ? -1 : i)}
+          onNext={i + 1 < steps.length ? () => setOpen(i + 1) : undefined}
+        />
+      ))}
+    </ol>
   );
 }
 
@@ -301,7 +308,6 @@ function AddMaterial() {
 
 function AddTemplate({ first }: { first: boolean }) {
   const placeholders = usePlaceholders();
-  const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
   return (
     <>
@@ -314,13 +320,6 @@ function AddTemplate({ first }: { first: boolean }) {
           template={null}
           sample={first ? SAMPLE_TEMPLATE : undefined}
           placeholders={placeholders.data}
-          // The first template is the one first emails start from.
-          onSaved={async (id) => {
-            if (first) {
-              await call("setDefaultTemplate", { id });
-              await queryClient.invalidateQueries({ queryKey: ["testLetter"] });
-            }
-          }}
           onClose={() => setAdding(false)}
         />
       )}
@@ -351,7 +350,7 @@ function TestLetterPreview({ mailbox, materials }: { mailbox: Mailbox; materials
   const letter = useQuery({ queryKey: ["testLetter"], queryFn: () => call("testLetter", {}) });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const send = useMutation({
-    mutationKey: ["sendTestLetter"],
+    mutationKey: SEND_TEST_LETTER,
     // Kept for the rest of this run of the app: the step counts as done once sent.
     gcTime: Infinity,
     mutationFn: ({ letter: l }: { to: string; letter: TestLetter }) => {
@@ -365,6 +364,8 @@ function TestLetterPreview({ mailbox, materials }: { mailbox: Mailbox; materials
       });
     },
   });
+  // Closing the step and opening it again must not allow a second letter while the first is on its way.
+  const last = useMutationState({ filters: { mutationKey: SEND_TEST_LETTER }, select: (m) => m.state }).at(-1);
   const error = letter.error ?? style.error;
   if (error) return <p className="text-sm text-destructive">未能准备试发的邮件：{errorMessage(error)}</p>;
   if (!letter.data || !style.data) return null;
@@ -381,11 +382,11 @@ function TestLetterPreview({ mailbox, materials }: { mailbox: Mailbox; materials
         用的是模板“{l.templateName}”，示例导师是示例大学计算机学院的张明教授。
       </p>
       <div className="flex flex-wrap items-center gap-3">
-        <Button disabled={send.isPending} onClick={() => send.mutate({ to: mailbox.address, letter: l })}>
-          {send.isPending ? "正在发送…" : `发给自己（${mailbox.address}）`}
+        <Button disabled={last?.status === "pending"} onClick={() => send.mutate({ to: mailbox.address, letter: l })}>
+          {last?.status === "pending" ? "正在发送…" : `发给自己（${mailbox.address}）`}
         </Button>
-        {send.isSuccess && <p className="text-sm text-success">已发出，去邮箱的收件箱看看。</p>}
-        {send.error && <p className="text-sm text-destructive">未能发出：{errorMessage(send.error)}</p>}
+        {last?.status === "success" && <p className="text-sm text-success">已发出，去邮箱的收件箱看看。</p>}
+        {last?.error && <p className="text-sm text-destructive">未能发出：{errorMessage(last.error)}</p>}
       </div>
     </div>
   );

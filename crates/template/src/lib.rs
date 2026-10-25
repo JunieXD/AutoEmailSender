@@ -219,12 +219,14 @@ pub async fn default_or_first(
     .await
 }
 
+/// The first template becomes the default, which first emails start from.
 pub async fn create(
     db: &SqlitePool,
     fields: &TemplateFields,
     now: i64,
 ) -> Result<i64, sqlx::Error> {
-    let row = sqlx::query!(
+    let mut tx = db.begin().await?;
+    let id = sqlx::query!(
         "INSERT INTO template (name, subject, body_md, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
         fields.name,
         fields.subject,
@@ -232,9 +234,18 @@ pub async fn create(
         now,
         now,
     )
-    .execute(db)
+    .execute(&mut *tx)
+    .await?
+    .last_insert_rowid();
+    sqlx::query!(
+        "UPDATE profile SET default_template_id = ?1
+         WHERE NOT EXISTS (SELECT 1 FROM template WHERE id <> ?1)",
+        id
+    )
+    .execute(&mut *tx)
     .await?;
-    Ok(row.last_insert_rowid())
+    tx.commit().await?;
+    Ok(id)
 }
 
 /// False when there is no such template.
