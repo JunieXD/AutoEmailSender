@@ -3,7 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { CandidateFilter, CandidateRow, CrawlSummary, Decisions } from "@/api/types";
+import type { CandidateFilter, CandidateRow, CrawlSummary, Decisions, EnrichPlan } from "@/api/types";
 import { ModelAction, AiIcon } from "@/components/ai-writing";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { IntakeChoices, ProfileDetails } from "@/components/intake-choices";
@@ -31,6 +31,7 @@ const STATES: Record<string, string> = {
   failed: "失败",
   lists: "寻找名单",
   profiles: "读取个人页",
+  enrich: "信息补全",
 };
 export function findSearch(s: Record<string, unknown>) {
   const filter: CandidateFilter =
@@ -55,6 +56,7 @@ export function refreshCrawls(client: ReturnType<typeof useQueryClient>) {
     "listCandidates",
     "getCandidate",
     "previewCandidates",
+    "previewEnrich",
   ])
     void client.invalidateQueries({ queryKey: [key] });
 }
@@ -206,10 +208,13 @@ function CrawlRecord({ crawl: c, expanded }: { crawl: CrawlSummary; expanded: bo
           aria-expanded={expanded}
         >
           <strong className="break-all">{c.url ?? `抓取 #${c.id}`}</strong>
-          <span className="ml-3 text-sm text-muted-foreground">{STATES[c.state]}</span>
+          <span className="ml-3 text-sm text-muted-foreground">
+            {c.state === "running" && c.stage === "enrich" ? "补全中" : STATES[c.state]}
+          </span>
           <span className="mt-1 block text-sm text-muted-foreground">
             {STATES[c.stage]} · 已处理 {c.pages} 页 · 已读 {c.profiles} 个个人页 · {c.candidates} 位候选
             {c.remaining > 0 && ` · 待处理 ${c.remaining} 页`}
+            {c.enrichRemaining > 0 && ` · 信息补全还剩 ${c.enrichRemaining} 位`}
           </span>
         </button>
         <CrawlControls crawl={c} />
@@ -228,7 +233,7 @@ function CrawlRecord({ crawl: c, expanded }: { crawl: CrawlSummary; expanded: bo
       </p>
       {c.error && <p className="mt-2 text-sm text-warning">{c.error}</p>}
       {c.failed > 0 && <p className="mt-2 text-sm text-warning">名单可能不完整：{c.failed} 个页面未打开或需要浏览器</p>}
-      {expanded && <CrawlDetails id={c.id} modelId={c.modelConfigId} />}
+      {expanded && <CrawlDetails id={c.id} modelId={c.modelConfigId} modelIds={c.modelIds} />}
     </section>
   );
 }
@@ -247,11 +252,7 @@ function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
         </Button>
       )}
       {c.state === "paused" && (
-        <ModelAction
-          disabled={mutation.isPending}
-          modelId={c.modelConfigId}
-          onWrite={() => mutation.mutate("resumeCrawl")}
-        >
+        <ModelAction disabled={mutation.isPending} modelIds={c.modelIds} onWrite={() => mutation.mutate("resumeCrawl")}>
           继续
         </ModelAction>
       )}
@@ -259,11 +260,11 @@ function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
         <Confirm
           trigger={
             <Button variant="ghost" disabled={mutation.isPending}>
-              取消抓取
+              取消工作
             </Button>
           }
-          message="取消后保留已找到的候选，仍可审核"
-          action="取消抓取"
+          message="取消后保留已找到的候选和已补到的资料，仍可审核"
+          action="取消工作"
           onConfirm={() => mutation.mutate("cancelCrawl")}
         />
       )}
@@ -271,7 +272,7 @@ function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
     </div>
   );
 }
-function CrawlDetails({ id, modelId }: { id: number; modelId: number | null }) {
+function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number | null; modelIds: number[] }) {
   const client = useQueryClient();
   const [page, setPage] = useState(1);
   const detail = useQuery({
@@ -301,7 +302,7 @@ function CrawlDetails({ id, modelId }: { id: number; modelId: number | null }) {
           )}
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="mr-auto font-medium">页面及未打开的原因</h3>
-            <ModelAction modelId={modelId} disabled={retry.isPending} onWrite={() => retry.mutate(null)}>
+            <ModelAction modelIds={modelIds} disabled={retry.isPending} onWrite={() => retry.mutate(null)}>
               重试全部未打开页面
             </ModelAction>
           </div>
@@ -321,7 +322,11 @@ function CrawlDetails({ id, modelId }: { id: number; modelId: number | null }) {
                 </p>
               </div>
               {p.state === "done" && p.status !== "success" && (
-                <ModelAction modelId={modelId} disabled={retry.isPending} onWrite={() => retry.mutate(p.id)}>
+                <ModelAction
+                  modelId={p.kind.startsWith("enrich_") ? null : modelId}
+                  disabled={retry.isPending}
+                  onWrite={() => retry.mutate(p.id)}
+                >
                   重试
                 </ModelAction>
               )}
@@ -348,6 +353,8 @@ function Candidates() {
   const client = useQueryClient();
   const [selected, setSelected] = useState<number[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [enrich, setEnrich] = useState<number[] | null>(null);
+  const [enrichResult, setEnrichResult] = useState<EnrichPlan | null>(null);
   const [review, setReview] = useState<number[] | null>(null);
   const [choices, setChoices] = useState<Record<number, Decisions>>({});
   const q = { crawlId: s.crawl ?? null, filter: s.filter, processed: s.processed, page: s.page };
@@ -415,6 +422,11 @@ function Candidates() {
             </Button>
           ))}
         </div>
+        {enrichResult && (
+          <p role="status" className="text-sm text-muted-foreground">
+            已安排补全 {enrichResult.ids.length} 位<SkippedEnrich plan={enrichResult} />
+          </p>
+        )}
         <ErrorText error={list.error ?? crawls.error ?? reject.error} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-24 phone:px-4">
@@ -488,6 +500,17 @@ function Candidates() {
                   </Link>
                 )}
               </div>
+              {(c.enrich === "queued" || c.enrich === "running") && (
+                <p role="status" className="mt-2 text-sm text-brand-text">
+                  补全中
+                </p>
+              )}
+              {c.enrichChanges.length > 0 && (
+                <p className="mt-2 text-sm text-brand-text">
+                  补到了{[...new Set(c.enrichChanges.map((v) => v.field))].join("、")}
+                </p>
+              )}
+              {c.enrichError && <p className="mt-2 text-sm text-warning">{c.enrichError}</p>}
               {c.sourceUrl && <SourceLink url={c.sourceUrl} />}
               {c.issue && <p className="mt-2 text-sm text-warning">{c.issue}</p>}
               {expanded === c.id && (
@@ -516,10 +539,25 @@ function Candidates() {
           <Button size="sm" onClick={() => setReview([...selected])}>
             批量接受
           </Button>
+          <Button size="sm" variant="quiet" onClick={() => setEnrich([...selected])}>
+            补全
+          </Button>
           <Button size="sm" variant="ghost" disabled={reject.isPending} onClick={() => reject.mutate(selected)}>
             批量拒绝
           </Button>
         </BatchBar>
+      )}
+      {enrich && (
+        <EnrichDialog
+          ids={enrich}
+          onClose={() => setEnrich(null)}
+          onDone={(result) => {
+            setEnrichResult(result);
+            setEnrich(null);
+            setSelected([]);
+            refreshCrawls(client);
+          }}
+        />
       )}
       {review && (
         <ReviewDialog
@@ -535,6 +573,84 @@ function Candidates() {
         />
       )}
     </>
+  );
+}
+const ENRICH_SKIP = {
+  missing_profile: "没有个人页",
+  complete: "资料已全",
+  active: "正在补全",
+  reviewed: "已处理或已删除",
+};
+function SkippedEnrich({ plan }: { plan: EnrichPlan }) {
+  const count = plan.skipped.reduce((sum, group) => sum + group.ids.length, 0);
+  return count > 0 ? (
+    <>
+      {" "}
+      · 跳过 {count} 位（{plan.skipped.map((group) => `${ENRICH_SKIP[group.reason]} ${group.ids.length} 位`).join("、")}
+      ）
+    </>
+  ) : null;
+}
+function EnrichDialog({
+  ids,
+  onClose,
+  onDone,
+}: {
+  ids: number[];
+  onClose: () => void;
+  onDone: (result: EnrichPlan) => void;
+}) {
+  const client = useQueryClient();
+  const preview = useQuery({ queryKey: ["previewEnrich", ids], queryFn: () => call("previewEnrich", { ids }) });
+  const models = useQuery({ queryKey: ["listModelConfigs"], queryFn: () => call("listModelConfigs", {}) });
+  const chosen = models.data?.find((m) => m.isDefault);
+  const start = useMutation({
+    mutationFn: () => call("enrichCandidates", { ids }),
+    onSuccess: onDone,
+    onError: () => client.invalidateQueries({ queryKey: ["listModelConfigs"] }),
+  });
+  const count = preview.data?.ids.length ?? 0;
+  const cost =
+    chosen && (chosen.inputPrice !== null || chosen.outputPrice !== null)
+      ? (((chosen.inputPrice ?? 0) * 4000 + (chosen.outputPrice ?? 0) * 1000) * count) / 1_000_000
+      : null;
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !start.isPending) onClose();
+      }}
+    >
+      <DialogContent className="w-[520px]">
+        <DialogHeader>补全候选信息</DialogHeader>
+        <DialogBody className="space-y-4 text-sm">
+          {preview.data && (
+            <p>
+              补全 {count} 位<SkippedEnrich plan={preview.data} />
+            </p>
+          )}
+          <p>模型：{chosen ? `${chosen.name || chosen.model}（${chosen.model}）` : "尚未添加默认模型"}</p>
+          <p className="text-muted-foreground">
+            每位预计读取 1～4 页，约 5000～20000 Token；本次约 {(count * 5000).toLocaleString()}～
+            {(count * 20000).toLocaleString()} Token
+            {cost !== null && `，约 ¥${cost.toFixed(2)}～¥${(cost * 4).toFixed(2)}`}
+            。仅为估算，以实际页面和服务商报告为准。
+          </p>
+          <p className="text-muted-foreground">
+            只补空着的资料，保留已有值。网页内容和候选姓名、别名将发给模型服务商。可在后台暂停或取消；所属抓取已暂停时，补全也会等待继续。
+          </p>
+          <ErrorText error={preview.error ?? models.error ?? start.error} />
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" disabled={start.isPending} onClick={onClose}>
+            关闭
+          </Button>
+          <ModelAction disabled={!preview.data || count === 0 || start.isPending} onWrite={() => start.mutate()}>
+            {start.isPending ? "正在安排…" : "开始补全"}
+          </ModelAction>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 function CandidateDetails({

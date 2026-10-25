@@ -249,7 +249,9 @@ function Background() {
             {crawling.map((c) => (
               <div key={c.id} className="py-2">
                 <Link to="/find" search={findSearch({ tab: "crawl", detail: c.id })}>
-                  抓取 #{c.id} · 已读 {c.pages} 页，{c.candidates} 位候选
+                  {c.stage === "enrich"
+                    ? `信息补全 · 还剩 ${c.enrichRemaining} 位`
+                    : `抓取 #${c.id} · 已读 ${c.pages} 页，${c.candidates} 位候选${c.enrichRemaining > 0 ? ` · 信息补全还剩 ${c.enrichRemaining} 位` : ""}`}
                 </Link>
                 <button className="ml-2 text-brand-text" onClick={() => pauseCrawl.mutate(c.id)}>
                   暂停
