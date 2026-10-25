@@ -202,7 +202,9 @@ export function TaskReviewPage() {
   }, [current, search.email, navigate]);
   async function flush() {
     await composer.current?.flush();
-    await waitForSaves(client, ["taskDraftAction", id]);
+    // Only an action still running when the user moves on can hold them here; an earlier failure was already shown.
+    if (client.isMutating({ mutationKey: ["taskDraftAction", id] }) > 0)
+      await waitForSaves(client, ["taskDraftAction", id]);
     setError(null);
   }
   function choose(email?: number) {
