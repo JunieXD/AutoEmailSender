@@ -5,10 +5,11 @@ use sqlx::SqlitePool;
 
 pub async fn names(db: &SqlitePool, keyword: Option<&str>) -> Vec<String> {
     let query = MentorQuery {
+        unanswered_days: None,
         status: None,
         keyword: keyword.map(Into::into),
         page: NonZeroU32::MIN,
     };
-    let page = mentor::list(db, &query).await.unwrap();
+    let page = mentor::list(db, &query, 0).await.unwrap();
     page.mentors.into_iter().map(|m| m.name).collect()
 }

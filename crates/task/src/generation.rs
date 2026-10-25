@@ -44,7 +44,7 @@ async fn generate(
     }
     let mut tx = db.begin().await?;
     let Some(t) = sqlx::query!(
-        "SELECT model_config_id,template_subject,template_body_md FROM task WHERE id = ?",
+        r#"SELECT kind AS "kind: Kind",model_config_id,template_subject,template_body_md FROM task WHERE id = ?"#,
         claim.task
     )
     .fetch_optional(&mut *tx)
@@ -65,6 +65,11 @@ async fn generate(
         ));
     }
     let refs = sqlx::query_as!(material::Reference,r#"SELECT m.file_name,m.extracted_text AS "text!" FROM material m JOIN task_material t ON t.material_id = m.id WHERE t.task_id = ? AND t.role = 'reference' ORDER BY m.id"#,claim.task).fetch_all(&mut *tx).await?;
+    let previous = if t.kind == Kind::FollowUp {
+        Some(history(&mut tx, claim.mentor).await?)
+    } else {
+        None
+    };
     let attachments = email::attached(&mut tx, claim.id).await?;
     tx.commit().await?;
     let Some(m) = mentor::get(db, claim.mentor).await? else {
@@ -88,6 +93,7 @@ async fn generate(
         writing::Basis {
             chosen: &chosen,
             references: &refs,
+            previous: previous.as_deref(),
         },
     )
     .await;
@@ -99,7 +105,7 @@ async fn generate(
             Failure::Failed(reason) => Outcome::Failed(reason),
         },
         Err(writing::Error::NotALetter { .. }) => {
-            Outcome::Failed("模型未能写出完整的主题和正文，请重试或换个模型。".into())
+            Outcome::Failed("模型未能写出完整的草稿，请重试或换个模型。".into())
         }
         Err(writing::Error::Db(e)) => return Err(e),
         Err(writing::Error::NoMentor) => Outcome::Requeue,

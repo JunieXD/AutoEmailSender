@@ -720,6 +720,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         &db,
         &task::NewTask {
             name: "写信".into(),
+            kind: task::Kind::First,
             ids,
             writer: task::Writer::Ai,
             template_id: None,

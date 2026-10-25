@@ -85,6 +85,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     .await
     .unwrap();
     let query = MentorQuery {
+        unanswered_days: None,
         status: None,
         keyword: None,
         page: NonZeroU32::MIN,
@@ -98,7 +99,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
             error: "回答不完整".into(),
         },
     ] {
-        let list = mentor::list(&db, &query).await.unwrap();
+        let list = mentor::list(&db, &query, 0).await.unwrap();
         let detail = mentor::get(&db, id).await.unwrap().unwrap();
         let r = list.mentors[0].match_state.result.as_ref().unwrap();
         assert_eq!(r.score, 88);

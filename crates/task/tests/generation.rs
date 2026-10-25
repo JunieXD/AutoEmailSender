@@ -97,6 +97,7 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
     let task = task::create(
         db,
         &NewTask {
+            kind: task::Kind::First,
             schedule: email::schedule::Schedule::Now,
             name: "AI 任务".into(),
             ids: ids.clone(),
@@ -111,6 +112,68 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
     .await
     .unwrap();
     (task, ids)
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn generates_and_regenerates_follow_up_body_with_the_fixed_subject(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let (_, ids) = setup(&db, &p.address, 1).await;
+    sqlx::query("UPDATE email SET state='sent',subject='申请',body_md='之前发出的申请',html='<p>之前发出的申请</p>',text='之前发出的申请',planned_at=1,sent_at=1,from_address='me@example.com',to_address='m0@example.com',message_id='<first@example.com>' WHERE mentor_id=?").bind(ids[0]).execute(&db).await.unwrap();
+    let id = task::create(
+        &db,
+        &NewTask {
+            kind: task::Kind::FollowUp,
+            name: "AI 追问".into(),
+            ids,
+            writer: Writer::Ai,
+            template_id: None,
+            model_config_id: None,
+            references: vec![],
+            attachments: vec![],
+            schedule: email::schedule::Schedule::Now,
+        },
+        2,
+    )
+    .await
+    .unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(
+            "<body>王老师：想请问是否方便查看我的申请。</body>",
+        ))
+        .ok()
+        .unwrap();
+    run.until(&db, id, |t| t.progress.review == 1).await;
+    let email = sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE task_id=?")
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let key = task::TaskEmail {
+        task_id: id,
+        id: email,
+    };
+    let draft = task::draft(&db, &key).await.unwrap().unwrap();
+    assert_eq!(draft.subject, "Re: 申请");
+    assert!(draft.body_md.contains("查看我的申请"));
+    task::regenerate(&db, id, Some(email), false, 3)
+        .await
+        .unwrap();
+    run.handle.wake();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(
+            "<body>王老师：再次请教招生安排，谢谢！</body>",
+        ))
+        .ok()
+        .unwrap();
+    run.until(&db, id, |t| t.progress.review == 1).await;
+    let draft = task::draft(&db, &key).await.unwrap().unwrap();
+    assert_eq!(draft.subject, "Re: 申请");
+    assert!(draft.body_md.contains("再次请教"));
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn generates_and_reports_single_failures_and_finishes_once(db: SqlitePool) {

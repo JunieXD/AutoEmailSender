@@ -89,6 +89,69 @@ fn blank() -> Letter {
     }
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePool) {
+    let (id, _) = setup(&db).await;
+    let (address, received) = provider(vec![(
+        "<body>王伟老师：想请问您是否方便查看之前的申请。谢谢！</body>",
+        "stop",
+    )])
+    .await;
+    model(&db, &address, true).await;
+    let previous = vec![Letter {
+        subject: "申请读博".into(),
+        body_md: "原信内容".repeat(3000) + "不应发送的尾部",
+    }];
+    let chosen = model::chosen(&db).await.unwrap().unwrap();
+    let references = material::for_writing(&db).await.unwrap();
+    let letter = writing::write(
+        &db,
+        &Net::new(Vec::new()).unwrap(),
+        id,
+        &blank(),
+        &[],
+        T,
+        writing::Basis {
+            chosen: &chosen,
+            references: &references,
+            previous: Some(&previous),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(letter.subject.is_empty());
+    assert!(letter.body_md.contains("之前的申请"));
+    let (system, message) = received.lock().unwrap()[0].clone();
+    assert!(system.contains("追问"));
+    assert!(message.contains("申请读博") && message.contains("原信内容"));
+    assert!(!message.contains("不应发送的尾部"));
+    assert!(!message.contains("wangwei@") && !message.contains("师兄说回信很慢"));
+    let data: Value = serde_json::from_str(&message).unwrap();
+    assert_eq!(
+        data["之前的信"][0]["正文"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        10_000 - 4
+    );
+    let estimate = writing::estimate(
+        &profile::get(&db).await.unwrap(),
+        &references,
+        &[],
+        &mentor::get(&db, id).await.unwrap().unwrap(),
+        None,
+        Some(&previous),
+    );
+    assert_eq!(
+        estimate,
+        (
+            model::background::tokens(&system) + model::background::tokens(&message),
+            500
+        )
+    );
+}
+
 /// The purpose and tokens of each call recorded.
 async fn usage(db: &SqlitePool) -> Vec<(String, i64, i64, i64)> {
     sqlx::query!(
@@ -125,7 +188,7 @@ async fn a_blank_letter_is_drafted_from_the_user_and_the_mentor(db: SqlitePool) 
     let references = material::for_writing(&db).await.unwrap();
     let mentor = mentor::get(&db, mentor).await.unwrap().unwrap();
     assert_eq!(
-        writing::estimate(&me, &references, &["简历.pdf".into()], &mentor, None),
+        writing::estimate(&me, &references, &["简历.pdf".into()], &mentor, None, None),
         (
             model::background::tokens(&system) + model::background::tokens(&message),
             1200
@@ -287,6 +350,7 @@ async fn current_write(
         writing::Basis {
             chosen: &chosen,
             references: &references,
+            previous: None,
         },
     )
     .await

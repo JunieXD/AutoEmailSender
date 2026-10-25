@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO email (task_id, mentor_id, kind, state, subject, body_md, generation_queued_at, created_at, updated_at) VALUES (?, ?, 'first', ?, ?, ?, ?, ?, ?) RETURNING id AS \"id!\"",
+  "query": "INSERT INTO email (task_id, mentor_id, kind, reply_to, state, subject, body_md, generation_queued_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id AS \"id!\"",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 8
+      "Right": 10
     },
     "nullable": [
       null
     ]
   },
-  "hash": "281c79c23b64f05bf9d645b797ba8b95b79828a312dc35af910f0330c86bd92d"
+  "hash": "4e4b04022d6679688a8b91f73e9853f460aec938e7ad90e29db3c8763f3cb7d5"
 }

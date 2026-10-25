@@ -1,11 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT model_config_id,template_subject,template_body_md FROM task WHERE id = ?",
+  "query": "SELECT kind AS \"kind: Kind\",model_config_id,template_subject,template_body_md FROM task WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "model_config_id",
+        "name": "kind: Kind",
         "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "model_config_id",
+        "ordinal": 1,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -16,7 +27,7 @@
       },
       {
         "name": "template_subject",
-        "ordinal": 1,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "template_body_md",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -41,10 +52,11 @@
       "Right": 1
     },
     "nullable": [
+      false,
       true,
       true,
       true
     ]
   },
-  "hash": "236ebcc5477615655fcfba6d4bbfdcd838c390dc9e04b64e61959b83e0fe01de"
+  "hash": "979c2f72f3907d0edcef8f03ad81cd4aeb165de2a1eea3e852f5c244eb0ad0bf"
 }

@@ -12,6 +12,7 @@ use test_fixtures::mail::first_email;
 
 fn query(status: Option<ContactStatus>, keyword: Option<&str>, page: u32) -> MentorQuery {
     MentorQuery {
+        unanswered_days: None,
         status,
         keyword: keyword.map(Into::into),
         page: NonZeroU32::new(page).unwrap(),
@@ -23,7 +24,9 @@ async fn names(
     status: Option<ContactStatus>,
     keyword: Option<&str>,
 ) -> Vec<String> {
-    let page = mentor::list(db, &query(status, keyword, 1)).await.unwrap();
+    let page = mentor::list(db, &query(status, keyword, 1), 0)
+        .await
+        .unwrap();
     assert_eq!(page.total, page.mentors.len() as i64);
     page.mentors.into_iter().map(|m| m.name).collect()
 }
@@ -44,6 +47,84 @@ fn at(university: &str, school: Option<&str>) -> Affiliation {
         school: school.map(Into::into),
         ..Affiliation::default()
     }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn unanswered_filter_uses_latest_sent_time_and_ignores_automatic_replies(db: SqlitePool) {
+    let day = 86_400_000;
+    let now = 20 * day;
+    test_fixtures::mail::mailbox(&mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let mut ids = vec![];
+    for name in [
+        "超过七天",
+        "恰好七天",
+        "不到七天",
+        "已经回复",
+        "已经退信",
+        "自动回复",
+        "网页发信",
+    ] {
+        ids.push(add(&db, name, "学校", "研究").await);
+    }
+    for (i, &id) in ids[..6].iter().enumerate() {
+        first_email(
+            &db,
+            id,
+            "sent",
+            now - 7 * day
+                + match i {
+                    0 | 3..=5 => -1,
+                    1 => 0,
+                    _ => 1,
+                },
+        )
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE email SET state='bounced',error='地址不存在' WHERE mentor_id=?")
+        .bind(ids[4])
+        .execute(&db)
+        .await
+        .unwrap();
+    for (i, kind, at) in [
+        (3, "reply", now),
+        (5, "auto_reply", now),
+        (6, "sent", now - 8 * day),
+    ] {
+        let msg = sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,sent_at,from_address,truncated) VALUES(1,'INBOX',1,?,?,?,?, 'someone@example.com',0)")
+            .bind(i as i64).bind(kind).bind(format!("<filter-{i}@example.com>")).bind(at).execute(&db).await.unwrap().last_insert_rowid();
+        sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
+            .bind(ids[i])
+            .bind(msg)
+            .execute(&db)
+            .await
+            .unwrap();
+    }
+    let mut q = query(Some(ContactStatus::Contacted), None, 1);
+    q.unanswered_days = NonZeroU32::new(7);
+    let found = mentor::list(&db, &q, now).await.unwrap();
+    assert_eq!(found.total, 3);
+    let actual: std::collections::BTreeSet<_> = found.mentors.iter().map(|m| m.id).collect();
+    assert_eq!(actual, [ids[0], ids[5], ids[6]].into_iter().collect());
+    // A newer outgoing message restarts the waiting period, including one sent elsewhere.
+    first_email(&db, ids[0], "sent", now - day).await.unwrap();
+    let found = mentor::list(&db, &q, now).await.unwrap();
+    assert_eq!(found.total, 2);
+    let rows = mentor::export::export(
+        &db,
+        &mentor::export::Scope::Filter(mentor::export::Filter {
+            status: q.status,
+            keyword: None,
+            unanswered_days: q.unanswered_days,
+        }),
+        false,
+        now,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 3);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -96,7 +177,7 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
         ["甲"]
     );
     assert_eq!(names(&db, Some(ContactStatus::None), None).await, ["丙"]);
-    let page = mentor::list(&db, &query(Some(ContactStatus::Contacted), None, 1))
+    let page = mentor::list(&db, &query(Some(ContactStatus::Contacted), None, 1), 0)
         .await
         .unwrap();
     let row = &page.mentors[0];
@@ -122,8 +203,8 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
         .await
         .unwrap();
     }
-    let first = mentor::list(&db, &query(None, None, 1)).await.unwrap();
-    let second = mentor::list(&db, &query(None, None, 2)).await.unwrap();
+    let first = mentor::list(&db, &query(None, None, 1), 0).await.unwrap();
+    let second = mentor::list(&db, &query(None, None, 2), 0).await.unwrap();
     assert_eq!(first.total, i64::from(PAGE_SIZE) + 7);
     assert_eq!(
         first.mentors[0].match_state,
@@ -195,7 +276,7 @@ async fn a_mentor_is_found_by_any_name_and_affiliation(db: SqlitePool) {
     assert_eq!(names(&db, None, Some("jing")).await, ["李静"]);
     assert_eq!(names(&db, None, Some("智源")).await, ["李静"]);
     assert_eq!(names(&db, None, Some("计算机")).await, ["李静"]);
-    let page = mentor::list(&db, &query(None, Some("李静"), 1))
+    let page = mentor::list(&db, &query(None, Some("李静"), 1), 0)
         .await
         .unwrap();
     let row = &page.mentors[0];
