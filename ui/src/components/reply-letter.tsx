@@ -178,6 +178,7 @@ function Composer({
     mutationFn: () => (followUpId !== null ? call("discardFollowUpDraft", { id: followUpId }) : Promise.resolve()),
     onSuccess: async () => {
       writing.forget();
+      factCheck.forget();
       await queryClient.invalidateQueries({ queryKey: [draftQuery, mentorId] });
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
     },
