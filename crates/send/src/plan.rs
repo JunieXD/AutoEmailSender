@@ -64,25 +64,108 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
         50
     };
     let mut tx = db.begin().await?;
-    let total=match query.column {
-        PlanColumn::Pending=>sqlx::query_scalar!("SELECT count(*) FROM email WHERE state IN ('generation_failed','failed','maybe_sent') OR (state='approved' AND (planned_at IS NULL OR latest_at<=?))",now).fetch_one(&mut *tx).await?,
-        PlanColumn::Upcoming=>sqlx::query_scalar!("SELECT count(*) FROM email WHERE state='approved' AND planned_at IS NOT NULL AND (latest_at IS NULL OR latest_at>?)",now).fetch_one(&mut *tx).await?,
-        PlanColumn::History=>sqlx::query_scalar!("SELECT count(*) FROM (SELECT id FROM email WHERE state IN ('sent','bounced') LIMIT 100)").fetch_one(&mut *tx).await?,
-    };
-    let ids=match query.column {
-        PlanColumn::Pending=>sqlx::query_scalar!("SELECT id FROM email WHERE state IN ('generation_failed','failed','maybe_sent') OR (state='approved' AND (planned_at IS NULL OR latest_at<=?1)) ORDER BY coalesce(planned_at,created_at),id LIMIT ?2 OFFSET ?3",now,limit,offset).fetch_all(&mut *tx).await?,
-        PlanColumn::Upcoming=>sqlx::query_scalar!("SELECT id FROM email WHERE state='approved' AND planned_at IS NOT NULL AND (latest_at IS NULL OR latest_at>?1) ORDER BY planned_at,id LIMIT ?2 OFFSET ?3",now,limit,offset).fetch_all(&mut *tx).await?,
-        PlanColumn::History=>sqlx::query_scalar!("SELECT id FROM email WHERE state IN ('sent','bounced') ORDER BY sent_at DESC,id DESC LIMIT ? OFFSET ?",limit,offset).fetch_all(&mut *tx).await?,
-    };
-    let rows = sqlx::query!(r#"SELECT e.id,e.mentor_id,m.name,e.subject,e.task_id,t.name AS task_name,e.state AS "state: DraftState",e.planned_at,e.latest_at,e.sent_at,e.from_address,e.error,e.resend_of,
-        t.state AS task_state,t.generation_paused_at,
-        CASE WHEN e.kind='reply' THEN coalesce(m.mailbox_id,(SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id=r.id WHERE mm.mentor_id=e.mentor_id AND r.message_id=e.reply_to AND r.kind='reply')) ELSE m.mailbox_id END AS own
-        FROM json_each(?1) j JOIN email e ON e.id=j.value JOIN mentor m ON m.id=e.mentor_id LEFT JOIN task t ON t.id=e.task_id
-        ORDER BY j.key"#,sqlx::types::Json(ids)).fetch_all(&mut *tx).await?;
-    let rotation =
-        sqlx::query_scalar!(r#"SELECT rotation AS "rotation: profile::Rotation" FROM profile"#)
+    let total = match query.column {
+        PlanColumn::Pending => {
+            sqlx::query_scalar!(
+                r#"SELECT count(*)
+                   FROM email
+                   WHERE state IN ('generation_failed', 'failed', 'maybe_sent')
+                     OR (state = 'approved' AND (planned_at IS NULL OR latest_at <= ?))"#,
+                now
+            )
             .fetch_one(&mut *tx)
-            .await?;
+            .await?
+        }
+        PlanColumn::Upcoming => {
+            sqlx::query_scalar!(
+                r#"SELECT count(*)
+                   FROM email
+                   WHERE state = 'approved'
+                     AND planned_at IS NOT NULL
+                     AND (latest_at IS NULL OR latest_at > ?)"#,
+                now
+            )
+            .fetch_one(&mut *tx)
+            .await?
+        }
+        PlanColumn::History => {
+            sqlx::query_scalar!(
+                r#"SELECT count(*)
+                   FROM (SELECT id FROM email WHERE state IN ('sent', 'bounced') LIMIT 100)"#
+            )
+            .fetch_one(&mut *tx)
+            .await?
+        }
+    };
+    let ids = match query.column {
+        PlanColumn::Pending => {
+            sqlx::query_scalar!(
+                r#"SELECT id
+                   FROM email
+                   WHERE state IN ('generation_failed', 'failed', 'maybe_sent')
+                     OR (state = 'approved' AND (planned_at IS NULL OR latest_at <= ?1))
+                   ORDER BY coalesce(planned_at, created_at), id
+                   LIMIT ?2 OFFSET ?3"#,
+                now,
+                limit,
+                offset
+            )
+            .fetch_all(&mut *tx)
+            .await?
+        }
+        PlanColumn::Upcoming => {
+            sqlx::query_scalar!(
+                r#"SELECT id
+                   FROM email
+                   WHERE state = 'approved'
+                     AND planned_at IS NOT NULL
+                     AND (latest_at IS NULL OR latest_at > ?1)
+                   ORDER BY planned_at, id
+                   LIMIT ?2 OFFSET ?3"#,
+                now,
+                limit,
+                offset
+            )
+            .fetch_all(&mut *tx)
+            .await?
+        }
+        PlanColumn::History => {
+            sqlx::query_scalar!(
+                r#"SELECT id
+                   FROM email
+                   WHERE state IN ('sent', 'bounced')
+                   ORDER BY sent_at DESC, id DESC
+                   LIMIT ? OFFSET ?"#,
+                limit,
+                offset
+            )
+            .fetch_all(&mut *tx)
+            .await?
+        }
+    };
+    let rows = sqlx::query!(
+        r#"SELECT e.id, e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state
+             AS "state: DraftState", e.planned_at, e.latest_at, e.sent_at, e.from_address,
+             e.error, e.resend_of, t.state AS task_state, t.generation_paused_at, CASE WHEN
+             e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT r.mailbox_id FROM message r
+             JOIN message_mentor mm ON mm.message_id = r.id WHERE mm.mentor_id = e.mentor_id AND
+             r.message_id = e.reply_to AND r.kind = 'reply')) ELSE m.mailbox_id END AS own
+           FROM json_each(?1) j
+           JOIN email e ON e.id = j.value
+           JOIN mentor m ON m.id = e.mentor_id
+           LEFT
+           JOIN task t ON t.id = e.task_id
+           ORDER BY j.key"#,
+        sqlx::types::Json(ids)
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let rotation = sqlx::query_scalar!(
+        r#"SELECT rotation AS "rotation: profile::Rotation"
+           FROM profile"#
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     let mailboxes = usage_on(&mut tx, now).await?;
     let emails = rows
         .into_iter()
@@ -165,9 +248,19 @@ pub async fn work(db: &SqlitePool, now: i64) -> Result<ScheduledWork, sqlx::Erro
         .and_then(|d| chrono::Local.from_local_datetime(&d).earliest())
         .ok_or_else(|| sqlx::Error::Decode("invalid next local day".into()))?
         .timestamp_millis();
-    sqlx::query_as!(ScheduledWork,r#"SELECT
-        (SELECT count(*) FROM email WHERE state IN ('generation_failed','failed','maybe_sent') OR (state='approved' AND (planned_at IS NULL OR latest_at<=?1))) AS "pending!: i64",
-        min(planned_at) AS "next_at: i64",
-        coalesce(sum(planned_at<?2),0) AS "today!: i64"
-        FROM email WHERE state='approved' AND planned_at IS NOT NULL AND (latest_at IS NULL OR latest_at>?1)"#,now,tomorrow).fetch_one(db).await
+    sqlx::query_as!(
+        ScheduledWork,
+        r#"SELECT (SELECT count(*) FROM email WHERE state IN ('generation_failed', 'failed',
+             'maybe_sent') OR (state = 'approved' AND (planned_at IS NULL OR latest_at <= ?1)))
+             AS "pending!: i64", min(planned_at) AS "next_at: i64", coalesce(sum(planned_at <
+             ?2), 0) AS "today!: i64"
+           FROM email
+           WHERE state = 'approved'
+             AND planned_at IS NOT NULL
+             AND (latest_at IS NULL OR latest_at > ?1)"#,
+        now,
+        tomorrow
+    )
+    .fetch_one(db)
+    .await
 }

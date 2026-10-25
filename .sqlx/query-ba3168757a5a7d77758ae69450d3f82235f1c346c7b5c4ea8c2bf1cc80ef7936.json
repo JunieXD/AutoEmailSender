@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n                   FROM email\n                   WHERE state IN ('generation_failed', 'failed', 'maybe_sent')\n                     OR (state = 'approved' AND (planned_at IS NULL OR latest_at <= ?1))\n                   ORDER BY coalesce(planned_at, created_at), id\n                   LIMIT ?2 OFFSET ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ba3168757a5a7d77758ae69450d3f82235f1c346c7b5c4ea8c2bf1cc80ef7936"
+}

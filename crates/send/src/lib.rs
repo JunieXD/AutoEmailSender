@@ -104,27 +104,39 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     let at = now();
     email::schedule::rollover(db, at, zone, random).await?;
     let due = sqlx::query!(
-        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id,
-             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id
-              WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply'))
-           ELSE m.mailbox_id END AS own,
-           e.kind = 'reply' AS "reply!: bool" FROM email e JOIN mentor m ON m.id = e.mentor_id
-         WHERE e.state = 'approved' AND e.planned_at <= ?1 AND (e.latest_at IS NULL OR e.latest_at > ?1)
-           AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
-         ORDER BY e.planned_at, e.id"#,
+        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT
+             r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id WHERE
+             mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply')) ELSE
+             m.mailbox_id END AS own, e.kind = 'reply' AS "reply!: bool"
+           FROM email e
+           JOIN mentor m ON m.id = e.mentor_id
+           WHERE e.state = 'approved'
+             AND e.planned_at <= ?1
+             AND (e.latest_at IS NULL OR e.latest_at > ?1)
+             AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active'
+               AND generation_paused_at IS NULL))
+           ORDER BY e.planned_at, e.id"#,
         at
     )
     .fetch_all(db)
     .await?;
     let mut next = sqlx::query_scalar!(
-        r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?1 AND (latest_at IS NULL OR latest_at > ?1)
-           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))"#,
+        r#"SELECT min(planned_at) AS "at: i64"
+           FROM email
+           WHERE state = 'approved'
+             AND planned_at > ?1
+             AND (latest_at IS NULL OR latest_at > ?1)
+             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND
+               generation_paused_at IS NULL))"#,
         at
     )
     .fetch_one(db)
     .await?;
     let deadline = sqlx::query_scalar!(
-        r#"SELECT min(latest_at) AS "at: i64" FROM email WHERE state='approved' AND latest_at>?"#,
+        r#"SELECT min(latest_at) AS "at: i64"
+           FROM email
+           WHERE state = 'approved'
+             AND latest_at > ?"#,
         at
     )
     .fetch_one(db)
@@ -328,14 +340,13 @@ struct BeforeHandover {
 impl BeforeHandover {
     async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            "UPDATE email SET
-               state=CASE WHEN error IS NULL THEN 'approved' ELSE 'canceled' END,
-               planned_at=CASE WHEN error IS NULL THEN planned_at END,
-               latest_at=CASE WHEN error IS NULL THEN ?1 END,
-               mailbox_id=(SELECT id FROM mailbox WHERE id=?2),
-               from_address=?3,to_address=?4,message_id=?5,sent_at=?6,
-               updated_at=CASE WHEN error IS NULL THEN ?7 ELSE updated_at END
-             WHERE id=?8 AND state='sending'",
+            r#"UPDATE email SET state = CASE WHEN error IS NULL THEN 'approved' ELSE 'canceled' END,
+                 planned_at = CASE WHEN error IS NULL THEN planned_at END, latest_at = CASE WHEN
+                 error IS NULL THEN ?1 END, mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
+                 from_address = ?3, to_address = ?4, message_id = ?5, sent_at = ?6, updated_at = CASE
+                 WHEN error IS NULL THEN ?7 ELSE updated_at END
+               WHERE id = ?8
+                 AND state = 'sending'"#,
             self.latest_at,
             self.mailbox_id,
             self.from_address,
@@ -370,7 +381,19 @@ async fn mark_sending(
         .await?;
     let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
     let at = now();
-    let Some(before) = sqlx::query_as!(BeforeHandover,"SELECT latest_at,mailbox_id,from_address,to_address,message_id,sent_at,updated_at FROM email WHERE id=?",id).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    let Some(before) = sqlx::query_as!(
+        BeforeHandover,
+        r#"SELECT latest_at, mailbox_id, from_address, to_address, message_id, sent_at,
+             updated_at
+           FROM email
+           WHERE id = ?"#,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
     let message_id = mailbox::message_id(account);
     let from: &str = account.address.as_ref();
     let Some(handover) =

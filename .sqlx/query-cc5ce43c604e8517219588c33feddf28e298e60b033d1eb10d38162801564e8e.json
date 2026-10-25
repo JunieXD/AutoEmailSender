@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n                   FROM email\n                   WHERE state IN ('sent', 'bounced')\n                   ORDER BY sent_at DESC, id DESC\n                   LIMIT ? OFFSET ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cc5ce43c604e8517219588c33feddf28e298e60b033d1eb10d38162801564e8e"
+}

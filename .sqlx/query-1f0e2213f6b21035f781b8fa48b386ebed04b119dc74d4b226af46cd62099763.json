@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE task SET name = name\n           WHERE id = ?\n             AND state <> 'stopped'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1f0e2213f6b21035f781b8fa48b386ebed04b119dc74d4b226af46cd62099763"
+}

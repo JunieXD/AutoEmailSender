@@ -503,11 +503,15 @@ async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePoo
                     .unwrap();
                 requested.recv().unwrap();
                 assert_eq!(
-                    sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id=?")
-                        .bind(id)
-                        .fetch_one(&db)
-                        .await
-                        .unwrap(),
+                    sqlx::query_scalar::<_, String>(
+                        r#"SELECT state
+                           FROM email
+                           WHERE id = ?"#
+                    )
+                    .bind(id)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap(),
                     "sending"
                 );
                 stop(&db, task, T).await.unwrap();
@@ -530,7 +534,9 @@ async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePoo
     .unwrap();
     writer.join().unwrap();
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
-        "SELECT state,error,planned_at,latest_at FROM email WHERE id=?",
+        r#"SELECT state, error, planned_at, latest_at
+           FROM email
+           WHERE id = ?"#,
     )
     .bind(id)
     .fetch_one(&db)

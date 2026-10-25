@@ -239,7 +239,8 @@ pub async fn approve_first(
     if let Some(at) = planned {
         let latest = at + 3_600_000;
         sqlx::query!(
-            "UPDATE email SET planned_at=?,latest_at=?,manual_schedule=1 WHERE id=?",
+            r#"UPDATE email SET planned_at = ?, latest_at = ?, manual_schedule = 1
+               WHERE id = ?"#,
             at,
             latest,
             id
@@ -373,11 +374,12 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
         });
     }
     sqlx::query!(
-        r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS "body_md!",
-             resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id) AS "resent!: bool",
-             planned_at, latest_at, from_address, to_address, sent_at, error
+        r#"SELECT id, state AS "state: DeliveryColumn", subject AS "subject!", body_md AS
+             "body_md!", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)
+             AS "resent!: bool", planned_at, latest_at, from_address, to_address, sent_at, error
            FROM email
-           WHERE mentor_id = ? AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
+           WHERE mentor_id = ?
+             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
            ORDER BY id"#,
         mentor_id
     )
@@ -439,11 +441,14 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
 /// new text went out.
 pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
-        "UPDATE email SET state = 'review', planned_at = NULL, latest_at = NULL, manual_schedule = 0, approval_order = NULL, mailbox_id = NULL, from_address = NULL,
-           to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
-           html = NULL, text = NULL, refs = NULL, updated_at = ?
-         WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL
-           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))",
+        r#"UPDATE email SET state = 'review', planned_at = NULL, latest_at = NULL,
+             manual_schedule = 0, approval_order = NULL, mailbox_id = NULL, from_address = NULL,
+             to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error
+             = NULL, html = NULL, text = NULL, refs = NULL, updated_at = ?
+           WHERE id = ?
+             AND state IN ('approved', 'failed')
+             AND resend_of IS NULL
+             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))"#,
         now,
         id,
     )
@@ -477,13 +482,14 @@ pub async fn cancel(
         CancelScope::Task { task, email } => (Some(task), email, None),
     };
     Ok(sqlx::query!(
-        "UPDATE email SET state = CASE WHEN state = 'sending' THEN state ELSE 'canceled' END,
-           planned_at = CASE WHEN state = 'sending' THEN planned_at END, latest_at = NULL,
-           error = ?1, generation_claim = generation_claim + 1, generation_queued_at = NULL,
-           updated_at = ?2
-         WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4))
-             OR mentor_id IN (SELECT value FROM json_each(?5)))
-           AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending', 'failed')",
+        r#"UPDATE email SET state = CASE WHEN state = 'sending' THEN state ELSE 'canceled' END,
+             planned_at = CASE WHEN state = 'sending' THEN planned_at END, latest_at = NULL,
+             error = ?1, generation_claim = generation_claim + 1, generation_queued_at = NULL,
+             updated_at = ?2
+           WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4)) OR mentor_id IN (SELECT value FROM
+             json_each(?5)))
+             AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending',
+               'failed')"#,
         reason,
         now,
         task,
@@ -552,8 +558,10 @@ pub async fn interrupted(
 ) -> Result<Vec<Handed>, sqlx::Error> {
     // Take the write lock before selecting attempts known not to have gone out.
     let unsent = sqlx::query_scalar!(
-        "UPDATE email SET updated_at = updated_at
-         WHERE state = 'sending' AND to_address IS NULL RETURNING id"
+        r#"UPDATE email SET updated_at = updated_at
+           WHERE state = 'sending'
+             AND to_address IS NULL
+           RETURNING id"#
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -606,14 +614,18 @@ pub async fn start_sending(
     now: i64,
 ) -> Result<Option<Handover>, sqlx::Error> {
     let Some(row) = sqlx::query!(
-        r#"UPDATE email SET state = 'sending', latest_at = NULL, error = NULL, mailbox_id = ?1, from_address = ?2,
-             to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
-               ORDER BY position LIMIT 1),
-             message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
-           WHERE id = ?5 AND state = 'approved' AND planned_at <= ?4 AND (latest_at IS NULL OR latest_at > ?4)
-             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
-           RETURNING mentor_id, to_address, message_id AS "message_id!", reply_to, refs, subject AS "subject!",
-             html AS "html!", text AS "text!""#,
+        r#"UPDATE email SET state = 'sending', latest_at = NULL, error = NULL, mailbox_id = ?1,
+             from_address = ?2, to_address = (SELECT address FROM mentor_email WHERE mentor_id =
+             email.mentor_id ORDER BY POSITION LIMIT 1), message_id = coalesce(message_id, ?3),
+             sent_at = ?4, updated_at = ?4
+           WHERE id = ?5
+             AND state = 'approved'
+             AND planned_at <= ?4
+             AND (latest_at IS NULL OR latest_at > ?4)
+             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND
+               generation_paused_at IS NULL))
+           RETURNING mentor_id, to_address, message_id AS "message_id!", reply_to, refs, subject
+             AS "subject!", html AS "html!", text AS "text!""#,
         mailbox_id,
         from_address,
         message_id,
@@ -646,7 +658,9 @@ pub async fn attachment_files(
     sqlx::query_as!(
         Attached,
         r#"SELECT file_name AS "file_name!", material_id AS "material_id!"
-           FROM email_attachment WHERE email_id = ? ORDER BY file_name"#,
+           FROM email_attachment
+           WHERE email_id = ?
+           ORDER BY file_name"#,
         id
     )
     .fetch_all(conn)
@@ -655,8 +669,9 @@ pub async fn attachment_files(
 
 pub async fn sent(conn: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE email SET state = 'sent', error = NULL, sent_at = ?1, updated_at = ?1
-         WHERE id = ?2 AND state = 'sending'",
+        r#"UPDATE email SET state = 'sent', error = NULL, sent_at = ?1, updated_at = ?1
+           WHERE id = ?2
+             AND state = 'sending'"#,
         now,
         id,
     )
@@ -691,13 +706,14 @@ pub async fn failed(
     now: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE email SET
-           state = CASE WHEN state = 'sending' AND error IS NOT NULL THEN 'canceled' ELSE 'failed' END,
-           planned_at = CASE WHEN state = 'sending' AND error IS NOT NULL THEN NULL ELSE planned_at END,
-           latest_at = NULL,
-           error = CASE WHEN state = 'sending' AND error IS NOT NULL THEN error ELSE ? END,
-           updated_at = ?
-         WHERE id = ? AND state IN ('approved', 'sending')",
+        r#"UPDATE email SET state = CASE WHEN state = 'sending'
+             AND error IS NOT NULL THEN 'canceled' ELSE 'failed' END, planned_at = CASE WHEN
+               state = 'sending'
+             AND error IS NOT NULL THEN NULL ELSE planned_at END, latest_at = NULL, error = CASE
+               WHEN state = 'sending'
+             AND error IS NOT NULL THEN error ELSE ? END, updated_at = ?
+           WHERE id = ?
+             AND state IN ('approved', 'sending')"#,
         error,
         now,
         id,
@@ -814,12 +830,12 @@ pub async fn copied(
     .execute(&mut *tx)
     .await?;
     let confirmed = sqlx::query!(
-        "UPDATE email SET state = 'sent', latest_at = NULL, error = NULL, updated_at = ?1
-         WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
-           AND (state IN ('sending', 'maybe_sent')
-             OR (state = 'approved' AND sent_at IS NOT NULL
-               AND to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
-                 ORDER BY position LIMIT 1)))",
+        r#"UPDATE email SET state = 'sent', latest_at = NULL, error = NULL, updated_at = ?1
+           WHERE id = ?2
+             AND to_address IN (SELECT value FROM json_each(?3))
+             AND (state IN ('sending', 'maybe_sent') OR (state = 'approved' AND sent_at IS NOT
+               NULL AND to_address = (SELECT address FROM mentor_email WHERE mentor_id =
+               email.mentor_id ORDER BY POSITION LIMIT 1)))"#,
         now,
         id,
         Json(recipients),

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*)\n                   FROM (SELECT id FROM email WHERE state IN ('sent', 'bounced') LIMIT 100)",
+  "describe": {
+    "columns": [
+      {
+        "name": "count(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f866067c00b7b6819373ef25f5fdafe0a959c5519be91f72f1d79175ea780f04"
+}

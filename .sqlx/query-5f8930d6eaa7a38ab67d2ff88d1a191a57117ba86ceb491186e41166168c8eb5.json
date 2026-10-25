@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE task SET schedule = ?, window_dates = ?, window_start = ?, window_end = ?,\n             per_window = ?\n           WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "5f8930d6eaa7a38ab67d2ff88d1a191a57117ba86ceb491186e41166168c8eb5"
+}

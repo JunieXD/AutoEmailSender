@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT rotation AS \"rotation: profile::Rotation\"\n           FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "rotation: profile::Rotation",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "rotation"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0de347306b9d5ba710ea339e7888fe38a31a9e88189fab1af960a150ac50a471"
+}

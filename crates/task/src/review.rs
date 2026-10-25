@@ -337,7 +337,21 @@ pub async fn draft(
     key: &TaskEmail,
 ) -> std::result::Result<Option<TaskDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(r) = sqlx::query!(r#"SELECT id,mentor_id,coalesce(subject,'') AS "subject!: String",coalesce(body_md,'') AS "body_md!: String",state AS "state: DraftState",error,planned_at,latest_at FROM email WHERE id = ? AND task_id = ?"#,key.id,key.task_id).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    let Some(r) = sqlx::query!(
+        r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String", coalesce(body_md,
+             '') AS "body_md!: String", state AS "state: DraftState", error, planned_at,
+             latest_at
+           FROM email
+           WHERE id = ?
+             AND task_id = ?"#,
+        key.id,
+        key.task_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
     Ok(Some(TaskDraft {
         id: r.id,
         mentor_id: r.mentor_id,
@@ -460,8 +474,27 @@ pub async fn preview_schedule(
         unplaced: 0,
     };
     if let email::schedule::Schedule::Window(w) = schedule {
-        let count=sqlx::query_scalar!("SELECT count(*) FROM email WHERE task_id=? AND state='review' AND id IN (SELECT value FROM json_each(?))",input.task_id,Json(&input.ids)).fetch_one(&mut *tx).await?;
-        let mut reserved=sqlx::query_scalar!(r#"SELECT planned_at AS "planned_at!" FROM email WHERE task_id=? AND planned_at IS NOT NULL AND state NOT IN ('review','generating','generation_failed','canceled')"#,input.task_id).fetch_all(&mut *tx).await?;
+        let count = sqlx::query_scalar!(
+            r#"SELECT count(*)
+               FROM email
+               WHERE task_id = ?
+                 AND state = 'review'
+                 AND id IN (SELECT value FROM json_each(?))"#,
+            input.task_id,
+            Json(&input.ids)
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        let mut reserved = sqlx::query_scalar!(
+            r#"SELECT planned_at AS "planned_at!"
+               FROM email
+               WHERE task_id = ?
+                 AND planned_at IS NOT NULL
+                 AND state NOT IN ('review', 'generating', 'generation_failed', 'canceled')"#,
+            input.task_id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
         for _ in 0..count {
             match email::schedule::plan(&w, &reserved, now, &chrono::Local, &mut |_| 0) {
                 Some(slot) => {

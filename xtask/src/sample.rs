@@ -439,7 +439,10 @@ pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
     ];
     let dates_json = serde_json::to_string(&dates.map(|d| d.to_string()))
         .map_err(|e| sqlx::Error::Encode(e.into()))?;
-    let task=sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('定时联系 · 人工智能','first','template','申请交流','老师您好，我是林晓。','window',?,'09:00','11:00',1,'active',?)").bind(dates_json).bind(now).execute(db).await?.last_insert_rowid();
+    let task=sqlx::query(r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md, schedule,
+                              window_dates, window_start, window_end, per_window, state, created_at)
+                            VALUES ('定时联系 · 人工智能', 'first', 'template', '申请交流', '老师您好，我是林晓。', 'window', ?,
+                              '09:00', '11:00', 1, 'active', ?)"#).bind(dates_json).bind(now).execute(db).await?.last_insert_rowid();
     for (i, state) in [
         "review",
         "approved",
@@ -483,7 +486,11 @@ pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
             "canceled" => Some("移出任务"),
             _ => None,
         };
-        sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,subject,body_md,html,text,planned_at,latest_at,approval_order,mailbox_id,from_address,to_address,message_id,sent_at,error,created_at,updated_at) VALUES (?,?,'first',?,'申请研究方向交流','老师您好，我是林晓。','<p>老师您好，我是林晓。</p>','老师您好，我是林晓。',?,?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query(r#"INSERT INTO email (mentor_id, task_id, kind, state, subject, body_md, html, text,
+                         planned_at, latest_at, approval_order, mailbox_id, from_address, to_address,
+                         message_id, sent_at, error, created_at, updated_at)
+                       VALUES (?, ?, 'first', ?, '申请研究方向交流', '老师您好，我是林晓。', '<p>老师您好，我是林晓。</p>', '老师您好，我是林晓。',
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#)
             .bind(mentor).bind((i!=8).then_some(task)).bind(state)
             .bind((!matches!(*state,"review"|"generation_failed"|"canceled")).then_some(if sent {now-3_600_000} else {planned}))
             .bind((*state=="approved").then_some(if i==8 {planned+3_600_000} else {latest})).bind(i as i64+1)

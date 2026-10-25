@@ -54,12 +54,15 @@ async fn standalone_scheduling_rejects_past_and_withdraw_clears_the_plan(db: Sql
     assert_eq!(e.planned_at, Some(20));
     assert_eq!(e.latest_at, Some(20 + 3_600_000));
     assert!(email::withdraw(&db, e.id, 11).await.unwrap());
-    let times: (Option<i64>, Option<i64>) =
-        sqlx::query_as("SELECT planned_at,latest_at FROM email WHERE id=?")
-            .bind(e.id)
-            .fetch_one(&db)
-            .await
-            .unwrap();
+    let times: (Option<i64>, Option<i64>) = sqlx::query_as(
+        r#"SELECT planned_at, latest_at
+           FROM email
+           WHERE id = ?"#,
+    )
+    .bind(e.id)
+    .fetch_one(&db)
+    .await
+    .unwrap();
     assert_eq!(times, (None, None));
 }
 

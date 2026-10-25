@@ -834,17 +834,30 @@ async fn expired_task_mail_rolls_only_into_selected_capacity_and_manual_dates_st
             .format("%Y-%m-%d")
             .to_string()
     });
-    let task=sqlx::query("INSERT INTO task(name,kind,writer,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('定时','first','ai','window',?,'09:00','11:00',1,'paused',?)").bind(sqlx::types::Json(dates)).bind(T).execute(&db).await.unwrap().last_insert_rowid();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, schedule, window_dates, window_start,
+             window_end, per_window, state, created_at)
+           VALUES ('定时', 'first', 'ai', 'window', ?, '09:00', '11:00', 1, 'paused', ?)"#,
+    )
+    .bind(sqlx::types::Json(dates))
+    .bind(T)
+    .execute(&db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     let mentor = approve(&db, "task@example.edu.cn", &[], base).await;
     let id = first_email(&db, mentor).await.id;
-    sqlx::query("UPDATE email SET task_id=?,planned_at=?,latest_at=? WHERE id=?")
-        .bind(task)
-        .bind(base + 9 * 3_600_000)
-        .bind(base + 11 * 3_600_000)
-        .bind(id)
-        .execute(&db)
-        .await
-        .unwrap();
+    sqlx::query(
+        r#"UPDATE email SET task_id = ?, planned_at = ?, latest_at = ?
+           WHERE id = ?"#,
+    )
+    .bind(task)
+    .bind(base + 9 * 3_600_000)
+    .bind(base + 11 * 3_600_000)
+    .bind(id)
+    .execute(&db)
+    .await
+    .unwrap();
     let next = base + DAY + 9 * 3_600_000;
     send::step_in_zone(
         &db,
@@ -896,11 +909,14 @@ async fn expired_task_mail_rolls_only_into_selected_capacity_and_manual_dates_st
         Some(base + 12 * 3_600_000)
     );
     assert!(inbox.lock().unwrap().is_empty());
-    sqlx::query("UPDATE task SET state='active' WHERE id=?")
-        .bind(task)
-        .execute(&db)
-        .await
-        .unwrap();
+    sqlx::query(
+        r#"UPDATE task SET state = 'active'
+           WHERE id = ?"#,
+    )
+    .bind(task)
+    .execute(&db)
+    .await
+    .unwrap();
     email::schedule::send_now(&db, id, expired).await.unwrap();
     assert_eq!(
         send::step_in_zone(&db, &net, nowhere(), || expired, &Utc, &mut |_| 0)
@@ -935,15 +951,36 @@ async fn plan_columns_explain_waiting_and_history_is_limited_and_paged(db: Sqlit
     email::failed(&mut db.acquire().await.unwrap(), ids[4], "拒收", T)
         .await
         .unwrap();
-    sqlx::query("UPDATE email SET state='maybe_sent',mailbox_id=1,from_address='me@example.com',to_address='unknown@example.edu.cn',message_id='<unknown@example.com>',sent_at=?,error='连接中断' WHERE id=?").bind(T).bind(ids[5]).execute(&db).await.unwrap();
-    let task=sqlx::query("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES ('暂停任务','first','ai','now','paused',?)").bind(T).execute(&db).await.unwrap().last_insert_rowid();
-    sqlx::query("UPDATE email SET task_id=? WHERE id=?")
-        .bind(task)
-        .bind(ids[2])
-        .execute(&db)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE mailbox SET daily_limit=1")
+    sqlx::query(
+        r#"UPDATE email SET state = 'maybe_sent', mailbox_id = 1, from_address =
+             'me@example.com', to_address = 'unknown@example.edu.cn', message_id =
+             '<unknown@example.com>', sent_at = ?, error = '连接中断'
+           WHERE id = ?"#,
+    )
+    .bind(T)
+    .bind(ids[5])
+    .execute(&db)
+    .await
+    .unwrap();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+           VALUES ('暂停任务', 'first', 'ai', 'now', 'paused', ?)"#,
+    )
+    .bind(T)
+    .execute(&db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query(
+        r#"UPDATE email SET task_id = ?
+           WHERE id = ?"#,
+    )
+    .bind(task)
+    .bind(ids[2])
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(r#"UPDATE mailbox SET daily_limit = 1"#)
         .execute(&db)
         .await
         .unwrap();
@@ -980,7 +1017,7 @@ async fn plan_columns_explain_waiting_and_history_is_limited_and_paged(db: Sqlit
             .waiting,
         Some(Waiting::TaskPaused)
     ));
-    sqlx::query("UPDATE mailbox SET paused_until=?,pause_reason='服务商限流'")
+    sqlx::query(r#"UPDATE mailbox SET paused_until = ?, pause_reason = '服务商限流'"#)
         .bind(T + MINUTE)
         .execute(&db)
         .await
@@ -1013,8 +1050,23 @@ async fn plan_columns_explain_waiting_and_history_is_limited_and_paged(db: Sqlit
             .is_empty()
     );
     for n in 0..110 {
-        sqlx::query("INSERT INTO email(mentor_id,kind,state,subject,body_md,html,text,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,created_at,updated_at) SELECT mentor_id,'first','sent','历史','正文','<p>正文</p>','正文',?,1,'me@example.com','mentor@example.edu.cn',?,?,?,? FROM email WHERE id=?")
-            .bind(T).bind(format!("<history{n}@example.com>")).bind(T+n).bind(T).bind(T).bind(ids[0]).execute(&db).await.unwrap();
+        sqlx::query(
+            r#"INSERT INTO email (mentor_id, kind, state, subject, body_md, html, text, planned_at,
+                 mailbox_id, from_address, to_address, message_id, sent_at, created_at, updated_at)
+                 SELECT mentor_id, 'first', 'sent', '历史', '正文', '<p>正文</p>', '正文', ?, 1,
+                 'me@example.com', 'mentor@example.edu.cn', ?, ?, ?, ?
+               FROM email
+               WHERE id = ?"#,
+        )
+        .bind(T)
+        .bind(format!("<history{n}@example.com>"))
+        .bind(T + n)
+        .bind(T)
+        .bind(T)
+        .bind(ids[0])
+        .execute(&db)
+        .await
+        .unwrap();
     }
     let history = send::plan::list(&db, &q(C::History, 1), T).await.unwrap();
     assert_eq!(history.total, 100);
@@ -1156,7 +1208,25 @@ async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool
         .await
         .unwrap();
     let evidence = async || {
-        sqlx::query_as::<_, (Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, i64)>("SELECT mailbox_id,from_address,to_address,message_id,sent_at,updated_at FROM email WHERE id=?").bind(id).fetch_one(&db).await.unwrap()
+        sqlx::query_as::<
+            _,
+            (
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<i64>,
+                i64,
+            ),
+        >(
+            r#"SELECT mailbox_id, from_address, to_address, message_id, sent_at, updated_at
+               FROM email
+               WHERE id = ?"#,
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap()
     };
     let before = evidence().await;
     let calls = Cell::new(0);
@@ -1216,7 +1286,9 @@ async fn review_deadline_crossed_during_envelope_must_not_upload(db: SqlitePool)
                 Option<i64>
             ),
         >(
-            "SELECT mailbox_id,from_address,to_address,message_id,sent_at FROM email WHERE id=?"
+            r#"SELECT mailbox_id, from_address, to_address, message_id, sent_at
+               FROM email
+               WHERE id = ?"#
         )
         .bind(id)
         .fetch_one(&db)
@@ -1276,11 +1348,15 @@ async fn change_during_commit<F: Future<Output = ()>>(
                     .unwrap();
                 requested.recv().unwrap();
                 assert_eq!(
-                    sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id=?")
-                        .bind(id)
-                        .fetch_one(&db)
-                        .await
-                        .unwrap(),
+                    sqlx::query_scalar::<_, String>(
+                        r#"SELECT state
+                           FROM email
+                           WHERE id = ?"#
+                    )
+                    .bind(id)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap(),
                     "sending"
                 );
                 change(db.clone()).await;
@@ -1321,16 +1397,28 @@ async fn scheduled_task(db: &SqlitePool, email: i64) -> (i64, i64) {
             .format("%Y-%m-%d")
             .to_string()
     });
-    let task = sqlx::query("INSERT INTO task(name,kind,writer,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('定时','first','ai','window',?,'09:00','11:00',1,'active',?)")
-        .bind(sqlx::types::Json(dates)).bind(T).execute(db).await.unwrap().last_insert_rowid();
-    sqlx::query("UPDATE email SET task_id=?,planned_at=?,latest_at=? WHERE id=?")
-        .bind(task)
-        .bind(base + 9 * 3_600_000)
-        .bind(base + 11 * 3_600_000)
-        .bind(email)
-        .execute(db)
-        .await
-        .unwrap();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, schedule, window_dates, window_start,
+             window_end, per_window, state, created_at)
+           VALUES ('定时', 'first', 'ai', 'window', ?, '09:00', '11:00', 1, 'active', ?)"#,
+    )
+    .bind(sqlx::types::Json(dates))
+    .bind(T)
+    .execute(db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    sqlx::query(
+        r#"UPDATE email SET task_id = ?, planned_at = ?, latest_at = ?
+           WHERE id = ?"#,
+    )
+    .bind(task)
+    .bind(base + 9 * 3_600_000)
+    .bind(base + 11 * 3_600_000)
+    .bind(email)
+    .execute(db)
+    .await
+    .unwrap();
     (task, base + 10 * 3_600_000)
 }
 
@@ -1345,7 +1433,9 @@ async fn review_expiry_restore_must_respect_trashing_during_commit(db: SqlitePoo
     })
     .await;
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
-        "SELECT state,error,planned_at,latest_at FROM email WHERE id=?",
+        r#"SELECT state, error, planned_at, latest_at
+           FROM email
+           WHERE id = ?"#,
     )
     .bind(id)
     .fetch_one(&db)
@@ -1379,7 +1469,9 @@ async fn review3_trash_then_restore_must_not_revive_canceled_contact(db: SqliteP
     .await;
     assert!(inbox.lock().unwrap().is_empty());
     let restored = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
-        "SELECT state,error,planned_at,latest_at FROM email WHERE id=?",
+        r#"SELECT state, error, planned_at, latest_at
+           FROM email
+           WHERE id = ?"#,
     )
     .bind(id)
     .fetch_one(&db)
@@ -1420,7 +1512,9 @@ async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_
             mentor::trash::trash(&db, &[mentor], at).await.unwrap();
             assert_eq!(
                 sqlx::query_as::<_, (String, Option<String>)>(
-                    "SELECT state,error FROM email WHERE id=?"
+                    r#"SELECT state, error
+                       FROM email
+                       WHERE id = ?"#
                 )
                 .bind(id)
                 .fetch_one(&db)
@@ -1432,7 +1526,9 @@ async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_
         })
         .await;
         let (state, error) = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT state,error FROM email WHERE id=?",
+            r#"SELECT state, error
+               FROM email
+               WHERE id = ?"#,
         )
         .bind(id)
         .fetch_one(&db)
@@ -1483,7 +1579,9 @@ async fn review_expiry_restore_after_mailbox_deleted_must_finish(db: SqlitePool)
                 i64,
             ),
         >(
-            "SELECT from_address,to_address,message_id,sent_at,updated_at FROM email WHERE id=?"
+            r#"SELECT from_address, to_address, message_id, sent_at, updated_at
+               FROM email
+               WHERE id = ?"#,
         )
         .bind(id)
         .fetch_one(&db)
@@ -1505,11 +1603,15 @@ async fn review_expiry_restore_after_mailbox_deleted_must_finish(db: SqlitePool)
     assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
     assert_eq!(evidence().await, before);
     assert_eq!(
-        sqlx::query_scalar::<_, Option<i64>>("SELECT mailbox_id FROM email WHERE id=?")
-            .bind(id)
-            .fetch_one(&db)
-            .await
-            .unwrap(),
+        sqlx::query_scalar::<_, Option<i64>>(
+            r#"SELECT mailbox_id
+               FROM email
+               WHERE id = ?"#
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
         None
     );
     assert_eq!(inbox.lock().unwrap().len(), 1);
@@ -1531,11 +1633,14 @@ async fn plan_returns_resend_origin_for_approved_and_failed_resends(db: SqlitePo
     let mentor = approve(&db, "bounced@example.edu.cn", &[], T).await;
     send::step(&db, &net, nowhere(), || T).await.unwrap();
     let original = first_email(&db, mentor).await.id;
-    sqlx::query("UPDATE email SET state='bounced',error='退信' WHERE id=?")
-        .bind(original)
-        .execute(&db)
-        .await
-        .unwrap();
+    sqlx::query(
+        r#"UPDATE email SET state = 'bounced', error = '退信'
+           WHERE id = ?"#,
+    )
+    .bind(original)
+    .execute(&db)
+    .await
+    .unwrap();
     assert_eq!(
         email::resend(&db, original, T).await.unwrap(),
         email::Approved::Yes

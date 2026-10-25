@@ -342,7 +342,9 @@ pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> 
     }
     let mut tx = db.begin().await?;
     if sqlx::query!(
-        "UPDATE task SET name=name WHERE id=? AND state<>'stopped'",
+        r#"UPDATE task SET name = name
+           WHERE id = ?
+             AND state <> 'stopped'"#,
         edit.id
     )
     .execute(&mut *tx)
@@ -353,9 +355,21 @@ pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> 
         return Err(Error::Invalid("任务已停止或已删除。".into()));
     }
     email::schedule::save(&mut tx, edit.id, &edit.schedule).await?;
-    let count = sqlx::query!("UPDATE email SET planned_at=NULL,latest_at=NULL,manual_schedule=0 WHERE task_id=? AND state='approved'",edit.id).execute(&mut *tx).await?.rows_affected();
+    let count = sqlx::query!(
+        r#"UPDATE email SET planned_at = NULL, latest_at = NULL, manual_schedule = 0
+           WHERE task_id = ?
+             AND state = 'approved'"#,
+        edit.id
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     let ordered = sqlx::query_scalar!(
-        "SELECT id FROM email WHERE task_id=? AND state='approved' ORDER BY approval_order,id",
+        r#"SELECT id
+           FROM email
+           WHERE task_id = ?
+             AND state = 'approved'
+           ORDER BY approval_order, id"#,
         edit.id
     )
     .fetch_all(&mut *tx)
