@@ -441,7 +441,9 @@ impl Session<'_> {
                 continue;
             };
             let Some((kind, mentors)) = keep else {
-                self.bounced(raw, headers.date.unwrap_or(sent_at)).await?;
+                // A bounce is written before it arrives; a later Date comes from a wrong clock.
+                let written = headers.date.map_or(sent_at, |date| date.min(sent_at));
+                self.bounced(raw, written).await?;
                 continue;
             };
             let text = mail::text(raw);

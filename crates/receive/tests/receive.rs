@@ -230,6 +230,19 @@ async fn a_remote_server_outage_bounce_does_not_pause_the_sender(db: SqlitePool)
     .await;
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_bounce_dated_after_it_arrived_pauses_from_its_arrival(db: SqlitePool) {
+    let pause = pause_after_bounce(
+        &db,
+        "Date: Sun, 17 Jan 2027 08:00:00 +0000\n",
+        T + MINUTE,
+        "5.4.5",
+        "550 Message rate limit exceeded",
+    )
+    .await;
+    assert_eq!(pause.unwrap().until, T + MINUTE + 60 * MINUTE);
+}
+
 async fn bounce_without_pause(
     db: &SqlitePool,
     date: &str,
@@ -237,6 +250,21 @@ async fn bounce_without_pause(
     status: &str,
     diagnostic: &str,
 ) {
+    assert!(
+        pause_after_bounce(db, date, received, status, diagnostic)
+            .await
+            .is_none()
+    );
+}
+
+/// How the sender of a bounced email is paused after the bounce arrives.
+async fn pause_after_bounce(
+    db: &SqlitePool,
+    date: &str,
+    received: i64,
+    status: &str,
+    diagnostic: &str,
+) -> Option<mailbox::pause::Pause> {
     let (net, store) = mailbox(db, SECRET).await;
     let owner = mentor(db, "王伟", "wang@example.edu.cn").await;
     sent_email(db, owner, "sent", "<original@example.com>").await;
@@ -258,7 +286,7 @@ async fn bounce_without_pause(
         email::list(db, owner).await.unwrap()[0].delivery,
         Delivery::Bounced { .. }
     ));
-    assert!(mailbox::list(db, T).await.unwrap()[0].pause.is_none());
+    mailbox::list(db, T).await.unwrap().remove(0).pause
 }
 
 /// The UIDs whose messages were fetched beyond their headers.
