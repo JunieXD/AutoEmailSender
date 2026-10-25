@@ -193,6 +193,7 @@ pub enum Approved {
     ReplyGone,
     ReplyChanged,
     FollowUpReplied,
+    FollowUpParentBounced,
     NoAddress,
     TimePassed,
 }
@@ -554,10 +555,10 @@ pub async fn cancel(
 /// again already, or the mentor is in the trash.
 pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx::Error> {
     let mut tx = db.begin().await?;
-    // Serialize eligibility with receiving a reply and canceling pending follow-ups.
+    // Serialize eligibility with receiving replies or parent bounces and canceling follow-ups.
     let source = sqlx::query!(
         "UPDATE email SET updated_at = updated_at WHERE id = ? AND state = 'bounced'
-         RETURNING mentor_id, kind",
+         RETURNING mentor_id, kind, reply_to",
         id
     )
     .fetch_optional(&mut *tx)
@@ -565,16 +566,23 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
     let Some(source) = source else {
         return Ok(Approved::Refused);
     };
-    if source.kind == "follow_up"
-        && sqlx::query_scalar!(
+    if source.kind == "follow_up" {
+        if sqlx::query_scalar!(
             r#"SELECT EXISTS (SELECT 1 FROM mentor_contact
                WHERE mentor_id = ? AND last_reply_at IS NOT NULL) AS "replied!: bool""#,
             source.mentor_id
         )
         .fetch_one(&mut *tx)
         .await?
-    {
-        return Ok(Approved::FollowUpReplied);
+        {
+            return Ok(Approved::FollowUpReplied);
+        }
+        if thread::previous(&mut tx, source.mentor_id, source.reply_to.as_deref(), false)
+            .await?
+            .is_some_and(|parent| parent.bounced)
+        {
+            return Ok(Approved::FollowUpParentBounced);
+        }
     }
     let Some(again) = sqlx::query_scalar!(
         "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,

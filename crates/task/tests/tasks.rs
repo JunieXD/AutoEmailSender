@@ -570,6 +570,149 @@ async fn resend_bounced_follow_up_respects_received_replies_in_both_orders(db: S
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn resend_bounced_follow_up_respects_parent_bounces_in_both_orders(db: SqlitePool) {
+    let pki = fakemail::pki();
+    let (imap, store) = fakemail::imap(&pki, false).await;
+    let (smtp, inbox) = fakemail::smtp(&pki, false).await;
+    let server = |port| mailbox::Server {
+        host: "localhost".into(),
+        port,
+        security: mailbox::Security::Tls,
+    };
+    mailbox::create(
+        &db,
+        &mailbox::MailboxForm {
+            address: fakemail::ADDRESS.into(),
+            sender_name: "我".into(),
+            provider: "custom".into(),
+            smtp: server(smtp),
+            imap: server(imap),
+            daily_limit: 50,
+            min_interval_s: 0,
+        }
+        .check()
+        .unwrap(),
+        fakemail::SECRET,
+        T,
+    )
+    .await
+    .unwrap();
+    let net = net::Net::new(vec![pki.root.clone()]).unwrap();
+    receive::round(&db, &net, T).await.unwrap();
+    let mut n = 0;
+    for (external, copy) in [(false, false), (false, true), (true, false)] {
+        for bounce_first in [false, true] {
+            n += 1;
+            let m = mentor(&db, n, true).await;
+            let parent = previous(&db, m, external, T - 86_400_000).await;
+            let reply_to = if copy {
+                let copy_id = format!("<parent-copy-{n}@example.com>");
+                sqlx::query("UPDATE email SET copy_message_id = ? WHERE message_id = ?")
+                    .bind(&copy_id)
+                    .bind(&parent)
+                    .execute(&db)
+                    .await
+                    .unwrap();
+                copy_id
+            } else {
+                parent.clone()
+            };
+            let t = create(&db, &follow_form(&db, vec![m]).await, T)
+                .await
+                .unwrap();
+            let d = items(&db, t).await.remove(0);
+            approve(
+                &db,
+                &TaskApprovals {
+                    task_id: t,
+                    emails: vec![approval(&d)],
+                },
+                T,
+            )
+            .await
+            .unwrap();
+            sqlx::query(
+                "UPDATE email SET state = 'bounced', mailbox_id = 1, from_address = 'me@example.com',
+                   to_address = ?, message_id = ?, sent_at = ?, error = '550 address unknown'
+                 WHERE id = ?",
+            )
+            .bind(format!("m{n}@example.com"))
+            .bind(format!("<bounced-follow-{n}@example.com>"))
+            .bind(T)
+            .bind(d.id)
+            .execute(&db)
+            .await
+            .unwrap();
+            let fixed_parent: String =
+                sqlx::query_scalar("SELECT reply_to FROM email WHERE id = ?")
+                    .bind(d.id)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            assert_eq!(fixed_parent, reply_to);
+            if !bounce_first {
+                assert_eq!(
+                    email::resend(&db, d.id, T + 1).await.unwrap(),
+                    email::Approved::Yes
+                );
+            }
+            let recipient = if external {
+                format!("m{n}@example.com")
+            } else {
+                "mentor@example.com".into()
+            };
+            store.deliver("INBOX", T + 2, &format!(
+                "From: MAILER-DAEMON@example.com\nMessage-ID: <parent-dsn-{n}@example.com>\nContent-Type: multipart/report; report-type=delivery-status; boundary=dsn\n\n--dsn\nContent-Type: text/plain\n\nDelivery failed\n--dsn\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; example.com\n\nFinal-Recipient: rfc822; {recipient}\nAction: failed\nStatus: 5.1.1\nDiagnostic-Code: smtp; 550 user unknown\n\n--dsn\nContent-Type: message/rfc822\n\nFrom: me@example.com\nTo: {recipient}\nMessage-ID: {parent}\nSubject: 原信\n\n之前的信\n--dsn--\n"
+            ));
+            receive::round(&db, &net, T + 3).await.unwrap();
+            let bounced: bool = if external {
+                sqlx::query_scalar(
+                    "SELECT mm.bounce_reason IS NOT NULL FROM message_mentor mm
+                     JOIN message m ON m.id = mm.message_id
+                     WHERE mm.mentor_id = ? AND m.message_id = ?",
+                )
+                .bind(m)
+                .bind(&parent)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+            } else {
+                sqlx::query_scalar("SELECT state = 'bounced' FROM email WHERE message_id = ?")
+                    .bind(&parent)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap()
+            };
+            assert!(bounced);
+            if bounce_first {
+                assert_eq!(
+                    email::resend(&db, d.id, T + 4).await.unwrap(),
+                    email::Approved::FollowUpParentBounced
+                );
+            }
+            send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+                .await
+                .unwrap();
+            let resent: Option<(String, Option<String>)> =
+                sqlx::query_as("SELECT state, cancel_reason FROM email WHERE resend_of = ?")
+                    .bind(d.id)
+                    .fetch_optional(&db)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                resent,
+                if bounce_first {
+                    None
+                } else {
+                    Some(("canceled".into(), Some("上一封被退回".into())))
+                }
+            );
+            assert!(inbox.lock().unwrap().is_empty());
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn missing_parent_mailbox_blocks_follow_up_in_plan_and_sender(db: SqlitePool) {
     for address in ["me@example.com", "backup@example.com"] {
         sqlx::query(

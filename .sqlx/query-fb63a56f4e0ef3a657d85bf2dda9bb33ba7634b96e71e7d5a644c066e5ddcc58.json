@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE email SET updated_at = updated_at WHERE id = ? AND state = 'bounced'\n         RETURNING mentor_id, kind",
+  "query": "UPDATE email SET updated_at = updated_at WHERE id = ? AND state = 'bounced'\n         RETURNING mentor_id, kind, reply_to",
   "describe": {
     "columns": [
       {
@@ -24,6 +24,17 @@
             "name": "kind"
           }
         }
+      },
+      {
+        "name": "reply_to",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "reply_to"
+          }
+        }
       }
     ],
     "parameters": {
@@ -31,8 +42,9 @@
     },
     "nullable": [
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "0d5bc2a03fa19ff11e52215d6d639f5bb9e4286fc4688d20bb91dadb678e06e0"
+  "hash": "fb63a56f4e0ef3a657d85bf2dda9bb33ba7634b96e71e7d5a644c066e5ddcc58"
 }
