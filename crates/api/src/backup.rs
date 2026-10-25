@@ -7,6 +7,7 @@ use std::io;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use sqlx::migrate::MigrateError;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{Connection, SqliteConnection, SqlitePool};
 use ts_rs::TS;
@@ -22,6 +23,7 @@ pub enum Error {
     Invalid(String),
     Io(io::Error),
     Database(sqlx::Error),
+    Migration(MigrateError),
     Worker(tokio::task::JoinError),
 }
 
@@ -31,6 +33,7 @@ impl std::fmt::Display for Error {
             Self::Invalid(message) => f.write_str(message),
             Self::Io(e) => write!(f, "backup file: {e}"),
             Self::Database(e) => write!(f, "backup database: {e}"),
+            Self::Migration(e) => write!(f, "backup migration: {e}"),
             Self::Worker(e) => write!(f, "backup worker: {e}"),
         }
     }
@@ -57,6 +60,7 @@ impl Error {
             Self::Invalid(message) => message.clone(),
             Self::Io(_) => "备份文件无法读写。请检查文件是否存在、磁盘空间和目录权限后重试。".into(),
             Self::Database(_) => "备份数据库无法读取或处理，文件可能已损坏。请换一份备份重试；仍然失败时导出日志发给开发者。".into(),
+            Self::Migration(_) => "这份备份的数据库和本应用的对不上，不能恢复。".into(),
             Self::Worker(_) => "备份处理未能完成，请重试；仍然失败时导出日志发给开发者。".into(),
         }
     }
@@ -153,9 +157,9 @@ pub async fn prepare(dir: &Path, source: &Path) -> Result<RestoreInfo> {
     let unpacked =
         tokio::task::spawn_blocking(move || archive::unpack(&source, &destination)).await?;
     let result = match unpacked {
-        Ok(manifest) => {
+        Ok(mut manifest) => {
             async {
-                let info = inspect(dir, &stage, manifest).await?;
+                let info = inspect(dir, &stage, &manifest).await?;
                 // Treat imported credentials as untrusted even if the archive claims to be ours.
                 let mut conn = SqliteConnection::connect_with(
                     &SqliteConnectOptions::new()
@@ -166,6 +170,10 @@ pub async fn prepare(dir: &Path, source: &Path) -> Result<RestoreInfo> {
                 let scrubbed = scrub(&mut conn).await;
                 conn.close().await?;
                 scrubbed?;
+                // Confirmation checks the staged database, which has already been upgraded.
+                manifest.database_version = database_version();
+                serde_json::to_writer(File::create(stage.join("manifest.json"))?, &manifest)
+                    .map_err(io::Error::other)?;
                 Ok(info)
             }
             .await
@@ -178,7 +186,7 @@ pub async fn prepare(dir: &Path, source: &Path) -> Result<RestoreInfo> {
     result
 }
 
-async fn inspect(dir: &Path, stage: &Path, manifest: Manifest) -> Result<RestoreInfo> {
+async fn inspect(dir: &Path, stage: &Path, manifest: &Manifest) -> Result<RestoreInfo> {
     if manifest.application != APPLICATION {
         return Err(Error::Invalid(
             "这不是 Auto Email Sender 导出的备份，请选择本应用的备份文件。".into(),
@@ -195,17 +203,30 @@ async fn inspect(dir: &Path, stage: &Path, manifest: Manifest) -> Result<Restore
             .read_only(true),
     )
     .await?;
-    let result = inspect_database(&mut conn, dir, stage, manifest).await;
+    let result = inspect_version(&mut conn, manifest.database_version).await;
+    conn.close().await?;
+    result?;
+
+    let mut conn = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(stage.join("app.db"))
+            .journal_mode(SqliteJournalMode::Delete),
+    )
+    .await?;
+    let result = async {
+        db::MIGRATOR
+            .run(&mut conn)
+            .await
+            .map_err(Error::Migration)?;
+        inspect_schema(&mut conn).await?;
+        inspect_database(&mut conn, dir, stage, manifest).await
+    }
+    .await;
     conn.close().await?;
     result
 }
 
-async fn inspect_database(
-    conn: &mut SqliteConnection,
-    dir: &Path,
-    stage: &Path,
-    manifest: Manifest,
-) -> Result<RestoreInfo> {
+async fn inspect_version(conn: &mut SqliteConnection, manifest_version: i64) -> Result<()> {
     let integrity: Vec<String> = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_all(&mut *conn)
         .await?;
@@ -214,35 +235,60 @@ async fn inspect_database(
             "备份数据库已损坏，请换一份备份文件。".into(),
         ));
     }
-    let versions: Vec<i64> =
-        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
-            .fetch_all(&mut *conn)
-            .await?;
-    if versions.last().is_some_and(|v| *v > database_version()) {
+    let version: Option<i64> = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+        .fetch_one(&mut *conn)
+        .await?;
+    if version.is_some_and(|v| v > database_version()) {
         return Err(Error::Invalid(
             "备份的数据库版本比当前应用新，请先升级应用再恢复。".into(),
         ));
     }
-    let failed: i64 = sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE success = 0")
-        .fetch_one(&mut *conn)
-        .await?;
-    if failed > 0 {
-        return Err(Error::Invalid(
-            "备份数据库包含未完成的升级，请选择升级成功后导出的备份。".into(),
-        ));
-    }
-    if versions.last().copied() != Some(manifest.database_version)
-        || versions
-            != db::MIGRATOR
-                .iter()
-                .filter(|m| m.version <= manifest.database_version)
-                .map(|m| m.version)
-                .collect::<Vec<_>>()
-    {
+    if version != Some(manifest_version) {
         return Err(Error::Invalid(
             "备份记录的数据库版本不一致或不受支持，请选择完整的本应用备份。".into(),
         ));
     }
+    Ok(())
+}
+
+type SchemaEntry = (String, String, String, Option<String>);
+
+async fn database_schema(conn: &mut SqliteConnection) -> Result<Vec<SchemaEntry>> {
+    // SQLite reserves the literal sqlite_ prefix for internal objects, including ANALYZE tables.
+    Ok(sqlx::query_as(
+        r"SELECT type, name, tbl_name, sql FROM sqlite_schema
+          WHERE name NOT LIKE 'sqlite\_%' ESCAPE '\' ORDER BY name",
+    )
+    .fetch_all(conn)
+    .await?)
+}
+
+async fn inspect_schema(conn: &mut SqliteConnection) -> Result<()> {
+    let actual = database_schema(conn).await?;
+    let mut expected = SqliteConnection::connect("sqlite::memory:").await?;
+    let result = async {
+        db::MIGRATOR
+            .run(&mut expected)
+            .await
+            .map_err(Error::Migration)?;
+        if actual != database_schema(&mut expected).await? {
+            return Err(Error::Invalid(
+                "这份备份的数据库和本应用的对不上，不能恢复。".into(),
+            ));
+        }
+        Ok(())
+    }
+    .await;
+    expected.close().await?;
+    result
+}
+
+async fn inspect_database(
+    conn: &mut SqliteConnection,
+    dir: &Path,
+    stage: &Path,
+    manifest: &Manifest,
+) -> Result<RestoreInfo> {
     let violation = sqlx::query("PRAGMA foreign_key_check")
         .fetch_optional(&mut *conn)
         .await?;
@@ -270,7 +316,7 @@ async fn inspect_database(
         .await?;
     Ok(RestoreInfo {
         exported_at: manifest.exported_at,
-        app_version: manifest.app_version,
+        app_version: manifest.app_version.clone(),
         mentor_count,
         email_count,
         backup_directory: dir.join("backups").display().to_string(),
@@ -300,7 +346,7 @@ pub async fn confirm(db: &SqlitePool, dir: &Path, now: i64) -> Result<()> {
         }
         e => e,
     })?;
-    inspect(dir, &stage, manifest).await?;
+    inspect(dir, &stage, &manifest).await?;
     let backups = dir.join("backups");
     fs::create_dir_all(&backups)?;
     let target = backups.join(format!("{BACKUP_PREFIX}{now}.zip"));

@@ -159,6 +159,136 @@ fn archive(path: &Path, entries: &[(&str, &[u8])]) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn extra_trigger_is_rejected_and_staging_is_removed(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(&db, dir.path()).await;
+    sqlx::raw_sql(
+        "CREATE TRIGGER extra_trigger AFTER UPDATE OF secret ON mailbox BEGIN SELECT 1; END;",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let target = dir.path().join("backup.zip");
+    backup::export(&db, &dir.path().join("materials"), &target, NOW)
+        .await
+        .unwrap();
+
+    let error = backup::prepare(dir.path(), &target).await.unwrap_err();
+    assert!(matches!(error, backup::Error::Invalid(_)), "{error}");
+    assert!(!dir.path().join("restore").exists());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn changed_migration_checksum_is_rejected_and_staging_is_removed(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(&db, dir.path()).await;
+    sqlx::query("UPDATE _sqlx_migrations SET checksum = x'00' WHERE version = 1")
+        .execute(&db)
+        .await
+        .unwrap();
+    let target = dir.path().join("backup.zip");
+    backup::export(&db, &dir.path().join("materials"), &target, NOW)
+        .await
+        .unwrap();
+
+    let error = backup::prepare(dir.path(), &target).await.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            backup::Error::Migration(sqlx::migrate::MigrateError::VersionMismatch(1))
+        ),
+        "{error}"
+    );
+    assert!(!dir.path().join("restore").exists());
+}
+
+#[tokio::test]
+async fn added_missing_and_changed_schema_objects_are_rejected() {
+    let changes = [
+        "CREATE TABLE sqliteX_extra(id INTEGER)",
+        "CREATE INDEX extra_index ON mailbox(address)",
+        "CREATE VIEW extra_view AS SELECT id FROM mailbox",
+        "ALTER TABLE material ADD COLUMN extra TEXT",
+        "DROP INDEX mentor_by_score",
+        "DROP INDEX mentor_by_score; CREATE INDEX mentor_by_score ON mentor(id)",
+        "DROP VIEW mentor_contact_live;
+         CREATE VIEW mentor_contact_live AS SELECT id FROM mentor",
+        "DROP TRIGGER mentor_scan_ai;
+         CREATE TRIGGER mentor_scan_ai AFTER INSERT ON mentor_email BEGIN SELECT 1; END;",
+    ];
+    for change in changes {
+        let dir = tempfile::tempdir().unwrap();
+        let db = db::open(&dir.path().join("app.db")).await.unwrap();
+        fixture(&db, dir.path()).await;
+        let target = dir.path().join("backup.zip");
+        sqlx::raw_sql(change).execute(&db).await.unwrap();
+        backup::export(&db, &dir.path().join("materials"), &target, NOW)
+            .await
+            .unwrap();
+        let error = backup::prepare(dir.path(), &target).await.unwrap_err();
+        assert!(matches!(error, backup::Error::Invalid(_)), "{error}");
+        assert!(!dir.path().join("restore").exists());
+        db.close().await;
+    }
+}
+
+#[tokio::test]
+async fn older_database_is_upgraded_during_prepare_and_starts_after_confirmation() {
+    let source = tempfile::tempdir().unwrap();
+    let db = SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(source.path().join("app.db"))
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    db::MIGRATOR.run_to(1, &db).await.unwrap();
+    fixture(&db, source.path()).await;
+    sqlx::query("ANALYZE").execute(&db).await.unwrap();
+    let target = source.path().join("backup.zip");
+    backup::export(&db, &source.path().join("materials"), &target, NOW)
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let _lock = api::startup::DataLock::acquire(dir.path()).unwrap();
+    let current = db::open(&dir.path().join("app.db")).await.unwrap();
+    let info = backup::prepare(dir.path(), &target).await.unwrap();
+    assert_eq!((info.mentor_count, info.email_count), (1, 2));
+    let mut staged = readonly(&dir.path().join("restore/app.db")).await;
+    let version: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+        .fetch_one(&mut staged)
+        .await
+        .unwrap();
+    assert_eq!(version, db::MIGRATOR.iter().last().unwrap().version);
+    staged.close().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT max(version) FROM _sqlx_migrations")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        1
+    );
+
+    backup::confirm(&current, dir.path(), NOW + 1)
+        .await
+        .unwrap();
+    current.close().await;
+    let restored = api::startup::open(dir.path()).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT name FROM mentor")
+            .fetch_one(&restored.db)
+            .await
+            .unwrap(),
+        "测试导师"
+    );
+    assert_eq!(fs::read(dir.path().join("materials/1")).unwrap(), b"resume");
+    assert!(!dir.path().join("restore.pending").exists());
+    restored.db.close().await;
+    db.close().await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn invalid_archives_are_rejected_and_cleaned_up(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     fixture(&db, dir.path()).await;
