@@ -9,6 +9,20 @@ struct Occurrence<'a> {
     unit: usize,
     start: usize,
     end: usize,
+    leading: bool,
+}
+
+fn item_start(material: &Material, unit: usize, depth: usize) -> usize {
+    let path = &material.units[unit].path;
+    if path.len() == depth {
+        return unit;
+    }
+    let child = &path[..depth + 1];
+    let mut first = unit;
+    while first > 0 && material.units[first - 1].path.starts_with(child) {
+        first -= 1;
+    }
+    first
 }
 
 /// Checks one proposed address against all mentor names extracted from this page.
@@ -43,20 +57,38 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
         .collect();
     names.sort();
     names.dedup();
-    let mut occurrences = Vec::new();
+    let mut matches = Vec::new();
     for (unit, block) in material.units.iter().enumerate() {
         let text = compact(&block.text);
+        let line_starts: Vec<_> = block
+            .line_starts
+            .iter()
+            .map(|&start| compact(&block.text[..start]).len())
+            .collect();
         for name in &names {
             for (start, matched) in text.match_indices(name.as_str()) {
-                occurrences.push(Occurrence {
+                let end = start + matched.len();
+                matches.push(Occurrence {
                     name,
                     unit,
                     start,
-                    end: start + matched.len(),
+                    end,
+                    leading: start == 0 || line_starts.contains(&start),
                 });
             }
         }
     }
+    let occurrences: Vec<_> = matches
+        .iter()
+        .filter(|found| {
+            !matches.iter().any(|other| {
+                found.unit == other.unit
+                    && other.name.len() > found.name.len()
+                    && other.start <= found.start
+                    && found.end <= other.end
+            })
+        })
+        .collect();
     occurrences
         .iter()
         .filter(|found| found.name == name)
@@ -76,30 +108,36 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                 if !contains_other {
                     return true;
                 }
+                if !found.leading {
+                    return false;
+                }
                 if found.unit == unit {
                     return offset >= found.start
                         && !occurrences.iter().any(|other| {
                             other.unit == unit
+                                && other.leading
                                 && other.name != name
-                                && other.start >= found.end
+                                && other.start >= found.start
                                 && other.start <= offset
                         });
                 }
-                let (Some(&name_child), Some(&email_child)) =
-                    (name_path.get(common), email_path.get(common))
-                else {
+                if material.units[unit].in_footer_or_nav {
                     return false;
-                };
-                name_child < email_child
+                }
+                let name_item = item_start(material, found.unit, common);
+                let email_item = item_start(material, unit, common);
+                let first_text =
+                    (name_item..=found.unit).find(|&index| !material.units[index].text.is_empty());
+                name_item < email_item
+                    && found.start == 0
+                    && first_text == Some(found.unit)
                     && !occurrences.iter().any(|other| {
                         let path = &material.units[other.unit].path;
-                        if !path.starts_with(ancestor) {
+                        if !other.leading || other.name == name || !path.starts_with(ancestor) {
                             return false;
                         }
-                        path.get(common).is_some_and(|&child| {
-                            (child == name_child && other.name != name)
-                                || (name_child < child && child <= email_child)
-                        })
+                        let item = item_start(material, other.unit, common);
+                        name_item <= item && item <= email_item
                     })
             })
         })

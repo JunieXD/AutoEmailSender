@@ -641,6 +641,110 @@ fn application_shells_can_contain_loading_placeholders() {
 }
 
 #[test]
+fn inline_elements_do_not_invent_email_characters_or_spaces() {
+    for raw in [
+        "al<span>ice</span>@pku.edu.cn",
+        "al<b>i</b>ce@pku.edu.cn",
+        "alice@pku.<em>edu</em>.cn",
+    ] {
+        let page = parse(
+            &url(),
+            &format!("<article><h2>Alice</h2><p>{raw}</p></article>"),
+        )
+        .unwrap();
+        let evidence: Vec<_> = page.units.iter().flat_map(|u| &u.emails).collect();
+        assert_eq!(evidence.len(), 1, "{raw}: {evidence:?}");
+        assert_eq!(evidence[0].address, "alice@pku.edu.cn", "{raw}");
+        assert!(crawl::owns_email(
+            &page,
+            &["Alice"],
+            "Alice",
+            "alice@pku.edu.cn"
+        ));
+        assert!(!crawl::owns_email(
+            &page,
+            &["Alice"],
+            "Alice",
+            "ice@pku.edu.cn"
+        ));
+        let unit = page.units.iter().find(|u| !u.emails.is_empty()).unwrap();
+        let EmailLocation::Text { start, end } = evidence[0].location else {
+            panic!("expected text evidence");
+        };
+        assert_eq!(&unit.text[start..end], "alice@pku.edu.cn");
+    }
+}
+
+#[test]
+fn current_page_spans_complete_two_page_pagination() {
+    for html in [
+        r#"<nav aria-label="Page navigation"><span aria-current="page">1</span><a href="page-two.html">2</a></nav>"#,
+        r#"<nav aria-label="Page navigation"><span aria-current="page">1</span><a href="/teachers/two/">2</a></nav>"#,
+        r#"<nav class="pagination"><span class="current">1</span><a href="list.htm?page=2&sort=name">2</a></nav>"#,
+    ] {
+        let page = parse(&url(), html).unwrap();
+        assert_eq!(page.pagination.urls.len(), 1, "{html}");
+        assert!(!page.pagination.needs_browser);
+    }
+    for html in [
+        r#"<span aria-current="page">1</span><nav aria-label="Page navigation"><a href="/teachers/two/">2</a></nav>"#,
+        r#"<nav aria-label="Page navigation"><span aria-current="page">1</span><a href="/teachers/third/">3</a></nav>"#,
+        r#"<div><span class="current">1</span><a href="/teachers/two/">2</a></div>"#,
+    ] {
+        assert!(
+            parse(&url(), html).unwrap().pagination.urls.is_empty(),
+            "{html}"
+        );
+    }
+}
+
+#[test]
+fn loading_placeholders_normalize_punctuation() {
+    for text in [
+        "Loading, please wait...",
+        "Loading: please wait!",
+        "Loading，please wait……",
+        "加载中！！！",
+        "请稍候，……",
+    ] {
+        let page = parse(&url(), &format!(r#"<div id="root"><p>{text}</p></div><noscript>Please enable JavaScript</noscript><script src="/app.js"></script>"#)).unwrap();
+        assert_eq!(
+            page.needs_browser,
+            Some(BrowserReason::JavaScript),
+            "{text}"
+        );
+    }
+    for text in [
+        "教师名单，暂未公布。",
+        "Alice, alice@pku.edu.cn",
+        "Loading results: Alice",
+    ] {
+        let page = parse(&url(), &format!(r#"<div id="root"><p>{text}</p></div><noscript>Please enable JavaScript</noscript><script src="/app.js"></script>"#)).unwrap();
+        assert_eq!(page.needs_browser, None, "{text}");
+    }
+}
+
+#[test]
+fn rendered_breaks_and_alternative_text_keep_byte_positions() {
+    let page = parse(&url(), "<main>前<a href='/zs'><img alt='张 三'></a><br>  <a href='mailto:zs@pku.edu.cn'>张三</a> 后</main>").unwrap();
+    let unit = &page.units[0];
+    assert_eq!(unit.text, "前张 三\n张三 后");
+    assert_eq!(unit.alternative_text.len(), 1);
+    assert_eq!(&unit.text[unit.alternative_text[0].clone()], "张 三");
+    assert_eq!(unit.line_starts.len(), 1);
+    assert_eq!(&unit.text[unit.line_starts[0]..], "张三 后");
+    let email = unit
+        .emails
+        .iter()
+        .find(|e| e.address == "zs@pku.edu.cn")
+        .unwrap();
+    let EmailLocation::Attribute { offset, .. } = email.location else {
+        panic!("expected attribute evidence");
+    };
+    assert_eq!(&unit.text[offset..], "张三 后");
+}
+
+#[test]
 fn email_quotes_and_ellipses_are_outside_the_evidence() {
     for (raw, spelling, address) in [
         (

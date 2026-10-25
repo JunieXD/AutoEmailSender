@@ -142,8 +142,8 @@ fn flat_headings_and_contacts_keep_ownership() {
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
         "<main><div><h2>Alice</h2></div><p>Research: AI</p><p><a href='mailto:a@pku.edu.cn'>联系</a></p><h2>Bob</h2><p><a href='mailto:b@pku.edu.cn'>联系</a></p></main>",
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><aside><h2>Bob</h2></aside><p>b@pku.edu.cn</p></main>",
-        "<p>Alice a@pku.edu.cn Bob b@pku.edu.cn</p>",
-        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a> Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
+        "<p>Alice a@pku.edu.cn<br>Bob b@pku.edu.cn</p>",
+        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a><br>Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
     ] {
         check(
             html,
@@ -185,14 +185,129 @@ fn same_block_mailto_positions_handle_whitespace_and_repeated_names() {
 #[test]
 fn names_that_are_mailto_links_keep_ownership() {
     for html in [
-        r#"<p><a href="mailto:a@pku.edu.cn">Alice</a>，<a href="mailto:b@pku.edu.cn">Bob</a></p>"#,
-        "<p><a href='mailto:a@pku.edu.cn'>Alice</a> <a href='mailto:b@pku.edu.cn'>Bob</a></p>",
+        r#"<p><a href="mailto:a@pku.edu.cn">Alice</a>，<br><a href="mailto:b@pku.edu.cn">Bob</a></p>"#,
+        "<p><a href='mailto:a@pku.edu.cn'>Alice</a><br><a href='mailto:b@pku.edu.cn'>Bob</a></p>",
     ] {
         check(
             html,
             &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
         );
     }
+}
+
+#[test]
+fn longer_names_contain_no_independent_short_name_occurrence() {
+    for (other, email) in [("王明华", "wmh@pku.edu.cn"), ("陈王明", "cwm@pku.edu.cn")] {
+        for html in [
+            format!("<p>王明 wm@pku.edu.cn<br>{other} {email}</p>"),
+            format!(
+                "<table><tr><td>王明</td><td>wm@pku.edu.cn</td></tr><tr><td>{other}</td><td>{email}</td></tr></table>"
+            ),
+        ] {
+            check(&html, &[("王明", &["wm@pku.edu.cn"]), (other, &[email])]);
+        }
+    }
+    check(
+        "<p><a href='mailto:js@pku.edu.cn'>John Smith</a><br><a href='mailto:jss@pku.edu.cn'>John Smithson</a></p>",
+        &[
+            ("John Smith", &["js@pku.edu.cn"]),
+            ("John Smithson", &["jss@pku.edu.cn"]),
+        ],
+    );
+}
+
+#[test]
+fn prose_mentions_do_not_start_or_block_flat_ownership() {
+    for html in [
+        "<main><article><h2>Alice</h2><p>Collaborates with Bob</p><p>Email: a@pku.edu.cn</p></article><article><h2>Bob</h2><p>Email: b@pku.edu.cn</p></article></main>",
+        "<main><article><h2>Alice</h2><p>Collaborates with\nBob</p><p>Email: a@pku.edu.cn</p></article><article><h2>Bob</h2><p>Email: b@pku.edu.cn</p></article></main>",
+        "<main><h2>Alice</h2><p>Collaborates with Bob</p><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
+        "<p>Alice<br>Collaborates with Bob<br>Email: a@pku.edu.cn<br>Bob<br>Email: b@pku.edu.cn</p>",
+    ] {
+        check(
+            html,
+            &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+        );
+    }
+    check(
+        "<main><article><h2>张三</h2><p>与李四共同指导研究生</p><p>张三邮箱：zs@pku.edu.cn</p></article><article><h2>李四</h2><p>ls@pku.edu.cn</p></article></main>",
+        &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
+    );
+}
+
+#[test]
+fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
+    for region in ["footer", "nav"] {
+        for contact in [
+            "学院邮箱: office@pku.edu.cn",
+            "<p>学院邮箱: office@pku.edu.cn</p>",
+        ] {
+            let html = format!(
+                "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p><{region}>{contact}</{region}></main>"
+            );
+            check(
+                &html,
+                &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+            );
+            let page = parse(&url(), &html).unwrap();
+            for name in ["Alice", "Bob"] {
+                assert!(
+                    !owns_email(&page, &["Alice", "Bob"], name, "office@pku.edu.cn"),
+                    "{name}: {html}"
+                );
+            }
+        }
+    }
+    let html = "<main><article><h2>Alice</h2><p>Collaborates with Bob</p><p>a@pku.edu.cn</p><footer>office@pku.edu.cn</footer></article><article><h2>Bob</h2><p>b@pku.edu.cn</p></article></main>";
+    check(
+        html,
+        &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+    );
+    let page = parse(&url(), html).unwrap();
+    assert!(!owns_email(
+        &page,
+        &["Alice", "Bob"],
+        "Alice",
+        "office@pku.edu.cn"
+    ));
+}
+
+#[test]
+fn direct_name_text_and_links_precede_child_contact_blocks() {
+    check(
+        "<main><a href='/a'>Alice</a><p>a@pku.edu.cn</p><a href='/b'>Bob</a><p>b@pku.edu.cn</p></main>",
+        &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+    );
+    check(
+        "<main>张三<p>zs@pku.edu.cn</p>李四<p>ls@pku.edu.cn</p></main>",
+        &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
+    );
+}
+
+#[test]
+fn image_link_alternatives_provide_positioned_names() {
+    for attribute in ["alt", "title", "aria-label"] {
+        let html = format!(
+            "<div><figure><a href='/a'><img src='a.jpg' {attribute}='Alice'></a><p>a@pku.edu.cn</p></figure><figure><a href='/b'><img src='b.jpg' {attribute}='Bob'></a><p>b@pku.edu.cn</p></figure></div>"
+        );
+        check(
+            &html,
+            &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+        );
+    }
+    for attribute in ["title", "aria-label"] {
+        let html = format!(
+            "<ul><li><a href='/zs' {attribute}='张三'><img src='zs.jpg'></a><p>zs@pku.edu.cn</p></li><li><a href='/ls' {attribute}='李四'><img src='ls.jpg'></a><p>ls@pku.edu.cn</p></li></ul>"
+        );
+        check(
+            &html,
+            &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
+        );
+    }
+    check(
+        "<ul><li><a href='/zs'><img alt='张三'></a><p>zs@pku.edu.cn</p></li><li><a href='/ls'><img alt='李四'></a><p>ls@pku.edu.cn</p></li></ul>",
+        &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
+    );
 }
 
 #[test]
@@ -229,7 +344,7 @@ fn blocks_keep_order_paths_and_only_their_own_evidence() {
             .iter()
             .map(|u| u.text.as_str())
             .collect::<Vec<_>>(),
-        ["前", "张 三 联系", "后", "b@pku.edu.cn"]
+        ["前", "张 三联系", "后", "b@pku.edu.cn"]
     );
     assert_eq!(page.units[0].path, page.units[2].path);
     assert!(page.units[1].path.starts_with(&page.units[0].path));

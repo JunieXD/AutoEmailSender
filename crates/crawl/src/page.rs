@@ -2,6 +2,7 @@ use ego_tree::iter::Edge;
 use regex::Regex;
 use scraper::{ElementRef, Html, Node, Selector};
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 use crate::{
     CrawlError, PageUrl,
@@ -51,6 +52,11 @@ pub struct Unit {
     pub emails: Vec<EmailEvidence>,
     /// Original DOM element ordinals from the root through the owning block.
     pub path: Vec<usize>,
+    /// UTF-8 positions after rendered line breaks; the block itself starts at zero.
+    pub line_starts: Vec<usize>,
+    /// UTF-8 ranges of link labels inserted from alternative text attributes.
+    pub alternative_text: Vec<Range<usize>>,
+    pub in_footer_or_nav: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -158,20 +164,41 @@ fn navigation(script: &str, pattern: &Regex, url: &PageUrl) -> Option<PageUrl> {
 }
 
 pub(crate) fn visible_text(element: ElementRef<'_>) -> String {
-    let text = element
-        .descendants()
-        .filter_map(|node| {
-            let Node::Text(text) = node.value() else {
-                return None;
-            };
-            node.ancestors()
-                .take_while(|n| n.id() != element.id())
-                .filter_map(ElementRef::wrap)
-                .all(|e| !ignored(e))
-                .then_some(text.as_ref())
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
+    if element
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .any(ignored)
+    {
+        return String::new();
+    }
+    let mut text = String::new();
+    let mut suppressed = 0;
+    for edge in element.traverse() {
+        match edge {
+            Edge::Open(node) => {
+                if let Some(element) = ElementRef::wrap(node) {
+                    if suppressed > 0 || ignored(element) {
+                        suppressed += 1;
+                    } else if block(element.value().name()) || element.value().name() == "br" {
+                        text.push(' ');
+                    }
+                } else if suppressed == 0
+                    && let Node::Text(value) = node.value()
+                {
+                    text.push_str(value);
+                }
+            }
+            Edge::Close(node) => {
+                if let Some(element) = ElementRef::wrap(node) {
+                    if suppressed > 0 {
+                        suppressed -= 1;
+                    } else if block(element.value().name()) {
+                        text.push(' ');
+                    }
+                }
+            }
+        }
+    }
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -180,29 +207,39 @@ fn label(element: ElementRef<'_>) -> String {
     if !text.is_empty() {
         return text;
     }
-    for attribute in ["aria-label", "title", "alt"] {
+    alternative_text(element)
+        .or_else(|| {
+            element
+                .descendants()
+                .filter_map(ElementRef::wrap)
+                .filter(|e| e.value().name() == "img")
+                .find_map(alternative_text)
+        })
+        .unwrap_or_else(|| "无文字链接".into())
+}
+
+fn alternative_text(element: ElementRef<'_>) -> Option<String> {
+    let attributes = if element.value().name() == "img" {
+        ["alt", "title", "aria-label"]
+    } else {
+        ["aria-label", "title", "alt"]
+    };
+    for attribute in attributes {
         if let Some(text) = element
             .value()
             .attr(attribute)
             .filter(|s| !s.trim().is_empty())
         {
-            return text.trim().into();
+            return Some(text.trim().into());
         }
     }
-    for image in element
-        .descendants()
-        .filter_map(ElementRef::wrap)
-        .filter(|e| e.value().name() == "img")
-    {
-        if let Some(text) = image
-            .value()
-            .attr("alt")
-            .or_else(|| image.value().attr("title"))
-        {
-            return text.into();
-        }
-    }
-    "无文字链接".into()
+    None
+}
+
+fn add_alternative(unit: &mut Unit, text: &str) {
+    let start = unit.text.len();
+    unit.text.push_str(text);
+    unit.alternative_text.push(start..unit.text.len());
 }
 
 /// Extracts data only; no scripts or event handlers are ever executed.
@@ -241,6 +278,7 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
     let mut ordinal = 0;
     let mut controls = Vec::new();
     let mut encrypted = false;
+    let mut regions = Vec::new();
     for edge in document.root_element().traverse() {
         match edge {
             Edge::Open(node) => {
@@ -255,6 +293,9 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                 let element_index = ordinal;
                 ordinal += 1;
                 path.push(element_index);
+                if matches!(element.value().name(), "footer" | "nav") {
+                    regions.push(element_index);
+                }
                 encrypted |= encrypted_field(element);
                 if suppressed > 0 || ignored(element) {
                     suppressed += 1;
@@ -266,8 +307,7 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                     current.path = path.clone();
                 } else if element.value().name() == "br" {
                     current.text.push('\n');
-                } else {
-                    current.text.push(' ');
+                    current.line_starts.push(current.text.len());
                 }
                 let href = element.value().attr("href");
                 if let Some(href) = href {
@@ -288,6 +328,17 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                         },
                     });
                     current.text.push_str(&format!(" {address} "));
+                }
+                if element.value().name() == "img"
+                    && let Some(parent) = std::iter::once(element)
+                        .chain(element.ancestors().filter_map(ElementRef::wrap))
+                        .find(|e| e.value().name() == "a" || e.value().attr("onclick").is_some())
+                    && !(parent.id() != element.id()
+                        && visible_text(parent).is_empty()
+                        && alternative_text(parent).is_some())
+                    && let Some(text) = alternative_text(element)
+                {
+                    add_alternative(&mut current, &text);
                 }
                 let direct = href
                     .filter(|h| !h.trim().is_empty() && !h.trim().starts_with('#'))
@@ -312,6 +363,13 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                         || element.value().attr("onclick").is_some()
                 };
                 if control {
+                    if element.value().name() != "img"
+                        && (link.is_some() || href.is_some())
+                        && visible_text(element).is_empty()
+                        && let Some(text) = alternative_text(element)
+                    {
+                        add_alternative(&mut current, &text);
+                    }
                     let text = if element.value().name() == "input" {
                         element
                             .value()
@@ -346,13 +404,14 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                     finish(&mut current, &mut units, &emails);
                     blocks.pop();
                     current.path = blocks.last().cloned().unwrap_or_default();
-                } else {
-                    current.text.push(' ');
                 }
             }
         }
     }
     finish(&mut current, &mut units, &emails);
+    for unit in &mut units {
+        unit.in_footer_or_nav = regions.iter().any(|ordinal| unit.path.contains(ordinal));
+    }
     let pagination = pagination::extract(&controls, url, has_scripts)?;
     let script_entry = document.select(&scripts).any(|e| {
         executable_script(e)
@@ -379,10 +438,11 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                 .iter()
                 .any(|cue| text.contains(cue))
     });
+    let punctuation = Regex::new(r"[\p{P}\s]").map_err(|e| CrawlError::Parse(e.to_string()))?;
     let placeholder_only = units.iter().all(|unit| {
         unit.links.is_empty()
             && unit.emails.is_empty()
-            && loading_placeholder(&unit.text)
+            && loading_placeholder(&unit.text, &punctuation)
             && mount_ordinals
                 .iter()
                 .any(|ordinal| unit.path.contains(ordinal))
@@ -427,6 +487,14 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
 fn finish(current: &mut Unit, units: &mut Vec<Unit>, emails: &Emails) {
     let mut unit = std::mem::take(current);
     let (text, positions) = normalize_text(&unit.text);
+    for start in &mut unit.line_starts {
+        *start = positions[*start];
+    }
+    unit.line_starts.dedup();
+    for range in &mut unit.alternative_text {
+        range.start = positions[range.start];
+        range.end = text[..positions[range.end]].trim_end().len();
+    }
     unit.text = text;
     for evidence in &mut unit.emails {
         if let EmailLocation::Attribute { offset, .. } = &mut evidence.location {
@@ -484,10 +552,10 @@ fn executable_script(element: ElementRef<'_>) -> bool {
     )
 }
 
-fn loading_placeholder(text: &str) -> bool {
-    let text: String = text
+fn loading_placeholder(text: &str, punctuation: &Regex) -> bool {
+    let text: String = punctuation
+        .replace_all(text, "")
         .chars()
-        .filter(|c| !c.is_whitespace() && !matches!(c, '.' | '…' | '。'))
         .flat_map(char::to_lowercase)
         .collect();
     matches!(

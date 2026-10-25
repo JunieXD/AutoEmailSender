@@ -189,8 +189,9 @@ pub(crate) fn extract(
     url: &PageUrl,
     has_scripts: bool,
 ) -> Result<Pagination, CrawlError> {
-    let current =
-        super::page::selector(".curr_page, .current_page, .current-page, [aria-current='page']")?;
+    let current = super::page::selector(
+        ".curr_page, .current_page, .current-page, .current, [aria-current='page']",
+    )?;
     let total = super::page::selector(".all_pages, .total_pages, .total-pages")?;
     let page_counts = Regex::new(r"(?:第\s*)?(\d+)\s*(?:页\s*)?/\s*(?:共\s*)?(\d+)\s*页?")
         .map_err(|e| CrawlError::Parse(e.to_string()))?;
@@ -217,14 +218,14 @@ pub(crate) fn extract(
                         .filter(|c| c.element.ancestors().any(|n| n.id() == element.id()))
                         .collect();
                     let group = members.iter().all(|c| !matches!(c.kind, Kind::Other));
-                    let numbers: Vec<_> = members
+                    let mut numbers: Vec<_> = members
                         .iter()
                         .filter_map(|c| match c.kind {
                             Kind::Number(n) => Some(n),
                             _ => None,
                         })
                         .collect();
-                    let consecutive = group
+                    let consecutive_links = group
                         && numbers
                             .windows(2)
                             .any(|pair| pair[0].checked_add(1) == Some(pair[1]));
@@ -245,9 +246,23 @@ pub(crate) fn extract(
                         })
                         .flatten();
                     let last = counts.is_some_and(|(current, total)| total > 0 && current >= total);
+                    let recognized = marked || consecutive_links || counts.is_some();
+                    if recognized {
+                        numbers.extend(
+                            element
+                                .select(&current)
+                                .filter_map(|e| visible_text(e).parse::<u32>().ok()),
+                        );
+                        numbers.sort_unstable();
+                        numbers.dedup();
+                    }
+                    let consecutive = recognized
+                        && numbers
+                            .windows(2)
+                            .any(|pair| pair[0].checked_add(1) == Some(pair[1]));
                     contexts.push(Context {
                         element,
-                        recognized: marked || consecutive || counts.is_some(),
+                        recognized,
                         consecutive,
                         last,
                     });
