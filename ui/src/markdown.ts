@@ -2,8 +2,8 @@ import type { Node } from "@tiptap/pm/model";
 import { marked, type Tokens } from "marked";
 import cjkFriendly from "marked-cjk-friendly";
 
-// Letters are Markdown with only the formats docs/design.md#邮件格式 allows. The renderer and
-// editor share this parser; the serializer writes what it reads back the same.
+// Letters are Markdown with only the formats docs/design.md#邮件格式 allows. This is the app's one
+// Markdown parser, and the editor's serializer that writes what it reads back the same.
 
 /** Whether a letter may link to an address: web pages and email addresses, never scripts. */
 export const linkable = (address: string) => /^(https?|mailto):/i.test(address);

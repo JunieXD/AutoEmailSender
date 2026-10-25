@@ -1,7 +1,5 @@
 //! Checks before an email goes out (docs/design.md#联系): problems the user may fix or ignore.
 
-use comrak::nodes::NodeValue;
-use comrak::{Arena, Options, parse_document};
 use hickory_resolver::Resolver;
 use hickory_resolver::net::NetError;
 use hickory_resolver::proto::rr::RData;
@@ -65,34 +63,15 @@ pub fn letter(
     body_md: &str,
     attached: bool,
 ) -> Vec<Problem> {
-    let arena = Arena::new();
-    let mut options = Options::default();
-    options.extension.cjk_friendly_emphasis = true;
-    let root = parse_document(&arena, body_md, &options);
-    let mut body_text = String::new();
-    for node in root.descendants() {
-        match &node.data().value {
-            NodeValue::Text(text) => body_text.push_str(text),
-            NodeValue::Code(code) => body_text.push_str(&code.literal),
-            NodeValue::CodeBlock(code) => body_text.push_str(&code.literal),
-            NodeValue::HtmlInline(html) => body_text.push_str(html),
-            NodeValue::HtmlBlock(html) => body_text.push_str(&html.literal),
-            NodeValue::SoftBreak
-            | NodeValue::LineBreak
-            | NodeValue::Paragraph
-            | NodeValue::Item(_) => body_text.push('\n'),
-            _ => {}
-        }
-    }
     let mut problems: Vec<Problem> = template::PLACEHOLDERS
         .into_iter()
         .filter(|name| {
             let written = format!("{{{name}}}");
-            subject.contains(&written) || body_text.contains(&written)
+            subject.contains(&written) || body_md.contains(&written)
         })
         .map(|name| Problem::Placeholder { name: name.into() })
         .collect();
-    for text in [subject, &body_text] {
+    for text in [subject, body_md] {
         for rest in text.split("【请").skip(1) {
             if let Some((content, _)) = rest.split_once('】') {
                 let prefix: String = content
@@ -435,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn student_decision_markers_are_checked_as_visible_text() {
+    fn student_decision_markers_are_found_with_either_colon_or_a_line_break() {
         for (body, marker) in [
             ("王老师：【重点】这是一段正常内容。", None),
             (
@@ -447,20 +426,8 @@ mod tests {
                 Some("【请补充:面谈时间】"),
             ),
             (
-                "王老师：时间为【请**补充**：面谈时间】。",
-                Some("【请补充：面谈时间】"),
-            ),
-            (
                 "王老师：时间为【请补\n充：面谈时间】。",
                 Some("【请补\n充：面谈时间】"),
-            ),
-            (
-                "王老师：时间为【请[补充](https://example.edu)：面谈时间】。",
-                Some("【请补充：面谈时间】"),
-            ),
-            (
-                "王老师：时间为【**请补充：**面谈时间】。",
-                Some("【请补充：面谈时间】"),
             ),
         ] {
             let expected: Vec<_> = marker
