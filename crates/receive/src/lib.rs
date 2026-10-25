@@ -682,22 +682,7 @@ impl Session<'_> {
             if linked.rows_affected() == 1 {
                 self.round.changed = true;
                 mentor::assign_mailbox(tx, mentor, self.mailbox_id).await?;
-                if sqlx::query_scalar!("SELECT kind FROM message WHERE id=?", id)
-                    .fetch_one(&mut *tx)
-                    .await?
-                    == "reply"
-                {
-                    email::cancel(
-                        tx,
-                        email::CancelScope::FollowUps {
-                            mentor,
-                            parent: None,
-                        },
-                        "导师已回信",
-                        self.now,
-                    )
-                    .await?;
-                }
+                email::follow_up::cancel_replied(tx, mentor, self.now).await?;
             }
         }
         Ok(())

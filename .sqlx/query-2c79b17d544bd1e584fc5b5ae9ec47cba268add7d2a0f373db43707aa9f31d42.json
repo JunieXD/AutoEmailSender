@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email (mentor_id, kind, reply_to, state, subject, created_at, updated_at)\n             VALUES (?, 'follow_up', ?, 'review', ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "2c79b17d544bd1e584fc5b5ae9ec47cba268add7d2a0f373db43707aa9f31d42"
+}

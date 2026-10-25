@@ -9,7 +9,7 @@ import { Link } from "@tanstack/react-router";
 import { Paperclip, Send, TriangleAlert } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useEffectEvent, useRef } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { DraftKind, FirstDraft, Material, Problem, ReplyDraft, TaskEmail } from "@/api/types";
+import type { DraftKind, FirstDraft, Material, Problem, ReplyDraft, FollowUpDraft, TaskEmail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -22,10 +22,11 @@ export function useDraftSave<Edit, Saved>(
   query: string,
   mentorId: number,
   persist: (edit: Edit) => Promise<Saved>,
+  draftId?: number,
 ) {
   const queryClient = useQueryClient();
-  const mutationKey = [operation, mentorId];
-  const scope = { id: `${operation} ${mentorId}` };
+  const mutationKey = draftId === undefined ? [operation, mentorId] : [operation, mentorId, draftId];
+  const scope = { id: mutationKey.join(" ") };
   const save = useMutation({
     mutationKey,
     scope,
@@ -170,7 +171,7 @@ export function AttachMenu({
   onAttach: (material: Material) => void;
   mentorId: number;
   kind: DraftKind;
-  onPrepare: () => Promise<FirstDraft | ReplyDraft | null>;
+  onPrepare: () => Promise<FirstDraft | ReplyDraft | FollowUpDraft | null>;
   onUploaded?: () => void;
   task?: TaskEmail;
 }) {
@@ -193,7 +194,12 @@ export function AttachMenu({
         ? await call("attachTaskMaterial", { ...task, materialId: id })
         : await call("attachDraftMaterial", { mentorId, kind, materialId: id });
       await queryClient.invalidateQueries({
-        queryKey: task ? ["getTaskDraft", task.id] : [kind === "first" ? "getFirstDraft" : "getReplyDraft", mentorId],
+        queryKey: task
+          ? ["getTaskDraft", task.id]
+          : [
+              kind === "first" ? "getFirstDraft" : kind === "follow_up" ? "getFollowUpDraft" : "getReplyDraft",
+              mentorId,
+            ],
         refetchType: "all",
       });
       if (!applied && prepared) throw new Error("草稿或材料已发生变化。请重新打开草稿，从附件菜单选择材料。");

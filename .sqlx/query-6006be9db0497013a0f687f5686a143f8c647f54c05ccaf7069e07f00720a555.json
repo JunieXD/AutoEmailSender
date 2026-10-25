@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name, kind AS \"kind: Kind\", writer AS \"writer: Writer\",\n        template_id, template_body_md, model_config_id FROM task WHERE id=?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "kind: Kind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "writer: Writer",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "writer"
+          }
+        }
+      },
+      {
+        "name": "template_id",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_id"
+          }
+        }
+      },
+      {
+        "name": "template_body_md",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_body_md"
+          }
+        }
+      },
+      {
+        "name": "model_config_id",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "model_config_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "6006be9db0497013a0f687f5686a143f8c647f54c05ccaf7069e07f00720a555"
+}

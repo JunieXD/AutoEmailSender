@@ -136,7 +136,7 @@ function Composer({
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
     // The names too, which the check reads from the mentor, so that one edited is checked anew.
-    queryKey: ["checkFirstDraft", letter, mentor.name, mentor.aliases],
+    queryKey: ["checkFirstDraft", letter, mentor.name, mentor.aliases, mentor.contact],
     queryFn: () => call("checkFirstDraft", letter),
     placeholderData: keepPreviousData,
     // Checked again as the user types; what an earlier text had is of no more use.
@@ -156,7 +156,12 @@ function Composer({
   const approve = useMutation({
     mutationKey: approveKey,
     scope,
-    mutationFn: (e: FirstEmail) => call("approveFirstEmail", e),
+    mutationFn: (e: FirstEmail) => {
+      const saved = queryClient.getQueryData<FirstDraft | null>(["getFirstDraft", mentorId]);
+      if (!saved || saved.subject !== e.subject.trim() || saved.bodyMd !== e.bodyMd)
+        throw new Error("草稿尚未保存成功，请修改后重试。");
+      return call("approveFirstEmail", e);
+    },
     onSuccess: async () => {
       // The correspondence takes this composer's place first, so that it does not show the draft emptied.
       await queryClient.invalidateQueries({ queryKey: ["listCorrespondence", mentorId] });
@@ -196,6 +201,7 @@ function Composer({
   const [scheduleOpen, setScheduleOpen] = useState(false);
   function send(plannedAt: number | null = null) {
     if (style.data) {
+      save.mutate(letter);
       approve.mutate({
         ...letter,
         plannedAt,
@@ -396,15 +402,17 @@ function attachedByDefault(materials: Material[]): number[] {
 }
 
 /** Lists the templates; a letter already written is replaced only once confirmed. */
-function TemplateMenu({
+export function TemplateMenu({
   mentorId,
   disabled,
   written,
   onApply,
+  bodyOnly = false,
 }: {
   mentorId: number;
   disabled: boolean;
   written: boolean;
+  bodyOnly?: boolean;
   onApply: (filled: { subject: string; bodyMd: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -442,7 +450,9 @@ function TemplateMenu({
       <PopoverContent align="start" className="flex w-72 flex-col p-1.5">
         {chosen ? (
           <div className="p-1.5">
-            <p>用“{chosen.name}”替换现在写的主题和正文？</p>
+            <p>
+              用“{chosen.name}”替换现在写的{bodyOnly ? "正文" : "主题和正文"}？
+            </p>
             <div className="mt-3 flex justify-end gap-2">
               <Button
                 variant="quiet"

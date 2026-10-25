@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET updated_at = ?\n         WHERE id = ? AND mentor_id = ? AND reply_to = ? AND kind = 'follow_up'\n           AND task_id IS NULL AND state = 'review'\n           AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)\n           AND mentor_id IN (SELECT mentor_id FROM mentor_email)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "0a17a21f036bc8db6b361f0021dc6049e157c0b6c1599be99f19b211e842c557"
+}

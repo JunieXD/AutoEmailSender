@@ -1,11 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT subject,body_md FROM template WHERE id = ?",
+  "query": "SELECT id AS \"template_id?\",subject,body_md FROM template WHERE id=?",
   "describe": {
     "columns": [
       {
-        "name": "subject",
+        "name": "template_id?",
         "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "template",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -16,7 +27,7 @@
       },
       {
         "name": "body_md",
-        "ordinal": 1,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -31,8 +42,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "621681118e5e202cdee459e52c3d2942ca6ceb8d7cfff90bdd0074321e821c7b"
+  "hash": "da1ef58585a2e7be17054b162f6c286500be0289874944fc1eebba5867301d5b"
 }

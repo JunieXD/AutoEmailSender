@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT material_id FROM task_material\n         WHERE task_id = ? AND role = 'attachment' ORDER BY material_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "material_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task_material",
+            "name": "material_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3485b1c2a8004fef44450ef67bd2c91a8bd62a8cc45ac255333b47f92d54a041"
+}

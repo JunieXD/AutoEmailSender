@@ -254,3 +254,9 @@ pub async fn scheduled_work(
 ) -> Result<send::plan::ScheduledWork, CallError> {
     Ok(send::plan::work(&ctx.db, now()).await?)
 }
+
+pub async fn restart_task(ctx: &Context, key: TaskId) -> Result<task::NewTask, CallError> {
+    task::restart(&ctx.db, key.id)
+        .await?
+        .ok_or_else(|| CallError::not_found("任务已被删除。"))
+}

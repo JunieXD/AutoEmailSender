@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM task WHERE id = ?1)\n               AND NOT EXISTS (\n                 SELECT 1 FROM json_each(?2) selected\n                 WHERE NOT EXISTS (SELECT 1 FROM email\n                   WHERE task_id = ?1 AND mentor_id = selected.value)\n               ) AS \"valid!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "valid!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "25e65011d40cf686a1abadb1dedc9c93c10065c6db7bd743c94926aa27bbf5f4"
+}

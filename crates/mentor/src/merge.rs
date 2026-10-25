@@ -37,9 +37,30 @@ impl std::error::Error for MergeError {}
 
 #[derive(Debug, serde::Serialize, ts_rs::TS)]
 #[ts(rename = "MergePreview")]
+#[serde(rename_all = "camelCase")]
 pub struct Preview {
     pub emails: usize,
     pub affiliations: usize,
+    pub discarded_drafts: Vec<email::DraftKind>,
+}
+
+async fn conflicting_drafts(
+    conn: &mut sqlx::SqliteConnection,
+    keep: i64,
+    other: i64,
+) -> Result<Vec<email::DraftKind>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT kind AS "kind: email::DraftKind" FROM email
+           WHERE mentor_id = ?2 AND state = 'review' AND task_id IS NULL
+             AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.state = 'review'
+               AND k.task_id IS NULL AND (k.kind = email.kind
+                 OR k.kind IN ('first', 'follow_up') AND email.kind IN ('first', 'follow_up')))
+           ORDER BY id"#,
+        keep,
+        other,
+    )
+    .fetch_all(conn)
+    .await
 }
 
 pub async fn preview(db: &SqlitePool, keep: i64, other: i64) -> Result<Preview, MergeError> {
@@ -56,6 +77,7 @@ pub async fn preview(db: &SqlitePool, keep: i64, other: i64) -> Result<Preview, 
     Ok(Preview {
         emails: fields.emails.len(),
         affiliations: fields.affiliations.len(),
+        discarded_drafts: conflicting_drafts(&mut tx, keep, other).await?,
     })
 }
 
@@ -175,16 +197,15 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     }
 
     // A draft each can have only one: the kept mentor's stays.
-    sqlx::query!(
-        "DELETE FROM email
-         WHERE mentor_id = ?2 AND state = 'review' AND task_id IS NULL AND kind IN ('first', 'reply')
-           AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.state = 'review'
-                         AND k.task_id IS NULL AND k.kind = email.kind)",
-        keep,
-        other,
-    )
-    .execute(&mut *tx)
-    .await?;
+    for kind in conflicting_drafts(&mut tx, keep, other).await? {
+        sqlx::query!(
+            "DELETE FROM email WHERE mentor_id = ? AND kind = ? AND state = 'review' AND task_id IS NULL",
+            other,
+            kind,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
     // Resolve task membership before changing mentor_id; delivered letters must survive the merge.
     sqlx::query!(
         "DELETE FROM email
@@ -233,6 +254,7 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     )
     .execute(&mut *tx)
     .await?;
+    email::follow_up::cancel_replied(&mut tx, keep, now).await?;
     sqlx::query!(
         "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id)
          SELECT ?, tag_id FROM mentor_tag WHERE mentor_id = ?",

@@ -297,12 +297,17 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     .flat_map(|(state, weight)| std::iter::repeat_n(state, weight))
     .collect();
     let mut sent = Vec::new();
-    let mut drafted = HashSet::new();
+    let mut unfinished = HashSet::new();
     for i in 1..=scale.emails {
         let mentor = *pick(&mut rng, &contacted);
-        let state = *pick(&mut rng, &states);
-        // A mentor has at most one first email being written outside a task.
-        let kind = if rng.f32() < 0.85 && (state != "review" || drafted.insert(mentor)) {
+        let mut state = *pick(&mut rng, &states);
+        // A mentor can have only one unfinished first letter or follow-up.
+        if matches!(state, "review" | "approved" | "failed" | "maybe_sent")
+            && !unfinished.insert(mentor)
+        {
+            state = "sent";
+        }
+        let kind = if rng.f32() < 0.85 {
             "first"
         } else {
             "follow_up"
@@ -646,5 +651,36 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
                 .await?;
         }
     }
+    for (i, name) in ["追问草稿示例", "待追问示例"].iter().enumerate() {
+        let m = mentor::create(
+            db,
+            &MentorFields {
+                name: (*name).into(),
+                emails: vec![format!("detail-followup-{i}@example.edu.cn")],
+                ..Default::default()
+            },
+            now,
+        )
+        .await?;
+        let at = now - 5 * DAY;
+        sqlx::query("INSERT INTO email(mentor_id,kind,state,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,subject,body_md,html,text,created_at,updated_at) VALUES(?,'first','sent',?,1,'linxiao@example.com',?,?,?,'申请研究方向交流','老师您好，我是林晓。','<p>老师您好，我是林晓。</p>','老师您好，我是林晓。',?,?)")
+            .bind(m).bind(at).bind(format!("detail-followup-{i}@example.edu.cn")).bind(format!("<detail-parent-{i}@example.com>")).bind(at).bind(at).bind(at).execute(db).await?;
+        if i == 0 {
+            sqlx::query("INSERT INTO email(mentor_id,kind,reply_to,state,subject,body_md,created_at,updated_at) VALUES(?,'follow_up',?,'review','Re: 申请研究方向交流','老师您好，想请问您是否方便查看之前的申请。',?,?)")
+                .bind(m).bind(format!("<detail-parent-{i}@example.com>")).bind(now).bind(now).execute(db).await?;
+        }
+    }
+    let m = mentor::create(
+        db,
+        &MentorFields {
+            name: "重新发起示例".into(),
+            emails: vec!["restart@example.edu.cn".into()],
+            ..Default::default()
+        },
+        now,
+    )
+    .await?;
+    let t=sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,state,created_at) VALUES('首封 · 重新发起示例','first','template','研究方向交流','{导师姓名}老师：您好，我是林晓，希望和您交流研究方向。','now','stopped',?)").bind(now).execute(db).await?.last_insert_rowid();
+    sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,subject,body_md,cancel_reason,created_at,updated_at) VALUES(?,?,'first','canceled','研究方向交流','老师您好，我是林晓。','任务停止',?,?)").bind(m).bind(t).bind(now).bind(now).execute(db).await?;
     Ok(())
 }
