@@ -161,7 +161,7 @@ function Crawls() {
           一位导师约 5000 Token{cost !== null && `，按已填单价约 ¥${cost.toFixed(3)}／位`}
           。实际用量随人数和网页长度变化，另计寻找名单的用量。
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           自动寻找名单和分类，读取个人页后进入候选审核。网页标题、文字、链接文字和公开的导师资料会发给模型服务商。
         </p>
         <ModelAction
@@ -173,13 +173,8 @@ function Crawls() {
           {start.isPending ? "正在开始…" : "开始抓取"}
         </ModelAction>
         <div id="crawl-url-error" className="text-sm text-muted-foreground">
-          {!urls.trim()
-            ? "请填写至少一个学院官网或教师名单网址"
-            : validation.error
-              ? errorMessage(validation.error)
-              : validation.isFetching
-                ? "正在检查网址…"
-                : null}
+          {urls.trim() &&
+            (validation.error ? errorMessage(validation.error) : validation.isFetching ? "正在检查网址…" : null)}
         </div>
         <ErrorText error={models.error ?? start.error} />
       </section>
