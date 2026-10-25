@@ -1,4 +1,5 @@
-import { Plugin } from "@tiptap/pm/state";
+import type { Node } from "@tiptap/pm/model";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { type Editor, EditorContent, Extension, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -26,6 +27,21 @@ export const letterFormats = StarterKit.configure({
 /** How the editor reads a letter's HTML: spaces typed in it, such as an indent, are text. */
 export const letterParsing = { preserveWhitespace: true } as const;
 
+/** Decorates the ranges `find` gives in the text of each textblock. */
+function decorate(doc: Node, className: string, find: (text: string) => [number, number][]) {
+  const found: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock) return true;
+    // Marks do not occupy positions; each hard break occupies one, like its newline.
+    const text = node.textBetween(0, node.content.size, "", "\n");
+    for (const [from, to] of find(text)) {
+      found.push(Decoration.inline(pos + 1 + from, pos + 1 + to, { class: className }));
+    }
+    return false;
+  });
+  return DecorationSet.create(doc, found);
+}
+
 /**
  * Highlights the placeholders the app fills in, such as `{导师姓名}`, so a mistyped one stands out by
  * staying plain.
@@ -38,23 +54,37 @@ function highlightPlaceholders(names: string[], className: string, unfilled: boo
       return [
         new Plugin({
           props: {
-            decorations(state) {
-              const found: Decoration[] = [];
-              state.doc.descendants((node, pos) => {
-                if (!node.isTextblock) return true;
-                // Marks do not occupy positions; each hard break occupies one, like its newline.
-                const text = node.textBetween(0, node.content.size, "", "\n");
-                for (const m of text.matchAll(pattern)) {
-                  found.push(
-                    Decoration.inline(pos + 1 + m.index, pos + 1 + m.index + m[0].length, {
-                      class: className,
-                    }),
-                  );
-                }
-                return false;
-              });
-              return DecorationSet.create(state.doc, found);
-            },
+            decorations: (state) =>
+              decorate(state.doc, className, (text) =>
+                Array.from(text.matchAll(pattern), (m) => [m.index, m.index + m[0].length]),
+              ),
+          },
+        }),
+      ];
+    },
+  });
+}
+
+const quoted = new PluginKey<string[]>("quoted");
+
+/** Marks what AI 核对 found no support for; a transaction with `quoted` meta replaces the quotes. */
+function highlightQuotes(initial: string[]) {
+  return Extension.create({
+    name: "highlightQuotes",
+    addProseMirrorPlugins() {
+      return [
+        new Plugin({
+          key: quoted,
+          state: { init: () => initial, apply: (tr, quotes: string[]) => tr.getMeta(quoted) ?? quotes },
+          props: {
+            decorations: (state) =>
+              decorate(state.doc, "rounded-sm bg-warning-soft", (text) =>
+                (quoted.getState(state) ?? []).flatMap((q) => {
+                  const at: [number, number][] = [];
+                  for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + q.length)) at.push([i, i + q.length]);
+                  return at;
+                }),
+              ),
           },
         }),
       ];
@@ -72,6 +102,7 @@ export function LetterEditor({
   markdown,
   placeholders,
   unfilled = false,
+  quotes = [],
   disabled,
   compact = false,
   focus = 0,
@@ -85,6 +116,8 @@ export function LetterEditor({
    * (docs/design.md#联系), and none can be inserted.
    */
   unfilled?: boolean;
+  /** What AI 核对 found no support for, marked where it appears. */
+  quotes?: string[];
   compact?: boolean;
   focus?: number;
   /** While the letter is being saved, so nothing typed meanwhile goes unsaved. */
@@ -99,6 +132,7 @@ export function LetterEditor({
         unfilled ? "rounded-sm bg-warning-soft text-warning" : "rounded-sm bg-selected text-brand-text",
         unfilled,
       ),
+      highlightQuotes(quotes),
     ],
     content: toHtml(markdown),
     parseOptions: letterParsing,
@@ -111,6 +145,12 @@ export function LetterEditor({
     onUpdate: ({ editor: e }) => onChange(toMarkdown(e.state.doc)),
   });
   useEffect(() => editor.setEditable(!disabled, false), [editor, disabled]);
+  useEffect(() => {
+    // Derived anew on each render, the quotes redraw only when they change.
+    if (quotes.join("\n") !== quoted.getState(editor.state)?.join("\n")) {
+      editor.view.dispatch(editor.state.tr.setMeta(quoted, quotes));
+    }
+  }, [editor, quotes]);
   const [tools, setTools] = useState(false);
   useEffect(() => {
     if (focus > 0) editor.commands.focus("end");

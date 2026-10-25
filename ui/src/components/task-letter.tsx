@@ -10,13 +10,14 @@ import { Link } from "@tanstack/react-router";
 import { useImperativeHandle, useRef, useState, type Ref, type ReactNode } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { DraftEdit, Material, MentorDetail, TaskDraft, TaskSummary } from "@/api/types";
-import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
+import { AiButton, FactCheckStatus, Rewrite, useFactCheck, useWriting } from "@/components/ai-writing";
 import { Attachments } from "@/components/attachments";
 import { LetterBody } from "@/components/correspondence";
 import {
   AttachMenu,
   LetterProblems,
   LetterSend,
+  quotes,
   useDraftSave,
   useUploading,
   waitForSaves,
@@ -107,6 +108,7 @@ export function TaskLetter({
     await waitForSaves(client, ["uploadLetterMaterial", mentor.id], false);
     await flush();
   }
+  const factCheck = useFactCheck(["getTaskDraft", draft.id], "checkTaskDraft", saved);
   const approve = useMutation({
     mutationKey: approveKey,
     scope,
@@ -188,6 +190,7 @@ export function TaskLetter({
             markdown={body.markdown}
             placeholders={placeholders}
             unfilled
+            quotes={quotes(problems)}
             disabled={locked}
             onChange={(bodyMd) => edit({ ...letter, bodyMd })}
           />
@@ -210,11 +213,14 @@ export function TaskLetter({
         }
       />
       {!readOnly && !review && (
-        <LetterProblems
-          problems={problems}
-          locked={locked}
-          onSalutation={(salutation) => rewrite({ ...letter, bodyMd: `${salutation}\n\n${letter.bodyMd}` })}
-        />
+        <>
+          <LetterProblems
+            problems={problems}
+            locked={locked}
+            onSalutation={(salutation) => rewrite({ ...letter, bodyMd: `${salutation}\n\n${letter.bodyMd}` })}
+          />
+          <FactCheckStatus check={factCheck} stored={draft.factCheck} />
+        </>
       )}
       <div className="flex flex-wrap items-center gap-2">
         {!readOnly &&
@@ -279,6 +285,7 @@ export function TaskLetter({
                   onClick={() => {
                     writing.forget();
                     rewrite({ ...letter, ...review.after });
+                    factCheck.start();
                   }}
                 >
                   采用修改

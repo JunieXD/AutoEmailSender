@@ -20,8 +20,15 @@ import type {
   MentorDetail,
   TemplateSummary,
 } from "@/api/types";
-import { AiButton, Rewrite, useWriting } from "@/components/ai-writing";
-import { AttachMenu, LetterProblems, LetterSend, useDraftSave, useUploading } from "@/components/letter-composer";
+import { AiButton, FactCheckStatus, Rewrite, useFactCheck, useWriting } from "@/components/ai-writing";
+import {
+  AttachMenu,
+  LetterProblems,
+  LetterSend,
+  quotes,
+  useDraftSave,
+  useUploading,
+} from "@/components/letter-composer";
 import { Attachments } from "@/components/attachments";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { dropDrafts } from "@/components/mentor";
@@ -79,7 +86,7 @@ function Composer({
 }) {
   const mentorId = mentor.id;
   const queryClient = useQueryClient();
-  const { save, last, scope } = useDraftSave<FirstDraftEdit, FirstDraft | null>(
+  const { save, last, scope, flush } = useDraftSave<FirstDraftEdit, FirstDraft | null>(
     "saveFirstDraft",
     "getFirstDraft",
     mentorId,
@@ -125,9 +132,11 @@ function Composer({
   // the user has since written something; otherwise it is compared with what replacing would change.
   const fills = drafting && (!touched || !isWritten(letter));
   const review = answer && !fills ? { before: letter, after: answer } : undefined;
+  const factCheck = useFactCheck(["getFirstDraft", mentorId], "checkFirstDraft", flush);
   const fill = useEffectEvent((drafted: Letter) => {
     writing.forget();
     rewrite({ ...letter, ...drafted });
+    factCheck.start();
   });
   useEffect(() => {
     if (answer && fills) fill(answer);
@@ -232,6 +241,7 @@ function Composer({
           markdown={body.markdown}
           placeholders={placeholders}
           unfilled
+          quotes={quotes(problems)}
           disabled={locked}
           onChange={(bodyMd) => edit({ ...letter, bodyMd })}
         />
@@ -249,6 +259,7 @@ function Composer({
           onSalutation={(salutation) => rewrite({ ...letter, bodyMd: `${salutation}\n\n${letter.bodyMd}` })}
         />
       )}
+      {!review && <FactCheckStatus check={factCheck} stored={draft?.factCheck} />}
       {checks.error && <p className="text-sm text-destructive">发送前检查未能完成：{errorMessage(checks.error)}</p>}
       {!touched && prefill.error && (
         <p className="text-sm text-destructive">
@@ -323,6 +334,7 @@ function Composer({
                 onClick={() => {
                   writing.forget();
                   rewrite({ ...letter, ...review.after });
+                  factCheck.start();
                 }}
               >
                 采用修改

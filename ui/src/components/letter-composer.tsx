@@ -86,7 +86,14 @@ export function LetterProblems({
         {problems.map((p) => (
           <li key={problemText(p)} className="flex items-start gap-2">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" strokeWidth={1.8} />
-            {problemText(p)}
+            {p.kind === "unsupported_claim" ? (
+              <div className="min-w-0 break-words">
+                {problemText(p)}
+                <p className="text-muted-foreground">{p.reason}</p>
+              </div>
+            ) : (
+              problemText(p)
+            )}
             {p.kind === "no_salutation" && (
               <Button
                 variant="quiet"
@@ -103,6 +110,11 @@ export function LetterProblems({
       </ul>
     )
   );
+}
+
+/** What AI 核对 found no support for, to mark in the letter. */
+export function quotes(problems: Problem[]): string[] {
+  return problems.flatMap((p) => (p.kind === "unsupported_claim" ? [p.quote] : []));
 }
 
 /** Both clicking and the reply shortcut use the same disabled button and problem confirmation. */
@@ -153,7 +165,7 @@ function problemText(p: Problem): string {
   if (p.kind === "other_mentor") return `草稿里出现了任务中另一位导师的姓名“${p.name}”，请核对。`;
   if (p.kind === "recently_contacted") return "最近 7 天内已经联系过这位导师，请核对是否需要再次联系。";
   if (p.kind === "no_attachment") return "正文提到了附件，但还没有添加附件。";
-  if (p.kind === "unsupported_claim") return p.quote;
+  if (p.kind === "unsupported_claim") return `材料里找不到依据：“${p.quote}”`;
   return `查不到 ${p.domain} 的收信服务器，请核对导师的邮箱地址。`;
 }
 

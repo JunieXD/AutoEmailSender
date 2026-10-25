@@ -18,7 +18,13 @@ const GROUPS = [
       { to: "/settings/letter-style", label: "信件样式" },
     ],
   },
-  { label: "邮件", sections: [{ to: "/settings/mailboxes", label: "邮箱" }] },
+  {
+    label: "邮件",
+    sections: [
+      { to: "/settings/mailboxes", label: "邮箱" },
+      { to: "/settings/checks", label: "发送前检查" },
+    ],
+  },
   { label: "AI", sections: [{ to: "/settings/models", label: "模型" }] },
   {
     label: "应用",
@@ -142,13 +148,13 @@ export function AboutSection() {
 export function NotificationsSection() {
   return (
     <Section title="通知">
-      <NotificationToggle
+      <Toggle
         get="getReplyNotifications"
         set="setReplyNotifications"
         label="新回信时发系统通知"
         description="应用不在前台时，导师回信会弹出系统通知。"
       />
-      <NotificationToggle
+      <Toggle
         get="getBackgroundNotifications"
         set="setBackgroundNotifications"
         label="后台工作做完时通知"
@@ -158,14 +164,39 @@ export function NotificationsSection() {
   );
 }
 
-function NotificationToggle({
+/** What docs/design.md#联系 checks before sending; the rules always, AI 核对 when turned on. */
+export function ChecksSection() {
+  return (
+    <Section title="发送前检查">
+      <div className="text-sm text-muted-foreground">
+        <p>草稿写好或修改后自动检查，问题列在正文下方，发送或批准时再提醒一次，可以忽略。总会检查：</p>
+        <ul className="mt-1.5 list-disc pl-5">
+          <li>占位符没有替换，或留着“【请补充：……】”这样的标记</li>
+          <li>正文提到附件，却没有添加附件</li>
+          <li>出现了任务中另一位导师的姓名</li>
+          <li>正文里没有称呼导师</li>
+          <li>最近 7 天内已经联系过这位导师</li>
+          <li>导师邮箱的域名查不到收信服务器</li>
+        </ul>
+      </div>
+      <Toggle
+        get="getAiFactCheck"
+        set="setAiFactCheck"
+        label="AI 核对"
+        description="用过 AI 起草或改写的信，AI 会找出其中你的经历、成果和数字在个人资料和写信参考材料里找不到依据的地方。这会把信、个人资料里的姓名和意向研究方向、写信参考材料发给模型服务商，每封多调用一次模型。"
+      />
+    </Section>
+  );
+}
+
+function Toggle({
   get,
   set,
   label,
   description,
 }: {
-  get: "getReplyNotifications" | "getBackgroundNotifications";
-  set: "setReplyNotifications" | "setBackgroundNotifications";
+  get: "getReplyNotifications" | "getBackgroundNotifications" | "getAiFactCheck";
+  set: "setReplyNotifications" | "setBackgroundNotifications" | "setAiFactCheck";
   label: string;
   description: string;
 }) {
@@ -195,8 +226,8 @@ function NotificationToggle({
         </button>
       </label>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
-      {query.error && <p className="mt-2 text-sm text-destructive">通知设置未能加载：{errorMessage(query.error)}</p>}
-      {save.error && <p className="mt-2 text-sm text-destructive">通知设置未能保存：{errorMessage(save.error)}</p>}
+      {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
+      {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
     </div>
   );
 }
