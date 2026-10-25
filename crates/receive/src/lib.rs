@@ -16,7 +16,7 @@ use tokio::sync::{Mutex, MutexGuard, Notify, watch};
 use ts_rs::TS;
 
 mod mail;
-mod quote;
+pub mod quote;
 
 const MINUTE: i64 = 60_000;
 /// How long to wait before receiving again.

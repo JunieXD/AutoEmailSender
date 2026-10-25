@@ -711,6 +711,7 @@ export interface Operations {
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
   checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   approveReply: { input: ReplyEmail; output: null };
+  writeReply: { input: ReplyDraftEdit; output: Letter };
   attachDraftMaterial: { input: DraftMaterial; output: boolean };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };

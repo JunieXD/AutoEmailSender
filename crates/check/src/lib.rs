@@ -15,7 +15,7 @@ use ts_rs::TS;
 pub enum Problem {
     /// A placeholder left as written, as what fills it was missing.
     Placeholder {
-        name: &'static str,
+        name: String,
     },
     /// The body never addresses the mentor; `salutation`, a Markdown paragraph, would.
     NoSalutation {
@@ -69,8 +69,20 @@ pub fn letter(
             let written = format!("{{{name}}}");
             subject.contains(&written) || body_md.contains(&written)
         })
-        .map(|name| Problem::Placeholder { name })
+        .map(|name| Problem::Placeholder { name: name.into() })
         .collect();
+    for text in [subject, body_md] {
+        for rest in text.split("【请补充：").skip(1) {
+            if let Some((content, _)) = rest.split_once('】') {
+                let problem = Problem::Placeholder {
+                    name: format!("【请补充：{content}】"),
+                };
+                if !problems.contains(&problem) {
+                    problems.push(problem);
+                }
+            }
+        }
+    }
     let addressed = std::iter::once(mentor)
         .chain(aliases.iter().map(String::as_str))
         .any(|name| addresses(body_md, name));
@@ -364,12 +376,33 @@ mod tests {
                 false
             ),
             [
-                Problem::Placeholder { name: "学院" },
                 Problem::Placeholder {
-                    name: "我的姓名"
+                    name: "学院".into()
+                },
+                Problem::Placeholder {
+                    name: "我的姓名".into()
                 }
             ]
         );
+    }
+
+    #[test]
+    fn student_decisions_are_unfilled_placeholders_until_replaced() {
+        let marker = "【请补充：方便面谈的时间】";
+        assert_eq!(
+            letter(
+                "王伟",
+                &[],
+                marker,
+                &format!("王老师：{marker}，{marker}"),
+                false
+            ),
+            [Problem::Placeholder {
+                name: marker.into()
+            }]
+        );
+        assert!(letter("王伟", &[], "", "王老师：周五下午方便面谈。", false).is_empty());
+        assert!(letter("王伟", &[], "", "王老师：【请补充：尚未闭合", false).is_empty());
     }
 
     #[test]
