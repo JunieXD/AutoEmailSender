@@ -32,6 +32,22 @@ fn tag_form_is_checked() {
     }
 }
 
+#[test]
+fn tag_names_reject_import_separators_for_create_and_rename() {
+    for name in ["AI;机器人", "AI；机器人", "AI、机器人"] {
+        assert!(
+            TagForm {
+                name: name.into(),
+                color: "#991b1b".into()
+            }
+            .check()
+            .is_err()
+        );
+        assert!(tags::checked_name(name).is_err());
+    }
+    assert_eq!(tags::checked_name(" AI, 机器人 ").unwrap(), "AI, 机器人");
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn tags_keep_the_users_order(db: SqlitePool) {
     let mentor = MentorFields {

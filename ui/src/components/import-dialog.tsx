@@ -1,0 +1,440 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
+import { exportMentors } from "@/api/app";
+import { call, errorMessage } from "@/api/call";
+import type {
+  Decisions,
+  Field,
+  Imported,
+  ImportProfile,
+  PreviewImport,
+  Preview,
+  ImportSetup as Setup,
+  TableFormat,
+} from "@/api/types";
+import { Differences, FIELD_NAMES } from "@/components/differences";
+import { placeOf, refreshMentors } from "@/components/mentor";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { base64 } from "@/file";
+import { reconcileChoices, reconcileMatches } from "@/import-decisions";
+
+type ImportFile = Omit<PreviewImport, "decisions">;
+
+const EMPTY: Decisions = { take: [], matches: [], restore: [] };
+const fields = Object.keys(FIELD_NAMES).filter((value): value is Field => value in FIELD_NAMES);
+const SELECT = "h-9 max-w-full rounded-md border border-border bg-background px-2 text-sm";
+
+export function ImportDialog({ onClose, onImported }: { onClose: () => void; onImported: (result: Imported) => void }) {
+  const queryClient = useQueryClient();
+  const picker = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<ImportFile | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [decisions, setDecisions] = useState<Decisions>(EMPTY);
+  const chosen = useRef(EMPTY);
+  // A late answer must not replace the preview for a newer file or column mapping.
+  const revision = useRef(0);
+  const read = useMutation({
+    mutationFn: async ({
+      selected,
+      setup,
+      choices,
+      remapping,
+    }: {
+      selected: File | ImportFile;
+      setup: Setup;
+      choices: Decisions;
+      remapping?: Preview;
+    }) => {
+      const version = ++revision.current;
+      if (selected instanceof File && selected.size > 20 * 1024 * 1024)
+        throw new Error("文件超过 20 MB，请缩小文件后重试");
+      const input =
+        selected instanceof File
+          ? { fileName: selected.name, data: await base64(selected), setup }
+          : { ...selected, setup };
+      let basis = remapping;
+      if (remapping) {
+        basis = await call("previewImport", { ...input, decisions: EMPTY });
+        // Restore approvals and differences depend on the selected targets, not the defaults.
+        choices = { ...choices, matches: reconcileMatches(basis, choices, remapping) };
+      }
+      const result =
+        basis && choices.take.length + choices.matches.length + choices.restore.length === 0
+          ? basis
+          : await call("previewImport", { ...input, decisions: choices });
+      return { version, input, result, choices, basis: basis ?? result };
+    },
+    onSuccess: ({ version, input, result, choices, basis }) => {
+      if (version !== revision.current) return;
+      setFile({ ...input, setup: { sheet: result.sheet, columns: result.columns.map((c) => c.field) } });
+      setPreview(result);
+      const next = reconcileChoices(result, choices, basis);
+      setDecisions(next);
+      chosen.current = next;
+    },
+  });
+  function choose(next: Decisions | ((previous: Decisions) => Decisions)) {
+    const choices = typeof next === "function" ? next(chosen.current) : next;
+    chosen.current = choices;
+    setDecisions(choices);
+    if (file) read.mutate({ selected: file, setup: file.setup, choices });
+  }
+  const template = useMutation({
+    mutationFn: (format: TableFormat) =>
+      exportMentors({ scope: { kind: "ids", value: [] }, format, note: true }, "导师导入模板"),
+  });
+  const save = useMutation({
+    mutationFn: (input: ImportFile) => call("importMentors", { ...input, decisions }),
+    onSuccess: (result) => {
+      refreshMentors(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["listTags"] });
+      onImported(result);
+      onClose();
+    },
+  });
+  const busy = read.isPending || save.isPending;
+  const takeFile = (selected: File) => {
+    setPreview(null);
+    setFile(null);
+    setDecisions(EMPTY);
+    chosen.current = EMPTY;
+    save.reset();
+    read.mutate({ selected, setup: { sheet: null, columns: null }, choices: EMPTY });
+  };
+  function remap(setup: Setup) {
+    if (!file || !preview) return;
+    save.reset();
+    const choices = setup.sheet === preview.sheet ? chosen.current : { ...chosen.current, matches: [], restore: [] };
+    chosen.current = choices;
+    setDecisions(choices);
+    read.mutate({ selected: file, setup, choices, remapping: preview });
+  }
+  const error = read.error ?? save.error ?? template.error;
+  const differenceIds = new Set(preview?.differences.map((d) => d.id));
+  const possible = preview !== null && preview.created + preview.updated > 0;
+  return (
+    <Dialog
+      open
+      onOpenChange={(open, event) => {
+        if (open || busy) return;
+        if (file && (event.reason === "outside-press" || event.reason === "escape-key")) return;
+        onClose();
+      }}
+    >
+      <DialogContent className={preview ? "w-[1040px]" : ""}>
+        <DialogHeader>导入表格</DialogHeader>
+        <DialogBody className="space-y-5 pb-4">
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const selected = e.dataTransfer.files[0];
+              if (selected && !busy) takeFile(selected);
+            }}
+            className="flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-border p-4"
+          >
+            <input
+              ref={picker}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              hidden
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                e.target.value = "";
+                if (selected) takeFile(selected);
+              }}
+            />
+            <Button variant="quiet" disabled={busy} onClick={() => picker.current?.click()}>
+              {file ? "重新选文件" : "选择文件"}
+            </Button>
+            <p className="min-w-0 flex-1 text-sm break-words text-muted-foreground phone:order-first phone:w-full phone:flex-none">
+              {file?.fileName ?? "CSV、XLSX 或 XLS，不超过 20 MB；也可以拖到这里"}
+            </p>
+            <div className="flex flex-wrap items-center gap-1 text-sm">
+              <span className="text-muted-foreground">下载模板</span>
+              {(["xlsx", "csv"] as const).map((format) => (
+                <Button
+                  key={format}
+                  variant="ghost"
+                  size="sm"
+                  disabled={template.isPending}
+                  onClick={() => template.mutate(format)}
+                >
+                  {format.toUpperCase()}
+                </Button>
+              ))}
+            </div>
+          </div>
+          {!preview && (
+            <div className="space-y-1 text-sm text-muted-foreground">
+              <p>一行一位导师，姓名必填</p>
+              <p>几个邮箱用换行或分号隔开</p>
+              <p>第二个单位写在“学校 2”这样的列里</p>
+            </div>
+          )}
+          {read.isPending && (
+            <p role="status" className="text-sm text-muted-foreground">
+              正在读取并比对表格…
+            </p>
+          )}
+          {preview && (
+            <div className={`space-y-5 ${read.isPending ? "pointer-events-none opacity-50" : ""}`}>
+              {preview.sheets.length > 1 && (
+                <label className="flex items-center gap-3 text-sm">
+                  工作表
+                  <select
+                    aria-label="工作表"
+                    className={SELECT}
+                    value={preview.sheet}
+                    onChange={(e) => remap({ sheet: Number(e.target.value), columns: null })}
+                  >
+                    {preview.sheets.map((name, n) => (
+                      <option key={n} value={n}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <section>
+                <h3 className="mb-2 text-sm font-medium">列的对应</h3>
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {preview.columns.map((c, n) => (
+                    <label key={n} className="flex w-36 shrink-0 flex-col gap-1.5 rounded-md bg-muted p-2.5 text-sm">
+                      <span className="truncate" title={c.header}>
+                        {c.header || `第 ${n + 1} 列`}
+                      </span>
+                      <select
+                        aria-label={`第 ${n + 1} 列对应`}
+                        className={`${SELECT} ${c.field ? "" : "text-muted-foreground"}`}
+                        value={c.field ?? ""}
+                        onChange={(e) => {
+                          const columns = preview.columns.map((column) => column.field);
+                          const field = fields.find((f) => f === e.target.value);
+                          columns[n] = field ?? null;
+                          remap({ sheet: preview.sheet, columns });
+                        }}
+                      >
+                        <option value="">不导入</option>
+                        {Object.entries(FIELD_NAMES).map(([f, name]) => (
+                          <option key={f} value={f}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </section>
+              {preview.issue ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {preview.issue}
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 rounded-lg bg-muted p-3 text-sm" role="status">
+                    <span>
+                      新增 <strong>{preview.created}</strong> 位
+                    </span>
+                    <span>
+                      补充资料 <strong>{preview.supplemented}</strong> 位
+                    </span>
+                    <span>
+                      资料不同 <strong>{differenceIds.size}</strong> 位
+                    </span>
+                    <span>
+                      没有变化 <strong>{preview.unchanged}</strong> 位
+                    </span>
+                  </div>
+                  {preview.differences.length > 0 && (
+                    <section>
+                      <h3 className="mb-2 font-medium">资料不同</h3>
+                      <Differences
+                        items={preview.differences}
+                        take={decisions.take}
+                        onChange={(take) => choose((d) => ({ ...d, take }))}
+                      />
+                    </section>
+                  )}
+                  {preview.maybeSame.length > 0 && (
+                    <section>
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <h3 className="mr-auto font-medium">可能是同一位 · {preview.maybeSame.length} 组</h3>
+                        <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, matches: [] }))}>
+                          全部按默认
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            choose((d) => ({ ...d, matches: preview.maybeSame.map((m) => ({ row: m.row, id: null })) }))
+                          }
+                        >
+                          全部新建
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {preview.maybeSame.map((m) => (
+                          <div key={m.row} className="rounded-lg border border-border p-3 text-sm">
+                            <div className="grid grid-cols-2 gap-4 phone:grid-cols-1">
+                              <div>
+                                <span className="mb-1 block text-xs text-muted-foreground">
+                                  表格 · 第 {m.rows.join("、")} 行
+                                </span>
+                                <ProfileDetails profile={m.incoming} />
+                              </div>
+                              <fieldset className="min-w-0 space-y-3">
+                                <legend className="mb-1 text-xs text-muted-foreground">选择并入哪一位，或新建</legend>
+                                {m.candidates.map((candidate) => (
+                                  <label key={candidate.id} className="flex items-start gap-2">
+                                    <input
+                                      type="radio"
+                                      name={`same-${m.row}`}
+                                      className="mt-1"
+                                      checked={m.selected === candidate.id}
+                                      onChange={() =>
+                                        choose((d) => ({
+                                          ...d,
+                                          matches: [
+                                            ...d.matches.filter((c) => c.row !== m.row),
+                                            { row: m.row, id: candidate.id },
+                                          ],
+                                        }))
+                                      }
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="mb-1 block text-xs text-muted-foreground">
+                                        并入 · 编号 {candidate.id}
+                                      </span>
+                                      <ProfileDetails profile={candidate.profile} />
+                                    </span>
+                                  </label>
+                                ))}
+                                <label className="flex items-center gap-2">
+                                  <input
+                                    type="radio"
+                                    name={`same-${m.row}`}
+                                    checked={m.selected === null}
+                                    onChange={() =>
+                                      choose((d) => ({
+                                        ...d,
+                                        matches: [
+                                          ...d.matches.filter((c) => c.row !== m.row),
+                                          { row: m.row, id: null },
+                                        ],
+                                      }))
+                                    }
+                                  />
+                                  新建
+                                </label>
+                              </fieldset>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                  {preview.trashed.length > 0 && (
+                    <section>
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <h3 className="mr-auto font-medium">在回收站里 · {preview.trashed.length} 位</h3>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => choose((d) => ({ ...d, restore: preview.trashed.map((m) => m.id) }))}
+                        >
+                          全部恢复并更新
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => choose((d) => ({ ...d, restore: [] }))}>
+                          全部不导入
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {preview.trashed.map((m) => (
+                          <div
+                            key={m.id}
+                            className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm"
+                          >
+                            <p className="mr-auto">
+                              {m.name} · 第 {m.rows.join("、")} 行
+                            </p>
+                            {[false, true].map((restore) => (
+                              <label key={String(restore)} className="flex items-center gap-2">
+                                <input
+                                  type="radio"
+                                  name={`restore-${m.id}`}
+                                  checked={decisions.restore.includes(m.id) === restore}
+                                  onChange={() =>
+                                    choose((d) => ({
+                                      ...d,
+                                      restore: [...d.restore.filter((id) => id !== m.id), ...(restore ? [m.id] : [])],
+                                    }))
+                                  }
+                                />
+                                {restore ? "恢复并更新" : "不导入"}
+                              </label>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+                  {preview.errors.length > 0 && (
+                    <section>
+                      <h3 className="mb-2 font-medium">有问题的行 · {preview.errors.length} 行</h3>
+                      <p className="mb-2 text-sm text-muted-foreground">这些行不导入，请修改表格后重新导入</p>
+                      <ul className="space-y-1 text-sm text-destructive">
+                        {preview.errors.map((e) => (
+                          <li key={e.row}>
+                            第 {e.row} 行：{e.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </DialogBody>
+        <DialogFooter className="flex-wrap">
+          <p className="min-w-0 grow text-sm text-destructive" role="alert">
+            {error && errorMessage(error)}
+          </p>
+          <DialogClose render={<Button variant="ghost" disabled={busy} />}>取消</DialogClose>
+          <Button
+            disabled={busy || read.isError || !file || !!preview?.issue || !possible}
+            onClick={() => file && save.mutate(file)}
+          >
+            {save.isPending
+              ? "正在导入…"
+              : `导入${preview && possible ? `（新增 ${preview.created} 位，更新 ${preview.updated} 位）` : ""}`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProfileDetails({ profile }: { profile: ImportProfile }) {
+  return (
+    <span className="block break-words">
+      {profile.name}
+      <span className="block text-muted-foreground">
+        {profile.affiliations.map((a, n) => (
+          <span key={n} className="block">
+            {placeOf(a)}
+          </span>
+        ))}
+        <span className="block">{profile.emails.join("、") || "未填写邮箱"}</span>
+        {profile.research && <span className="block whitespace-pre-wrap">{profile.research}</span>}
+        {profile.homepages.map((url) => (
+          <span key={url} className="block">
+            {url}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}

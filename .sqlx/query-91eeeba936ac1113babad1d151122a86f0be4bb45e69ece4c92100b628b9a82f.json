@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id, university, school, department, title FROM mentor_affiliation WHERE mentor_id IN (SELECT value FROM json_each(?)) ORDER BY position",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "university",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "department",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "name": "title",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "title"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "91eeeba936ac1113babad1d151122a86f0be4bb45e69ece4c92100b628b9a82f"
+}
