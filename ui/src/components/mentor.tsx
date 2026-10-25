@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { Affiliation, Contact, ContactStatus } from "@/api/types";
+import type { Affiliation, Contact, ContactStatus, Email } from "@/api/types";
 import { day } from "@/format";
 
 const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
@@ -87,22 +87,34 @@ export function refreshMentors(queryClient: QueryClient) {
 }
 
 /**
- * Drafts the trash canceled or the user approved are gone, and must not come back from the cache, a
- * failed save or what AI wrote for them when the mentor is restored or the email taken back to a draft.
+ * Replaced drafts must not come back from the cache, a failed save or an AI answer. Withdrawal
+ * replaces only that email's draft; trashing and merging replace every draft of the mentor.
  */
-export function dropDrafts(queryClient: QueryClient, ids: number[], kind: "first" | "all" = "all") {
+export function dropDrafts(
+  queryClient: QueryClient,
+  ids: number[],
+  draft: "first" | "all" | Pick<Email, "id" | "kind" | "replyTo"> = "all",
+) {
+  const kind = typeof draft === "string" ? draft : draft.kind;
   const mutations = queryClient.getMutationCache();
   for (const id of ids) {
-    if (kind === "all") {
+    if (kind === "all" || kind === "reply") {
       queryClient.removeQueries({ queryKey: ["getReplyDraft", id] });
-      queryClient.removeQueries({ queryKey: ["getFollowUpDraft", id] });
-      for (const m of mutations.findAll({ mutationKey: ["saveFollowUpDraft", id] })) mutations.remove(m);
-      for (const m of mutations.findAll({ mutationKey: ["writeFollowUp", id] })) mutations.remove(m);
-      for (const m of mutations.findAll({ mutationKey: ["writeReply", id] })) mutations.remove(m);
+      const mutationKey = typeof draft === "string" ? ["writeReply", id] : ["writeReply", id, draft.replyTo];
+      for (const m of mutations.findAll({ mutationKey })) mutations.remove(m);
       for (const m of mutations.findAll({ mutationKey: ["saveReplyDraft", id], status: "error" })) mutations.remove(m);
     }
-    queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
-    for (const m of mutations.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) mutations.remove(m);
-    for (const m of mutations.findAll({ mutationKey: ["writeLetter", id] })) mutations.remove(m);
+    if (kind === "all" || kind === "follow_up") {
+      queryClient.removeQueries({ queryKey: ["getFollowUpDraft", id] });
+      for (const op of ["saveFollowUpDraft", "writeFollowUp"]) {
+        const mutationKey = typeof draft === "string" ? [op, id] : [op, id, draft.id];
+        for (const m of mutations.findAll({ mutationKey })) mutations.remove(m);
+      }
+    }
+    if (kind === "all" || kind === "first") {
+      queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
+      for (const m of mutations.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) mutations.remove(m);
+      for (const m of mutations.findAll({ mutationKey: ["writeLetter", id] })) mutations.remove(m);
+    }
   }
 }

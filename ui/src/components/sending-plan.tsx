@@ -100,7 +100,7 @@ function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn })
       } else await call(op, { id: e.id });
     },
     onSuccess: (_, op) => {
-      if (op === "withdrawEmail") dropDrafts(client, [e.mentorId]);
+      if (op === "withdrawEmail") dropDrafts(client, [e.mentorId], e);
       refreshSchedule(client);
     },
   });

@@ -100,7 +100,7 @@ export type DraftSummary = { id: number, mentorId: number, name: string, state: 
 
 export type DraftsFinished = { taskId: number, name: string, generated: number, failed: number, };
 
-export type Email = { id: number, plannedAt: number | null, latestAt: number | null, subject: string, bodyMd: string, attachments: Array<Attachment>,
+export type Email = { id: number, kind: DraftKind, replyTo: string | null, plannedAt: number | null, latestAt: number | null, subject: string, bodyMd: string, attachments: Array<Attachment>,
 /**
  * The bounced email this one sends again.
  */
@@ -431,7 +431,7 @@ export type PageStatus = "success" | "failed" | "needs_browser";
 
 export type PlanColumn = "pending" | "upcoming" | "history";
 
-export type PlanEmail = { id: number, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, cancelReason: string | null, waiting: Waiting | null, };
+export type PlanEmail = { id: number, kind: DraftKind, replyTo: string | null, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, cancelReason: string | null, waiting: Waiting | null, };
 
 export type PlanPage = { emails: Array<PlanEmail>, total: number, };
 
