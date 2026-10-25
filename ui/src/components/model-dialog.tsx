@@ -72,15 +72,17 @@ export function ModelDialog({
   const providerRef = useRef<HTMLSelectElement>(null);
 
   const provider = providers.find((p) => p.id === form.provider);
-  // The core only uses the saved key where it was saved for.
-  const keySaved =
+  // The core only uses the saved key where it was saved for, and asks again for one a restore
+  // left out only there.
+  const sameSource =
     config !== null &&
-    !config.needsApiKey &&
     form.provider === initial.provider &&
     (form.provider !== CUSTOM || form.baseUrl === initial.baseUrl);
+  const keySaved = sameSource && !config.needsApiKey;
+  const keyLost = sameSource && config.needsApiKey;
   const reachable =
     (provider !== undefined || (form.provider === CUSTOM && form.baseUrl.trim() !== "")) &&
-    (keySaved || (form.provider === CUSTOM && !config?.needsApiKey) || form.apiKey.trim() !== "");
+    (keySaved || (form.provider === CUSTOM && !keyLost) || form.apiKey.trim() !== "");
   const complete = reachable && form.model.trim() !== "";
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
@@ -146,7 +148,7 @@ export function ModelDialog({
                   placeholder={
                     keySaved
                       ? "不修改就留空"
-                      : config?.needsApiKey
+                      : keyLost
                         ? "从备份恢复后需要重新填写"
                         : form.provider === CUSTOM
                           ? "本机的模型可以不填"
