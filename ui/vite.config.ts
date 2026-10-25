@@ -29,6 +29,13 @@ export default defineConfig(({ command, mode }) => {
     }),
     resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
     clearScreen: false,
-    server: { port: 1420, strictPort: true },
+    server: {
+      port: 1420,
+      strictPort: true,
+      // Only the app's own pages load from the dev server; no other site may read it, and nobody may
+      // fetch the development data (database, mailbox passwords, API keys) through it.
+      cors: false,
+      fs: { deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "**/.dev-data/**"] },
+    },
   };
 });
