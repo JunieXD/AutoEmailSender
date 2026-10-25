@@ -148,7 +148,7 @@ export function WelcomePage() {
             跳过引导
           </Button>
         </header>
-        <ol className="flex flex-col gap-[3px]">
+        <ol className="divide-y divide-border border-y border-border">
           {steps.map((s, i) => (
             <StepRow
               key={s.title}
@@ -195,11 +195,11 @@ function StepRow({
   onNext?: () => void;
 }) {
   return (
-    <li className={`rounded-lg ${open ? "bg-muted" : "hover:bg-muted/60"}`}>
+    <li>
       <button
         type="button"
         aria-expanded={open}
-        className="flex min-h-14 w-full items-center gap-3 px-4 py-3 text-left"
+        className="group flex min-h-14 w-full items-center gap-3 px-1 py-3 text-left"
         onClick={onToggle}
       >
         <span
@@ -212,19 +212,19 @@ function StepRow({
         <span className="shrink-0 font-medium">{s.title}</span>
         {s.done && s.result && <span className="min-w-0 truncate text-sm text-muted-foreground">{s.result}</span>}
         <ChevronDown
-          className={`ml-auto size-[18px] shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+          className={`ml-auto size-[18px] shrink-0 text-muted-foreground transition-transform group-hover:text-foreground ${open ? "rotate-180" : ""}`}
           strokeWidth={1.6}
         />
       </button>
       {open && (
-        <div className="flex flex-col gap-4 pr-4 pb-5 pl-14 phone:pl-4">
+        <div className="flex flex-col gap-4 pr-1 pb-6 pl-11 phone:pl-1">
           <p className="text-sm text-muted-foreground">{s.intro}</p>
           {s.body}
           {(s.action ?? onNext) && (
             <div className="flex flex-wrap items-center gap-2">
               {s.action}
               {onNext && (
-                <Button variant="ghost" onClick={onNext}>
+                <Button variant="quiet" onClick={onNext}>
                   下一步
                 </Button>
               )}
