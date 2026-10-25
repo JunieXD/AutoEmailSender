@@ -219,7 +219,7 @@ function WaitingDot() {
   );
 }
 
-function Background() {
+function Background({ className }: { className?: string }) {
   const queryClient = useQueryClient();
   const work = useBackground();
   const pauseCrawl = useMutation({
@@ -231,7 +231,12 @@ function Background() {
     <Popover>
       <PopoverTrigger
         render={
-          <button className="mb-0.5 flex h-10 items-center gap-3 rounded-md px-3 text-muted-foreground hover:bg-press" />
+          <button
+            className={cn(
+              "mb-0.5 flex h-10 items-center gap-3 rounded-md px-3 text-muted-foreground hover:bg-press",
+              className,
+            )}
+          />
         }
       >
         <LoaderCircle className={cn("size-[18px]", work.running > 0 && "animate-spin")} strokeWidth={1.6} />
@@ -361,7 +366,7 @@ export function MorePage() {
         <Settings className="size-5" />
         设置
       </Link>
-      <Background />
+      <Background className="h-12 w-full rounded-md bg-muted px-4 text-foreground [&>svg]:size-5" />
     </div>
   );
 }

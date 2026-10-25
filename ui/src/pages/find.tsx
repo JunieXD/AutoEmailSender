@@ -508,7 +508,7 @@ function Candidates() {
                   )}
                 </button>
                 {(c.enrich === "queued" || c.enrich === "running") && (
-                  <p role="status" className="mt-2 text-sm text-brand-text">
+                  <p role="status" className="mt-2 text-sm text-muted-foreground">
                     补全中
                   </p>
                 )}
