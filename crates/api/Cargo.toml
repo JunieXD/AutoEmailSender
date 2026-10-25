@@ -33,6 +33,7 @@ writing.workspace = true
 receive.workspace = true
 task.workspace = true
 crawl.workspace = true
+db.workspace = true
 
 [dev-dependencies]
-db.workspace = true
+tempfile = "3.27.0"

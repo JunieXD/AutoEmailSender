@@ -2,6 +2,7 @@
 //! (docs/design.md#桌面端). Input is validated here, when it is deserialized.
 
 mod crawling;
+pub mod startup;
 mod statistics;
 mod tasks;
 use crawling::*;
