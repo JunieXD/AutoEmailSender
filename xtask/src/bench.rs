@@ -274,13 +274,21 @@ pub async fn run(path: &Path) -> Result {
     )
     .execute(&db)
     .await?;
+    let fact_check = serde_json::json!({"state":"completed","findings":[
+        {"quote":"北京航空航天大学","reason":"材料中没有就读学校记录"},
+        {"quote":"已经改掉的成果","reason":"材料中没有成果记录"},
+    ]});
+    sqlx::query("UPDATE email SET fact_check = ? WHERE task_id = 1")
+        .bind(sqlx::types::Json(fact_check))
+        .execute(&db)
+        .await?;
     let query = task::DraftQuery {
         task_id: 1,
         filter: task::DraftFilter::All,
         page: NonZeroU32::MIN,
     };
     report(
-        "审核页草稿列表一页（500 封的任务，含问题数）",
+        "审核页草稿列表一页（500 封的任务，含规则及 AI 核对问题数）",
         median(async || task::drafts(&db, &query, NOW).await.map(drop)).await?,
         home,
     );

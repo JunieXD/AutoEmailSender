@@ -81,6 +81,7 @@ async fn seed() -> Result {
     sample::crawls(&db, sample::now()).await?;
     sample::scheduled(&db, sample::now()).await?;
     sample::follow_up(&db, sample::now()).await?;
+    sample::fact_checks(&db).await?;
     println!("已生成 300 位导师、往来邮件、定时任务、追问任务、单独追问草稿和抓取候选");
     Ok(())
 }
