@@ -16,6 +16,8 @@ const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
 /// How long to wait before trying the database again.
 const RETRY: Duration = Duration::from_secs(5);
+/// How often at most the window hears about emails going out back to back.
+const TELL_EVERY: Duration = Duration::from_secs(5);
 
 /// Wakes the sender, so that an email approved or retried goes out without waiting.
 #[derive(Clone, Default)]
@@ -28,7 +30,8 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`. `changed` runs once emails have been sent or failed, before waiting.
+/// attached from `materials`. `changed` runs after emails have been sent or failed: before waiting,
+/// and every few seconds while they go back to back.
 pub async fn run(
     db: SqlitePool,
     net: Net,
@@ -41,10 +44,16 @@ pub async fn run(
         tokio::time::sleep(RETRY).await;
     }
     let mut dealt = false;
+    let mut told = tokio::time::Instant::now();
     loop {
         let wait = match step(&db, &net, &materials, now).await {
             Ok(Next::Now) => {
                 dealt = true;
+                if told.elapsed() >= TELL_EVERY {
+                    dealt = false;
+                    told = tokio::time::Instant::now();
+                    changed();
+                }
                 continue;
             }
             Ok(Next::At(at)) => Some(at - now()),
@@ -55,9 +64,10 @@ pub async fn run(
                 Some(MINUTE)
             }
         };
-        // Once for a run of emails dealt with back to back, such as many failing at once: each
-        // change makes the window read its lists and statistics again.
+        // Not once for each of many emails dealt with back to back, such as many failing at once:
+        // each change makes the window read its lists and statistics again.
         if std::mem::take(&mut dealt) {
+            told = tokio::time::Instant::now();
             changed();
         }
         match wait {
