@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT crawl_id, list_page_id, mentor_id FROM candidate WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "crawl_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "list_page_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "list_page_id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "mentor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9190288f06194ebbb2768c4bcf526972273395eaabe595a640fdae096c866ab0"
+}

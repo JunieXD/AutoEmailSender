@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO crawl_page (crawl_id, url, kind, steps, mode, status, error, fetched_at, text)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\n           ON CONFLICT (crawl_id, url, steps) DO UPDATE SET\n             kind = excluded.kind, mode = excluded.mode, status = excluded.status,\n             error = excluded.error, fetched_at = excluded.fetched_at, text = excluded.text\n           RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5f6664980ae0e1fd305b84287887285969eee0f9ca4ec59e9cd6b8d6da21f3ad"
+}
