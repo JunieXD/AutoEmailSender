@@ -546,7 +546,7 @@ function MarkingFailed({ messageId, reason }: { messageId: number; reason: strin
   });
   return (
     <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-      AI 未能标出回信结果：{reason}
+      AI 未能标出：{reason}
       <Button variant="quiet" size="sm" disabled={retry.isPending} onClick={() => retry.mutate()}>
         重试
       </Button>

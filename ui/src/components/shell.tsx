@@ -11,6 +11,7 @@ import { startupFailure } from "@/api/app";
 import type { MatchFinished, DraftsFinished, CrawlFinished } from "@/api/types";
 import { refreshTasks } from "@/pages/tasks";
 import { scheduledAt } from "@/components/schedule";
+import { ModelAction } from "@/components/ai-writing";
 import { refreshMentors, refreshReplyOutcomes } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -289,14 +290,9 @@ function Background({ className }: { className?: string }) {
                 <Link to="/conversations" className={ITEM}>
                   <Entry title="回信处理已暂停" detail={work.repliesPaused.reason} />
                 </Link>
-                <Button
-                  variant="quiet"
-                  size="sm"
-                  disabled={resumeReplies.isPending}
-                  onClick={() => resumeReplies.mutate()}
-                >
+                <ModelAction disabled={resumeReplies.isPending} onWrite={() => resumeReplies.mutate()}>
                   继续
-                </Button>
+                </ModelAction>
               </div>
             )}
           </Group>

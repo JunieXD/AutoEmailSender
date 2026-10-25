@@ -11,7 +11,7 @@ import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
-import { AboutSection, NotificationsSection, SettingsPage } from "./pages/settings";
+import { AboutSection, NotificationsSection, ReplyProcessingSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -127,6 +127,12 @@ const modelsRoute = createRoute({
   component: ModelsSection,
 });
 
+const repliesRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "replies",
+  component: ReplyProcessingSection,
+});
+
 const notificationsRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "notifications",
@@ -159,6 +165,7 @@ export const router = createRouter({
       letterStyleRoute,
       mailboxesRoute,
       modelsRoute,
+      repliesRoute,
       notificationsRoute,
       aboutRoute,
     ]),
