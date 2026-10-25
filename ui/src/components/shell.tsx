@@ -48,6 +48,8 @@ export function Shell() {
       refreshMentors(queryClient);
       setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
     });
+    // A sent email changes its mentor's correspondence and contact status as well as its task.
+    const sendingChanged = listen("sending-changed", () => refreshMentors(queryClient));
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
     const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
       refreshTasks(queryClient);
@@ -56,6 +58,7 @@ export function Shell() {
     return () => {
       void crawlChanged.then((f) => f());
       void crawlFinished.then((f) => f());
+      void sendingChanged.then((f) => f());
       void tasksChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());

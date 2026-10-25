@@ -28,15 +28,24 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`.
-pub async fn run(db: SqlitePool, net: Net, materials: PathBuf, sender: Sender) {
+/// attached from `materials`. `changed` runs after each email sent or failed.
+pub async fn run(
+    db: SqlitePool,
+    net: Net,
+    materials: PathBuf,
+    sender: Sender,
+    changed: impl Fn() + Send + 'static,
+) {
     while let Err(e) = recover(&db, now()).await {
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
     loop {
         let wait = match step(&db, &net, &materials, now).await {
-            Ok(Next::Now) => continue,
+            Ok(Next::Now) => {
+                changed();
+                continue;
+            }
             Ok(Next::At(at)) => Some(at - now()),
             Ok(Next::Idle) => None,
             // Nobody to tell but the log; the database is likely to work again in a while.
