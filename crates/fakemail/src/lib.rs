@@ -184,6 +184,9 @@ async fn smtp_session(
             }
             Some("AUTH") => "535 5.7.8 authentication failed\r\n",
             Some("RCPT") if line.contains("<unknown@") => "550 5.1.1 user unknown\r\n",
+            Some("RCPT") if line.contains("<421@") => {
+                "550 5.1.1 <421@example.edu.cn>: Recipient address rejected: User unknown\r\n"
+            }
             Some("RCPT") if primary && line.contains("<throttled@") => {
                 "451 4.7.0 Message rate limit exceeded\r\n"
             }

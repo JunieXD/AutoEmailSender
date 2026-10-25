@@ -38,10 +38,12 @@ pub struct Pause {
 /// Only for failures known to have happened before handover, or an explicit server rejection.
 pub fn classify(error: &MailError) -> Failure {
     match error {
-        MailError::Login(reply) | MailError::Refused(reply) => {
-            if let Some(throttle) = throttle(reply) {
+        MailError::Login { reply, smtp_code } | MailError::Refused { reply, smtp_code } => {
+            if let Some(throttle) =
+                throttle(reply).or_else(|| (*smtp_code == Some(421)).then_some(Throttle::Hour))
+            {
                 Failure::Pause(PauseKind::Throttled(throttle))
-            } else if matches!(error, MailError::Login(_)) {
+            } else if matches!(error, MailError::Login { .. }) {
                 Failure::Pause(PauseKind::LoginRejected)
             } else {
                 Failure::Email
@@ -58,13 +60,10 @@ pub fn classify(error: &MailError) -> Failure {
     }
 }
 
-/// Uses the complete server reply, before any shortening for display.
+/// Explicit throttling evidence in the complete diagnostic, before shortening for display.
 pub fn throttle(reply: &str) -> Option<Throttle> {
     let text = reply.to_lowercase();
-    let unavailable = text
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|word| word == "421");
-    if !unavailable && !THROTTLE_MARKERS.iter().any(|marker| text.contains(marker)) {
+    if !THROTTLE_MARKERS.iter().any(|marker| text.contains(marker)) {
         return None;
     }
     Some(
@@ -128,6 +127,36 @@ pub async fn apply(conn: &mut SqliteConnection, id: i64, pause: &Pause) -> Resul
         pause.until,
         pause.reason,
         id,
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// A saved configuration must not inherit the failure of a request using its old settings.
+pub async fn apply_for_account(
+    conn: &mut SqliteConnection,
+    id: i64,
+    account: &crate::Account,
+    pause: &Pause,
+) -> Result<(), sqlx::Error> {
+    let address: &str = account.address.as_ref();
+    sqlx::query!(
+        "UPDATE mailbox SET paused_until = ?1, pause_reason = ?2
+         WHERE id = ?3 AND (paused_until IS NULL OR paused_until < ?1)
+           AND address = ?4 AND smtp_host = ?5 AND smtp_port = ?6 AND smtp_security = ?7
+           AND imap_host = ?8 AND imap_port = ?9 AND imap_security = ?10 AND secret = ?11",
+        pause.until,
+        pause.reason,
+        id,
+        address,
+        account.smtp.host,
+        account.smtp.port,
+        account.smtp.security,
+        account.imap.host,
+        account.imap.port,
+        account.imap.security,
+        account.secret,
     )
     .execute(conn)
     .await?;
@@ -206,7 +235,7 @@ mod tests {
             ("550 RP:DRC", Some(Throttle::Hour)),
             ("554 DT:STC", Some(Throttle::Hour)),
             ("554 DT:STF", Some(Throttle::Hour)),
-            ("421 Service not available", Some(Throttle::Hour)),
+            ("421 Service not available", None),
             ("535 too many login attempts", Some(Throttle::Hour)),
             ("550 sending limit per day exceeded", Some(Throttle::Daily)),
             ("554 今日发送额度已用完", Some(Throttle::Daily)),
@@ -217,22 +246,37 @@ mod tests {
             ("552 5.2.2 recipient mailbox quota exceeded", None),
             ("550 5.5.3 too many recipients", None),
             ("550 reference 1421 or x421", None),
+            (
+                "550 5.1.1 <421@example.edu.cn>: Recipient address rejected: User unknown",
+                None,
+            ),
         ] {
             assert_eq!(throttle(reply), expected, "{reply}");
-            let expected =
-                expected.map_or(Failure::Email, |t| Failure::Pause(PauseKind::Throttled(t)));
+            let smtp_code = reply.split_whitespace().next().unwrap().parse().unwrap();
+            let expected = expected
+                .or_else(|| (smtp_code == 421).then_some(Throttle::Hour))
+                .map_or(Failure::Email, |t| Failure::Pause(PauseKind::Throttled(t)));
             assert_eq!(
-                classify(&MailError::Refused(reply.into())),
+                classify(&MailError::Refused {
+                    reply: reply.into(),
+                    smtp_code: Some(smtp_code)
+                }),
                 expected,
                 "{reply}"
             );
         }
         assert_eq!(
-            classify(&MailError::Login("535 invalid credentials".into())),
+            classify(&MailError::Login {
+                reply: "535 invalid credentials".into(),
+                smtp_code: Some(535)
+            }),
             Failure::Pause(PauseKind::LoginRejected)
         );
         assert_eq!(
-            classify(&MailError::Login("535 too many login attempts".into())),
+            classify(&MailError::Login {
+                reply: "535 too many login attempts".into(),
+                smtp_code: Some(535)
+            }),
             Failure::Pause(PauseKind::Throttled(Throttle::Hour))
         );
         assert_eq!(

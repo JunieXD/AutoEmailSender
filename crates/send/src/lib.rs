@@ -277,7 +277,13 @@ async fn send<T: chrono::TimeZone>(
             return match pause::classify(&err) {
                 Failure::Pause(kind) => {
                     let pause = kind.in_zone(now(), zone)?;
-                    pause::apply(&mut *db.acquire().await?, mailbox_id, &pause).await
+                    pause::apply_for_account(
+                        &mut *db.acquire().await?,
+                        mailbox_id,
+                        &account,
+                        &pause,
+                    )
+                    .await
                 }
                 Failure::Email => {
                     email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await
@@ -315,7 +321,7 @@ async fn send<T: chrono::TimeZone>(
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, mailbox_id, &m, &outcome, answered).await {
+    while let Err(e) = record(db, id, mailbox_id, &account, &m, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }
@@ -509,6 +515,7 @@ async fn record(
     db: &SqlitePool,
     id: i64,
     mailbox_id: i64,
+    account: &mailbox::Account,
     marked: &Marked,
     outcome: &Outcome,
     now: i64,
@@ -518,7 +525,7 @@ async fn record(
         Outcome::Sent => email::sent(&mut tx, id, now).await?,
         Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
         Outcome::Paused(pause) => {
-            pause::apply(&mut tx, mailbox_id, pause).await?;
+            pause::apply_for_account(&mut tx, mailbox_id, account, pause).await?;
             marked.before.restore(&mut tx, id).await?;
             return tx.commit().await;
         }

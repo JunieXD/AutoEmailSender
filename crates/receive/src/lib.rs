@@ -158,7 +158,7 @@ pub async fn round(db: &SqlitePool, net: &Net, now: i64) -> Result<Round, sqlx::
             Ok(()) => round.changed |= mailbox::received(db, id).await?,
             Err(Error::Mail(e)) => {
                 tracing::warn!(mailbox = id, "receive: {e}");
-                let refused = matches!(e, MailError::Login(_) | MailError::Refused(_));
+                let refused = matches!(e, MailError::Login { .. } | MailError::Refused { .. });
                 mailbox::receive_failed(db, id, &e.message(), refused.then_some(now + REFUSED))
                     .await?;
                 round.changed = true;
@@ -441,7 +441,7 @@ impl Session<'_> {
                 continue;
             };
             let Some((kind, mentors)) = keep else {
-                self.bounced(raw).await?;
+                self.bounced(raw, headers.date.unwrap_or(sent_at)).await?;
                 continue;
             };
             let text = mail::text(raw);
@@ -689,7 +689,7 @@ impl Session<'_> {
     }
 
     /// Marks the mail a bounce returns, whether the app sent it or it was sent elsewhere.
-    async fn bounced(&mut self, raw: &[u8]) -> Result<(), Error> {
+    async fn bounced(&mut self, raw: &[u8], sent_at: i64) -> Result<(), Error> {
         let Some(bounce) = mail::bounce(raw) else {
             return Ok(());
         };
@@ -708,9 +708,11 @@ impl Session<'_> {
                 .fetch_one(&mut *tx)
                 .await?;
                 if let Some(mailbox) = mailbox {
-                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(self.now)?;
+                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(sent_at)?;
                     pause.reason = format!("退信说明{}", pause.reason);
-                    mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
+                    if pause.until > self.now {
+                        mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
+                    }
                 }
             }
             marked |= bounced;

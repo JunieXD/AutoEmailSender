@@ -194,6 +194,73 @@ async fn throttled_bounces_pause_the_original_sender_once(db: SqlitePool) {
     );
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_old_daily_bounce_uses_its_date_instead_of_the_read_time(db: SqlitePool) {
+    bounce_without_pause(
+        &db,
+        "Date: Wed, 13 Jan 2027 08:00:00 +0000\n",
+        T + MINUTE,
+        "5.4.5",
+        "550 5.4.5 Daily user sending quota exceeded",
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_undated_daily_bounce_uses_its_received_time(db: SqlitePool) {
+    bounce_without_pause(
+        &db,
+        "",
+        T - 2 * DAY,
+        "5.4.5",
+        "550 5.4.5 Daily user sending quota exceeded",
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_remote_server_outage_bounce_does_not_pause_the_sender(db: SqlitePool) {
+    bounce_without_pause(
+        &db,
+        "",
+        T + MINUTE,
+        "5.4.7",
+        "421 4.3.2 mx.example.edu.cn Service not available",
+    )
+    .await;
+}
+
+async fn bounce_without_pause(
+    db: &SqlitePool,
+    date: &str,
+    received: i64,
+    status: &str,
+    diagnostic: &str,
+) {
+    let (net, store) = mailbox(db, SECRET).await;
+    let owner = mentor(db, "王伟", "wang@example.edu.cn").await;
+    sent_email(db, owner, "sent", "<original@example.com>").await;
+    round(db, &net, T - 3 * DAY).await;
+    let report = format!(
+        "From: MAILER-DAEMON@mx.example.com\nSubject: Undelivered Mail Returned to Sender\n\
+             Message-ID: <report@mx.example.com>\n{date}\
+             Content-Type: multipart/report; report-type=delivery-status; boundary=r\n\n\
+             --r\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; mx.example.com\n\n\
+             Final-Recipient: rfc822; wang@example.edu.cn\nAction: failed\nStatus: {status}\n\
+             Diagnostic-Code: smtp; {diagnostic}\n\
+             --r\nContent-Type: text/rfc822-headers\n\n\
+             From: me@example.com\nTo: wang@example.edu.cn\n\
+             Message-ID: <original@example.com>\n--r--\n"
+    );
+    store.deliver("INBOX", received, &report);
+    assert!(round(db, &net, T + 3 * MINUTE).await.changed);
+    assert!(matches!(
+        email::list(db, owner).await.unwrap()[0].delivery,
+        Delivery::Bounced { .. }
+    ));
+    assert!(mailbox::list(db, T).await.unwrap()[0].pause.is_none());
+}
+
 /// The UIDs whose messages were fetched beyond their headers.
 fn opened(commands: &[String]) -> Vec<u32> {
     commands

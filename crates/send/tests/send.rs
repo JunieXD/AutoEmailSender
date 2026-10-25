@@ -248,6 +248,25 @@ async fn a_refused_email_fails_and_a_cut_off_one_may_have_gone_out(db: SqlitePoo
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_recipient_named_421_only_fails_that_email(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let unknown = approve(&db, "421@example.edu.cn", &[], T).await;
+    let next = approve(&db, "wang@example.edu.cn", &[], T).await;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    assert!(matches!(
+        first_email(&db, unknown).await.delivery,
+        Delivery::Failed { .. }
+    ));
+    assert!(mailbox::list(&db, T).await.unwrap()[0].pause.is_none());
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    assert!(matches!(
+        first_email(&db, next).await.delivery,
+        Delivery::Sent { .. }
+    ));
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn an_email_taken_back_and_changed_is_another_letter(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let hangup = approve(&db, "hangup@example.edu.cn", &[], T).await;
@@ -326,6 +345,82 @@ async fn a_refused_login_pauses_the_mailbox(db: SqlitePool) {
             .is_none()
     );
     assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_old_failure_does_not_pause_saved_mailbox_settings(db: SqlitePool) {
+    for (secret, address, recipient, pause_clock_call) in [
+        ("wrong", ADDRESS, "wang@example.edu.cn", 2),
+        (
+            SECRET,
+            fakemail::BACKUP_ADDRESS,
+            "throttled-data@example.edu.cn",
+            3,
+        ),
+    ] {
+        let (net, inbox) = mailbox(&db, secret).await;
+        let owner = approve(&db, recipient, &[], T).await;
+        let primary = mailbox::list(&db, T).await.unwrap().remove(0);
+        let fields = MailboxForm {
+            address: address.into(),
+            sender_name: primary.sender_name,
+            provider: primary.provider,
+            smtp: primary.smtp,
+            imap: primary.imap,
+            daily_limit: primary.daily_limit,
+            min_interval_s: primary.min_interval_s,
+        }
+        .check()
+        .unwrap();
+        let options = db.connect_options().as_ref().clone();
+        let (request, requested) = std::sync::mpsc::channel();
+        let (finish, finished) = std::sync::mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let db = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(1)
+                        .connect_with(options)
+                        .await
+                        .unwrap();
+                    requested
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    assert!(
+                        mailbox::update(&db, primary.id, &fields, SECRET)
+                            .await
+                            .unwrap()
+                    );
+                    db.close().await;
+                    finish.send(()).unwrap();
+                });
+        });
+        let calls = Cell::new(0);
+        send::step(&db, &net, nowhere(), || {
+            calls.set(calls.get() + 1);
+            if calls.get() == pause_clock_call {
+                request.send(()).unwrap();
+                finished.recv().unwrap();
+            }
+            T
+        })
+        .await
+        .unwrap();
+        writer.join().unwrap();
+        assert_eq!(first_email(&db, owner).await.delivery, Delivery::Approved);
+        assert!(mailbox::list(&db, T).await.unwrap()[0].pause.is_none());
+        assert!(inbox.lock().unwrap().is_empty());
+        send::step(&db, &net, nowhere(), || T).await.unwrap();
+        assert!(matches!(
+            first_email(&db, owner).await.delivery,
+            Delivery::Sent { .. }
+        ));
+        assert_eq!(inbox.lock().unwrap().len(), 1);
+        mailbox::delete(&db, primary.id).await.unwrap();
+    }
 }
 
 async fn backup_mailbox(db: &SqlitePool) -> i64 {

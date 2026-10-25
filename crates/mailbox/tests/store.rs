@@ -93,3 +93,56 @@ async fn pauses_expire_extend_and_clear_on_resume_or_edit(db: SqlitePool) {
     );
     assert!(!mailbox::resume(&db, id + 1).await.unwrap());
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_request_failure_only_pauses_the_configuration_it_used(db: SqlitePool) {
+    use mailbox::pause::{self, Pause};
+    let original = form("me@qq.com").check().unwrap();
+    let id = mailbox::create(&db, &original, "secret", 0).await.unwrap();
+    let account = mailbox::account(&db, id).await.unwrap().unwrap();
+    let pause = Pause {
+        until: 2000,
+        reason: "登录被拒绝".into(),
+    };
+    for field in 0..8 {
+        let mut edited = form("me@qq.com");
+        let mut secret = "secret";
+        match field {
+            0 => edited.address = "other@qq.com".into(),
+            1 => edited.smtp.host = Cow::Borrowed("smtp.example.com"),
+            2 => edited.smtp.port = 587,
+            3 => edited.smtp.security = Security::Starttls,
+            4 => edited.imap.host = Cow::Borrowed("imap.example.com"),
+            5 => edited.imap.port = 143,
+            6 => edited.imap.security = Security::Starttls,
+            7 => secret = "new secret",
+            _ => unreachable!(),
+        }
+        mailbox::update(&db, id, &edited.check().unwrap(), secret)
+            .await
+            .unwrap();
+        let mut tx = db.begin().await.unwrap();
+        pause::apply_for_account(&mut tx, id, &account, &pause)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            mailbox::list(&db, 0).await.unwrap()[0].pause.is_none(),
+            "field {field}"
+        );
+    }
+    mailbox::update(&db, id, &original, "secret").await.unwrap();
+    let mut tx = db.begin().await.unwrap();
+    pause::apply_for_account(&mut tx, id, &account, &pause)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        mailbox::list(&db, 0).await.unwrap()[0]
+            .pause
+            .as_ref()
+            .unwrap()
+            .until,
+        pause.until
+    );
+}
