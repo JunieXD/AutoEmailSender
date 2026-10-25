@@ -52,7 +52,7 @@ export function StatsPage() {
   const usage = useQuery({ queryKey: ["tokenStats", period], queryFn: () => call("tokenStats", period) });
   return (
     <div className="@container flex-1 overflow-y-auto">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-3 px-7 pt-6 pb-2 phone:px-4 phone:pt-3.5">
+      <header className="flex max-w-[1120px] flex-wrap items-center gap-x-4 gap-y-3 px-7 pt-6 pb-2 phone:px-4 phone:pt-3.5">
         <h1 className="grow text-2xl font-semibold phone:text-[22px]">统计</h1>
         <div role="tablist" aria-label="时间范围" className="inline-flex gap-0.5 rounded-full bg-muted p-[3px]">
           {RANGES.map(([r, label]) => (
@@ -155,13 +155,7 @@ function Contact({
         />
         <Figure label="退信" value={p.bounced} unit="封" detail="这段时间发出后被退回" />
       </div>
-      <div>
-        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h3 className="grow font-medium">{range === "all" ? "每月" : "每天"}发出的信和收到的回信</h3>
-          <Legend series={TREND} />
-        </div>
-        <TrendView trend={p.trend} monthly={range === "all"} />
-      </div>
+      <TrendView trend={p.trend} monthly={range === "all"} />
       <div className="grid grid-cols-[2fr_3fr] gap-10 @max-[780px]:grid-cols-1">
         <div>
           <h3 className="mb-1 font-medium">首次回复用了多久</h3>
@@ -240,8 +234,16 @@ function Figure({
 function TrendView({ trend, monthly }: { trend: Trend[]; monthly: boolean }) {
   const [table, setTable] = useState(false);
   const points: Point[] = trend.map((t) => ({ ...dateLabels(t.date, monthly), values: [t.sent, t.replies] }));
+  const title = `${monthly ? "每月" : "每天"}发出的信和收到的回信`;
   return (
-    <>
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <h3 className="grow font-medium">{title}</h3>
+        <Legend series={TREND} />
+        <button className="text-sm text-brand-text hover:underline" onClick={() => setTable(!table)}>
+          {table ? "看图表" : "看表格"}
+        </button>
+      </div>
       {table ? (
         <div className="max-h-72 overflow-y-auto">
           <table className="w-full text-sm">
@@ -264,12 +266,9 @@ function TrendView({ trend, monthly }: { trend: Trend[]; monthly: boolean }) {
           </table>
         </div>
       ) : (
-        <BarChart series={TREND} points={points} caption={`${monthly ? "每月" : "每天"}发出的信和收到的回信`} />
+        <BarChart series={TREND} points={points} caption={title} />
       )}
-      <button className="mt-3 text-sm text-brand-text hover:underline" onClick={() => setTable(!table)}>
-        {table ? "看图表" : "看表格"}
-      </button>
-    </>
+    </div>
   );
 }
 
@@ -302,10 +301,10 @@ function Mentors({ overview: o }: { overview: MentorOverview }) {
             { label: "40～59 分", value: o.matching[2] },
             { label: "20～39 分", value: o.matching[1] },
             { label: "0～19 分", value: o.matching[0] },
-            { label: "未分析", value: o.matching[5], faint: true },
           ]}
           unit="位"
         />
+        {o.matching[5] > 0 && <p className="mt-3 text-sm text-muted-foreground">另有 {o.matching[5]} 位还没分析</p>}
       </div>
       <div>
         <h3 className="mb-4 font-medium">学校</h3>
@@ -338,7 +337,7 @@ function Bars({
   max = Math.max(1, ...rows.map((r) => r.value)),
   share = false,
 }: {
-  rows: { label: string; value: number; faint?: boolean }[];
+  rows: { label: string; value: number }[];
   unit: string;
   max?: number;
   share?: boolean;
@@ -351,10 +350,7 @@ function Bars({
             {r.label}
           </span>
           <span className="h-2 rounded-full bg-muted">
-            <span
-              className={cn("block h-full rounded-full", r.faint ? "bg-faint" : "bg-primary")}
-              style={{ width: `${(r.value / max) * 100}%` }}
-            />
+            <span className="block h-full rounded-full bg-primary/75" style={{ width: `${(r.value / max) * 100}%` }} />
           </span>
           <span className="w-16 text-right tabular-nums">
             {share ? `${Math.round((r.value / max) * 100)}%` : `${r.value} ${unit}`}
@@ -370,13 +366,13 @@ function Tokens({ usage }: { usage: TokenUsage }) {
   const unpriced = usage.total.unpricedCalls;
   return (
     <>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[520px] text-sm">
+      <div className="max-w-3xl">
+        <table className="w-full text-sm">
           <thead className="text-left text-muted-foreground">
             <tr className="border-b border-border">
               <th className="py-2 font-normal">用途</th>
               <th className="py-2 text-right font-normal">输入</th>
-              <th className="py-2 text-right font-normal">其中缓存命中</th>
+              <th className="py-2 text-right font-normal phone:hidden">其中缓存命中</th>
               <th className="py-2 text-right font-normal">输出</th>
               <th className="py-2 text-right font-normal">估算费用</th>
             </tr>
@@ -411,16 +407,15 @@ function TokenRow({
     <tr className={cn("border-b border-border", total && "border-b-0 font-medium")}>
       <td className="py-2.5">{label}</td>
       <td className="py-2.5 text-right tabular-nums">{tokens(row.input)}</td>
-      <td className="py-2.5 text-right text-muted-foreground tabular-nums">{tokens(row.cached)}</td>
+      <td className="py-2.5 text-right text-muted-foreground tabular-nums phone:hidden">{tokens(row.cached)}</td>
       <td className="py-2.5 text-right tabular-nums">{tokens(row.output)}</td>
       <td className="py-2.5 text-right tabular-nums">{cost(row.estimatedCost)}</td>
     </tr>
   );
 }
 
-/** "8,520" or "12.3 万". */
 function tokens(n: number): string {
-  return n < 10_000 ? n.toLocaleString() : `${(n / 10_000).toFixed(1)} 万`;
+  return n.toLocaleString();
 }
 
 function cost(yuan: number | null): string {
