@@ -36,6 +36,8 @@ export type Column = { header: string, field: Field | null, };
 
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
 
+export type ContactProgress = { trend: Array<Trend>, contacted: number, replied: number, medianDays: number | null, bounced: number, waiting: [number, number, number, number, number], schools: Array<SchoolProgress>, schoolCount: number, };
+
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
 export type Conversation = { mentorId: number, name: string, subject: string | null, at: number, unread: number, };
@@ -293,6 +295,8 @@ export type MentorNote = { id: number,
  */
 note: string, };
 
+export type MentorOverview = { total: number, matching: [number, number, number, number, number, number], email: number, research: number, papers: number, homepage: number, schools: Array<SchoolCount>, otherSchools: number, };
+
 export type MentorPage = { mentors: Array<MentorRow>, total: number, };
 
 export type MentorQuery = {
@@ -464,6 +468,10 @@ domains: Array<string>, setup: Setup, };
 
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
+export type PurposeUsage = { purpose: UsagePurpose, input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
+
+export type Range = "week" | "month" | "quarter" | "all";
+
 export type ReceiveStatus = { receivedAt: number | null, };
 
 export type RenderedApproval = { attachments: Array<number>, id: number, html: string, text: string, subject: string, bodyMd: string, };
@@ -500,6 +508,10 @@ export type SchedulePreview = { dates: Array<string>, unplaced: number, };
 
 export type ScheduledWork = { pending: number, nextAt: number | null, today: number, };
 
+export type SchoolCount = { university: string, count: number, };
+
+export type SchoolProgress = { university: string, contacted: number, replied: number, };
+
 export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
@@ -521,6 +533,10 @@ steps: Array<string>,
  * Where the steps start.
  */
 url: string, } | { "kind": "unsupported", reason: string, };
+
+export type StatsPeriod = { range: Range, timezone: string, now: number, };
+
+export type StatsQuery = { page: number, range: Range, timezone: string, now: number, };
 
 export type TableFormat = "xlsx" | "csv";
 
@@ -584,6 +600,10 @@ isDefault: boolean, };
 
 export type TestLetter = { templateName: string, subject: string, bodyMd: string, attachments: Array<number>, };
 
+export type TokenTotals = { input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
+
+export type TokenUsage = { purposes: Array<PurposeUsage>, total: TokenTotals, };
+
 export type TrashQuery = {
 /**
  * Starts at 1.
@@ -591,6 +611,10 @@ export type TrashQuery = {
 page: number, };
 
 export type Trashed = { rows: Array<number>, id: number, name: string, };
+
+export type Trend = { date: string, sent: number, replies: number, };
+
+export type UsagePurpose = "crawl" | "match" | "draft" | "rewrite" | "fact_check" | "reply_outcome" | "reply_todos";
 
 export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "mailbox_secret" | "ready";
 
@@ -601,6 +625,9 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  contactStats: { input: StatsQuery; output: ContactProgress };
+  mentorStats: { input: Nothing; output: MentorOverview };
+  tokenStats: { input: StatsPeriod; output: TokenUsage };
   checkCrawlUrls: { input: CrawlUrls; output: Array<string> };
   crawlWork: { input: CrawlWorkQuery; output: Array<CrawlSummary> };
   startCrawl: { input: CrawlStart; output: CrawlId };

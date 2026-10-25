@@ -61,6 +61,7 @@ export function refreshTasks(client: ReturnType<typeof useQueryClient>) {
     "restartTask",
     "sendingPlan",
     "scheduledWork",
+    "stats",
   ])
     void client.invalidateQueries({ queryKey: [key] });
 }

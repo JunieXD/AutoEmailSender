@@ -16,6 +16,8 @@ const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
 /// How long to wait before trying the database again.
 const RETRY: Duration = Duration::from_secs(5);
+/// How often at most the window hears about emails going out back to back.
+const TELL_EVERY: Duration = Duration::from_secs(5);
 
 /// Wakes the sender, so that an email approved or retried goes out without waiting.
 #[derive(Clone, Default)]
@@ -28,32 +30,55 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`.
-pub async fn run(db: SqlitePool, net: Net, materials: PathBuf, sender: Sender) {
+/// attached from `materials`. `changed` runs once emails have been sent or failed.
+pub async fn run(
+    db: SqlitePool,
+    net: Net,
+    materials: PathBuf,
+    sender: Sender,
+    changed: impl Fn() + Send + 'static,
+) {
     while let Err(e) = recover(&db, now()).await {
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
-    loop {
-        let wait = match step(&db, &net, &materials, now).await {
-            Ok(Next::Now) => continue,
-            Ok(Next::At(at)) => Some(at - now()),
-            Ok(Next::Idle) => None,
-            // Nobody to tell but the log; the database is likely to work again in a while.
-            Err(e) => {
-                tracing::error!("send: {e}");
-                Some(MINUTE)
+    let dealt = Notify::new();
+    let sending = async {
+        loop {
+            let wait = match step(&db, &net, &materials, now).await {
+                Ok(Next::Now) => {
+                    dealt.notify_one();
+                    continue;
+                }
+                Ok(Next::At(at)) => Some(at - now()),
+                Ok(Next::Idle) => None,
+                // Nobody to tell but the log; the database is likely to work again in a while.
+                Err(e) => {
+                    tracing::error!("send: {e}");
+                    Some(MINUTE)
+                }
+            };
+            match wait {
+                // Looks again within a minute: the timer stands still while the computer sleeps.
+                Some(ms) => tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
+                    () = sender.0.notified() => {}
+                },
+                None => sender.0.notified().await,
             }
-        };
-        match wait {
-            // Looks again within a minute: the timer stands still while the computer sleeps.
-            Some(ms) => tokio::select! {
-                () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
-                () = sender.0.notified() => {}
-            },
-            None => sender.0.notified().await,
         }
-    }
+    };
+    // Each telling makes the window read its lists and statistics again, so emails dealt with back
+    // to back, such as many failing at once, are told of together: the first at once, the rest
+    // when a few seconds have passed, however long the email being sent then takes.
+    let telling = async {
+        loop {
+            dealt.notified().await;
+            changed();
+            tokio::time::sleep(TELL_EVERY).await;
+        }
+    };
+    tokio::join!(sending, telling);
 }
 
 /// Emails the last run left being sent may have gone out, so they are marked maybe sent, and their

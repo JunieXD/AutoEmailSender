@@ -157,11 +157,17 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         generator,
         model_limit,
     } = &ctx;
+    let ui = app.clone();
     tauri::async_runtime::spawn(send::run(
         db.clone(),
         net.clone(),
         materials.clone(),
         sender.clone(),
+        move || {
+            if let Err(e) = ui.emit("sending-changed", ()) {
+                tracing::warn!("refresh sending: {e}");
+            }
+        },
     ));
     let ui = app.clone();
     let notifications_db = db.clone();

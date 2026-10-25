@@ -146,7 +146,12 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
 }
 
 fn manifest() -> serde_json::Value {
-    json!({"application":"io.github.juniexd.autoemailsender", "appVersion":"3.0.0-alpha.0", "databaseVersion":4, "exportedAt":NOW})
+    json!({"application":"io.github.juniexd.autoemailsender", "appVersion":"3.0.0-alpha.0", "databaseVersion":latest(), "exportedAt":NOW})
+}
+
+/// The version of the newest migration, which a backup made now records.
+fn latest() -> i64 {
+    db::MIGRATOR.iter().last().unwrap().version
 }
 
 fn archive(path: &Path, entries: &[(&str, &[u8])]) {
@@ -316,7 +321,7 @@ async fn invalid_archives_are_rejected_and_cleaned_up(db: SqlitePool) {
     foreign["application"] = json!("another.app");
     let foreign = serde_json::to_vec(&foreign).unwrap();
     let mut future = manifest();
-    future["databaseVersion"] = json!(5);
+    future["databaseVersion"] = json!(latest() + 1);
     let future = serde_json::to_vec(&future).unwrap();
     let oversized = vec![b'x'; 64 * 1024 + 1];
     let cases = vec![

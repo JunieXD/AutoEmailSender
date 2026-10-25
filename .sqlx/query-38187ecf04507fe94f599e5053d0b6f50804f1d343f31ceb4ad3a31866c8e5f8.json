@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH scores AS MATERIALIZED (\n SELECT CASE WHEN match_score IS NULL THEN 5 ELSE min(match_score/20,4) END AS bucket, count(*) AS n\n FROM mentor WHERE trashed_at IS NULL GROUP BY bucket\n)\nSELECT (SELECT coalesce(sum(n),0) FROM scores) AS \"total!: i64\",\n (SELECT json_array(coalesce(sum(CASE WHEN bucket=0 THEN n END),0), coalesce(sum(CASE WHEN bucket=1 THEN n END),0),\n coalesce(sum(CASE WHEN bucket=2 THEN n END),0),coalesce(sum(CASE WHEN bucket=3 THEN n END),0),\n coalesce(sum(CASE WHEN bucket=4 THEN n END),0),coalesce(sum(CASE WHEN bucket=5 THEN n END),0)) FROM scores) AS \"matching!: String\"\n",
+  "describe": {
+    "columns": [
+      {
+        "name": "total!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "matching!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "38187ecf04507fe94f599e5053d0b6f50804f1d343f31ceb4ad3a31866c8e5f8"
+}
