@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { ScheduleFields, scheduleValid, useScheduleCapacity } from "@/components/schedule";
 import { day, fileSize } from "@/format";
 
 export function CreateTaskDialog({ ids, onClose }: { ids: number[]; onClose: () => void }) {
@@ -59,6 +60,7 @@ function TaskSteps({
   const [form, setForm] = useState<NewTask>(() => {
     const date = new Date();
     return {
+      schedule: { kind: "now" },
       name: `首封 ${date.getMonth() + 1}月${date.getDate()}日`,
       ids,
       writer: "ai",
@@ -97,6 +99,10 @@ function TaskSteps({
       void navigate({ to: "/tasks/$id", params: { id } });
     },
   });
+  const capacity = useScheduleCapacity(form.schedule);
+  const enoughCapacity =
+    form.schedule.kind === "now" ||
+    (capacity.data != null && !capacity.error && capacity.data.emails >= eligible.length);
   const attached = materials.filter((m) => form.attachments.includes(m.id));
   function toggle(key: "references" | "attachments", id: number, on: boolean) {
     setForm({ ...form, [key]: on ? [...form[key], id] : form[key].filter((i) => i !== id) });
@@ -252,6 +258,11 @@ function TaskSteps({
               <Field id="task-name" label="任务名称">
                 <Input id="task-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </Field>
+              <ScheduleFields
+                value={form.schedule}
+                onChange={(schedule) => setForm({ ...form, schedule })}
+                count={eligible.length}
+              />
               <div className="space-y-2 rounded-lg bg-muted p-4">
                 <p>
                   {eligible.length} 位导师 · {form.writer === "ai" ? "AI 逐一撰写" : "使用模板"}
@@ -260,7 +271,7 @@ function TaskSteps({
                   {form.templateId ? templates.find((t) => t.id === form.templateId)?.name : "从头起草"} ·{" "}
                   {form.references.length} 份参考材料 · {attached.length} 个附件
                 </p>
-                <p className="font-medium">批准后立即发送</p>
+
                 <p className="text-muted-foreground">
                   创建后先审核草稿。每封邮件经你批准后，按邮箱的余量和最短间隔依次发出。
                 </p>
@@ -285,13 +296,16 @@ function TaskSteps({
           ) : form.writer === "ai" ? (
             <ModelAction
               modelId={form.modelConfigId}
-              disabled={create.isPending || !form.name.trim()}
+              disabled={create.isPending || !form.name.trim() || !scheduleValid(form.schedule) || !enoughCapacity}
               onWrite={() => create.mutate()}
             >
               创建任务
             </ModelAction>
           ) : (
-            <Button disabled={create.isPending || !form.name.trim()} onClick={() => create.mutate()}>
+            <Button
+              disabled={create.isPending || !form.name.trim() || !scheduleValid(form.schedule) || !enoughCapacity}
+              onClick={() => create.mutate()}
+            >
               创建任务
             </Button>
           )}

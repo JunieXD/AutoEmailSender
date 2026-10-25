@@ -720,6 +720,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             model_config_id: Some(config),
             references: vec![],
             attachments: vec![],
+            schedule: email::schedule::Schedule::Now,
         },
         1,
     )

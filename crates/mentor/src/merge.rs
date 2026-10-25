@@ -189,9 +189,11 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     sqlx::query!(
         "DELETE FROM email
          WHERE mentor_id IN (?1, ?2) AND task_id IS NOT NULL AND state = 'canceled'
+           AND NOT (state = 'canceled' AND sent_at IS NOT NULL)
            AND EXISTS (SELECT 1 FROM email k WHERE k.task_id = email.task_id
              AND k.mentor_id IN (?1, ?2) AND k.mentor_id <> email.mentor_id
-             AND (email.mentor_id = ?2 OR k.state IN ('maybe_sent', 'sent', 'bounced')))",
+             AND (email.mentor_id = ?2 OR k.state IN ('maybe_sent', 'sent', 'bounced')
+               OR (k.state = 'canceled' AND k.sent_at IS NOT NULL)))",
         keep,
         other,
     )

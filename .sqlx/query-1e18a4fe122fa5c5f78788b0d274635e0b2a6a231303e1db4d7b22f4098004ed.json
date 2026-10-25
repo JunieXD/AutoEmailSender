@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'approved', planned_at = ?1, latest_at = NULL,\n             manual_schedule = 0, error = NULL, updated_at = ?1\n           WHERE id = ?2 AND state IN ('failed', 'maybe_sent') AND cancel_reason IS NULL\n           RETURNING task_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "task_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "1e18a4fe122fa5c5f78788b0d274635e0b2a6a231303e1db4d7b22f4098004ed"
+}

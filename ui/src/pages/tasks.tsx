@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearch, useParams, useBlocker } from "@tanstack/r
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ChevronLeft, MoreHorizontal } from "lucide-react";
 import { call, errorMessage } from "@/api/call";
-import type { DraftFilter, DraftState, Progress, TaskSummary } from "@/api/types";
+import type { DraftFilter, DraftState, PlanColumn, Progress, TaskSummary } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
 import { TaskLetter, type TaskComposerHandle } from "@/components/task-letter";
@@ -17,11 +17,27 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { SendingPlan } from "@/components/sending-plan";
+import { ChangeSchedule, ScheduleActions, scheduleText, scheduledAt } from "@/components/schedule";
 import { day } from "@/format";
 import { letterHtml, letterText } from "@/letter";
 
-export function tasksSearch(s: Record<string, unknown>): { page?: number } {
-  return { page: pageParam(s.page) };
+export function tasksSearch(s: Record<string, unknown>): {
+  page?: number;
+  tab?: "plan";
+  column?: PlanColumn;
+  pending?: number;
+  upcoming?: number;
+  history?: number;
+} {
+  return {
+    page: pageParam(s.page),
+    tab: s.tab === "plan" ? "plan" : undefined,
+    column: s.column === "upcoming" || s.column === "history" ? s.column : undefined,
+    pending: pageParam(s.pending),
+    upcoming: pageParam(s.upcoming),
+    history: pageParam(s.history),
+  };
 }
 export function taskSearch(s: Record<string, unknown>): { email?: number; page?: number; filter?: DraftFilter } {
   return {
@@ -34,7 +50,16 @@ export function taskSearch(s: Record<string, unknown>): { email?: number; page?:
   };
 }
 export function refreshTasks(client: ReturnType<typeof useQueryClient>) {
-  for (const key of ["taskWork", "listTasks", "getTask", "listTaskDrafts", "getTaskDraft", "planTask"])
+  for (const key of [
+    "taskWork",
+    "listTasks",
+    "getTask",
+    "listTaskDrafts",
+    "getTaskDraft",
+    "planTask",
+    "sendingPlan",
+    "scheduledWork",
+  ])
     void client.invalidateQueries({ queryKey: [key] });
 }
 const SEGMENTS: [keyof Progress, string, string][] = [
@@ -90,6 +115,7 @@ export function TasksPage() {
   const query = useQuery({
     queryKey: ["listTasks", page],
     queryFn: () => call("listTasks", { page }),
+    enabled: search.tab !== "plan",
     refetchInterval: 3000,
   });
   return (
@@ -98,43 +124,67 @@ export function TasksPage() {
         <h1 className="text-2xl font-semibold">任务</h1>
         <p className="mt-1 text-sm text-muted-foreground">审核首封草稿，批准后依次发出</p>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 phone:px-2">
-        {query.error ? (
-          <Notice title="任务列表未能加载" detail={errorMessage(query.error)} />
-        ) : query.data?.total === 0 ? (
-          <Notice title="尚未创建任务" detail="在导师列表勾选多位导师，按“写信”创建任务。" />
-        ) : (
-          query.data?.tasks.map((t) => (
-            <Link
-              key={t.id}
-              to="/tasks/$id"
-              params={{ id: t.id }}
-              className="mb-[3px] grid grid-cols-[minmax(140px,1fr)_minmax(160px,1.5fr)_70px] items-center gap-5 rounded-md px-4 py-4 hover:bg-muted phone:grid-cols-[minmax(0,1fr)_64px] phone:gap-2"
-            >
-              <div className="min-w-0">
-                <h2 className="truncate font-medium">{t.name}</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {day(t.createdAt)} · {Object.values(t.progress).reduce((n, v) => n + v, 0)} 位导师
-                </p>
-              </div>
-              <div className="phone:col-span-2 phone:row-start-2">
-                <ProgressBar progress={t.progress} labels />
-              </div>
-              <span className={`text-sm ${t.state === "paused" ? "text-warning" : "text-muted-foreground"}`}>
-                {TASK_STATE[t.state]}
-              </span>
-            </Link>
-          ))
-        )}
+      <div className="mb-4 flex gap-2 px-7 phone:px-4" role="tablist" aria-label="任务页面">
+        <Button
+          variant={search.tab !== "plan" ? "quiet" : "ghost"}
+          role="tab"
+          aria-selected={search.tab !== "plan"}
+          onClick={() => void navigate({ search: (s) => ({ ...s, tab: undefined }) })}
+        >
+          任务
+        </Button>
+        <Button
+          variant={search.tab === "plan" ? "quiet" : "ghost"}
+          role="tab"
+          aria-selected={search.tab === "plan"}
+          onClick={() => void navigate({ search: (s) => ({ ...s, tab: "plan" }) })}
+        >
+          发送计划
+        </Button>
       </div>
-      <footer className="flex justify-end px-7 py-3">
-        <Pager
-          page={page}
-          total={query.data?.total ?? 0}
-          pageSize={20}
-          onPage={(p) => navigate({ search: { page: p > 1 ? p : undefined } })}
-        />
-      </footer>
+      {search.tab === "plan" ? (
+        <SendingPlan />
+      ) : (
+        <>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 phone:px-2">
+            {query.error ? (
+              <Notice title="任务列表未能加载" detail={errorMessage(query.error)} />
+            ) : query.data?.total === 0 ? (
+              <Notice title="尚未创建任务" detail="在导师列表勾选多位导师，按“写信”创建任务。" />
+            ) : (
+              query.data?.tasks.map((t) => (
+                <Link
+                  key={t.id}
+                  to="/tasks/$id"
+                  params={{ id: t.id }}
+                  className="mb-[3px] grid grid-cols-[minmax(140px,1fr)_minmax(160px,1.5fr)_70px] items-center gap-5 rounded-md px-4 py-4 hover:bg-muted phone:grid-cols-[minmax(0,1fr)_64px] phone:gap-2"
+                >
+                  <div className="min-w-0">
+                    <h2 className="truncate font-medium">{t.name}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {day(t.createdAt)} · {Object.values(t.progress).reduce((n, v) => n + v, 0)} 位导师
+                    </p>
+                  </div>
+                  <div className="phone:col-span-2 phone:row-start-2">
+                    <ProgressBar progress={t.progress} labels />
+                  </div>
+                  <span className={`text-sm ${t.state === "paused" ? "text-warning" : "text-muted-foreground"}`}>
+                    {TASK_STATE[t.state]}
+                  </span>
+                </Link>
+              ))
+            )}
+          </div>
+          <footer className="flex justify-end px-7 py-3">
+            <Pager
+              page={page}
+              total={query.data?.total ?? 0}
+              pageSize={20}
+              onPage={(p) => navigate({ search: { page: p > 1 ? p : undefined } })}
+            />
+          </footer>
+        </>
+      )}
     </div>
   );
 }
@@ -166,6 +216,8 @@ export function TaskReviewPage() {
   const composer = useRef<TaskComposerHandle>(null);
   const [error, setError] = useState<string | null>(null);
   const [bulk, setBulk] = useState(false);
+  const [changingSchedule, setChangingSchedule] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const filter = search.filter ?? "all";
   const page = search.page ?? 1;
   const task = useQuery({ queryKey: ["getTask", id], queryFn: () => call("getTask", { id }), refetchInterval: 3000 });
@@ -293,11 +345,22 @@ export function TaskReviewPage() {
                 {t.state === "paused" ? "继续" : "暂停"}
               </Button>
             ))}
-          <Popover>
+          <Popover open={moreOpen} onOpenChange={setMoreOpen}>
             <PopoverTrigger render={<Button variant="ghost" size="icon" aria-label="更多" />}>
               <MoreHorizontal />
             </PopoverTrigger>
             <PopoverContent align="end" className="flex w-64 flex-col gap-2 p-2">
+              {t.state !== "stopped" && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setChangingSchedule(true);
+                  }}
+                >
+                  修改发送时间
+                </Button>
+              )}
               {t.state !== "stopped" && (
                 <Confirm
                   trigger={<Button variant="ghost">停止任务</Button>}
@@ -319,6 +382,7 @@ export function TaskReviewPage() {
             </PopoverContent>
           </Popover>
         </div>
+        <p className="text-sm text-muted-foreground">{scheduleText(t.schedule)}</p>
         <ProgressBar progress={t.progress} labels />
         {t.state === "paused" && (
           <p className="text-sm text-warning">
@@ -421,6 +485,7 @@ export function TaskReviewPage() {
           <Notice title="选择一封草稿开始审核" detail="草稿会陆续出现在左边。" />
         )}
       </div>
+      {changingSchedule && <ChangeSchedule task={t} onClose={() => setChangingSchedule(false)} />}
       {bulk && <BulkApproval task={t} onClose={() => setBulk(false)} />}
     </div>
   );
@@ -554,10 +619,28 @@ function DraftDetail({
                 onConfirm={() => action.mutate("removeTaskEmail")}
               />
             )}
+          {d.state === "approved" && (
+            <>
+              <p className="w-full text-sm text-muted-foreground">
+                {d.plannedAt === null
+                  ? "所选窗口已无空位，留待处理"
+                  : d.latestAt === null
+                    ? "等待发送"
+                    : `计划 ${scheduledAt(d.plannedAt)} 发送`}
+              </p>
+              <ScheduleActions id={d.id} initial={d.plannedAt ?? undefined} />
+            </>
+          )}
           {(d.state === "approved" || d.state === "failed") && task.state !== "stopped" && (
             <Button variant="quiet" onClick={() => action.mutate("withdrawEmail")}>
               改回草稿
             </Button>
+          )}
+          {d.cancelReason && (
+            <p className="w-full text-sm text-warning">
+              已取消：{d.cancelReason}
+              {d.state !== "canceled" && "，等待发送结果。"}
+            </p>
           )}
           {d.error && d.state !== "generation_failed" && <p className="w-full text-sm text-warning">{d.error}</p>}
           {action.error && <p className="w-full text-sm text-destructive">{errorMessage(action.error)}</p>}
@@ -612,6 +695,11 @@ function BulkApproval({ task, onClose }: { task: TaskSummary; onClose: () => voi
   });
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const chosen = drafts.data?.filter((d) => !skip || d.problems === 0) ?? [];
+  const timing = useQuery({
+    queryKey: ["previewTaskSchedule", task.id, chosen.map((d) => d.id)],
+    queryFn: () => call("previewTaskSchedule", { taskId: task.id, ids: chosen.map((d) => d.id) }),
+    enabled: task.schedule.kind === "window" && drafts.isSuccess,
+  });
   const problematic = drafts.data?.filter((d) => d.problems > 0).length ?? 0;
   const approve = useMutation({
     mutationFn: async () => {
@@ -645,16 +733,27 @@ function BulkApproval({ task, onClose }: { task: TaskSummary; onClose: () => voi
             <Checkbox checked={skip} onCheckedChange={setSkip} />
             跳过有问题的邮件
           </label>
+          {task.schedule.kind === "window" && (
+            <p className="text-sm">
+              {timing.data
+                ? `预计排进：${timing.data.dates.map((d) => day(new Date(`${d}T12:00`).getTime())).join("、") || "没有可用窗口"}。${timing.data.unplaced > 0 ? `${timing.data.unplaced} 封没有空位，将留待处理。` : ""}`
+                : "正在核对剩余窗口…"}
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             将批准 {chosen.length} 封。
             {task.state === "paused"
               ? "任务已暂停，继续任务后才会发出。"
-              : "批准后立即交给发信循环，按邮箱余量依次发出。"}
+              : task.schedule.kind === "window"
+                ? "批准后按所选窗口排期。"
+                : "批准后立即交给发信循环，按邮箱余量依次发出。"}
             之后生成的草稿不包括在内。
           </p>
           <p className="text-sm text-muted-foreground">附件按各封草稿当前的清单发送，请在批准前核对。</p>
-          {(drafts.error ?? style.error ?? approve.error) && (
-            <p className="text-sm text-destructive">{errorMessage(drafts.error ?? style.error ?? approve.error)}</p>
+          {(drafts.error ?? style.error ?? approve.error ?? timing.error) && (
+            <p className="text-sm text-destructive">
+              {errorMessage(drafts.error ?? style.error ?? approve.error ?? timing.error)}
+            </p>
           )}
         </DialogBody>
         <DialogFooter className="justify-end">
@@ -662,7 +761,13 @@ function BulkApproval({ task, onClose }: { task: TaskSummary; onClose: () => voi
             取消
           </Button>
           <Button
-            disabled={!drafts.data || !style.data || chosen.length === 0 || approve.isPending}
+            disabled={
+              !drafts.data ||
+              !style.data ||
+              chosen.length === 0 ||
+              approve.isPending ||
+              (task.schedule.kind === "window" && !timing.data)
+            }
             onClick={() => approve.mutate()}
           >
             批准 {chosen.length} 封

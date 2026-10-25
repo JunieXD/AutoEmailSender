@@ -10,11 +10,13 @@ workspace = true
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+fastrand = "2.5.0"
 serde.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
+chrono-tz = "0.10.4"
 db.workspace = true
 mentor.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

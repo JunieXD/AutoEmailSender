@@ -258,6 +258,9 @@ CREATE TABLE email (
   generation_claim INTEGER NOT NULL DEFAULT 0,
   generation_queued_at INTEGER,
   planned_at INTEGER,
+  latest_at INTEGER,            -- only an approved scheduled email has a deadline
+  approval_order INTEGER,
+  manual_schedule INTEGER NOT NULL DEFAULT 0 CHECK (manual_schedule IN (0,1)),
   mailbox_id INTEGER REFERENCES mailbox(id) ON DELETE SET NULL,
   from_address TEXT,
   to_address TEXT COLLATE NOCASE, -- the mentor's address it was last handed over for
@@ -267,6 +270,7 @@ CREATE TABLE email (
   sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent, kept while waiting to be sent
                                -- again) or accepted (sent/bounced)
   error TEXT,
+  cancel_reason TEXT,
   tracking_id TEXT UNIQUE,
   open_count INTEGER,
   first_opened_at INTEGER,
@@ -279,22 +283,28 @@ CREATE TABLE email (
   text TEXT,
   CHECK ((kind = 'first') = (reply_to IS NULL)),
   CHECK (state NOT IN ('approved', 'cloud', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
-         OR (subject IS NOT NULL AND body_md IS NOT NULL AND html IS NOT NULL AND text IS NOT NULL
-             AND planned_at IS NOT NULL)),
+         OR (subject IS NOT NULL AND body_md IS NOT NULL AND html IS NOT NULL AND text IS NOT NULL)),
+  CHECK (state NOT IN ('cloud', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed') OR planned_at IS NOT NULL),
+  CHECK (state <> 'approved' OR planned_at IS NOT NULL OR task_id IS NOT NULL),
+  CHECK (latest_at IS NULL OR (state = 'approved' AND planned_at IS NOT NULL AND latest_at > planned_at)),
   CHECK (state NOT IN ('sending', 'maybe_sent', 'sent', 'bounced')
          OR (message_id IS NOT NULL AND sent_at IS NOT NULL AND from_address IS NOT NULL)),
   -- An email to a mentor with no address fails before going out.
   CHECK (state NOT IN ('maybe_sent', 'sent', 'bounced') OR to_address IS NOT NULL),
-  CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
+  CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced') OR error IS NOT NULL),
+  CHECK (cancel_reason IS NULL OR state IN ('sending', 'maybe_sent', 'canceled')),
+  CHECK (state <> 'canceled' OR cancel_reason IS NOT NULL)
 ) STRICT;
 CREATE INDEX email_out ON email (mentor_id, sent_at, kind)
   WHERE state IN ('maybe_sent', 'sent', 'bounced');
-CREATE INDEX email_queue ON email (planned_at) WHERE state = 'approved';
+CREATE INDEX email_queue ON email (planned_at, id, latest_at) WHERE state = 'approved';
+CREATE INDEX email_deadline ON email (latest_at, task_id) WHERE state = 'approved';
+CREATE INDEX email_history ON email (sent_at DESC, id DESC) WHERE state IN ('sent', 'bounced');
 CREATE INDEX email_mentor ON email (mentor_id, state);
 -- What each mailbox has sent lately, for its daily limit and minimum interval.
 CREATE INDEX email_mailbox_out ON email (mailbox_id, sent_at)
   WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced');
-CREATE INDEX email_task ON email (task_id, state);
+CREATE INDEX email_task ON email (task_id, state, approval_order, planned_at);
 CREATE UNIQUE INDEX email_task_mentor ON email (mentor_id, task_id) WHERE task_id IS NOT NULL;
 CREATE INDEX email_generation_queue ON email (generation_queued_at, id) WHERE state = 'generating';
 CREATE INDEX email_attention ON email (state) WHERE state IN ('generation_failed', 'failed', 'maybe_sent');

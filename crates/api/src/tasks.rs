@@ -1,4 +1,17 @@
 use super::*;
+pub async fn schedule_capacity(
+    _ctx: &Context,
+    window: email::schedule::Window,
+) -> Result<email::schedule::Capacity, CallError> {
+    Ok(task::schedule_capacity(&window, now())?)
+}
+
+pub async fn preview_task_schedule(
+    ctx: &Context,
+    input: task::ApprovalPreview,
+) -> Result<task::SchedulePreview, CallError> {
+    Ok(task::preview_schedule(&ctx.db, &input, now()).await?)
+}
 #[derive(Debug, Deserialize, Serialize, TS)]
 pub struct TaskId {
     pub id: i64,
@@ -145,6 +158,7 @@ pub async fn delete_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
 pub async fn remove_task_email(ctx: &Context, key: task::TaskEmail) -> Result<(), CallError> {
     task::remove(&ctx.db, &key, now()).await?;
     ctx.generator.wake();
+    ctx.sender.wake();
     Ok(())
 }
 pub async fn regenerate_task_email(ctx: &Context, key: task::TaskEmail) -> Result<u64, CallError> {
@@ -180,4 +194,53 @@ pub async fn attach_task_material(ctx: &Context, input: TaskMaterial) -> Result<
         input.material_id,
     )
     .await?)
+}
+
+pub async fn change_task_schedule(
+    ctx: &Context,
+    edit: task::ScheduleEdit,
+) -> Result<u64, CallError> {
+    let n = task::change_schedule(&ctx.db, &edit, now()).await?;
+    ctx.sender.wake();
+    Ok(n)
+}
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct RescheduleEmail {
+    pub id: i64,
+    pub planned_at: i64,
+}
+pub async fn reschedule_email(ctx: &Context, edit: RescheduleEmail) -> Result<(), CallError> {
+    let at = now();
+    if edit.planned_at <= at {
+        return Err(CallError::invalid(
+            "所选时间已过，请选择未来的日期和时间。".into(),
+        ));
+    }
+    require_applied(
+        email::schedule::reschedule(&ctx.db, edit.id, edit.planned_at, at).await?,
+        "这封邮件已不在待发送状态。",
+    )?;
+    ctx.sender.wake();
+    Ok(())
+}
+pub async fn send_email_now(ctx: &Context, key: EmailId) -> Result<(), CallError> {
+    require_applied(
+        email::schedule::send_now(&ctx.db, key.id, now()).await?,
+        "这封邮件已不在待发送状态。",
+    )?;
+    ctx.sender.wake();
+    Ok(())
+}
+pub async fn sending_plan(
+    ctx: &Context,
+    query: send::plan::PlanQuery,
+) -> Result<send::plan::PlanPage, CallError> {
+    Ok(send::plan::list(&ctx.db, &query, now()).await?)
+}
+pub async fn scheduled_work(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<send::plan::ScheduledWork, CallError> {
+    Ok(send::plan::work(&ctx.db, now()).await?)
 }

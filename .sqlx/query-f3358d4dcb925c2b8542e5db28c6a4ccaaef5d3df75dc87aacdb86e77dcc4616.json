@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT min(latest_at) AS \"at: i64\"\n           FROM email\n           WHERE state = 'approved'\n             AND latest_at > ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "at: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "f3358d4dcb925c2b8542e5db28c6a4ccaaef5d3df75dc87aacdb86e77dcc4616"
+}
