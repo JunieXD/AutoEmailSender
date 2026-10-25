@@ -12,6 +12,8 @@ export type CallError = { code: ErrorCode, message: string, };
 
 export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, };
 
+export type Capacity = { windows: number, emails: number, };
+
 export type Column = { header: string, field: Field | null, };
 
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
@@ -349,7 +351,7 @@ export type NotificationSetting = { on: boolean, };
 
 export type PlanColumn = "pending" | "upcoming" | "history";
 
-export type PlanEmail = { id: number, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, waiting: Waiting | null, };
+export type PlanEmail = { id: number, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, waiting: Waiting | null, };
 
 export type PlanPage = { emails: Array<PlanEmail>, total: number, };
 
@@ -499,6 +501,7 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  scheduleCapacity: { input: Window; output: Capacity };
   previewTaskSchedule: { input: ApprovalPreview; output: SchedulePreview };
   changeTaskSchedule: { input: ScheduleEdit; output: number };
   rescheduleEmail: { input: RescheduleEmail; output: null };

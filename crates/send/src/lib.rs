@@ -254,49 +254,37 @@ async fn send(
             return email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await;
         }
     };
-    let Some(m) = mark_sending(db, id, &account, mailbox_id, now()).await? else {
+    let attached = email::attachment_files(&mut *db.acquire().await?, id).await?;
+    let files = files(materials, &attached).await;
+    let Some(m) = mark_sending(db, id, &account, mailbox_id, now, &attached, files).await? else {
         smtp.quit();
         return Ok(());
     };
-    let outgoing = async {
-        let to = m.handover.to_address.as_deref().ok_or(email::NO_ADDRESS)?;
-        let attachments = files(materials, &m.handover.attachments).await?;
-        let letter = Letter {
-            message_id: &m.handover.message_id,
-            in_reply_to: m.handover.reply_to.as_deref(),
-            references: m.handover.refs.as_deref(),
-            to_name: &m.to_name,
-            to,
-            subject: &m.handover.subject,
-            html: &m.handover.html,
-            text: &m.handover.text,
-            attachments: &attachments,
-        };
-        mailbox::compose(&account, &letter).map_err(|e| e.message())
+    // The durable commit or closing the connection may itself have crossed the deadline.
+    if m.before.latest_at.is_some_and(|latest| now() >= latest) {
+        smtp.quit();
+        while let Err(e) = m.before.restore(db, id).await {
+            tracing::error!("restore expired email {id}: {e}");
+            tokio::time::sleep(RETRY).await;
+        }
+        return Ok(());
     }
-    .await;
-    let outcome = match outgoing {
-        Ok(outgoing) => match smtp.send(&outgoing).await {
-            Ok(()) => {
-                tracing::info!("email {id} sent from mailbox {mailbox_id}");
-                Outcome::Sent
+    let outcome = match smtp.send(&m.outgoing).await {
+        Ok(()) => {
+            tracing::info!("email {id} sent from mailbox {mailbox_id}");
+            Outcome::Sent
+        }
+        Err(err) => {
+            tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
+            match err {
+                SendError::NotSent(_) => Outcome::Failed(err.message()),
+                SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
             }
-            Err(err) => {
-                tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
-                match err {
-                    SendError::NotSent(_) => Outcome::Failed(err.message()),
-                    SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
-                }
-            }
-        },
-        Err(error) => {
-            smtp.quit();
-            Outcome::Failed(error)
         }
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, m.handover.mentor_id, mailbox_id, &outcome, answered).await {
+    while let Err(e) = record(db, id, m.mentor_id, mailbox_id, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }
@@ -322,10 +310,30 @@ async fn files(dir: &Path, attachments: &[email::Attached]) -> Result<Vec<mailbo
     Ok(files)
 }
 
-/// What goes out, read as the email is marked as being handed over.
 struct Marked {
-    handover: email::Handover,
-    to_name: String,
+    mentor_id: i64,
+    outgoing: mailbox::Outgoing,
+    before: BeforeHandover,
+}
+
+/// A retry can already carry delivery evidence from an earlier attempt; keep it intact if this
+/// attempt expires without handing anything to SMTP.
+struct BeforeHandover {
+    latest_at: Option<i64>,
+    mailbox_id: Option<i64>,
+    from_address: Option<String>,
+    to_address: Option<String>,
+    message_id: Option<String>,
+    sent_at: Option<i64>,
+    updated_at: i64,
+}
+
+impl BeforeHandover {
+    async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+        sqlx::query!("UPDATE email SET state='approved',latest_at=?,mailbox_id=?,from_address=?,to_address=?,message_id=?,sent_at=?,updated_at=? WHERE id=? AND state='sending'",
+            self.latest_at,self.mailbox_id,self.from_address,self.to_address,self.message_id,self.sent_at,self.updated_at,id).execute(db).await?;
+        Ok(())
+    }
 }
 
 /// Marks the email as being handed over in a transaction synced to the disk itself: were the mark
@@ -336,27 +344,68 @@ async fn mark_sending(
     id: i64,
     account: &mailbox::Account,
     mailbox_id: i64,
-    now: i64,
+    now: &impl Fn() -> i64,
+    attached: &[email::Attached],
+    files: Result<Vec<mailbox::File>, String>,
 ) -> Result<Option<Marked>, sqlx::Error> {
     let mut conn = db.acquire().await?.detach();
     // fullfsync, on macOS, gets the commit past the drive's own cache.
     sqlx::raw_sql("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON")
         .execute(&mut conn)
         .await?;
-    let mut tx = conn.begin().await?;
+    let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
+    let at = now();
+    let Some(before) = sqlx::query_as!(BeforeHandover,"SELECT latest_at,mailbox_id,from_address,to_address,message_id,sent_at,updated_at FROM email WHERE id=?",id).fetch_optional(&mut *tx).await? else { return Ok(None); };
     let message_id = mailbox::message_id(account);
     let from: &str = account.address.as_ref();
     let Some(handover) =
-        email::start_sending(&mut tx, id, mailbox_id, from, &message_id, now).await?
+        email::start_sending(&mut tx, id, mailbox_id, from, &message_id, at).await?
     else {
         return Ok(None);
     };
+    // The approval may have changed while files were being read. Re-read its files next step.
+    if handover.attachments != attached {
+        return Ok(None);
+    }
     let to_name = sqlx::query_scalar!("SELECT name FROM mentor WHERE id = ?", handover.mentor_id)
         .fetch_one(&mut *tx)
         .await?;
+    let outgoing = files.and_then(|files| {
+        let to = handover.to_address.as_deref().ok_or(email::NO_ADDRESS)?;
+        mailbox::compose(
+            account,
+            &Letter {
+                message_id: &handover.message_id,
+                in_reply_to: handover.reply_to.as_deref(),
+                references: handover.refs.as_deref(),
+                to_name: &to_name,
+                to,
+                subject: &handover.subject,
+                html: &handover.html,
+                text: &handover.text,
+                attachments: &files,
+            },
+        )
+        .map_err(|e| e.message())
+    });
+    if before.latest_at.is_some_and(|latest| now() >= latest) {
+        return Ok(None);
+    }
+    let outgoing = match outgoing {
+        Ok(outgoing) => outgoing,
+        Err(error) => {
+            email::failed(&mut tx, id, &error, now()).await?;
+            tx.commit().await?;
+            return Ok(None);
+        }
+    };
     tx.commit().await?;
     conn.close().await?;
-    Ok(Some(Marked { handover, to_name }))
+    Ok(Some(Marked {
+        mentor_id: handover.mentor_id,
+        outgoing,
+        before,
+    }))
 }
 
 /// How SMTP answered.

@@ -1028,3 +1028,191 @@ async fn plan_columns_explain_waiting_and_history_is_limited_and_paged(db: Sqlit
             .is_empty()
     );
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deadline_crossed_while_acquiring_write_lock_must_not_send(db: SqlitePool) {
+    use sqlx::Connection;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+        mpsc,
+    };
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "lock@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    let clock = Arc::new(AtomicI64::new(T));
+    let (request, requested) = mpsc::channel();
+    let (released, release) = mpsc::channel();
+    let options = db
+        .connect_options()
+        .as_ref()
+        .clone()
+        .busy_timeout(std::time::Duration::ZERO);
+    let advancing = clock.clone();
+    let writer = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let mut conn = sqlx::SqliteConnection::connect_with(&options)
+                    .await
+                    .unwrap();
+                requested.recv().unwrap();
+                let lock = conn.begin_with("BEGIN IMMEDIATE").await;
+                advancing.store(T + 3_600_000, Ordering::SeqCst);
+                match lock {
+                    Ok(tx) => {
+                        tx.commit().await.unwrap();
+                        released.send(true).unwrap();
+                    }
+                    Err(e) => {
+                        // A clock read made under the sender's write lock sees the new time directly.
+                        assert_eq!(e.as_database_error().unwrap().code().as_deref(), Some("5"));
+                        released.send(false).unwrap();
+                    }
+                }
+            });
+    });
+    let calls = Cell::new(0);
+    let now = || {
+        let captured = clock.load(Ordering::SeqCst);
+        calls.set(calls.get() + 1);
+        if calls.get() == 2 {
+            request.send(()).unwrap();
+            if release.recv().unwrap() {
+                request.send(()).unwrap();
+                return captured;
+            }
+        }
+        clock.load(Ordering::SeqCst)
+    };
+    send::step(&db, &net, nowhere(), now).await.unwrap();
+    writer.join().unwrap();
+    assert_eq!(inbox.lock().unwrap().len(), 0);
+    let email = first_email(&db, mentor).await;
+    assert_eq!(email.delivery, Delivery::Approved);
+    assert_eq!(email.latest_at, Some(T + 3_600_000));
+}
+
+#[cfg(unix)]
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deadline_crossed_while_reading_attachment_must_not_send(db: SqlitePool) {
+    use std::io::Write;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    };
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let dir = tempfile::tempdir().unwrap();
+    let attachment = material(&db, dir.path(), "简历.pdf", b"resume").await;
+    let mentor = approve(&db, "disk@example.edu.cn", &[attachment], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    let path = material::file(dir.path(), attachment);
+    std::fs::remove_file(&path).unwrap();
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let clock = Arc::new(AtomicI64::new(T));
+    let advancing = clock.clone();
+    let writer = std::thread::spawn(move || {
+        // Opening the writer waits for the sender to start reading, without a timed sleep.
+        let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        advancing.store(T + 3_600_000, Ordering::SeqCst);
+        file.write_all(b"resume").unwrap();
+    });
+    send::step(&db, &net, dir.path(), || clock.load(Ordering::SeqCst))
+        .await
+        .unwrap();
+    writer.join().unwrap();
+    assert_eq!(inbox.lock().unwrap().len(), 0);
+    let email = first_email(&db, mentor).await;
+    assert_eq!(email.delivery, Delivery::Approved);
+    assert_eq!(email.latest_at, Some(T + 3_600_000));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    let id = first_email(&db, mentor).await.id;
+    email::retry(&db, id, T + MINUTE).await.unwrap();
+    email::schedule::reschedule(&db, id, T + MINUTE, T + MINUTE)
+        .await
+        .unwrap();
+    let evidence = async || {
+        sqlx::query_as::<_, (Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>, i64)>("SELECT mailbox_id,from_address,to_address,message_id,sent_at,updated_at FROM email WHERE id=?").bind(id).fetch_one(&db).await.unwrap()
+    };
+    let before = evidence().await;
+    let calls = Cell::new(0);
+    send::step(&db, &net, nowhere(), || {
+        calls.set(calls.get() + 1);
+        if calls.get() < 4 {
+            T + MINUTE
+        } else {
+            T + MINUTE + 3_600_000
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+    assert_eq!(evidence().await, before);
+    let email = first_email(&db, mentor).await;
+    assert_eq!(email.delivery, Delivery::Approved);
+    assert_eq!(email.latest_at, Some(T + MINUTE + 3_600_000));
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + MINUTE + 3_600_000)
+            .await
+            .unwrap(),
+        Next::Idle
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn plan_returns_resend_origin_for_approved_and_failed_resends(db: SqlitePool) {
+    use send::plan::{PlanColumn, PlanQuery};
+    let (net, _) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "bounced@example.edu.cn", &[], T).await;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    let original = first_email(&db, mentor).await.id;
+    sqlx::query("UPDATE email SET state='bounced',error='退信' WHERE id=?")
+        .bind(original)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        email::resend(&db, original, T).await.unwrap(),
+        email::Approved::Yes
+    );
+    let again = email::list(&db, mentor).await.unwrap()[1].id;
+    email::schedule::reschedule(&db, again, T + DAY, T)
+        .await
+        .unwrap();
+    for column in [PlanColumn::Upcoming, PlanColumn::Pending] {
+        if matches!(column, PlanColumn::Pending) {
+            email::failed(&mut db.acquire().await.unwrap(), again, "拒收", T)
+                .await
+                .unwrap();
+        }
+        let page = send::plan::list(
+            &db,
+            &PlanQuery {
+                column,
+                page: std::num::NonZeroU32::MIN,
+            },
+            T,
+        )
+        .await
+        .unwrap();
+        let row = page.emails.iter().find(|e| e.id == again).unwrap();
+        assert_eq!(row.resend_of, Some(original));
+        assert!(!email::withdraw(&db, again, T).await.unwrap());
+    }
+}

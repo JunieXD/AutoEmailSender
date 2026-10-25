@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use lettre::Message;
+use lettre::address::Envelope;
 use lettre::message::header::ContentType;
 use lettre::message::{Attachment, MultiPart};
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
@@ -47,7 +48,7 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
         .map_err(|e| MailError::Broken(e.to_string()))?;
     login(net, account)
         .await?
-        .send(&Outgoing(message))
+        .send(&Outgoing::from(message))
         .await
         .map_err(|(SendError::NotSent(e) | SendError::Unknown(e))| e)
 }
@@ -77,7 +78,19 @@ pub struct File {
 }
 
 /// An email ready to hand to the server.
-pub struct Outgoing(Message);
+pub struct Outgoing {
+    envelope: Envelope,
+    message: Vec<u8>,
+}
+
+impl From<Message> for Outgoing {
+    fn from(message: Message) -> Self {
+        Self {
+            envelope: message.envelope().clone(),
+            message: message.formatted(),
+        }
+    }
+}
 
 /// Puts an email from the mailbox together, with the letter as HTML and as plain text for mail apps
 /// that show no HTML, and its files after.
@@ -117,7 +130,7 @@ pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError
         ))
         .subject(letter.subject)
         .multipart(body)
-        .map(Outgoing)
+        .map(Outgoing::from)
         .map_err(|e| MailError::Broken(e.to_string()))
 }
 
@@ -187,7 +200,7 @@ impl Smtp {
     /// `send`, which on a refusal waits for the server to answer QUIT, and some never do.
     pub async fn send(self, email: &Outgoing) -> Result<(), SendError> {
         let Smtp { server, mut conn } = self;
-        let envelope = email.0.envelope();
+        let envelope = &email.envelope;
         let ready = connect::within(&server, async {
             // A server without SMTPUTF8 turns down addresses that are not ASCII.
             let utf8 = envelope
@@ -216,9 +229,9 @@ impl Smtp {
             return Err(SendError::NotSent(e));
         }
         // From here on, a server that got the whole email may have taken it, whatever happens next.
-        let message = email.0.formatted();
+        let message = &email.message;
         let sent = connect::uploading(&server, message.len(), async {
-            conn.message(&message).await.map_err(refused)
+            conn.message(message).await.map_err(refused)
         })
         .await;
         match sent {

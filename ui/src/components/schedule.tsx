@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { call, errorMessage } from "@/api/call";
 import type { Schedule, TaskSummary } from "@/api/types";
 import { Field, formClose } from "@/components/form";
@@ -27,8 +27,13 @@ export function scheduleValid(s: Schedule): boolean {
     s.kind === "now" || (s.dates.length > 0 && s.start < s.end && s.perWindow > 0 && Number.isInteger(s.perWindow))
   );
 }
-export function capacity(s: Schedule): number {
-  return s.kind === "now" ? Infinity : s.dates.length * s.perWindow;
+export function useScheduleCapacity(schedule: Schedule) {
+  return useQuery({
+    queryKey: ["scheduleCapacity", schedule],
+    queryFn: () => (schedule.kind === "window" ? call("scheduleCapacity", schedule) : null),
+    enabled: schedule.kind === "window" && scheduleValid(schedule),
+    refetchInterval: 1000,
+  });
 }
 export function scheduledAt(at: number): string {
   return `${day(at)} ${time(at)}`;
@@ -51,6 +56,7 @@ export function ScheduleFields({
   count?: number;
 }) {
   const [today] = useState(() => new Date(new Date().setHours(0, 0, 0, 0)));
+  const capacity = useScheduleCapacity(value);
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
@@ -109,13 +115,21 @@ export function ScheduleFields({
               </Field>
             </div>
           </div>
-          <p className="text-sm">
-            共 {value.dates.length} 天，最多 {capacity(value)} 封
-          </p>
+          {capacity.data && scheduleValid(value) && (
+            <p className="text-sm">
+              共 {capacity.data.windows} 个可用窗口，最多 {capacity.data.emails} 封
+            </p>
+          )}
+          {capacity.isFetching && !capacity.data && <p className="text-sm text-muted-foreground">正在计算可用容量…</p>}
+          {capacity.error && (
+            <p role="alert" className="text-sm text-destructive">
+              {errorMessage(capacity.error)}
+            </p>
+          )}
           {!scheduleValid(value) && <p className="text-sm text-warning">请选择日期、有效时间窗口和每个窗口的数量</p>}
-          {count !== undefined && capacity(value) < count && (
+          {count !== undefined && capacity.data && scheduleValid(value) && capacity.data.emails < count && (
             <p role="alert" className="text-sm text-warning">
-              容量不足，还差 {count - capacity(value)} 封，请增加日期或每个窗口的数量
+              容量不足，还差 {count - capacity.data.emails} 封，请增加日期或每个窗口的数量
             </p>
           )}
           <p className="text-xs text-muted-foreground">

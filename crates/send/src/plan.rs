@@ -41,6 +41,7 @@ pub struct PlanEmail {
     pub task_id: Option<i64>,
     pub task_name: Option<String>,
     pub state: DraftState,
+    pub resend_of: Option<i64>,
     pub planned_at: Option<i64>,
     pub latest_at: Option<i64>,
     pub sent_at: Option<i64>,
@@ -73,7 +74,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
         PlanColumn::Upcoming=>sqlx::query_scalar!("SELECT id FROM email WHERE state='approved' AND planned_at IS NOT NULL AND (latest_at IS NULL OR latest_at>?1) ORDER BY planned_at,id LIMIT ?2 OFFSET ?3",now,limit,offset).fetch_all(&mut *tx).await?,
         PlanColumn::History=>sqlx::query_scalar!("SELECT id FROM email WHERE state IN ('sent','bounced') ORDER BY sent_at DESC,id DESC LIMIT ? OFFSET ?",limit,offset).fetch_all(&mut *tx).await?,
     };
-    let rows = sqlx::query!(r#"SELECT e.id,e.mentor_id,m.name,e.subject,e.task_id,t.name AS task_name,e.state AS "state: DraftState",e.planned_at,e.latest_at,e.sent_at,e.from_address,e.error,
+    let rows = sqlx::query!(r#"SELECT e.id,e.mentor_id,m.name,e.subject,e.task_id,t.name AS task_name,e.state AS "state: DraftState",e.planned_at,e.latest_at,e.sent_at,e.from_address,e.error,e.resend_of,
         t.state AS task_state,t.generation_paused_at,
         CASE WHEN e.kind='reply' THEN coalesce(m.mailbox_id,(SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id=r.id WHERE mm.mentor_id=e.mentor_id AND r.message_id=e.reply_to AND r.kind='reply')) ELSE m.mailbox_id END AS own
         FROM json_each(?1) j JOIN email e ON e.id=j.value JOIN mentor m ON m.id=e.mentor_id LEFT JOIN task t ON t.id=e.task_id
@@ -123,6 +124,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
                 task_id: r.task_id,
                 task_name: r.task_name,
                 state: r.state,
+                resend_of: r.resend_of,
                 planned_at: r.planned_at,
                 latest_at: r.latest_at,
                 sent_at: r.sent_at,

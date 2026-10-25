@@ -157,22 +157,26 @@ pub fn fill(
     }
 }
 
+pub fn schedule_capacity(
+    window: &email::schedule::Window,
+    now: i64,
+) -> Result<email::schedule::Capacity> {
+    window
+        .validate()
+        .map_err(|message| Error::Invalid(message.into()))?;
+    Ok(window.capacity(now, &chrono::Local))
+}
+
 pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     if form.name.trim().is_empty() {
         return Err(Error::Invalid("请填写任务名称".into()));
     }
     if let email::schedule::Schedule::Window(w) = &form.schedule {
-        w.validate().map_err(|s| Error::Invalid(s.into()))?;
-        let count = w
-            .dates
-            .iter()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            * w.per_window as usize;
-        if count < form.ids.len() {
+        let count = schedule_capacity(w, now)?.emails;
+        if count < form.ids.len() as u64 {
             return Err(Error::Invalid(format!(
                 "发送容量不足，还差 {} 封",
-                form.ids.len() - count
+                form.ids.len() as u64 - count
             )));
         }
     }
@@ -340,7 +344,7 @@ pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> 
         return Err(Error::Invalid("任务已停止或已删除。".into()));
     }
     email::schedule::save(&mut tx, edit.id, &edit.schedule).await?;
-    let ids = sqlx::query_scalar!("UPDATE email SET planned_at=NULL,latest_at=NULL,manual_schedule=0 WHERE task_id=? AND state='approved' RETURNING id",edit.id).fetch_all(&mut *tx).await?;
+    let count = sqlx::query!("UPDATE email SET planned_at=NULL,latest_at=NULL,manual_schedule=0 WHERE task_id=? AND state='approved'",edit.id).execute(&mut *tx).await?.rows_affected();
     let ordered = sqlx::query_scalar!(
         "SELECT id FROM email WHERE task_id=? AND state='approved' ORDER BY approval_order,id",
         edit.id
@@ -354,5 +358,5 @@ pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> 
         .await?;
     }
     tx.commit().await?;
-    Ok(ids.len() as u64)
+    Ok(count)
 }

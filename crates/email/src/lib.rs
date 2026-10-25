@@ -548,6 +548,7 @@ pub struct Handover {
 }
 
 /// A material to attach, named as the user approved it.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Attached {
     pub file_name: String,
     /// Never null here: material::delete keeps a material that an email still to go out uses.
@@ -586,14 +587,7 @@ pub async fn start_sending(
     else {
         return Ok(None);
     };
-    let attachments = sqlx::query_as!(
-        Attached,
-        r#"SELECT file_name AS "file_name!", material_id AS "material_id!"
-           FROM email_attachment WHERE email_id = ?"#,
-        id
-    )
-    .fetch_all(conn)
-    .await?;
+    let attachments = attachment_files(conn, id).await?;
     Ok(Some(Handover {
         mentor_id: row.mentor_id,
         to_address: row.to_address,
@@ -605,6 +599,20 @@ pub async fn start_sending(
         text: row.text,
         attachments,
     }))
+}
+
+pub async fn attachment_files(
+    conn: &mut SqliteConnection,
+    id: i64,
+) -> Result<Vec<Attached>, sqlx::Error> {
+    sqlx::query_as!(
+        Attached,
+        r#"SELECT file_name AS "file_name!", material_id AS "material_id!"
+           FROM email_attachment WHERE email_id = ? ORDER BY file_name"#,
+        id
+    )
+    .fetch_all(conn)
+    .await
 }
 
 pub async fn sent(conn: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {

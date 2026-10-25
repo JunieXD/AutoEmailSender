@@ -147,7 +147,7 @@ function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn })
       {column !== "history" && (
         <div className="flex flex-wrap gap-1">
           {e.state === "approved" && <ScheduleActions id={e.id} initial={e.plannedAt ?? undefined} />}
-          {(e.state === "approved" || e.state === "failed") && (
+          {e.resendOf === null && (e.state === "approved" || e.state === "failed") && (
             <Button
               variant="ghost"
               size="sm"

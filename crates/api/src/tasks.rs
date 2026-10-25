@@ -1,4 +1,11 @@
 use super::*;
+pub async fn schedule_capacity(
+    _ctx: &Context,
+    window: email::schedule::Window,
+) -> Result<email::schedule::Capacity, CallError> {
+    Ok(task::schedule_capacity(&window, now())?)
+}
+
 pub async fn preview_task_schedule(
     ctx: &Context,
     input: task::ApprovalPreview,

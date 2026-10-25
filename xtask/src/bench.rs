@@ -29,6 +29,21 @@ pub async fn run(path: &Path) -> Result {
         NOW,
     )
     .await?;
+    let dates = chrono::DateTime::from_timestamp_millis(NOW - 86_400_000)
+        .ok_or("invalid benchmark time")?
+        .format("%Y-%m-%d")
+        .to_string();
+    let task = sqlx::query("INSERT INTO task(name,kind,writer,schedule,window_dates,window_start,window_end,per_window,state,created_at) VALUES ('无剩余空位的基准任务','first','ai','window',?,'09:00','11:00',10,'active',?)").bind(sqlx::types::Json([dates])).bind(NOW).execute(&db).await?.last_insert_rowid();
+    let without_slot = sqlx::query("UPDATE email SET task_id=?,planned_at=NULL WHERE state='approved' AND id%3=0 AND id IN (SELECT min(id) FROM email WHERE state='approved' GROUP BY mentor_id)").bind(task).execute(&db).await?.rows_affected();
+    let expired = sqlx::query(
+        "UPDATE email SET planned_at=?1,latest_at=?2 WHERE state='approved' AND id%3=1",
+    )
+    .bind(NOW - 7_200_000)
+    .bind(NOW - 3_600_000)
+    .execute(&db)
+    .await?
+    .rows_affected();
+    println!("发送计划样本：{without_slot} 封已批准但无空位，{expired} 封已过截止");
     sqlx::query("ANALYZE").execute(&db).await?;
     println!("生成数据用了 {:.0} 秒\n", started.elapsed().as_secs_f64());
 
@@ -120,7 +135,8 @@ pub async fn run(path: &Path) -> Result {
     );
 
     // Every task/mentor pair is unique even when a mentor has several historical letters.
-    sqlx::query("UPDATE email SET task_id = NULL")
+    sqlx::query("UPDATE email SET planned_at=coalesce(planned_at,?1),latest_at=NULL,task_id=NULL")
+        .bind(NOW)
         .execute(&db)
         .await?;
     sqlx::query("DELETE FROM task").execute(&db).await?;

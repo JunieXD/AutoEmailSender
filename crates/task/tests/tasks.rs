@@ -773,3 +773,50 @@ async fn uploaded_material_is_added_only_to_the_current_task_draft_without_overw
             .unwrap()
     );
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn ended_today_window_must_not_pass_capacity(db: SqlitePool) {
+    use chrono::{Local, TimeZone};
+    use email::schedule::{Schedule, Window};
+    let now = Local
+        .with_ymd_and_hms(2026, 10, 25, 12, 0, 0)
+        .unwrap()
+        .timestamp_millis();
+    let id = mentor(&db, 1, true).await;
+    let mut f = form(&db, vec![id]).await;
+    f.schedule = Schedule::Window(Window {
+        dates: vec!["2026-10-25".into()],
+        start: "09:00".into(),
+        end: "11:00".into(),
+        per_window: 1,
+    });
+    assert!(
+        matches!(create(&db, &f, now).await, Err(Error::Invalid(message)) if message.contains("容量不足"))
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn ended_and_future_windows_must_have_enough_remaining_capacity(db: SqlitePool) {
+    use chrono::{Local, TimeZone};
+    use email::schedule::{Schedule, Window};
+    let now = Local
+        .with_ymd_and_hms(2026, 10, 25, 12, 0, 0)
+        .unwrap()
+        .timestamp_millis();
+    let a = mentor(&db, 1, true).await;
+    let b = mentor(&db, 2, true).await;
+    let mut f = form(&db, vec![a, b]).await;
+    let mut w = Window {
+        dates: vec!["2026-10-25".into(), "2026-10-26".into()],
+        start: "09:00".into(),
+        end: "11:00".into(),
+        per_window: 1,
+    };
+    f.schedule = Schedule::Window(w.clone());
+    assert!(
+        matches!(create(&db, &f, now).await, Err(Error::Invalid(message)) if message.contains("还差 1 封"))
+    );
+    w.per_window = 2;
+    f.schedule = Schedule::Window(w);
+    assert!(create(&db, &f, now).await.is_ok());
+}

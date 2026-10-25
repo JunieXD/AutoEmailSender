@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { ScheduleFields, scheduleValid, capacity } from "@/components/schedule";
+import { ScheduleFields, scheduleValid, useScheduleCapacity } from "@/components/schedule";
 import { day, fileSize } from "@/format";
 
 export function CreateTaskDialog({ ids, onClose }: { ids: number[]; onClose: () => void }) {
@@ -99,6 +99,10 @@ function TaskSteps({
       void navigate({ to: "/tasks/$id", params: { id } });
     },
   });
+  const capacity = useScheduleCapacity(form.schedule);
+  const enoughCapacity =
+    form.schedule.kind === "now" ||
+    (capacity.data != null && !capacity.error && capacity.data.emails >= eligible.length);
   const attached = materials.filter((m) => form.attachments.includes(m.id));
   function toggle(key: "references" | "attachments", id: number, on: boolean) {
     setForm({ ...form, [key]: on ? [...form[key], id] : form[key].filter((i) => i !== id) });
@@ -292,24 +296,14 @@ function TaskSteps({
           ) : form.writer === "ai" ? (
             <ModelAction
               modelId={form.modelConfigId}
-              disabled={
-                create.isPending ||
-                !form.name.trim() ||
-                !scheduleValid(form.schedule) ||
-                capacity(form.schedule) < eligible.length
-              }
+              disabled={create.isPending || !form.name.trim() || !scheduleValid(form.schedule) || !enoughCapacity}
               onWrite={() => create.mutate()}
             >
               创建任务
             </ModelAction>
           ) : (
             <Button
-              disabled={
-                create.isPending ||
-                !form.name.trim() ||
-                !scheduleValid(form.schedule) ||
-                capacity(form.schedule) < eligible.length
-              }
+              disabled={create.isPending || !form.name.trim() || !scheduleValid(form.schedule) || !enoughCapacity}
               onClick={() => create.mutate()}
             >
               创建任务

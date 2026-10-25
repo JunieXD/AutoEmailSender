@@ -129,6 +129,7 @@ macro_rules! operations {
 }
 
 operations! {
+    "scheduleCapacity" => schedule_capacity(email::schedule::Window) -> email::schedule::Capacity;
     "previewTaskSchedule" => preview_task_schedule(task::ApprovalPreview) -> task::SchedulePreview;
     "changeTaskSchedule" => change_task_schedule(task::ScheduleEdit) -> u64;
     "rescheduleEmail" => reschedule_email(RescheduleEmail) -> ();

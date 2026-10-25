@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT file_name AS \"file_name!\", material_id AS \"material_id!\"\n           FROM email_attachment WHERE email_id = ?",
+  "query": "SELECT file_name AS \"file_name!\", material_id AS \"material_id!\"\n           FROM email_attachment WHERE email_id = ? ORDER BY file_name",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "f4f38f354864b159e4757ae910414776749e057e0f360f9e70cf36aab1eecbe7"
+  "hash": "40b88a378a5e697b857841d757b3618d10f5fe02df1b15d2a45d1f5fa7d61fbe"
 }

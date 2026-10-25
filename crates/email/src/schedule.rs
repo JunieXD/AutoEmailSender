@@ -37,12 +37,58 @@ impl Window {
         }
         Ok(())
     }
+
+    fn windows<T: TimeZone>(&self, zone: &T) -> Vec<Slot> {
+        let (Ok(start), Ok(end)) = (
+            NaiveTime::parse_from_str(&self.start, "%H:%M"),
+            NaiveTime::parse_from_str(&self.end, "%H:%M"),
+        ) else {
+            return vec![];
+        };
+        let mut dates = self.dates.iter().collect::<Vec<_>>();
+        dates.sort();
+        dates.dedup();
+        dates
+            .into_iter()
+            .filter_map(|date| {
+                let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+                Some(Slot {
+                    planned_at: zone
+                        .from_local_datetime(&date.and_time(start))
+                        .earliest()?
+                        .timestamp_millis(),
+                    latest_at: zone
+                        .from_local_datetime(&date.and_time(end))
+                        .earliest()?
+                        .timestamp_millis(),
+                })
+            })
+            .collect()
+    }
+
+    pub fn capacity<T: TimeZone>(&self, now: i64, zone: &T) -> Capacity {
+        let windows = self
+            .windows(zone)
+            .into_iter()
+            .filter(|s| now < s.latest_at)
+            .count();
+        Capacity {
+            windows,
+            emails: windows as u64 * u64::from(self.per_window),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Slot {
     pub planned_at: i64,
     pub latest_at: i64,
+}
+
+#[derive(Debug, Serialize, TS)]
+pub struct Capacity {
+    pub windows: usize,
+    pub emails: u64,
 }
 
 /// A repeated wall time uses its first occurrence; a window with a missing DST boundary is skipped.
@@ -54,20 +100,8 @@ pub fn plan<T: TimeZone>(
     zone: &T,
     random: &mut impl FnMut(i64) -> i64,
 ) -> Option<Slot> {
-    let start = NaiveTime::parse_from_str(&window.start, "%H:%M").ok()?;
-    let end = NaiveTime::parse_from_str(&window.end, "%H:%M").ok()?;
-    let mut dates = window.dates.iter().collect::<Vec<_>>();
-    dates.sort();
-    dates.dedup();
-    for date in dates {
-        let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
-        let Some(start) = zone.from_local_datetime(&date.and_time(start)).earliest() else {
-            continue;
-        };
-        let Some(end) = zone.from_local_datetime(&date.and_time(end)).earliest() else {
-            continue;
-        };
-        let (start, end) = (start.timestamp_millis(), end.timestamp_millis());
+    for slot in window.windows(zone) {
+        let (start, end) = (slot.planned_at, slot.latest_at);
         if now >= end {
             continue;
         }
