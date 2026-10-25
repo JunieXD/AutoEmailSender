@@ -8,6 +8,7 @@ import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
 import { CreateTaskDialog } from "@/components/create-task";
 import { TaskLetter, type TaskComposerHandle } from "@/components/task-letter";
+import { dropFactChecks } from "@/components/ai-writing";
 import { waitForSaves } from "@/components/letter-composer";
 import { Avatar } from "@/components/mentor";
 import { Pager, pageParam } from "@/components/mentor-table";
@@ -61,6 +62,7 @@ export function refreshTasks(client: ReturnType<typeof useQueryClient>) {
     "restartTask",
     "sendingPlan",
     "scheduledWork",
+    "stats",
   ])
     void client.invalidateQueries({ queryKey: [key] });
 }
@@ -568,6 +570,7 @@ function DraftDetail({
       if (op === "withdrawEmail") await call(op, { id });
       else if (op === "retryTaskGeneration") await call(op, key);
       else await call(op, key);
+      if (op === "regenerateTaskEmail") dropFactChecks(client, ["getTaskDraft", id]);
       if (op === "reapplyTaskTemplate") {
         const stored = await call("getTaskDraft", key);
         await client.cancelQueries({ queryKey: ["getTaskDraft", id] });

@@ -16,7 +16,7 @@ use crate::usage::Usage;
 pub struct Access {
     /// Without a trailing slash.
     pub base_url: String,
-    pub api_key: String,
+    pub api_key: Option<String>,
     pub no_thinking: Option<NoThinking>,
 }
 
@@ -33,7 +33,7 @@ pub async fn list_models(net: &Net, access: &Access) -> Result<Vec<String>, Mode
     let request = net
         .http()
         .get(format!("{}/models", access.base_url))
-        .bearer_auth(&access.api_key)
+        .bearer_auth(access.api_key.as_deref().ok_or(ModelError::MissingKey)?)
         .timeout(Duration::from_secs(20));
     let body = read(send(request, access).await?, access).await?;
     let models: Models =
@@ -144,7 +144,7 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
     let request = net
         .http()
         .post(format!("{}/chat/completions", access.base_url))
-        .bearer_auth(&access.api_key)
+        .bearer_auth(access.api_key.as_deref().ok_or(ModelError::MissingKey)?)
         .json(&body);
     let mut response = send(request, access).await?;
     let (mut text, mut finish_reason, mut tokens) = (String::new(), None, None);
@@ -301,9 +301,9 @@ fn unreachable(access: &Access, source: reqwest::Error) -> ModelError {
 /// Up to 200 characters of what the provider said, for the user and the log. Without the key, in
 /// case the provider quotes it back.
 fn quote(text: &str, access: &Access) -> String {
-    let text = match access.api_key.as_str() {
-        "" => text.to_owned(),
-        key => text.replace(key, "***"),
+    let text = match access.api_key.as_deref() {
+        None | Some("") => text.to_owned(),
+        Some(key) => text.replace(key, "***"),
     };
     text.chars().take(200).collect()
 }

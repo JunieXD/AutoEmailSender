@@ -613,3 +613,105 @@ async fn reply_target_must_still_exist_and_have_a_message_id(db: SqlitePool) {
         Err(writing::reply::Error::NoTarget)
     ));
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: SqlitePool) {
+    let (mentor, _) = setup(&db).await;
+    let mut provider = provider::Provider::start().await;
+    model(&db, &provider.address, true).await;
+    let letter = Letter {
+        subject: "获得优秀学生奖".into(),
+        body_md: (0..12)
+            .map(|i| format!("成果{i}。表述{i}。"))
+            .collect::<String>(),
+    };
+    let email = email::save_first_draft(&db, mentor, &letter.subject, &letter.body_md, &[], T)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let chosen = model::chosen(&db).await.unwrap().unwrap();
+    let references = material::for_writing(&db).await.unwrap();
+    let net = Net::new(vec![]).unwrap();
+    let work = writing::fact_check::check(&db, &net, email, &letter, &chosen, &references, T);
+    let respond = async {
+        let request = provider.requests.recv().await.unwrap();
+        let data: Value =
+            serde_json::from_str(request.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(data["个人资料"]["姓名"], "林晓");
+        assert_eq!(data["个人资料"]["意向研究方向"], "多模态学习");
+        assert_eq!(data["材料"][0]["文字"], "在 ACL 2025 发表论文一篇");
+        assert_eq!(
+            data["材料"][0],
+            serde_json::json!({"文字": "在 ACL 2025 发表论文一篇"})
+        );
+        assert_eq!(data["信"]["正文"], letter.body_md);
+        assert_eq!(data.as_object().unwrap().len(), 3);
+        assert!(!data.to_string().contains("GPA 3.9"));
+        let mut findings = vec![
+            serde_json::json!({"quote":"信里没有的原话", "reason":"缺少依据"}),
+            serde_json::json!({"quote":"", "reason":"缺少依据"}),
+            serde_json::json!({"quote":"获得优秀学生奖", "reason":"缺少获奖证明"}),
+            serde_json::json!({"quote":"获得优秀学生奖", "reason":"重复"}),
+        ];
+        findings.extend(
+            (0..12).map(
+                |i| serde_json::json!({"quote":format!("成果{i}。"), "reason":"长".repeat(250)}),
+            ),
+        );
+        request
+            .respond
+            .send(provider::Response::answer(
+                &serde_json::to_string(&findings).unwrap(),
+            ))
+            .ok()
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(work, respond);
+    let findings = result.unwrap();
+    assert_eq!(findings.len(), 10);
+    assert_eq!(findings[0].quote, letter.subject);
+    assert_eq!(findings[9].quote, "成果8。");
+    assert_eq!(findings[1].reason.chars().count(), 200);
+    assert_eq!(
+        usage(&db).await,
+        vec![("fact_check".into(), 2000, 1500, 400)]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT email_id FROM usage")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        email
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn incomplete_fact_check_is_an_error_and_still_records_usage(db: SqlitePool) {
+    let (mentor, _) = setup(&db).await;
+    let (address, _) = provider(vec![("[]", "length"), ("不是 JSON", "stop")]).await;
+    model(&db, &address, true).await;
+    let letter = Letter {
+        subject: "申请".into(),
+        body_md: "正文".into(),
+    };
+    let email = email::save_first_draft(&db, mentor, &letter.subject, &letter.body_md, &[], T)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let mut chosen = model::chosen(&db).await.unwrap().unwrap();
+    let net = Net::new(vec![]).unwrap();
+    for _ in 0..2 {
+        assert!(matches!(
+            writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], T).await,
+            Err(writing::fact_check::Error::InvalidAnswer)
+        ));
+    }
+    chosen.agreed = false;
+    assert!(matches!(
+        writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], T).await,
+        Err(writing::fact_check::Error::NotAgreed)
+    ));
+    assert_eq!(usage(&db).await.len(), 2);
+}

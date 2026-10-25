@@ -181,10 +181,11 @@ async fn analyze(
         tracing::info!(message_id = claim.id, model = chosen.model, usage = ?answer.usage, finish_reason = answer.finish_reason, "reply outcome model answered");
         if let Some(usage) = answer.usage {
             let at = now();
-            while let Err(error) = model::usage::record_reply_outcome(
+            while let Err(error) = model::usage::record_for_email(
                 db,
                 chosen.id,
                 &chosen.model,
+                model::usage::Purpose::ReplyOutcome,
                 email_id,
                 usage,
                 at,

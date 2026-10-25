@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ai_fact_check AS \"on: bool\" FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "on: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "ai_fact_check"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7990c0bdb2ee704d216653ca4385bcab9f1e563fc2cea71f358fd38c48cc7892"
+}

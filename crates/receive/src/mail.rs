@@ -285,6 +285,7 @@ pub(crate) struct Bounce {
 pub(crate) struct Failure {
     pub recipients: Vec<String>,
     pub reason: String,
+    pub throttle: Option<mailbox::pause::Throttle>,
 }
 
 /// What a delivery status report says about a recipient.
@@ -383,6 +384,7 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
         vec![Failure {
             recipients: Vec::new(),
             reason: reason(None, None, &told),
+            throttle: mailbox::pause::throttle(&told),
         }]
     } else {
         failed
@@ -390,6 +392,7 @@ pub(crate) fn bounce(raw: &[u8]) -> Option<Bounce> {
             .map(|s| Failure {
                 recipients: s.recipients.clone(),
                 reason: reason(s.diagnostic.as_deref(), s.status.as_deref(), &told),
+                throttle: mailbox::pause::throttle(s.diagnostic.as_deref().unwrap_or(&told)),
             })
             .collect()
     };

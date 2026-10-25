@@ -28,6 +28,7 @@ pub enum Waiting {
     TaskPaused,
     MailboxInterval,
     NoMailbox,
+    MailboxSecret,
     Ready,
 }
 
@@ -188,6 +189,12 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
                 Some(Waiting::Time)
             } else {
                 Some(match choose(rotation, r.own, r.reply, &mailboxes, now) {
+                    None if mailboxes
+                        .iter()
+                        .any(|m| m.needs_secret && r.own.is_none_or(|id| m.id == id)) =>
+                    {
+                        Waiting::MailboxSecret
+                    }
                     None => Waiting::NoMailbox,
                     Some((id, at)) if at > now => {
                         if mailboxes
@@ -246,18 +253,15 @@ pub struct ScheduledWork {
 }
 
 pub async fn work(db: &SqlitePool, now: i64) -> Result<ScheduledWork, sqlx::Error> {
-    use chrono::TimeZone;
-    let date = chrono::Local
-        .timestamp_millis_opt(now)
-        .single()
-        .ok_or_else(|| sqlx::Error::Decode("invalid current time".into()))?;
-    let tomorrow = date
-        .date_naive()
-        .succ_opt()
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .and_then(|d| chrono::Local.from_local_datetime(&d).earliest())
-        .ok_or_else(|| sqlx::Error::Decode("invalid next local day".into()))?
-        .timestamp_millis();
+    work_in_zone(db, now, &chrono::Local).await
+}
+
+pub async fn work_in_zone<T: chrono::TimeZone>(
+    db: &SqlitePool,
+    now: i64,
+    zone: &T,
+) -> Result<ScheduledWork, sqlx::Error> {
+    let tomorrow = pause::next_day_start(now, zone);
     sqlx::query_as!(
         ScheduledWork,
         r#"SELECT (SELECT count(*) FROM email WHERE state IN ('generation_failed', 'failed',

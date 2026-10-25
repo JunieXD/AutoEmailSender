@@ -98,6 +98,197 @@ async fn contact(db: &SqlitePool, mentor: i64) -> Contact {
     mentor::get(db, mentor).await.unwrap().unwrap().contact
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn throttled_bounces_pause_the_original_sender_once(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let mut sender = form(993);
+    sender.address = fakemail::BACKUP_ADDRESS.into();
+    let sender = mailbox::create(&db, &sender.check().unwrap(), SECRET, T)
+        .await
+        .unwrap();
+    // Receive the report through mailbox 1; it must pause the sender, mailbox 2.
+    sqlx::query("UPDATE mailbox SET receive_error = '等待重试', receive_retry_at = ? WHERE id = ?")
+        .bind(T + 10 * DAY)
+        .bind(sender)
+        .execute(&db)
+        .await
+        .unwrap();
+    let owner = mentor(&db, "王伟", "wang@example.edu.cn").await;
+    let email = sent_email(&db, owner, "sent", "<limited@example.com>").await;
+    sqlx::query("UPDATE email SET mailbox_id = ? WHERE id = ?")
+        .bind(sender)
+        .bind(email)
+        .execute(&db)
+        .await
+        .unwrap();
+    round(&db, &net, T).await;
+    // The classification must use the whole diagnostic, beyond the displayed 150 characters.
+    let diagnostic = format!(
+        "550 {} Message rate limit exceeded",
+        "server context ".repeat(20)
+    );
+    let bounce = |id: &str, original: &str, recipient: &str| {
+        format!(
+            "From: MAILER-DAEMON@mx.example.com\nSubject: Undelivered Mail Returned to Sender\n\
+         Message-ID: <{id}@mx.example.com>\n\
+         Content-Type: multipart/report; report-type=delivery-status; boundary=r\n\n\
+         --r\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; mx.example.com\n\n\
+         Final-Recipient: rfc822; {recipient}\nAction: failed\nStatus: 5.4.5\n\
+         Diagnostic-Code: smtp; {diagnostic}\n\
+         --r\nContent-Type: text/rfc822-headers\n\n\
+         From: backup@example.com\nTo: {recipient}\nMessage-ID: {original}\n--r--\n"
+        )
+    };
+    let report = bounce("first", "<limited@example.com>", "wang@example.edu.cn");
+    store.deliver("INBOX", T + MINUTE, &report);
+    assert!(round(&db, &net, T + MINUTE).await.changed);
+    assert!(matches!(
+        email::list(&db, owner).await.unwrap()[0].delivery,
+        Delivery::Bounced { .. }
+    ));
+    let mailboxes = mailbox::list(&db, T + MINUTE).await.unwrap();
+    assert!(mailboxes[0].pause.is_none());
+    let pause = mailboxes[1].pause.as_ref().unwrap();
+    assert_eq!(pause.until, T + 61 * MINUTE);
+    assert!(pause.reason.contains("退信"));
+    let until = pause.until;
+    // A separately delivered copy of the same report does not start a fresh pause.
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        &report.replace("<first@", "<duplicate@"),
+    );
+    round(&db, &net, T + 2 * MINUTE).await;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT paused_until FROM mailbox WHERE id = ?")
+            .bind(sender)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        until
+    );
+
+    let deleted_owner = mentor(&db, "李明", "li@example.edu.cn").await;
+    let deleted = sent_email(&db, deleted_owner, "sent", "<deleted@example.com>").await;
+    sqlx::query("UPDATE email SET mailbox_id = ? WHERE id = ?")
+        .bind(sender)
+        .bind(deleted)
+        .execute(&db)
+        .await
+        .unwrap();
+    mailbox::delete(&db, sender).await.unwrap();
+    store.deliver(
+        "INBOX",
+        T + 3 * MINUTE,
+        &bounce("deleted", "<deleted@example.com>", "li@example.edu.cn"),
+    );
+    assert!(round(&db, &net, T + 3 * MINUTE).await.changed);
+    assert!(matches!(
+        email::list(&db, deleted_owner).await.unwrap()[0].delivery,
+        Delivery::Bounced { .. }
+    ));
+    assert!(
+        mailbox::list(&db, T + 3 * MINUTE).await.unwrap()[0]
+            .pause
+            .is_none()
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_old_daily_bounce_uses_its_date_instead_of_the_read_time(db: SqlitePool) {
+    bounce_without_pause(
+        &db,
+        "Date: Wed, 13 Jan 2027 08:00:00 +0000\n",
+        T + MINUTE,
+        "5.4.5",
+        "550 5.4.5 Daily user sending quota exceeded",
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_undated_daily_bounce_uses_its_received_time(db: SqlitePool) {
+    bounce_without_pause(
+        &db,
+        "",
+        T - 2 * DAY,
+        "5.4.5",
+        "550 5.4.5 Daily user sending quota exceeded",
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_remote_server_outage_bounce_does_not_pause_the_sender(db: SqlitePool) {
+    bounce_without_pause(
+        &db,
+        "",
+        T + MINUTE,
+        "5.4.7",
+        "421 4.3.2 mx.example.edu.cn Service not available",
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_bounce_dated_after_it_arrived_pauses_from_its_arrival(db: SqlitePool) {
+    let pause = pause_after_bounce(
+        &db,
+        "Date: Sun, 17 Jan 2027 08:00:00 +0000\n",
+        T + MINUTE,
+        "5.4.5",
+        "550 Message rate limit exceeded",
+    )
+    .await;
+    assert_eq!(pause.unwrap().until, T + MINUTE + 60 * MINUTE);
+}
+
+async fn bounce_without_pause(
+    db: &SqlitePool,
+    date: &str,
+    received: i64,
+    status: &str,
+    diagnostic: &str,
+) {
+    assert!(
+        pause_after_bounce(db, date, received, status, diagnostic)
+            .await
+            .is_none()
+    );
+}
+
+/// How the sender of a bounced email is paused after the bounce arrives.
+async fn pause_after_bounce(
+    db: &SqlitePool,
+    date: &str,
+    received: i64,
+    status: &str,
+    diagnostic: &str,
+) -> Option<mailbox::pause::Pause> {
+    let (net, store) = mailbox(db, SECRET).await;
+    let owner = mentor(db, "王伟", "wang@example.edu.cn").await;
+    sent_email(db, owner, "sent", "<original@example.com>").await;
+    round(db, &net, T - 3 * DAY).await;
+    let report = format!(
+        "From: MAILER-DAEMON@mx.example.com\nSubject: Undelivered Mail Returned to Sender\n\
+             Message-ID: <report@mx.example.com>\n{date}\
+             Content-Type: multipart/report; report-type=delivery-status; boundary=r\n\n\
+             --r\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; mx.example.com\n\n\
+             Final-Recipient: rfc822; wang@example.edu.cn\nAction: failed\nStatus: {status}\n\
+             Diagnostic-Code: smtp; {diagnostic}\n\
+             --r\nContent-Type: text/rfc822-headers\n\n\
+             From: me@example.com\nTo: wang@example.edu.cn\n\
+             Message-ID: <original@example.com>\n--r--\n"
+    );
+    store.deliver("INBOX", received, &report);
+    assert!(round(db, &net, T + 3 * MINUTE).await.changed);
+    assert!(matches!(
+        email::list(db, owner).await.unwrap()[0].delivery,
+        Delivery::Bounced { .. }
+    ));
+    mailbox::list(db, T).await.unwrap().remove(0).pause
+}
+
 /// The UIDs whose messages were fetched beyond their headers.
 fn opened(commands: &[String]) -> Vec<u32> {
     commands
@@ -590,7 +781,9 @@ async fn earlier_mail_is_looked_up_once_per_address(db: SqlitePool) {
 async fn a_refused_login_waits_unless_the_mailbox_changes(db: SqlitePool) {
     let (net, store) = mailbox(&db, "wrong").await;
     round(&db, &net, T).await;
-    let error = mailbox::list(&db).await.unwrap()[0].receive_error.clone();
+    let error = mailbox::list(&db, T).await.unwrap()[0]
+        .receive_error
+        .clone();
     assert!(error.unwrap().starts_with("登录被拒绝"));
     store.commands();
     round(&db, &net, T + 10 * MINUTE).await;
@@ -604,7 +797,7 @@ async fn a_refused_login_waits_unless_the_mailbox_changes(db: SqlitePool) {
         .await
         .unwrap();
     round(&db, &net, T + 11 * MINUTE).await;
-    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+    assert_eq!(mailbox::list(&db, T).await.unwrap()[0].receive_error, None);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -720,7 +913,7 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn address_edit_with_only_old_letter(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
-    let port = mailbox::list(&db).await.unwrap()[0].imap.port;
+    let port = mailbox::list(&db, T).await.unwrap()[0].imap.port;
     let mut old = form(port);
     old.address = "old-alias@example.com".into();
     assert!(
@@ -748,7 +941,7 @@ async fn address_edit_with_only_old_letter(db: SqlitePool) {
     );
     round(&db, &net, T + MINUTE).await;
 
-    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+    assert_eq!(mailbox::list(&db, T).await.unwrap()[0].receive_error, None);
     assert_eq!(
         sqlx::query_as::<_, (String, String, Option<String>)>(
             "SELECT state, message_id, copy_message_id FROM email WHERE id = ?"
@@ -769,7 +962,7 @@ async fn address_edit_with_only_old_letter(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn address_edit_does_not_confirm_another_letter(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
-    let port = mailbox::list(&db).await.unwrap()[0].imap.port;
+    let port = mailbox::list(&db, T).await.unwrap()[0].imap.port;
     let mut old = form(port);
     old.address = "old-alias@example.com".into();
     assert!(
@@ -804,7 +997,7 @@ async fn address_edit_does_not_confirm_another_letter(db: SqlitePool) {
     );
     round(&db, &net, T + MINUTE).await;
 
-    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+    assert_eq!(mailbox::list(&db, T).await.unwrap()[0].receive_error, None);
     assert_eq!(
         sqlx::query_as::<_, (i64, String, String, Option<String>)>(
             "SELECT id, state, message_id, copy_message_id FROM email ORDER BY id"
@@ -1053,11 +1246,15 @@ async fn a_refused_search_is_tried_again(db: SqlitePool) {
     let li = mentor(&db, "李明", "li@pku.edu.cn").await;
     round(&db, &net, T).await;
     assert!(messages(&db, li).await.is_empty());
-    assert!(mailbox::list(&db).await.unwrap()[0].receive_error.is_some());
+    assert!(
+        mailbox::list(&db, T).await.unwrap()[0]
+            .receive_error
+            .is_some()
+    );
 
     round(&db, &net, T + 61 * MINUTE).await;
     assert_eq!(messages(&db, li).await.len(), 1);
-    assert_eq!(mailbox::list(&db).await.unwrap()[0].receive_error, None);
+    assert_eq!(mailbox::list(&db, T).await.unwrap()[0].receive_error, None);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

@@ -172,11 +172,26 @@ fn mentor(rng: &mut Rng, i: usize) -> MentorFields {
 pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
     let mut rng = Rng::with_seed(7);
     let mut tx = db.begin().await?;
+    sqlx::query("UPDATE profile SET onboarded = 1")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         // A domain with no mail servers, so testing this mailbox reaches no one.
         "INSERT INTO mailbox VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
            'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, NULL, NULL, ?)",
     )
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port, smtp_security,
+         imap_host, imap_port, imap_security, auth, secret, daily_limit, min_interval_s,
+         rotation_order, paused_until, pause_reason, created_at)
+         VALUES ('linxiao-backup@example.com', '林晓', 'custom', 'smtp.example.com', 465, 'tls',
+         'imap.example.com', 993, 'tls', 'password', 'sample', 50, 60, 2, ?,
+         '被邮箱服务商限流了。可以降低发信频率。', ?)",
+    )
+    .bind(now + 3_600_000)
     .bind(now)
     .execute(&mut *tx)
     .await?;
@@ -207,7 +222,7 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
                    match_error = ?, match_queued_at = ?, match_priority = ? WHERE id = ?",
             )
             .bind((!done).then_some(state))
-            .bind(done.then(|| rng.i64(30..100)))
+            .bind(done.then(|| rng.i64(0..=100)))
             .bind(done.then_some(now))
             .bind(done.then_some("deepseek-chat"))
             .bind((state == "failed").then_some("模型返回的结果不完整"))
@@ -445,6 +460,8 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .await?;
         }
     }
+    sqlx::query("INSERT INTO model_config(provider,model,api_key,agreed,input_price,output_price,created_at) VALUES('deepseek','deepseek-chat','sample',0,2,8,?)").bind(now).execute(&mut *tx).await?;
+    sqlx::query("WITH RECURSIVE calls(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM calls WHERE n<?1) INSERT INTO usage(at,model_config_id,model,purpose,input_tokens,cached_tokens,output_tokens) SELECT ?2-(n%180)*86400000,CASE WHEN n%5=0 THEN NULL ELSE (SELECT min(id) FROM model_config) END,'deepseek-chat',CASE n%4 WHEN 0 THEN 'crawl' WHEN 1 THEN 'match' WHEN 2 THEN 'draft' ELSE 'rewrite' END,1200+n%800,300,200+n%400 FROM calls").bind(scale.emails as i64).bind(now).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -713,6 +730,36 @@ pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
         sqlx::query("INSERT INTO reply_processing(message_id, action, queued_at, state, error) VALUES (?, 'outcome', ?, ?, ?)")
             .bind(id).bind(now).bind(state).bind((state == "failed").then_some("模型没有按要求标出回信结果，可以重试或换个模型。"))
             .execute(db).await?;
+    }
+    Ok(())
+}
+
+/// Show both unresolved findings and checks that can be retried.
+pub async fn fact_checks(db: &SqlitePool) -> Result {
+    let ids: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM email WHERE state = 'review' ORDER BY id LIMIT 2")
+            .fetch_all(db)
+            .await?;
+    for (i, id) in ids.into_iter().enumerate() {
+        let result = if i == 0 {
+            sqlx::query(
+                "UPDATE email SET body_md = body_md || '\n\n我曾发表 3 篇论文。' WHERE id = ?",
+            )
+            .bind(id)
+            .execute(db)
+            .await?;
+            serde_json::json!({"state": "completed", "findings": [
+                {"quote": "发表 3 篇论文", "reason": "参考材料中没有对应的发表记录。"},
+                {"quote": "获得国家奖学金", "reason": "参考材料中未说明获奖情况。"},
+            ]})
+        } else {
+            serde_json::json!({"state": "failed", "reason": "模型服务暂时无法连接，请重试。"})
+        };
+        sqlx::query("UPDATE email SET fact_check = ? WHERE id = ?")
+            .bind(sqlx::types::Json(result))
+            .bind(id)
+            .execute(db)
+            .await?;
     }
     Ok(())
 }

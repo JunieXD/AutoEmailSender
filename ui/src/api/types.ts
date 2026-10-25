@@ -10,7 +10,7 @@ export type AffiliationAddition = { before: Affiliation | null, added: Affiliati
 
 export type AiReplyOutcome = { enabled: boolean, };
 
-export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
+export type ApprovalCandidate = { problems: number, factCheck: FactCheck | null, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
 
@@ -37,6 +37,8 @@ export type Capacity = { windows: number, emails: number, nextChangeAt: number |
 export type Column = { header: string, field: Field | null, };
 
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
+
+export type ContactProgress = { trend: Array<Trend>, contacted: number, replied: number, medianDays: number | null, bounced: number, waiting: [number, number, number, number, number], schools: Array<SchoolProgress>, schoolCount: number, };
 
 export type ContactStatus = "none" | "contacted" | "replied" | "bounced";
 
@@ -136,6 +138,8 @@ export type Evidence = { url: string, name: string, emails: Array<string>, resea
 
 export type ExportMentors = { scope: Scope, format: TableFormat, note: boolean, };
 
+export type FactCheck = { "state": "completed", findings: Array<Finding>, } | { "state": "failed", reason: string, };
+
 export type Field = "name" | "email" | "university" | "school" | "department" | "title" | "homepage" | "alias" | "research" | "papers" | "sourceUrl" | "tags" | "note";
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
@@ -146,7 +150,9 @@ export type Filter = { unansweredDays?: number, status?: ContactStatus,
  */
 replyOutcome?: ReplyOutcomeFilter, keyword?: string, };
 
-export type FirstDraft = { subject: string | null, bodyMd: string | null,
+export type Finding = { quote: string, reason: string, };
+
+export type FirstDraft = { id: number, factCheck: FactCheck | null, subject: string | null, bodyMd: string | null,
 /**
  * The materials attached, by id.
  */
@@ -164,7 +170,7 @@ export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: 
  */
 attachments: Array<number>, };
 
-export type FollowUpDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: FollowUpTarget | null, };
+export type FollowUpDraft = { factCheck: FactCheck | null, id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: FollowUpTarget | null, };
 
 export type FollowUpEdit = { draftId: number, mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
@@ -214,7 +220,7 @@ minIntervalS: number,
 /**
  * Why the last round of receiving failed.
  */
-receiveError: string | null, };
+receiveError: string | null, pause: Pause | null, needsSecret: boolean, };
 
 export type MailboxEdit = { id: number,
 /**
@@ -299,6 +305,8 @@ export type MentorNote = { id: number,
  */
 note: string, };
 
+export type MentorOverview = { total: number, matching: [number, number, number, number, number, number], email: number, research: number, papers: number, homepage: number, schools: Array<SchoolCount>, otherSchools: number, };
+
 export type MentorPage = { mentors: Array<MentorRow>, total: number, };
 
 export type MentorQuery = {
@@ -363,7 +371,7 @@ isDefault: boolean,
 /**
  * The user agreed to what AI features send to its provider.
  */
-agreed: boolean, inputPrice: number | null, outputPrice: number | null, };
+agreed: boolean, needsApiKey: boolean, inputPrice: number | null, outputPrice: number | null, };
 
 export type ModelConfigEdit = { id: number,
 /**
@@ -443,6 +451,8 @@ export type PageState = "queued" | "running" | "done";
 
 export type PageStatus = "success" | "failed" | "needs_browser";
 
+export type Pause = { until: number, reason: string, };
+
 export type PlanColumn = "pending" | "upcoming" | "history";
 
 export type PlanEmail = { id: number, kind: DraftKind, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, cancelReason: string | null, waiting: Waiting | null, };
@@ -459,9 +469,9 @@ export type PreviousLetter = { subject: string | null, sentAt: number, };
 
 export type PreviousPreview = { subject: string | null, sentAt: number, attribution: string, bodyText: string | null, };
 
-export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "no_mail_server", domain: string, };
+export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "unsupported_claim", quote: string, reason: string, } | { "kind": "no_mail_server", domain: string, };
 
-export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
+export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, onboarded: boolean, };
 
 export type ProfileForm = { name: string, researchInterests: string, rewritePreference: string, };
 
@@ -476,11 +486,15 @@ domains: Array<string>, setup: Setup, };
 
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
+export type PurposeUsage = { purpose: UsagePurpose, input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
+
+export type Range = "week" | "month" | "quarter" | "all";
+
 export type ReceiveStatus = { receivedAt: number | null, };
 
 export type RenderedApproval = { attachments: Array<number>, id: number, html: string, text: string, subject: string, bodyMd: string, };
 
-export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
+export type ReplyDraft = { factCheck: FactCheck | null, id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
 
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
@@ -504,6 +518,12 @@ export type ReplyTargetQuery = { mentorId: number, id: number | null, };
 
 export type RescheduleEmail = { id: number, plannedAt: number, };
 
+export type RestoreInfo = {
+/**
+ * UTC milliseconds.
+ */
+exportedAt: number, appVersion: string, mentorCount: number, emailCount: number, backupDirectory: string, };
+
 export type ReviewInput = { ids: Array<number>, decisions: Decisions, };
 
 export type Reviewed = { accepted: number, skipped: number, };
@@ -518,9 +538,15 @@ export type SchedulePreview = { dates: Array<string>, unplaced: number, };
 
 export type ScheduledWork = { pending: number, nextAt: number | null, today: number, };
 
+export type SchoolCount = { university: string, count: number, };
+
+export type SchoolProgress = { university: string, contacted: number, replied: number, };
+
 export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
+
+export type SendTestLetter = { mailboxId: number, subject: string, html: string, text: string, attachments: Array<number>, };
 
 export type Server = { host: string, port: number, security: Security, };
 
@@ -537,6 +563,10 @@ steps: Array<string>,
  * Where the steps start.
  */
 url: string, } | { "kind": "unsupported", reason: string, };
+
+export type StatsPeriod = { range: Range, timezone: string, now: number, };
+
+export type StatsQuery = { page: number, range: Range, timezone: string, now: number, };
 
 export type TableFormat = "xlsx" | "csv";
 
@@ -562,7 +592,7 @@ export type TagName = { id: number, name: string, };
 
 export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
 
-export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
+export type TaskDraft = { factCheck: FactCheck | null, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type TaskEmail = { taskId: number, id: number, };
 
@@ -598,6 +628,12 @@ export type TemplateSummary = { id: number, name: string, subject: string,
  */
 isDefault: boolean, };
 
+export type TestLetter = { templateName: string, subject: string, bodyMd: string, attachments: Array<number>, };
+
+export type TokenTotals = { input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
+
+export type TokenUsage = { purposes: Array<PurposeUsage>, total: TokenTotals, };
+
 export type TrashQuery = {
 /**
  * Starts at 1.
@@ -606,7 +642,11 @@ page: number, };
 
 export type Trashed = { rows: Array<number>, id: number, name: string, };
 
-export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "ready";
+export type Trend = { date: string, sent: number, replies: number, };
+
+export type UsagePurpose = "crawl" | "match" | "draft" | "rewrite" | "fact_check" | "reply_outcome" | "reply_todos";
+
+export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "mailbox_secret" | "ready";
 
 export type Window = { dates: Array<string>, start: string, end: string, perWindow: number, };
 
@@ -615,6 +655,9 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  contactStats: { input: StatsQuery; output: ContactProgress };
+  mentorStats: { input: Nothing; output: MentorOverview };
+  tokenStats: { input: StatsPeriod; output: TokenUsage };
   checkCrawlUrls: { input: CrawlUrls; output: Array<string> };
   crawlWork: { input: CrawlWorkQuery; output: Array<CrawlSummary> };
   startCrawl: { input: CrawlStart; output: CrawlId };
@@ -667,6 +710,9 @@ export interface Operations {
   receiveStatus: { input: Nothing; output: ReceiveStatus };
   getBackgroundNotifications: { input: Nothing; output: boolean };
   setBackgroundNotifications: { input: NotificationSetting; output: null };
+  getAiFactCheck: { input: Nothing; output: boolean };
+  setAiFactCheck: { input: NotificationSetting; output: null };
+  factCheckEmail: { input: EmailId; output: FactCheck | null };
   getReplyNotifications: { input: Nothing; output: boolean };
   setReplyNotifications: { input: NotificationSetting; output: null };
   planMatching: { input: MatchBatch; output: MatchEstimate };
@@ -702,12 +748,16 @@ export interface Operations {
   listMailboxes: { input: Nothing; output: Array<Mailbox> };
   addMailbox: { input: NewMailbox; output: MailboxId };
   updateMailbox: { input: MailboxEdit; output: null };
+  resumeMailbox: { input: MailboxId; output: null };
   deleteMailbox: { input: MailboxId; output: null };
   testSending: { input: MailboxTest; output: null };
   testReceiving: { input: MailboxTest; output: null };
   sendTestMail: { input: MailboxId; output: null };
   getProfile: { input: Nothing; output: Profile };
   updateProfile: { input: ProfileForm; output: null };
+  finishOnboarding: { input: Nothing; output: null };
+  testLetter: { input: Nothing; output: TestLetter | null };
+  sendTestLetter: { input: SendTestLetter; output: null };
   getLetterStyle: { input: Nothing; output: LetterStyle };
   updateLetterStyle: { input: LetterStyle; output: null };
   listMaterials: { input: Nothing; output: Array<Material> };
@@ -735,6 +785,7 @@ export interface Operations {
   getReplyDraft: { input: MentorId; output: ReplyDraft | null };
   getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
+  checkFollowUpDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   approveReply: { input: ReplyEmail; output: null };
   writeReply: { input: ReplyDraftEdit; output: Letter };

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET ai_fact_check = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "47cbb87200aa3fcefe4f71af39447ba4d3f17d6f2abbb576ad1ea945f79fa8cd"
+}

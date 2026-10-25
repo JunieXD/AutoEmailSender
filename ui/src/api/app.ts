@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ExportMentors } from "@/api/types";
+import type { ExportMentors, RestoreInfo } from "@/api/types";
 
 // Commands of the desktop app itself (crates/app), beside the core's operations in call.ts.
 
@@ -26,4 +26,24 @@ export function openDataLocation(): Promise<void> {
 /** Saves a mentor table where the user chooses; false when canceled. */
 export function exportMentors(input: ExportMentors, fileName: string): Promise<boolean> {
   return invoke<boolean>("export_mentors", { input, fileName });
+}
+
+/** Saves a backup where the user chooses; false when canceled. */
+export function exportBackup(): Promise<boolean> {
+  return invoke<boolean>("export_backup");
+}
+
+/** Stages and checks the selected backup; null when canceled. */
+export function prepareRestore(): Promise<RestoreInfo | null> {
+  return invoke<RestoreInfo | null>("prepare_restore");
+}
+
+/** Discards the unconfirmed restore. */
+export function cancelRestore(): Promise<void> {
+  return invoke<void>("cancel_restore");
+}
+
+/** Backs up current data and restarts to install the confirmed restore. */
+export function restoreBackup(): Promise<void> {
+  return invoke<void>("restore_backup");
 }

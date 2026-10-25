@@ -27,6 +27,7 @@ use tokio_rustls::rustls::{self, ServerConfig};
 
 /// The mailbox the servers accept a login for.
 pub const ADDRESS: &str = "me@example.com";
+pub const BACKUP_ADDRESS: &str = "backup@example.com";
 pub const SECRET: &str = "right secret";
 
 /// A test authority and a `localhost` certificate it signed. macOS refuses certificates valid for
@@ -147,8 +148,14 @@ async fn smtp_session(
     on_rcpt: Arc<dyn Fn() + Send + Sync>,
 ) -> std::io::Result<()> {
     let login = base64::engine::general_purpose::STANDARD.encode(format!("\0{ADDRESS}\0{SECRET}"));
+    let backup_login =
+        base64::engine::general_purpose::STANDARD.encode(format!("\0{BACKUP_ADDRESS}\0{SECRET}"));
+    let throttled_login =
+        base64::engine::general_purpose::STANDARD.encode(format!("\0{ADDRESS}\0throttled"));
     let mut encrypted = false;
     let mut hangup = false;
+    let mut reject_data = false;
+    let mut primary = true;
     io.write_all(b"220 fake ESMTP\r\n").await?;
     io.flush().await?;
     loop {
@@ -166,15 +173,36 @@ async fn smtp_session(
                 encrypted = true;
                 continue;
             }
-            Some("AUTH") if words.get(2) == Some(&login.as_str()) => "235 ok\r\n",
+            Some("AUTH")
+                if words.get(2) == Some(&login.as_str())
+                    || words.get(2) == Some(&backup_login.as_str()) =>
+            {
+                "235 ok\r\n"
+            }
+            Some("AUTH") if words.get(2) == Some(&throttled_login.as_str()) => {
+                "535 too many login attempts\r\n"
+            }
             Some("AUTH") => "535 5.7.8 authentication failed\r\n",
             Some("RCPT") if line.contains("<unknown@") => "550 5.1.1 user unknown\r\n",
+            Some("RCPT") if line.contains("<421@") => {
+                "550 5.1.1 <421@example.edu.cn>: Recipient address rejected: User unknown\r\n"
+            }
+            Some("RCPT") if primary && line.contains("<throttled@") => {
+                "451 4.7.0 Message rate limit exceeded\r\n"
+            }
+            Some("RCPT") if primary && line.contains("<daily@") => {
+                "550 5.4.5 Daily user sending quota exceeded\r\n"
+            }
             Some("RCPT") => {
+                reject_data |= primary && line.contains("<throttled-data@");
                 hangup |= line.contains("<hangup@");
                 on_rcpt();
                 "250 ok\r\n"
             }
-            Some("MAIL") => "250 ok\r\n",
+            Some("MAIL") => {
+                primary = line.contains(&format!("<{ADDRESS}>"));
+                "250 ok\r\n"
+            }
             Some("DATA") => {
                 io.write_all(b"354 go ahead\r\n").await?;
                 let mut message = String::new();
@@ -182,6 +210,12 @@ async fn smtp_session(
                     if io.read_line(&mut message).await? == 0 {
                         return Ok(());
                     }
+                }
+                if reject_data {
+                    io.write_all(b"451 4.7.0 Message rate limit exceeded\r\n")
+                        .await?;
+                    io.flush().await?;
+                    continue;
                 }
                 inbox.lock().unwrap().push(message);
                 if hangup {

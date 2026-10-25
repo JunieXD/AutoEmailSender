@@ -319,6 +319,7 @@ struct ReviewRow {
     subject: Option<String>,
     kind: Kind,
     body_md: Option<String>,
+    fact_check: Option<Json<email::fact_check::FactCheck>>,
     aliases: Json<Vec<String>>,
     attachments: Json<Vec<i64>>,
     contact_count: Option<i64>,
@@ -331,7 +332,7 @@ async fn review_rows(
     limit: i64,
     offset: i64,
 ) -> std::result::Result<Vec<ReviewRow>, sqlx::Error> {
-    sqlx::query_as!(ReviewRow, r#"SELECT e.id,e.mentor_id,m.name,e.kind AS "kind: Kind",e.state AS "state: DraftState",e.subject,e.body_md,
+    sqlx::query_as!(ReviewRow, r#"SELECT e.id,e.mentor_id,m.name,e.kind AS "kind: Kind",e.state AS "state: DraftState",e.subject,e.body_md,e.fact_check AS "fact_check: Json<email::fact_check::FactCheck>",
         (SELECT json_group_array(name) FROM mentor_alias WHERE mentor_id = m.id) AS "aliases!: Json<Vec<String>>",
         (SELECT json_group_array(material_id) FROM email_attachment WHERE email_id = e.id AND material_id IS NOT NULL) AS "attachments!: Json<Vec<i64>>",
         c.contact_count,c.last_out_at
@@ -367,6 +368,11 @@ fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
             now,
         ));
     }
+    p.extend(check::fact_check(
+        r.fact_check.as_deref(),
+        r.subject.as_deref().unwrap_or_default(),
+        body,
+    ));
     p
 }
 #[derive(Debug, Deserialize, Serialize, TS)]
@@ -378,6 +384,7 @@ pub struct TaskEmail {
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDraft {
+    pub fact_check: Option<email::fact_check::FactCheck>,
     pub id: i64,
     pub mentor_id: i64,
     pub subject: String,
@@ -407,7 +414,7 @@ pub async fn draft(
     let Some(r) = sqlx::query!(
         r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String", coalesce(body_md,
              '') AS "body_md!: String", state AS "state: DraftState", error, cancel_reason, planned_at,
-             latest_at, kind AS "kind: Kind", reply_to
+             latest_at, kind AS "kind: Kind", reply_to, fact_check AS "fact_check: Json<email::fact_check::FactCheck>"
            FROM email
            WHERE id = ?
              AND task_id = ?"#,
@@ -435,6 +442,7 @@ pub async fn draft(
         None
     };
     Ok(Some(TaskDraft {
+        fact_check: r.fact_check.map(|v| v.0),
         previous,
         id: r.id,
         mentor_id: r.mentor_id,
@@ -480,7 +488,7 @@ pub async fn save(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<()> {
 pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<check::Problem>> {
     let mut tx = db.begin().await?;
     let row = sqlx::query!(
-        "SELECT mentor_id,kind FROM email WHERE id = ? AND task_id = ?",
+        r#"SELECT mentor_id,kind,subject,fact_check AS "fact_check: Json<email::fact_check::FactCheck>" FROM email WHERE id = ? AND task_id = ?"#,
         edit.id,
         edit.task_id
     )
@@ -521,6 +529,16 @@ pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<ch
     if let Some(c) = c.filter(|_| row.kind == "first") {
         p.extend(check::recent(c.contact_count, c.last_out_at, now));
     }
+    let subject = if row.kind == "follow_up" {
+        row.subject.as_deref().unwrap_or_default()
+    } else {
+        &edit.subject
+    };
+    p.extend(check::fact_check(
+        row.fact_check.as_deref(),
+        subject,
+        &edit.body_md,
+    ));
     Ok(p)
 }
 #[derive(Debug, Deserialize, TS)]
@@ -764,6 +782,7 @@ pub async fn pending(
             let count = problems(&r, &names, now).len();
             ApprovalCandidate {
                 draft: TaskDraft {
+                    fact_check: r.fact_check.map(|v| v.0),
                     id: r.id,
                     mentor_id: r.mentor_id,
                     subject: r.subject.unwrap_or_default(),

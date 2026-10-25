@@ -417,6 +417,7 @@ async fn receiving_reply_cancels_unsent_follow_ups_and_fences_inflight_generatio
             "迟到主题",
             "迟到正文",
             "fixed",
+            None,
             T + 3
         )
         .await
@@ -1468,9 +1469,17 @@ async fn stale_generation_results_cannot_revive_removed_or_regenerated_items(db:
     let new = queue::next(&db).await.unwrap().unwrap();
     assert_ne!(old, new);
     assert!(
-        !queue::complete(&mut db.acquire().await.unwrap(), old, "旧", "旧稿", "m", T)
-            .await
-            .unwrap()
+        !queue::complete(
+            &mut db.acquire().await.unwrap(),
+            old,
+            "旧",
+            "旧稿",
+            "m",
+            None,
+            T
+        )
+        .await
+        .unwrap()
     );
     assert!(
         !generation::requeue(&db, old, Some(("旧错误", None)), T)
@@ -1478,9 +1487,17 @@ async fn stale_generation_results_cannot_revive_removed_or_regenerated_items(db:
             .unwrap()
     );
     assert!(
-        queue::complete(&mut db.acquire().await.unwrap(), new, "新", "新稿", "m", T)
-            .await
-            .unwrap()
+        queue::complete(
+            &mut db.acquire().await.unwrap(),
+            new,
+            "新",
+            "新稿",
+            "m",
+            None,
+            T
+        )
+        .await
+        .unwrap()
     );
     regenerate(&db, task, Some(new.id), false, T).await.unwrap();
     let next = queue::next(&db).await.unwrap().unwrap();
@@ -1501,6 +1518,7 @@ async fn stale_generation_results_cannot_revive_removed_or_regenerated_items(db:
             "迟到",
             "迟到稿",
             "m",
+            None,
             T
         )
         .await
@@ -1572,6 +1590,7 @@ async fn regeneration_is_local_and_deleted_model_uses_the_new_default(db: Sqlite
             "原主题",
             "人工稿",
             "old",
+            None,
             T,
         )
         .await
@@ -2416,6 +2435,7 @@ async fn restart_replaces_only_selected_failed_letters_at_creation(db: SqlitePoo
                 "申请",
                 "固定草稿",
                 "fixed",
+                None,
                 T + 3,
             )
             .await
@@ -2537,6 +2557,7 @@ async fn restarting_and_retrying_the_same_failure_can_only_send_once(db: SqliteP
                 "申请",
                 "固定草稿",
                 "fixed",
+                None,
                 T + 3,
             )
             .await

@@ -36,7 +36,7 @@
       "Right": 1
     },
     "nullable": [
-      null,
+      true,
       true,
       true
     ]

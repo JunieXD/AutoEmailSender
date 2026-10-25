@@ -1,9 +1,16 @@
 import type { ReactElement, ReactNode } from "react";
-import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type MutationState,
+  type QueryClient,
+  useMutation,
+  useMutationState,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
 import { call, errorMessage } from "@/api/call";
-import type { FirstDraftEdit, Letter, ModelConfig, ModelProvider, ReplyTarget } from "@/api/types";
+import type { FactCheck, FirstDraftEdit, Letter, ModelConfig, ModelProvider, ReplyTarget } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { useModelProviders } from "@/components/model-dialog";
 import { Button } from "@/components/ui/button";
@@ -184,6 +191,75 @@ function notice(model: ModelConfig, providers: ModelProvider[]): string {
   // A custom configuration is known by its address.
   const where = providers.find((p) => p.id === model.provider)?.name ?? model.baseUrl;
   return `AI 写信、分析匹配度这类功能会把用到的内容发给“${where}”：你的个人资料、材料里的文字、导师的资料、抓取的网页标题和文字及链接文字，以及要改写、回复或追问参考的邮件和导师的回信。同意后，用这个模型时不再询问。`;
+}
+
+const aiFactCheck = { queryKey: ["getAiFactCheck"], queryFn: () => call("getAiFactCheck", {}) };
+
+/**
+ * AI 核对 of a draft, after a letter AI wrote is put in it and saved, when the setting is on
+ * (docs/design.md#联系). Like the writing, the check outlives the composer. The result is kept on
+ * the draft, and what it found comes back with the checks named `checks`.
+ */
+export function useFactCheck(draftKey: readonly unknown[], checks: string, flush: () => Promise<void>) {
+  const queryClient = useQueryClient();
+  const mutationKey = ["factCheckEmail", ...draftKey];
+  const check = useMutation({
+    mutationKey,
+    // One check at a time, so that the result kept is that of the latest.
+    scope: { id: mutationKey.join(" ") },
+    mutationFn: async () => {
+      if (!(await queryClient.ensureQueryData(aiFactCheck))) return null;
+      await flush();
+      const draft = queryClient.getQueryData<{ id: number } | null>(draftKey);
+      return draft ? call("factCheckEmail", { id: draft.id }) : null;
+    },
+    // Settles with the draft read again, so that a failure is not shown twice nor a result late.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: draftKey }),
+        queryClient.invalidateQueries({ queryKey: [checks] }),
+      ]),
+  });
+  const latest = useMutationState<MutationState<FactCheck | null, Error, void>>({
+    filters: { mutationKey },
+    select: (m) => m.state,
+  }).at(-1);
+  return { latest, start: () => check.mutate(), forget: () => dropFactChecks(queryClient, draftKey) };
+}
+
+/** Drops the checks of a draft sent or written anew meanwhile; their answers are not shown. */
+export function dropFactChecks(queryClient: QueryClient, draftKey: readonly unknown[]) {
+  const cache = queryClient.getMutationCache();
+  for (const m of cache.findAll({ mutationKey: ["factCheckEmail", ...draftKey] })) cache.remove(m);
+}
+
+/** AI 核对 underway, or why it failed, with the way to try again (docs/ui.md#交互). */
+export function FactCheckStatus({
+  check,
+  stored,
+}: {
+  check: ReturnType<typeof useFactCheck>;
+  stored: FactCheck | null | undefined;
+}) {
+  // A failure kept from before the setting was turned off is of no more use.
+  const on = useQuery(aiFactCheck);
+  if (check.latest?.status === "pending") return <p className="text-sm text-muted-foreground">AI 正在核对…</p>;
+  const reason =
+    check.latest?.status === "error"
+      ? errorMessage(check.latest.error)
+      : on.data && stored?.state === "failed"
+        ? stored.reason
+        : null;
+  return (
+    reason !== null && (
+      <p className="text-sm text-destructive">
+        AI 核对未能完成：{reason}
+        <Button variant="quiet" size="sm" onClick={check.start}>
+          重试
+        </Button>
+      </p>
+    )
+  );
 }
 
 /** What replacing the letter with the one AI wrote would change. */
