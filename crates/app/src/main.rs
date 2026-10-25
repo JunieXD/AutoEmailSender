@@ -1,6 +1,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod background;
 mod logs;
 mod save;
 
@@ -95,13 +96,21 @@ fn open_data_location(app: AppHandle) -> Result<(), String> {
 }
 
 fn main() -> tauri::Result<()> {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let app = tauri::Builder::default()
         // First, so that launching the app again only brings the running one forward.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(context.config().identifier.clone())
+                .arg(background::AUTOSTART_ARG)
+                .build(),
+        )
         .setup(|app| {
+            background::init(app.handle())?;
             match tauri::async_runtime::block_on(start(app.handle())) {
                 Ok(ctx) => app.manage(ctx),
                 Err(e) => {
@@ -109,17 +118,30 @@ fn main() -> tauri::Result<()> {
                     app.manage(StartupFailure(e.message()))
                 }
             };
+            if !std::env::args_os().any(|arg| arg == background::AUTOSTART_ARG) {
+                show(app.handle());
+            }
             Ok(())
         })
+        .on_window_event(background::on_window_event)
         .invoke_handler(tauri::generate_handler![
             call,
             startup_failure,
             export_logs,
             export_mentors,
             data_location,
-            open_data_location
+            open_data_location,
+            background::autostart_enabled,
+            background::set_autostart
         ])
-        .run(tauri::generate_context!())
+        .build(context)?;
+    app.run(|_app, _event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            show(_app);
+        }
+    });
+    Ok(())
 }
 
 /// Opens the data directory, the logs and the database.
