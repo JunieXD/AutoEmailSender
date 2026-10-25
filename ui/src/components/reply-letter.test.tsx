@@ -120,3 +120,35 @@ it("does not revive a trashed reply's late AI result or save a new draft after r
     await view.close();
   }
 });
+
+it("keeps a failed empty reply's error and original target after new mail and leaving the page", async () => {
+  const original = remote.target;
+  let fail: ((error: Error) => void) | undefined;
+  remote.write = () =>
+    new Promise((_, reject) => {
+      fail = reject;
+    });
+  const view = setup();
+  try {
+    await view.render();
+    await vi.waitFor(() => expect(view.button("AI 起草").disabled).toBe(false));
+    await act(async () => view.button("AI 起草").click());
+    await vi.waitFor(() => expect(fail).toBeDefined());
+    remote.target = { ...original, id: 2, messageId: "<new@example.edu>", subject: "新来信", sentAt: 2 };
+    await act(async () => {
+      await view.client.invalidateQueries({ queryKey: ["getReplyTarget", mentor.id] });
+    });
+    expect(view.container.textContent).toContain("回复 王伟：面谈");
+    await act(async () => fail?.(new Error("服务商出错了（503）。稍后再试。")));
+    await vi.waitFor(() => expect(view.container.textContent).toContain("AI 撰写未能完成：服务商出错了（503）"));
+    expect(view.container.textContent).toContain("回复 王伟：面谈");
+    await view.render(false);
+    await view.render();
+    await vi.waitFor(() => expect(view.container.textContent).toContain("AI 撰写未能完成：服务商出错了（503）"));
+    expect(view.container.textContent).toContain("回复 王伟：面谈");
+    expect(remote.draft).toBeNull();
+  } finally {
+    remote.target = original;
+    await view.close();
+  }
+});

@@ -23,7 +23,7 @@ export function useReplyWritingTarget(mentorId: number) {
     filters: { mutationKey: ["writeReply", mentorId] },
     select: (m) => m.state,
   }).at(-1);
-  return latest?.status === "pending" || latest?.status === "success" ? latest.variables?.replyTarget : undefined;
+  return latest?.variables?.replyTarget;
 }
 
 /**
