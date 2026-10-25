@@ -30,8 +30,8 @@ export const letterParsing = { preserveWhitespace: true } as const;
  * Highlights the placeholders the app fills in, such as `{导师姓名}`, so a mistyped one stands out by
  * staying plain.
  */
-function highlightPlaceholders(names: string[], className: string) {
-  const pattern = new RegExp(`\\{(?:${names.join("|")})\\}`, "g");
+function highlightPlaceholders(names: string[], className: string, unfilled: boolean) {
+  const pattern = new RegExp(`\\{(?:${names.join("|")})\\}${unfilled ? "|【请补充：[^】]*】" : ""}`, "g");
   return Extension.create({
     name: "highlightPlaceholders",
     addProseMirrorPlugins() {
@@ -93,6 +93,7 @@ export function LetterEditor({
       highlightPlaceholders(
         placeholders,
         unfilled ? "rounded-sm bg-warning-soft text-warning" : "rounded-sm bg-selected text-brand-text",
+        unfilled,
       ),
     ],
     content: toHtml(markdown),

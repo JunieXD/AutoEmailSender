@@ -3,38 +3,66 @@ import { type MutationState, useMutation, useMutationState, useQuery, useQueryCl
 import { Link } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
 import { call, errorMessage } from "@/api/call";
-import type { FirstDraftEdit, Letter, ModelConfig, ModelProvider } from "@/api/types";
+import type { FirstDraftEdit, Letter, ModelConfig, ModelProvider, ReplyTarget } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { useModelProviders } from "@/components/model-dialog";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { changes } from "@/diff";
 import { Changes } from "@/components/changes";
+import { waitForSaves } from "@/components/letter-composer";
 import { letterText } from "@/letter";
 
 // AI writing in a composer (docs/ui.md#交互).
+
+type WritingEdit = FirstDraftEdit & { replyTarget?: Omit<ReplyTarget, "id"> | null };
+
+/** An empty reply has no saved draft yet; its AI request keeps the selected target on return. */
+export function useReplyWritingTarget(mentorId: number) {
+  const latest = useMutationState<MutationState<Letter, Error, WritingEdit>>({
+    filters: { mutationKey: ["writeReply", mentorId] },
+    select: (m) => m.state,
+  }).at(-1);
+  return latest?.status === "pending" || latest?.status === "success" ? latest.variables?.replyTarget : undefined;
+}
 
 /**
  * The model writing a mentor's letter. The request and its answer stay in the mutation cache
  * until forgotten, so that leaving the page neither stops it nor loses what comes back.
  */
-export function useWriting(mentorId: number, task?: { taskId: number; id: number }, followUpId?: number) {
+export function useWriting(
+  mentorId: number,
+  task?: { taskId: number; id: number },
+  followUpId?: number,
+  replyTo?: string,
+) {
   const queryClient = useQueryClient();
   const mutationKey = task
     ? ["writeTaskDraft", task.id]
     : followUpId !== undefined
       ? ["writeFollowUp", mentorId, followUpId]
-      : ["writeLetter", mentorId];
+      : replyTo !== undefined
+        ? ["writeReply", mentorId, replyTo]
+        : ["writeLetter", mentorId];
   const write = useMutation({
     mutationKey,
-    mutationFn: (letter: FirstDraftEdit) =>
-      task
-        ? call("writeTaskDraft", { ...letter, ...task })
-        : call(followUpId !== undefined ? "writeFollowUp" : "writeLetter", letter),
+    mutationFn: async (letter: WritingEdit) => {
+      if (task) return call("writeTaskDraft", { ...letter, ...task });
+      if (replyTo !== undefined) {
+        await waitForSaves(queryClient, ["saveReplyDraft", mentorId]);
+        return call("writeReply", {
+          mentorId,
+          replyTo,
+          bodyMd: letter.bodyMd,
+          attachments: letter.attachments,
+        });
+      }
+      return call(followUpId !== undefined ? "writeFollowUp" : "writeLetter", letter);
+    },
     gcTime: Infinity,
     onError: () => queryClient.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
-  const latest = useMutationState<MutationState<Letter, Error, FirstDraftEdit>>({
+  const latest = useMutationState<MutationState<Letter, Error, WritingEdit>>({
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
@@ -43,7 +71,7 @@ export function useWriting(mentorId: number, task?: { taskId: number; id: number
     const cache = queryClient.getMutationCache();
     for (const m of cache.findAll({ mutationKey })) cache.remove(m);
   }
-  function start(letter: FirstDraftEdit) {
+  function start(letter: WritingEdit) {
     forget();
     write.mutate(letter);
   }
