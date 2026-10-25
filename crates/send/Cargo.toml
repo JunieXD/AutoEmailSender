@@ -27,5 +27,7 @@ ts-rs.workspace = true
 base64 = "0.22"
 db.workspace = true
 fakemail.workspace = true
+receive.workspace = true
+task.workspace = true
 tempfile = "3"
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -1931,6 +1931,328 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
     assert_eq!(confirmed, vec![true, true, true, true]);
 }
 
+async fn immediate_task(db: &SqlitePool, emails: &[i64]) -> i64 {
+    let task = sqlx::query(
+        "INSERT INTO task (name, kind, writer, schedule, state, created_at)
+         VALUES ('首封任务', 'first', 'ai', 'now', 'active', 0)",
+    )
+    .execute(db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
+    for id in emails {
+        sqlx::query("UPDATE email SET task_id = ? WHERE id = ?")
+            .bind(task)
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap();
+    }
+    task
+}
+
+/// The first upload is uncertain; removing the retry after its claim cancels it before upload.
+async fn cancel_task_retry(db: &SqlitePool, net: &Net, task: i64, id: i64, at: i64) {
+    send::step(db, net, nowhere(), || at).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .unwrap(),
+        "maybe_sent"
+    );
+    assert!(email::retry(db, id, at + MINUTE).await.unwrap());
+    assert!(
+        email::schedule::reschedule(db, id, at + MINUTE, at)
+            .await
+            .unwrap()
+    );
+    change_during_commit(
+        db,
+        net,
+        id,
+        at + MINUTE,
+        at + MINUTE + 3_600_000,
+        move |db| async move {
+            task::remove(&db, &task::TaskEmail { task_id: task, id }, at)
+                .await
+                .unwrap();
+        },
+    )
+    .await;
+    assert_eq!(
+        sqlx::query_as::<_, (String, Option<i64>, Option<String>)>(
+            "SELECT state, sent_at, cancel_reason FROM email WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .unwrap(),
+        ("canceled".into(), Some(at), Some("移出任务".into()))
+    );
+}
+
+async fn bounce_mailbox(db: &SqlitePool) -> (Net, fakemail::Store) {
+    let pki = fakemail::pki();
+    let (port, store) = fakemail::imap(&pki, false).await;
+    let mailbox = mailbox::list(db).await.unwrap().remove(0);
+    let form = MailboxForm {
+        address: mailbox.address,
+        sender_name: mailbox.sender_name,
+        provider: mailbox.provider,
+        smtp: mailbox.smtp,
+        imap: Server {
+            host: Cow::Borrowed("localhost"),
+            port,
+            security: Security::Tls,
+        },
+        daily_limit: mailbox.daily_limit,
+        min_interval_s: mailbox.min_interval_s,
+    };
+    mailbox::update(db, mailbox.id, &form.check().unwrap(), SECRET)
+        .await
+        .unwrap();
+    let net = Net::new(vec![pki.root.clone()]).unwrap();
+    // Initialize the empty folder before the bounce arrives; the first round starts at its end.
+    receive::round(db, &net, T).await.unwrap();
+    (net, store)
+}
+
+/// A late DSN must still find the canceled email after task deletion or mentor merging.
+async fn late_bounce_after_cleanup(
+    db: &SqlitePool,
+    receiving: &(Net, fakemail::Store),
+    id: i64,
+    mentor: i64,
+    task: Option<i64>,
+    at: i64,
+    count: i64,
+) {
+    let row = sqlx::query_as::<_, (i64, Option<i64>, String, i64, String, String)>(
+        "SELECT mentor_id, task_id, state, sent_at, message_id, to_address FROM email WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+    .unwrap();
+    assert!(row.is_some(), "cleanup must retain prior delivery evidence");
+    let (owner, membership, state, sent_at, message_id, address) = row.unwrap();
+    assert_eq!(
+        (owner, membership, state.as_str(), sent_at),
+        (mentor, task, "canceled", at)
+    );
+    let (net, store) = receiving;
+    store.deliver(
+        "INBOX",
+        at + DAY,
+        &format!(
+            "From: MAILER-DAEMON@mx.example.com\n\
+         Subject: Undelivered Mail Returned to Sender\n\
+         Message-ID: <bounce-{id}@mx.example.com>\n\
+         Content-Type: multipart/report; report-type=delivery-status; boundary=r\n\n\
+         --r\nContent-Type: message/delivery-status\n\n\
+         Reporting-MTA: dns; mx.example.com\n\n\
+         Final-Recipient: rfc822; {address}\nAction: failed\nStatus: 5.1.1\n\
+         Diagnostic-Code: smtp; 550 User unknown\n\
+         --r\nContent-Type: text/rfc822-headers\n\n\
+         From: {ADDRESS}\nTo: {address}\nMessage-ID: {message_id}\n--r--\n"
+        ),
+    );
+    assert!(receive::round(db, net, at + DAY).await.unwrap().changed);
+    assert_eq!(mailbox::list(db).await.unwrap()[0].receive_error, None);
+    assert!(matches!(
+        email::list(db, mentor)
+            .await
+            .unwrap()
+            .iter()
+            .find(|email| email.id == id)
+            .unwrap()
+            .delivery,
+        Delivery::Bounced { .. }
+    ));
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>("SELECT cancel_reason FROM email WHERE id = ?")
+            .bind(id)
+            .fetch_one(db)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        mentor::get(db, mentor).await.unwrap().unwrap().contact,
+        mentor::Contact::Bounced {
+            count,
+            last_out_at: at
+        }
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let receiving = bounce_mailbox(&db).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    let never = approve(&db, "never@example.edu.cn", &[], T).await;
+    let never = first_email(&db, never).await.id;
+    let task = immediate_task(&db, &[id, never]).await;
+    task::remove(
+        &db,
+        &task::TaskEmail {
+            task_id: task,
+            id: never,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, Option<i64>)>("SELECT state, sent_at FROM email WHERE id = ?")
+            .bind(never)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        ("canceled".into(), None)
+    );
+    cancel_task_retry(&db, &net, task, id, T).await;
+    task::delete(&db, task).await.unwrap();
+    assert!(
+        sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE id = ?")
+            .bind(never)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    late_bounce_after_cleanup(&db, &receiving, id, mentor, None, T, 1).await;
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let receiving = bounce_mailbox(&db).await;
+    for (offset, (keep_canceled, partner_sent)) in
+        [(false, true), (true, true), (false, false), (true, false)]
+            .into_iter()
+            .enumerate()
+    {
+        let at = T + offset as i64 * 2 * DAY;
+        let partner = approve(&db, &format!("partner@case{offset}.edu.cn"), &[], at).await;
+        let partner_id = first_email(&db, partner).await.id;
+        let canceled = approve(
+            &db,
+            &format!("hangup@case{offset}.edu.cn"),
+            &[],
+            at + MINUTE,
+        )
+        .await;
+        let id = first_email(&db, canceled).await.id;
+        let task = immediate_task(&db, &[partner_id, id]).await;
+        if partner_sent {
+            send::step(&db, &net, nowhere(), || at).await.unwrap();
+        } else {
+            task::remove(
+                &db,
+                &task::TaskEmail {
+                    task_id: task,
+                    id: partner_id,
+                },
+                at,
+            )
+            .await
+            .unwrap();
+        }
+        cancel_task_retry(&db, &net, task, id, at + MINUTE).await;
+        let (keep, other) = if keep_canceled {
+            (canceled, partner)
+        } else {
+            (partner, canceled)
+        };
+
+        // A second shared task has no delivery evidence: its duplicate should still be deleted.
+        let empty_task = immediate_task(&db, &[]).await;
+        let mut empty = Vec::new();
+        for mentor in [keep, other] {
+            let mut tx = db.begin().await.unwrap();
+            let id = email::tasks::create(
+                &mut tx,
+                empty_task,
+                mentor,
+                Some(("申请", "老师您好")),
+                &[],
+                at,
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            task::remove(
+                &db,
+                &task::TaskEmail {
+                    task_id: empty_task,
+                    id,
+                },
+                at,
+            )
+            .await
+            .unwrap();
+            empty.push(id);
+        }
+        mentor::merge::merge(&db, keep, other, at + DAY)
+            .await
+            .unwrap();
+        assert!(
+            sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE id = ?")
+                .bind(empty[1])
+                .fetch_optional(&db)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            sqlx::query_as::<_, (i64, Option<i64>)>(
+                "SELECT task_id, sent_at FROM email WHERE id = ?"
+            )
+            .bind(empty[0])
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            (empty_task, None)
+        );
+        let keeps_membership = keep_canceled || !partner_sent;
+        late_bounce_after_cleanup(
+            &db,
+            &receiving,
+            id,
+            keep,
+            keeps_membership.then_some(task),
+            at + MINUTE,
+            if partner_sent { 2 } else { 1 },
+        )
+        .await;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE task_id = ?")
+                .bind(task)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            if keeps_membership { id } else { partner_id }
+        );
+        if !partner_sent {
+            assert!(
+                sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE id = ?")
+                    .bind(partner_id)
+                    .fetch_optional(&db)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 6);
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
