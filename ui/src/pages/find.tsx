@@ -385,13 +385,13 @@ function Candidates() {
             <option value="">全部抓取</option>
             {crawls.data?.map((c) => (
               <option key={c.id} value={c.id}>
+                {day(c.createdAt)} {time(c.createdAt)} ·{" "}
                 {c.url
                   ? c.url
                       .replace(/^https?:\/\//, "")
                       .replace(/\/$/, "")
                       .slice(0, 48)
-                  : "Agent 提交"}{" "}
-                · {day(c.createdAt)} {time(c.createdAt)}
+                  : "Agent 提交"}
               </option>
             ))}
           </NativeSelect>

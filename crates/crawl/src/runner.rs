@@ -343,6 +343,18 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     if !queue::valid(&mut tx, c).await? {
         return Ok(false);
     }
+    let redirect_failure = Outcome::Failed("个人页跳到了别的页面，可能已经改版".into());
+    let outcome = if let Outcome::Done(p) = outcome
+        && c.kind == "profile"
+        && p.material.url.as_str() != c.url
+        && let Some(person) = p.people.first()
+    {
+        let name = mentor::intake::comparable(&person.fields.name);
+        let matched = sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM candidate_profile p JOIN candidate c ON c.id = p.candidate_id WHERE p.crawl_id = ? AND p.url = ? AND ? IN (SELECT value FROM json_each(c.match_names))) AS "matched!: bool""#, c.crawl, c.url, name).fetch_one(&mut *tx).await?;
+        if matched { outcome } else { &redirect_failure }
+    } else {
+        outcome
+    };
     match outcome {
         Outcome::Done(p) => {
             let text = p.material.text();

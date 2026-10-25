@@ -263,7 +263,7 @@ pub(crate) async fn save(
 ) -> Result<(), sqlx::Error> {
     let f = &person.fields;
     let profile = person.profile.as_ref().map(crate::PageUrl::as_str);
-    // Only the fetched profile's validated destination is an identity, not its homepage links.
+    // The runner checks redirected names before allowing the destination as an identity.
     let identities: Vec<_> = profile
         .into_iter()
         .chain((kind == "profile").then_some(url))

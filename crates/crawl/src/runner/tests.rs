@@ -1297,6 +1297,479 @@ async fn review_fixture(db: &SqlitePool) -> (Site, Claim) {
     let claim = queue::next(db).await.unwrap().unwrap();
     (site, claim)
 }
+async fn profile_fixture(db: &SqlitePool, site: &Site) -> (Claim, tokio::task::JoinHandle<()>) {
+    let mut provider = Provider::start().await;
+    let model = config(db, &provider.address).await;
+    queue::start(db, &[site.url("/")], model, 1).await.unwrap();
+    let root = queue::next(db).await.unwrap().unwrap();
+    save(db, &root, &Outcome::Failed("fixture root".into()))
+        .await
+        .unwrap();
+    let server = tokio::spawn(async move {
+        while let Some(r) = provider.requests.recv().await {
+            let data: Value =
+                serde_json::from_str(r.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let title = data["title"].as_str().unwrap();
+            let name = if title == "教师名单" {
+                "张三"
+            } else {
+                title
+            };
+            let email = if name == "李四" {
+                "li@example.edu"
+            } else {
+                "zhang@example.edu"
+            };
+            r.respond
+                .send(Response::answer(&person(name, email).to_string()))
+                .ok();
+        }
+    });
+    (root, server)
+}
+async fn process_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
+    let outcome = process(
+        db,
+        &net::Net::new(vec![]).unwrap(),
+        &Fetcher::local(site.port),
+        &Limit::default(),
+        claim,
+        &Cooldown::default(),
+    )
+    .await
+    .unwrap();
+    assert!(save(db, claim, &outcome).await.unwrap());
+    outcome
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/old-zhang", "/li");
+    site.page("/li", "<title>李四</title><p>李四 li@example.edu</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    for (path, name, email) in [
+        ("/old-zhang", "张三", "zhang@example.edu"),
+        ("/li", "李四", "li@example.edu"),
+    ] {
+        observation(
+            &db,
+            &root,
+            &site,
+            path,
+            "list",
+            observed(name, &[email], None),
+        )
+        .await;
+    }
+    let ids = candidate_ids(&db).await;
+    let before = serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    assert!(matches!(
+        process_claim(&db, &site, &claim).await,
+        Outcome::Done(_)
+    ));
+    assert_eq!(candidate_ids(&db).await, ids);
+    assert_eq!(
+        serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap(),
+        before
+    );
+    let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
+    let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
+    assert_eq!(page.status, "failed");
+    assert_eq!(
+        page.error.as_deref(),
+        Some("个人页跳到了别的页面，可能已经改版")
+    );
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=? ORDER BY url")
+            .bind(ids[0])
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(identities, vec![site.url("/old-zhang").as_str()]);
+    let li = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(li.url, site.url("/li").as_str());
+    process_claim(&db, &site, &li).await;
+    assert_eq!(
+        review::accept(
+            &db,
+            &ReviewInput {
+                ids: ids.clone(),
+                decisions: Decisions::default()
+            },
+            2
+        )
+        .await
+        .unwrap()
+        .accepted,
+        2
+    );
+    for (id, name, email) in [
+        (ids[0], "张三", "zhang@example.edu"),
+        (ids[1], "李四", "li@example.edu"),
+    ] {
+        let candidate = review::detail(&db, id).await.unwrap().unwrap().candidate;
+        let mentor = mentor::get(&db, candidate.mentor_id.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(mentor.name, name);
+        assert_eq!(mentor.emails, vec![email]);
+        assert!(mentor.aliases.is_empty());
+    }
+    site.redirect("/old-zhang", "/zhang");
+    site.page("/zhang", "<title>张三</title><p>张三 zhang@example.edu</p>");
+    assert_eq!(
+        queue::retry(&db, root.crawl, Some(claim.id), 3)
+            .await
+            .unwrap(),
+        1
+    );
+    let retry = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(retry.id, claim.id);
+    process_claim(&db, &site, &retry).await;
+    assert_eq!(candidate_ids(&db).await, ids);
+    let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
+    assert_eq!(
+        detail
+            .pages
+            .iter()
+            .find(|p| p.id == claim.id)
+            .unwrap()
+            .status,
+        "success"
+    );
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/old-zhang", "/directory");
+    site.redirect("/old-li", "/directory");
+    site.page(
+        "/directory",
+        "<title>教师名单</title><p>张三 zhang@example.edu</p><p>李四 li@example.edu</p>",
+    );
+    let (root, server) = profile_fixture(&db, &site).await;
+    for (path, name, email) in [
+        ("/old-zhang", "张三", "zhang@example.edu"),
+        ("/old-li", "李四", "li@example.edu"),
+    ] {
+        observation(
+            &db,
+            &root,
+            &site,
+            path,
+            "list",
+            observed(name, &[email], None),
+        )
+        .await;
+    }
+    let ids = candidate_ids(&db).await;
+    let before = serde_json::to_value(review::detail(&db, ids[1]).await.unwrap()).unwrap();
+    let first = queue::next(&db).await.unwrap().unwrap();
+    process_claim(&db, &site, &first).await;
+    let second = queue::next(&db).await.unwrap().unwrap();
+    process_claim(&db, &site, &second).await;
+    assert_eq!(candidate_ids(&db).await, ids);
+    assert_eq!(
+        serde_json::to_value(review::detail(&db, ids[1]).await.unwrap()).unwrap(),
+        before
+    );
+    let first = review::detail(&db, ids[0])
+        .await
+        .unwrap()
+        .unwrap()
+        .candidate;
+    assert_eq!(first.fields.name, "张三");
+    assert!(first.fields.aliases.is_empty());
+    assert_eq!(first.fields.emails, vec!["zhang@example.edu"]);
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=?")
+            .bind(ids[1])
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(identities, vec![site.url("/old-li").as_str()]);
+    let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
+    let page = detail.pages.iter().find(|p| p.id == second.id).unwrap();
+    assert_eq!(page.status, "failed");
+    assert_eq!(
+        page.error.as_deref(),
+        Some("个人页跳到了别的页面，可能已经改版")
+    );
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b3_same_request_changed_destination_must_not_merge(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/old", "/zhang");
+    site.page(
+        "/zhang",
+        "<title>张三</title><p>张三 zhang@example.edu</p><button>下一页</button>",
+    );
+    site.page("/li", "<title>李四</title><p>李四 li@example.edu</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    for (path, name, email) in [
+        ("/old", "张三", "zhang@example.edu"),
+        ("/li", "李四", "li@example.edu"),
+    ] {
+        observation(
+            &db,
+            &root,
+            &site,
+            path,
+            "list",
+            observed(name, &[email], None),
+        )
+        .await;
+    }
+    let ids = candidate_ids(&db).await;
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let Outcome::Done(page) = process_claim(&db, &site, &claim).await else {
+        panic!("profile did not finish")
+    };
+    assert_eq!(
+        page.material.needs_browser,
+        Some(crate::BrowserReason::Pagination)
+    );
+    let before = serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap();
+    site.redirect("/old", "/li");
+    assert_eq!(
+        queue::retry(&db, root.crawl, Some(claim.id), 2)
+            .await
+            .unwrap(),
+        1
+    );
+    let retry = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(retry.id, claim.id);
+    process_claim(&db, &site, &retry).await;
+    assert_eq!(candidate_ids(&db).await, ids);
+    assert_eq!(
+        serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap(),
+        before
+    );
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=? ORDER BY url")
+            .bind(ids[0])
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        identities,
+        vec![site.url("/old").as_str(), site.url("/zhang").as_str()]
+    );
+    let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
+    let page = detail.pages.iter().find(|p| p.id == retry.id).unwrap();
+    assert_eq!(page.status, "failed");
+    assert_eq!(
+        page.error.as_deref(),
+        Some("个人页跳到了别的页面，可能已经改版")
+    );
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b3_five_hop_same_person(db: SqlitePool) {
+    let site = Site::new().await;
+    for hop in 0..5 {
+        site.redirect(&format!("/hop{hop}"), &format!("/hop{}", hop + 1));
+    }
+    site.page("/hop5", "<title>张三</title><p>张三</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    for path in ["/hop0", "/hop5"] {
+        observation(&db, &root, &site, path, "list", observed("张三", &[], None)).await;
+    }
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    process_claim(&db, &site, &claim).await;
+    assert_eq!(candidate_ids(&db).await.len(), 1);
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        identities,
+        vec![site.url("/hop0").as_str(), site.url("/hop5").as_str()]
+    );
+    assert!(queue::next(&db).await.unwrap().is_none());
+    assert_eq!(
+        *site.visits.lock().unwrap(),
+        (0..=5).map(|hop| format!("/hop{hop}")).collect::<Vec<_>>()
+    );
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b3_redirect_external_is_rejected(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect(
+        "/old",
+        site.url("/external")
+            .as_str()
+            .replace("school.example.edu", "outside.example.org")
+            .as_str(),
+    );
+    site.page("/external", "<title>张三</title><p>张三</p>");
+    let mut provider = Provider::start().await;
+    let model = config(&db, &provider.address).await;
+    queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
+    let root = queue::next(&db).await.unwrap().unwrap();
+    save(&db, &root, &Outcome::Failed("fixture root".into()))
+        .await
+        .unwrap();
+    observation(
+        &db,
+        &root,
+        &site,
+        "/old",
+        "list",
+        observed("张三", &[], None),
+    )
+    .await;
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let Outcome::Failed(reason) = process_claim(&db, &site, &claim).await else {
+        panic!("external redirect was not rejected")
+    };
+    assert_eq!(reason, "页面超出了这次抓取允许访问的网站。");
+    assert_eq!(*site.visits.lock().unwrap(), vec!["/old"]);
+    assert!(provider.requests.try_recv().is_err());
+    let identities: Vec<String> = sqlx::query_scalar("SELECT url FROM candidate_profile")
+        .fetch_all(&db)
+        .await
+        .unwrap();
+    assert_eq!(identities, vec![site.url("/old").as_str()]);
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/external-old", "/external-canonical");
+    site.page("/external-canonical", "<title>张三</title><p>张三</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    let old = PageUrl::parse(
+        &site
+            .url("/external-old")
+            .as_str()
+            .replace("school.example.edu", "outside.example.org"),
+    )
+    .unwrap();
+    let material = crate::parse(
+        &site.url("/"),
+        &format!("<a href='{}'>张三</a>", old.as_str()),
+    )
+    .unwrap();
+    let scope = Scope::new(&site.url("/"));
+    let listed = extract::listed(
+        &material,
+        vec![extract::Listed {
+            name: "张三".into(),
+            title: None,
+            profile: Some(1),
+            emails: vec![],
+            research: None,
+        }],
+        &scope,
+    )
+    .unwrap();
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    for person in listed {
+        review::save(
+            &mut tx,
+            root.crawl,
+            root.id,
+            "list",
+            material.url.as_str(),
+            person,
+        )
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(claim.url, old.as_str());
+    process_claim(&db, &site, &claim).await;
+    assert_eq!(candidate_ids(&db).await.len(), 1);
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    let canonical = old.join("/external-canonical").unwrap();
+    assert_eq!(identities, vec![canonical.as_str(), old.as_str()]);
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn redirected_profile_matches_normalized_candidate_alias(db: SqlitePool) {
+    let site = Site::new().await;
+    site.redirect("/old", "/canonical");
+    site.page("/canonical", "<title>Zhang San</title><p>Zhang San</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    let mut fields = observed("张三", &[], None);
+    fields.aliases = vec![" Ｚｈａｎｇ　 Ｓａｎ ".into()];
+    observation(&db, &root, &site, "/old", "list", fields).await;
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    process_claim(&db, &site, &claim).await;
+    let ids = candidate_ids(&db).await;
+    assert_eq!(ids.len(), 1);
+    assert_eq!(
+        review::detail(&db, ids[0])
+            .await
+            .unwrap()
+            .unwrap()
+            .candidate
+            .fields
+            .name,
+        "Zhang San"
+    );
+    let identities: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        identities,
+        vec![site.url("/canonical").as_str(), site.url("/old").as_str()]
+    );
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn non_redirected_profile_keeps_queue_candidate_when_name_changes(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/profile", "<title>李四</title><p>李四 li@example.edu</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    observation(
+        &db,
+        &root,
+        &site,
+        "/profile",
+        "list",
+        observed("张三", &[], None),
+    )
+    .await;
+    let ids = candidate_ids(&db).await;
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    process_claim(&db, &site, &claim).await;
+    assert_eq!(candidate_ids(&db).await, ids);
+    assert_eq!(
+        review::detail(&db, ids[0])
+            .await
+            .unwrap()
+            .unwrap()
+            .candidate
+            .fields
+            .name,
+        "李四"
+    );
+    let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
+    assert_eq!(
+        detail
+            .pages
+            .iter()
+            .find(|p| p.id == claim.id)
+            .unwrap()
+            .status,
+        "success"
+    );
+    server.abort();
+}
 async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
     let site = Site::new().await;
     site.redirect("/old", "/canonical");
