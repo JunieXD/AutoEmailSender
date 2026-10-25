@@ -23,7 +23,7 @@ pub struct Filter {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Profile {
+pub struct Profile {
     pub id: i64,
     pub fields: MentorFields,
     pub source_url: Option<String>,

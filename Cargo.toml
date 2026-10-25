@@ -10,6 +10,7 @@ publish = false
 
 [workspace.dependencies]
 api = { path = "crates/api" }
+crawl = { path = "crates/crawl" }
 check = { path = "crates/check" }
 db = { path = "crates/db" }
 email = { path = "crates/email" }

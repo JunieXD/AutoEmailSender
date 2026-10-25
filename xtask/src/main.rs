@@ -75,7 +75,8 @@ async fn seed() -> Result {
         sample::now(),
     )
     .await?;
+    sample::crawls(&db, sample::now()).await?;
     sample::scheduled(&db, sample::now()).await?;
-    println!("已生成 300 位导师和一些往来邮件");
+    println!("已生成 300 位导师、往来邮件、定时任务和抓取候选");
     Ok(())
 }

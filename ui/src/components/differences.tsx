@@ -27,7 +27,9 @@ export function Differences({
   items,
   take,
   onChange,
+  source = "表格",
 }: {
+  source?: string;
   items: Difference[];
   take: Difference[];
   onChange: (take: Difference[]) => void;
@@ -46,6 +48,7 @@ export function Differences({
     <div className="flex flex-col gap-3">
       {groups.map(([field, group]) => (
         <DifferenceGroup
+          source={source}
           key={field}
           field={field}
           items={group}
@@ -66,6 +69,7 @@ export function Differences({
 }
 
 function DifferenceGroup({
+  source,
   field,
   items,
   take,
@@ -73,6 +77,7 @@ function DifferenceGroup({
   onAll,
   onOne,
 }: {
+  source: string;
   field: Field;
   items: Difference[];
   take: Difference[];
@@ -105,7 +110,7 @@ function DifferenceGroup({
             aria-pressed={all && !individual}
             onClick={() => onAll(true)}
           >
-            用表格的
+            用{source}的
           </Button>
         </div>
         <Button size="sm" variant="ghost" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
@@ -119,7 +124,7 @@ function DifferenceGroup({
               <p className="mb-1.5 font-medium">
                 {d.name}
                 <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  第 {d.row} 行{d.affiliation && ` · ${placeOf(d.affiliation)}`}
+                  第 {d.row} 项{d.affiliation && ` · ${placeOf(d.affiliation)}`}
                 </span>
               </p>
               <div
@@ -135,7 +140,9 @@ function DifferenceGroup({
                     onClick={() => onOne(d, incoming)}
                     className="min-w-0 rounded-md border border-border p-3 text-left break-words whitespace-pre-wrap aria-pressed:border-brand aria-pressed:bg-selected"
                   >
-                    <span className="mb-1 block text-xs text-muted-foreground">{incoming ? "表格的" : "本地的"}</span>
+                    <span className="mb-1 block text-xs text-muted-foreground">
+                      {incoming ? `${source}的` : "本地的"}
+                    </span>
                     <span>{incoming ? d.incoming : d.local}</span>
                   </button>
                 ))}

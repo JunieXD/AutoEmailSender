@@ -151,6 +151,7 @@ CREATE TABLE mentor_affiliation (
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   position INTEGER NOT NULL,
   university TEXT CHECK (university <> ''),
+  university_match TEXT,
   school TEXT CHECK (school <> ''),
   department TEXT CHECK (department <> ''),
   title TEXT CHECK (title <> ''),
@@ -165,6 +166,14 @@ CREATE TABLE mentor_homepage (
   url TEXT NOT NULL,
   PRIMARY KEY (mentor_id, position)
 ) STRICT, WITHOUT ROWID;
+
+-- Normalized names for identity lookups; maintained with the mentor's search entry.
+CREATE TABLE mentor_name (
+  mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  PRIMARY KEY (mentor_id,name)
+) STRICT;
+CREATE INDEX mentor_name_name ON mentor_name (name,mentor_id);
 
 CREATE TABLE mentor_alias (
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
@@ -380,6 +389,7 @@ CREATE TABLE crawl (
   university TEXT,
   school TEXT,
   start_urls TEXT,             -- JSON array
+  limits TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(limits)),
   model_config_id INTEGER REFERENCES model_config(id) ON DELETE SET NULL,
   state TEXT NOT NULL CHECK (state IN ('running', 'paused', 'done', 'failed', 'canceled')),
   error TEXT,
@@ -406,15 +416,22 @@ CREATE TABLE crawl_page (
   url TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('entry', 'list', 'profile')),
   steps TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(steps) AND json_type(steps) = 'array'),
+  scope_url TEXT,
+  depth INTEGER NOT NULL DEFAULT 0 CHECK (depth BETWEEN 0 AND 2),
+  work_state TEXT NOT NULL DEFAULT 'done' CHECK (work_state IN ('queued', 'running', 'done')),
+  claim INTEGER NOT NULL DEFAULT 0,
   mode TEXT NOT NULL CHECK (mode IN ('http', 'webview')),
   status TEXT NOT NULL CHECK (status IN ('success', 'failed', 'needs_browser')),
   error TEXT,
-  fetched_at INTEGER NOT NULL,
+  fetched_at INTEGER,
   text TEXT,
   CHECK ((status = 'success') = (error IS NULL)),
   CHECK (status != 'success' OR text IS NOT NULL),
   UNIQUE (crawl_id, url, steps)
 ) STRICT;
+
+CREATE INDEX crawl_page_queue ON crawl_page (work_state, crawl_id, id);
+CREATE INDEX crawl_page_progress ON crawl_page (crawl_id, work_state, status);
 
 CREATE TABLE candidate (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -422,6 +439,10 @@ CREATE TABLE candidate (
   list_page_id INTEGER REFERENCES crawl_page(id) ON DELETE SET NULL,
   profile_page_id INTEGER REFERENCES crawl_page(id) ON DELETE SET NULL,
   profile_url TEXT,
+  profile_fields TEXT CHECK (profile_fields IS NULL OR json_valid(profile_fields)),
+  match_names TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(match_names)),
+  match_schools TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(match_schools)),
+  evidence TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence)),
   review TEXT NOT NULL CHECK (review IN ('pending', 'accepted', 'rejected', 'merged')),
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
   enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done', 'failed')),
@@ -444,13 +465,23 @@ CREATE TABLE candidate (
   CHECK (enrich != 'failed' OR enrich_error IS NOT NULL),
   UNIQUE (crawl_id, profile_url)
 ) STRICT;
+CREATE INDEX candidate_review ON candidate ((review != 'pending'), id, crawl_id);
+CREATE INDEX candidate_name ON candidate (crawl_id, name);
 CREATE INDEX candidate_crawl ON candidate (crawl_id, review);
 CREATE INDEX candidate_list_page ON candidate (list_page_id) WHERE list_page_id IS NOT NULL;
 CREATE INDEX candidate_profile_page ON candidate (profile_page_id) WHERE profile_page_id IS NOT NULL;
 CREATE INDEX candidate_mentor ON candidate (mentor_id) WHERE mentor_id IS NOT NULL;
 
+CREATE TABLE candidate_profile (
+  candidate_id INTEGER NOT NULL REFERENCES candidate(id) ON DELETE CASCADE,
+  crawl_id INTEGER REFERENCES crawl(id) ON DELETE SET NULL,
+  url TEXT NOT NULL,
+  PRIMARY KEY (candidate_id, url)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX candidate_profile_url ON candidate_profile (crawl_id, url);
+
 CREATE TRIGGER crawl_delete_candidates BEFORE DELETE ON crawl BEGIN
-  DELETE FROM candidate WHERE crawl_id = old.id AND review = 'pending';
+  DELETE FROM candidate WHERE crawl_id = old.id AND review = 'pending' AND mentor_id IS NULL;
 END;
 
 -- How far receiving has got in a folder: mail after last_uid is new.

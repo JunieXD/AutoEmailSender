@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url AS \"url: PageUrl\",scope_url AS \"scope!: PageUrl\",depth,kind AS \"kind: PageKind\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "crawl_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "claim",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "claim"
+          }
+        }
+      },
+      {
+        "name": "url: PageUrl",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "scope!: PageUrl",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "scope_url"
+          }
+        }
+      },
+      {
+        "name": "depth",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "depth"
+          }
+        }
+      },
+      {
+        "name": "kind: PageKind",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "8b829909d58c6492afa02b1b40bbf5b827a155ba9b0b506ab69604e7dce50240"
+}

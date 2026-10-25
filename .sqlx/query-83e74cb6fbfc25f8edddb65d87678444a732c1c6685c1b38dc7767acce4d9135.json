@@ -1,0 +1,158 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id,crawl_id,review,mentor_id,name,aliases AS \"aliases: Json<Vec<String>>\",emails AS \"emails: Json<Vec<String>>\",affiliations AS \"affiliations: Json<Vec<mentor::Affiliation>>\",homepages AS \"homepages: Json<Vec<String>>\",research,papers AS \"papers: Json<Vec<String>>\",source_url FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "crawl_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "review",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "review"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "aliases: Json<Vec<String>>",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "aliases"
+          }
+        }
+      },
+      {
+        "name": "emails: Json<Vec<String>>",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "emails"
+          }
+        }
+      },
+      {
+        "name": "affiliations: Json<Vec<mentor::Affiliation>>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "affiliations"
+          }
+        }
+      },
+      {
+        "name": "homepages: Json<Vec<String>>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "homepages"
+          }
+        }
+      },
+      {
+        "name": "research",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "research"
+          }
+        }
+      },
+      {
+        "name": "papers: Json<Vec<String>>",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "papers"
+          }
+        }
+      },
+      {
+        "name": "source_url",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "source_url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "83e74cb6fbfc25f8edddb65d87678444a732c1c6685c1b38dc7767acce4d9135"
+}

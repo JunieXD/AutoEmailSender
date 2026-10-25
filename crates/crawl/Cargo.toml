@@ -12,6 +12,7 @@ workspace = true
 ego-tree = "0.11.1"
 encoding_rs = { version = "0.8.42", default-features = false, features = ["alloc"] }
 mentor.workspace = true
+model.workspace = true
 net.workspace = true
 percent-encoding = { version = "2.3.2", default-features = false, features = ["alloc"] }
 psl = { version = "2.1.245", default-features = false, features = ["helpers"] }
@@ -19,13 +20,18 @@ regex = { version = "1.13.1", default-features = false, features = ["perf", "std
 reqwest = { version = "0.13.5", default-features = false, features = ["brotli", "gzip"] }
 scraper = { version = "0.29.0", default-features = false }
 serde.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing.workspace = true
+ts-rs.workspace = true
 url = { version = "2.5.8", default-features = false }
 
 [dev-dependencies]
 db.workspace = true
+email.workspace = true
+matching.workspace = true
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring"] }
+task.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "test-util"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }

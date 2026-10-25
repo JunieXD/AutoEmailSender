@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE crawl_id = ?1 AND (?2 IS NULL OR id = ?2) AND work_state = 'done' AND status != 'success'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "81e28f0eba5839efe5bf2713b06a2457125e65672f02b1e639db70094559c41c"
+}

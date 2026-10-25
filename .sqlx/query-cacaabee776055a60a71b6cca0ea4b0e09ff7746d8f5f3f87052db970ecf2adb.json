@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl SET state = 'done',finished_at = ? WHERE state = 'running' AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = crawl.id AND work_state != 'done') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cacaabee776055a60a71b6cca0ea4b0e09ff7746d8f5f3f87052db970ecf2adb"
+}

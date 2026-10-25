@@ -1,7 +1,9 @@
 //! The operations the UI, the phone and agents call, and the one dispatcher that runs them all
 //! (docs/design.md#桌面端). Input is validated here, when it is deserialized.
 
+mod crawling;
 mod tasks;
+use crawling::*;
 use std::collections::BTreeMap;
 use tasks::*;
 
@@ -16,6 +18,7 @@ pub struct Context {
     pub sender: send::Sender,
     pub receiver: receive::Receiver,
     pub matcher: matching::Matcher,
+    pub crawler: crawl::runner::Crawler,
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
     /// Where material files are kept.
@@ -111,6 +114,7 @@ macro_rules! operations {
             let cfg = Config::new().with_large_int("number");
             let mut decls = BTreeMap::new();
             collect::<CallError>(&cfg, &mut decls);
+            collect::<crawl::runner::CrawlFinished>(&cfg, &mut decls);
             collect::<matching::MatchFinished>(&cfg, &mut decls);
             collect::<task::generation::DraftsFinished>(&cfg, &mut decls);
             collect::<ExportMentors>(&cfg, &mut decls);
@@ -129,6 +133,22 @@ macro_rules! operations {
 }
 
 operations! {
+    "checkCrawlUrls" => check_crawl_urls(CrawlUrls) -> Vec<String>;
+    "crawlWork" => crawl_work(CrawlWorkQuery) -> Vec<crawl::queue::CrawlSummary>;
+    "startCrawl" => start_crawl(CrawlStart) -> CrawlId;
+    "listCrawls" => list_crawls(CrawlQuery) -> Vec<crawl::queue::CrawlSummary>;
+    "crawlOptions" => crawl_options(Nothing) -> Vec<crawl::queue::CrawlOption>;
+    "getCrawl" => get_crawl(CrawlDetailQuery) -> crawl::queue::CrawlDetail;
+    "pauseCrawl" => pause_crawl(CrawlId) -> ();
+    "resumeCrawl" => resume_crawl(CrawlId) -> ();
+    "cancelCrawl" => cancel_crawl(CrawlId) -> ();
+    "retryCrawl" => retry_crawl(CrawlRetry) -> u64;
+    "deleteCrawl" => delete_crawl(CrawlId) -> ();
+    "listCandidates" => list_candidates(crawl::review::CandidateQuery) -> crawl::review::CandidatePage;
+    "getCandidate" => get_candidate(CrawlId) -> crawl::review::CandidateDetail;
+    "previewCandidates" => preview_candidates(crawl::review::ReviewInput) -> mentor::import::Preview;
+    "acceptCandidates" => accept_candidates(crawl::review::ReviewInput) -> crawl::review::Reviewed;
+    "rejectCandidates" => reject_candidates(CandidateIds) -> u64;
     "scheduleCapacity" => schedule_capacity(email::schedule::Window) -> email::schedule::Capacity;
     "previewTaskSchedule" => preview_task_schedule(task::ApprovalPreview) -> task::SchedulePreview;
     "changeTaskSchedule" => change_task_schedule(task::ScheduleEdit) -> u64;

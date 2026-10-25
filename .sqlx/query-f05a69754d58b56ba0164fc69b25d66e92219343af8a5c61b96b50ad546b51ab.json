@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET default_model_config_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f05a69754d58b56ba0164fc69b25d66e92219343af8a5c61b96b50ad546b51ab"
+}

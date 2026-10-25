@@ -31,3 +31,7 @@ ts-rs.workspace = true
 writing.workspace = true
 receive.workspace = true
 task.workspace = true
+crawl.workspace = true
+
+[dev-dependencies]
+db.workspace = true

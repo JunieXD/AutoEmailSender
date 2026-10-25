@@ -12,6 +12,7 @@ use ts_rs::TS;
 pub mod conversations;
 pub mod export;
 pub mod import;
+pub mod intake;
 pub mod matching;
 pub mod merge;
 mod supplement;
@@ -671,7 +672,7 @@ fn is_web_page(s: &str) -> bool {
 }
 
 /// A mentor's own fields, checked: blank ones are None or left out of their lists.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct MentorFields {
     pub name: String,
     pub aliases: Vec<String>,
@@ -822,13 +823,21 @@ async fn save_lists(
         .execute(&mut *tx)
         .await?;
     let affiliations = Json(&mentor.affiliations);
+    let universities = Json(
+        mentor
+            .affiliations
+            .iter()
+            .map(|a| a.university.as_deref().map(supplement::comparable))
+            .collect::<Vec<_>>(),
+    );
     sqlx::query!(
-        "INSERT INTO mentor_affiliation (mentor_id, position, university, school, department, title)
+        "INSERT INTO mentor_affiliation (mentor_id, position, university, school, department, title, university_match)
          SELECT ?1, j.key, j.value ->> 'university', j.value ->> 'school',
-           j.value ->> 'department', j.value ->> 'title'
+           j.value ->> 'department', j.value ->> 'title', json_extract(?3, '$[' || j.key || ']')
          FROM json_each(?2) j",
         id,
         affiliations,
+        universities,
     )
     .execute(&mut *tx)
     .await?;
@@ -962,6 +971,19 @@ async fn index(
         .chain(&mentor.aliases)
         .map(String::as_str)
         .collect();
+    sqlx::query!("DELETE FROM mentor_name WHERE mentor_id = ?", id)
+        .execute(&mut *tx)
+        .await?;
+    for name in &names {
+        let name = supplement::comparable(name);
+        sqlx::query!(
+            "INSERT OR IGNORE INTO mentor_name (mentor_id,name) VALUES (?,?)",
+            id,
+            name
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
     let places = mentor.affiliations.iter().flat_map(|a| {
         [&a.university, &a.school, &a.department]
             .into_iter()

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(SELECT 1 FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.id = ? AND p.claim = ? AND p.work_state = 'running' AND c.state = 'running') AS \"valid!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "valid!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3494766e59cacb9728b908da29b46aeb0e5122912d2db3efc178ee49450f6b51"
+}

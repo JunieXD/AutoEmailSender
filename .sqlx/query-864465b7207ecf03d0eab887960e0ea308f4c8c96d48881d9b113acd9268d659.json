@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        WITH classified AS MATERIALIZED (\n          SELECT c.id, CASE WHEN c.mentor_id IS NOT NULL OR EXISTS (\n              SELECT 1 FROM json_each(c.emails) e JOIN mentor_email m ON m.address = e.value\n            ) THEN 'supplement'\n            WHEN EXISTS (\n              SELECT 1 FROM json_each(c.match_names) n JOIN mentor_name mn ON mn.name = n.value\n              WHERE (coalesce(json_array_length(c.emails),0) = 0\n                     OR NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = mn.mentor_id))\n                AND (json_array_length(c.match_schools) = 0 OR EXISTS (\n                  SELECT 1 FROM mentor_affiliation a WHERE a.mentor_id = mn.mentor_id\n                    AND a.university_match IN (SELECT value FROM json_each(c.match_schools))\n                ))\n            ) THEN 'maybe' ELSE 'new' END AS category\n          FROM candidate c WHERE (?1 IS NULL OR c.crawl_id = ?1) AND (c.review != 'pending') = ?2\n            AND (NOT ?4 OR coalesce(json_array_length(c.emails),0) = 0)\n        ), filtered AS MATERIALIZED (SELECT id,category FROM classified WHERE ?3 IS NULL OR category = ?3)\n        SELECT (SELECT json_group_array(json_object('id',id,'category',category)) FROM (SELECT id,category FROM filtered ORDER BY id LIMIT 50 OFFSET ?5)) AS \"ids!: Json<Vec<Classified>>\",\n          count(*) AS \"total!: i64\" FROM filtered\n    ",
+  "describe": {
+    "columns": [
+      {
+        "name": "ids!: Json<Vec<Classified>>",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "total!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "864465b7207ecf03d0eab887960e0ea308f4c8c96d48881d9b113acd9268d659"
+}
