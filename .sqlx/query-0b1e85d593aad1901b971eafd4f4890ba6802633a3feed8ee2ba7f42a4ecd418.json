@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state\n             AS \"state: DraftState\", e.planned_at, e.latest_at, e.sent_at, e.from_address,\n             e.error, e.resend_of, t.state AS task_state, t.generation_paused_at, CASE WHEN\n             e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT r.mailbox_id FROM message r\n             JOIN message_mentor mm ON mm.message_id = r.id WHERE mm.mentor_id = e.mentor_id AND\n             r.message_id = e.reply_to AND r.kind = 'reply')) ELSE m.mailbox_id END AS own\n           FROM json_each(?1) j\n           JOIN email e ON e.id = j.value\n           JOIN mentor m ON m.id = e.mentor_id\n           LEFT\n           JOIN task t ON t.id = e.task_id\n           ORDER BY j.key",
+  "query": "SELECT e.id, e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state\n             AS \"state: DraftState\", e.planned_at, e.latest_at, e.sent_at, e.from_address,\n             e.error, e.cancel_reason, e.resend_of, t.state AS task_state, t.generation_paused_at, CASE WHEN\n             e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT r.mailbox_id FROM message r\n             JOIN message_mentor mm ON mm.message_id = r.id WHERE mm.mentor_id = e.mentor_id AND\n             r.message_id = e.reply_to AND r.kind = 'reply')) ELSE m.mailbox_id END AS own\n           FROM json_each(?1) j\n           JOIN email e ON e.id = j.value\n           JOIN mentor m ON m.id = e.mentor_id\n           LEFT JOIN task t ON t.id = e.task_id\n           ORDER BY j.key",
   "describe": {
     "columns": [
       {
@@ -136,8 +136,19 @@
         }
       },
       {
-        "name": "resend_of",
+        "name": "cancel_reason",
         "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cancel_reason"
+          }
+        }
+      },
+      {
+        "name": "resend_of",
+        "ordinal": 13,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -148,7 +159,7 @@
       },
       {
         "name": "task_state",
-        "ordinal": 13,
+        "ordinal": 14,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -159,7 +170,7 @@
       },
       {
         "name": "generation_paused_at",
-        "ordinal": 14,
+        "ordinal": 15,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -170,7 +181,7 @@
       },
       {
         "name": "own",
-        "ordinal": 15,
+        "ordinal": 16,
         "type_info": "Integer",
         "origin": "Expression"
       }
@@ -194,8 +205,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "01ef8d89f0685ab7159a4e1a01b4de148e0686f9993ece726e67ce7ea1432b7c"
+  "hash": "0b1e85d593aad1901b971eafd4f4890ba6802633a3feed8ee2ba7f42a4ecd418"
 }

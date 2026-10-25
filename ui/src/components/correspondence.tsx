@@ -172,7 +172,7 @@ function Sent({
 }) {
   const queryClient = useQueryClient();
   const act = useMutation({
-    mutationFn: (op: "withdrawEmail" | "retryEmail" | "resendEmail") => call(op, { id: e.id }),
+    mutationFn: (op: "withdrawEmail" | "retryEmail" | "confirmUnsentEmail" | "resendEmail") => call(op, { id: e.id }),
     onSuccess: (_, op) => {
       refreshSchedule(queryClient);
       // Read again when the composer comes back, as the draft it shows is this email.
@@ -216,13 +216,17 @@ function Sent({
             <Confirm
               trigger={
                 <Button variant="ghost" disabled={act.isPending}>
-                  <Send strokeWidth={1.6} />
-                  重新发送
+                  {e.cancelReason === null && <Send strokeWidth={1.6} />}
+                  {e.cancelReason === null ? "重新发送" : "确认没发出"}
                 </Button>
               }
-              message="确认这封邮件未发出？如果之前已经发出，导师会收到两封。"
-              action="重新发送"
-              onConfirm={() => act.mutate("retryEmail")}
+              message={
+                e.cancelReason === null
+                  ? "确认这封邮件没发出？如果之前已经发出，导师会收到两封。"
+                  : `已取消：${e.cancelReason}。确认这封邮件没发出后，将结束这封邮件，不再发送。`
+              }
+              action={e.cancelReason === null ? "重新发送" : "确认没发出"}
+              onConfirm={() => act.mutate(e.cancelReason === null ? "retryEmail" : "confirmUnsentEmail")}
             />
           )}
           {e.state === "bounced" && !e.resent && sendTo && (
@@ -252,8 +256,15 @@ function Sent({
       )}
       {act.error && (
         <p className="text-sm text-destructive">
-          未能{act.variables === "withdrawEmail" ? "改回草稿" : e.state === "failed" ? "重试" : "重新发送"}：
-          {errorMessage(act.error)}
+          未能
+          {act.variables === "withdrawEmail"
+            ? "改回草稿"
+            : act.variables === "confirmUnsentEmail"
+              ? "确认没发出"
+              : e.state === "failed"
+                ? "重试"
+                : "重新发送"}
+          ：{errorMessage(act.error)}
         </p>
       )}
     </article>
@@ -267,14 +278,22 @@ function status(e: Email, several: boolean): [string, string] {
       e.latestAt !== null && e.plannedAt !== null ? `定时 ${scheduledAt(e.plannedAt)}` : "待发送",
       "text-muted-foreground",
     ];
-  if (e.state === "sending") return ["发送中", "text-muted-foreground"];
+  if (e.state === "sending")
+    return [
+      e.cancelReason === null ? "发送中" : `发送中；已取消：${e.cancelReason}，等待发送结果。`,
+      "text-muted-foreground",
+    ];
   if (e.state === "sent") {
     const to = several ? `，发到 ${e.toAddress}` : "";
     return [`${day(e.sentAt)} ${time(e.sentAt)} 由 ${e.fromAddress} 发出${to}`, "text-muted-foreground"];
   }
   if (e.state === "maybe_sent") {
     const to = several ? `（发到 ${e.toAddress}）` : "";
-    return [`可能已发出${to}：${e.error}确认导师未收到时，可重新发送。`, "text-warning"];
+    const next =
+      e.cancelReason === null
+        ? "确认导师未收到时，可重新发送。"
+        : `已取消：${e.cancelReason}。确认没发出后，不再发送。`;
+    return [`可能已发出${to}：${e.error}${next}`, "text-warning"];
   }
   if (e.state === "failed") return [`发送失败：${e.error}`, "text-destructive"];
   return [`退信（发到 ${e.toAddress}）：${e.error}`, "text-warning"];

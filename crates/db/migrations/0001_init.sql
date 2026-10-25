@@ -261,6 +261,7 @@ CREATE TABLE email (
   sent_at INTEGER,             -- handed to SMTP (sending/maybe_sent, kept while waiting to be sent
                                -- again) or accepted (sent/bounced)
   error TEXT,
+  cancel_reason TEXT,
   tracking_id TEXT UNIQUE,
   open_count INTEGER,
   first_opened_at INTEGER,
@@ -281,7 +282,9 @@ CREATE TABLE email (
          OR (message_id IS NOT NULL AND sent_at IS NOT NULL AND from_address IS NOT NULL)),
   -- An email to a mentor with no address fails before going out.
   CHECK (state NOT IN ('maybe_sent', 'sent', 'bounced') OR to_address IS NOT NULL),
-  CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced', 'canceled') OR error IS NOT NULL)
+  CHECK (state NOT IN ('generation_failed', 'maybe_sent', 'failed', 'bounced') OR error IS NOT NULL),
+  CHECK (cancel_reason IS NULL OR state IN ('sending', 'maybe_sent', 'canceled')),
+  CHECK (state <> 'canceled' OR cancel_reason IS NOT NULL)
 ) STRICT;
 CREATE INDEX email_out ON email (mentor_id, sent_at, kind)
   WHERE state IN ('maybe_sent', 'sent', 'bounced');

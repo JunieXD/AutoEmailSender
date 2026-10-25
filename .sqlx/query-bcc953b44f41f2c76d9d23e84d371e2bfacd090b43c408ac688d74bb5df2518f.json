@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS\n             \"body_md!\", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)\n             AS \"resent!: bool\", planned_at, latest_at, from_address, to_address, sent_at, error\n           FROM email\n           WHERE mentor_id = ?\n             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
+  "query": "SELECT id, state AS \"state: DeliveryColumn\", subject AS \"subject!\", body_md AS\n             \"body_md!\", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)\n             AS \"resent!: bool\", planned_at, latest_at, from_address, to_address, sent_at,\n             error, cancel_reason\n           FROM email\n           WHERE mentor_id = ?\n             AND state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -129,6 +129,17 @@
             "name": "error"
           }
         }
+      },
+      {
+        "name": "cancel_reason",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cancel_reason"
+          }
+        }
       }
     ],
     "parameters": {
@@ -146,8 +157,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "0f0a583182e4fa95d34abc80aa33a8746b9a0cf9c95e34c5496e85805d3a46fd"
+  "hash": "bcc953b44f41f2c76d9d23e84d371e2bfacd090b43c408ac688d74bb5df2518f"
 }

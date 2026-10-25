@@ -236,6 +236,7 @@ operations! {
     "markRead" => mark_read(MentorId) -> ();
     "withdrawEmail" => withdraw_email(EmailId) -> ();
     "retryEmail" => retry_email(EmailId) -> ();
+    "confirmUnsentEmail" => confirm_unsent_email(EmailId) -> ();
     "resendEmail" => resend_email(EmailId) -> ();
     "listModelProviders" => list_model_providers(Nothing) -> &'static [model::providers::Provider];
     "listModelConfigs" => list_model_configs(Nothing) -> Vec<model::ModelConfig>;
@@ -1447,7 +1448,7 @@ async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry
                 | email::Delivery::Sent { sent_at, .. }
                 | email::Delivery::Bounced { sent_at, .. } => sent_at,
                 email::Delivery::Approved
-                | email::Delivery::Sending
+                | email::Delivery::Sending { .. }
                 | email::Delivery::Failed { .. } => i64::MAX,
             };
             (at, Entry::Email(e))
@@ -1488,9 +1489,16 @@ async fn withdraw_email(ctx: &Context, input: EmailId) -> Result<(), CallError> 
 
 async fn retry_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
     let applied = email::retry(&ctx.db, input.id, now()).await?;
-    require_applied(applied, "这封邮件已在发送或已发出，或导师已移入回收站。")?;
+    require_applied(applied, "这封邮件已取消，或已不在可重试状态。")?;
     ctx.sender.wake();
     Ok(())
+}
+
+async fn confirm_unsent_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {
+    require_applied(
+        email::confirm_unsent(&ctx.db, input.id, now()).await?,
+        "这封邮件没有待确认的取消记录，或发送状态已变化。",
+    )
 }
 
 async fn resend_email(ctx: &Context, input: EmailId) -> Result<(), CallError> {

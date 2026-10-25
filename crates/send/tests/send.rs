@@ -309,7 +309,8 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
             from_address: ADDRESS.into(),
             to_address: "wang@example.edu.cn".into(),
             sent_at: T,
-            error: email::INTERRUPTED.into()
+            error: email::INTERRUPTED.into(),
+            cancel_reason: None,
         }
     );
     assert_eq!(own_mailbox(&db, wang).await, Some(1));
@@ -1433,7 +1434,7 @@ async fn review_expiry_restore_must_respect_trashing_during_commit(db: SqlitePoo
     })
     .await;
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
-        r#"SELECT state, error, planned_at, latest_at
+        r#"SELECT state, cancel_reason, planned_at, latest_at
            FROM email
            WHERE id = ?"#,
     )
@@ -1469,7 +1470,7 @@ async fn review3_trash_then_restore_must_not_revive_canceled_contact(db: SqliteP
     .await;
     assert!(inbox.lock().unwrap().is_empty());
     let restored = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
-        r#"SELECT state, error, planned_at, latest_at
+        r#"SELECT state, cancel_reason, planned_at, latest_at
            FROM email
            WHERE id = ?"#,
     )
@@ -1512,7 +1513,7 @@ async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_
             mentor::trash::trash(&db, &[mentor], at).await.unwrap();
             assert_eq!(
                 sqlx::query_as::<_, (String, Option<String>)>(
-                    r#"SELECT state, error
+                    r#"SELECT state, cancel_reason
                        FROM email
                        WHERE id = ?"#
                 )
@@ -1525,23 +1526,26 @@ async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_
             mentor::trash::restore(&db, &[mentor], at).await.unwrap();
         })
         .await;
-        let (state, error) = sqlx::query_as::<_, (String, Option<String>)>(
-            r#"SELECT state, error
+        let (state, error, cancel_reason) =
+            sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+                r#"SELECT state, error, cancel_reason
                FROM email
                WHERE id = ?"#,
-        )
-        .bind(id)
-        .fetch_one(&db)
-        .await
-        .unwrap();
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
         assert_eq!(state, expected);
-        match expected {
-            "sent" => assert_eq!(error, None),
-            "maybe_sent" => {
-                assert!(error.is_some());
-                assert_ne!(error.as_deref(), Some(mentor::trash::CANCELED));
-            }
-            _ => assert_eq!(error.as_deref(), Some(mentor::trash::CANCELED)),
+        assert_eq!(
+            cancel_reason.as_deref(),
+            (expected != "sent").then_some(mentor::trash::CANCELED)
+        );
+        if expected == "maybe_sent" {
+            assert!(error.is_some());
+            assert_ne!(error.as_deref(), Some(mentor::trash::CANCELED));
+        } else {
+            assert_eq!(error, None);
         }
     }
     assert_eq!(inbox.lock().unwrap().len(), 2);
@@ -1669,4 +1673,383 @@ async fn plan_returns_resend_origin_for_approved_and_failed_resends(db: SqlitePo
         assert_eq!(row.resend_of, Some(original));
         assert!(!email::withdraw(&db, again, T).await.unwrap());
     }
+}
+
+#[tokio::test]
+async fn cancellation_crash_child() {
+    let Some(path) = std::env::var_os("AES_CANCELLATION_CRASH_DB") else {
+        return;
+    };
+    let db = db::open(Path::new(&path)).await.unwrap();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (id, mentor) = sqlx::query_as::<_, (i64, i64)>("SELECT id, mentor_id FROM email")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    change_during_commit(&db, &net, id, T, T, move |db| async move {
+        mentor::trash::trash(&db, &[mentor], T).await.unwrap();
+        mentor::trash::restore(&db, &[mentor], T).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            "sending"
+        );
+        assert!(inbox.lock().unwrap().is_empty());
+        std::process::exit(73);
+    })
+    .await;
+    panic!("child must exit after the durable claim");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancellation_survives_crash_recovery(db: SqlitePool) {
+    let mentor = approve(&db, "crash@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    let path = db.connect_options().get_filename().to_path_buf();
+    db.close().await;
+    let status = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "cancellation_crash_child", "--nocapture"])
+            .env("AES_CANCELLATION_CRASH_DB", &path)
+            .status()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    assert_eq!(status.code(), Some(73));
+    let db = db::open(db.connect_options().get_filename()).await.unwrap();
+    send::recover(&db, T + MINUTE).await.unwrap();
+    assert!(matches!(
+        first_email(&db, mentor).await.delivery,
+        Delivery::MaybeSent { .. }
+    ));
+    let page = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Pending,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T + MINUTE,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.emails[0].cancel_reason.as_deref(),
+        Some(mentor::trash::CANCELED)
+    );
+    assert!(page.emails[0].error.is_some());
+    assert!(!email::retry(&db, id, T + MINUTE).await.unwrap());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancellation_survives_unknown_outcome(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    change_during_commit(&db, &net, id, T, T, move |db| async move {
+        mentor::trash::trash(&db, &[mentor], T).await.unwrap();
+        mentor::trash::restore(&db, &[mentor], T).await.unwrap();
+    })
+    .await;
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+    assert!(matches!(
+        first_email(&db, mentor).await.delivery,
+        Delivery::MaybeSent { .. }
+    ));
+    let page = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Pending,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T + MINUTE,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page.emails[0].cancel_reason.as_deref(),
+        Some(mentor::trash::CANCELED)
+    );
+    assert!(page.emails[0].error.is_some());
+    assert!(!email::retry(&db, id, T + MINUTE).await.unwrap());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mut confirmed = Vec::new();
+    for (offset, proof) in ["original", "replacement", "bounce", "rejected"]
+        .into_iter()
+        .enumerate()
+    {
+        let at = T + offset as i64 * DAY;
+        let address = format!("hangup@case{offset}.edu.cn");
+        let mentor = approve(&db, &address, &[], at).await;
+        let id = first_email(&db, mentor).await.id;
+        send::step(&db, &net, nowhere(), || at).await.unwrap();
+        assert!(matches!(
+            first_email(&db, mentor).await.delivery,
+            Delivery::MaybeSent { .. }
+        ));
+        let message_id =
+            sqlx::query_scalar::<_, String>("SELECT message_id FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        if proof == "rejected" {
+            mentor::update(
+                &db,
+                mentor,
+                &MentorFields {
+                    name: "王伟".into(),
+                    emails: vec![format!("unknown@case{offset}.edu.cn")],
+                    ..MentorFields::default()
+                },
+                at,
+            )
+            .await
+            .unwrap();
+        }
+        assert!(email::retry(&db, id, at + MINUTE).await.unwrap());
+        assert!(
+            email::schedule::reschedule(&db, id, at + MINUTE, at)
+                .await
+                .unwrap()
+        );
+        change_during_commit(
+            &db,
+            &net,
+            id,
+            at + MINUTE,
+            if proof == "rejected" {
+                at + MINUTE
+            } else {
+                at + MINUTE + 3_600_000
+            },
+            move |db| async move {
+                mentor::trash::trash(&db, &[mentor], at).await.unwrap();
+                mentor::trash::restore(&db, &[mentor], at).await.unwrap();
+            },
+        )
+        .await;
+        assert_eq!(
+            sqlx::query_as::<_, (String, Option<i64>)>(
+                "SELECT state, sent_at FROM email WHERE id = ?"
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            ("canceled".into(), Some(at))
+        );
+        let recipients = [address];
+        let mut conn = db.acquire().await.unwrap();
+        let found = match proof {
+            "original" | "rejected" => {
+                email::sent_copy(&mut conn, &message_id, &recipients, at + MINUTE)
+                    .await
+                    .unwrap()
+                    == email::SentCopy::Confirmed
+            }
+            "replacement" => {
+                let candidates = email::copy_candidates(
+                    &mut conn,
+                    &email::Copy {
+                        mailbox_id: 1,
+                        recipient: &recipients[0],
+                        subject: "申请硕士",
+                        at,
+                    },
+                )
+                .await
+                .unwrap();
+                if candidates.iter().any(|c| c.id == id) {
+                    email::copied(
+                        &mut conn,
+                        id,
+                        "<qq-copy@example.com>",
+                        &recipients,
+                        at + MINUTE,
+                    )
+                    .await
+                    .unwrap()
+                        == email::SentCopy::Confirmed
+                } else {
+                    false
+                }
+            }
+            _ => email::bounced(
+                &mut conn,
+                &message_id,
+                &recipients,
+                "地址不存在",
+                at + MINUTE,
+            )
+            .await
+            .unwrap(),
+        };
+        drop(conn);
+        confirmed.push(found);
+        let visible = email::list(&db, mentor).await.unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(
+            matches!(visible[0].delivery, Delivery::Bounced { .. }),
+            proof == "bounce"
+        );
+        assert_eq!(sqlx::query_scalar::<_, Option<String>>(
+            "SELECT cancel_reason FROM email WHERE id = ?",
+        ).bind(id).fetch_one(&db).await.unwrap(), None);
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM mentor_contact WHERE mentor_id = ?)",
+            )
+            .bind(mentor)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        );
+        let history = send::plan::list(
+            &db,
+            &send::plan::PlanQuery {
+                column: send::plan::PlanColumn::History,
+                page: std::num::NonZeroU32::MIN,
+            },
+            at + MINUTE,
+        )
+        .await
+        .unwrap();
+        assert!(history.emails.iter().any(|email| email.id == id));
+        assert!(!email::retry(&db, id, at + DAY).await.unwrap());
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 4);
+    assert_eq!(confirmed, vec![true, true, true, true]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: SqlitePool) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    for (offset, expired) in [false, true].into_iter().enumerate() {
+        let at = T + offset as i64 * DAY;
+        let address = format!("unknown@never{offset}.edu.cn");
+        let mentor = approve(&db, &address, &[], at).await;
+        let id = first_email(&db, mentor).await.id;
+        email::schedule::reschedule(&db, id, at, at).await.unwrap();
+        let after = if expired { at + 3_600_000 } else { at };
+        change_during_commit(&db, &net, id, at, after, move |db| async move {
+            mentor::trash::trash(&db, &[mentor], at).await.unwrap();
+            mentor::trash::restore(&db, &[mentor], at).await.unwrap();
+        })
+        .await;
+        let (state, sent_at, message_id) =
+            sqlx::query_as::<_, (String, Option<i64>, Option<String>)>(
+                "SELECT state, sent_at, message_id FROM email WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!((state.as_str(), sent_at), ("canceled", None));
+        let mut conn = db.acquire().await.unwrap();
+        let candidates = email::copy_candidates(
+            &mut conn,
+            &email::Copy {
+                mailbox_id: 1,
+                recipient: &address,
+                subject: "申请硕士",
+                at,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(candidates.is_empty());
+        let recipients = [address];
+        assert_ne!(
+            email::copied(
+                &mut conn,
+                id,
+                &format!("<unrelated-copy{offset}@example.com>"),
+                &recipients,
+                at
+            )
+            .await
+            .unwrap(),
+            email::SentCopy::Confirmed
+        );
+        if let Some(message_id) = message_id {
+            assert_ne!(
+                email::sent_copy(&mut conn, &message_id, &recipients, at)
+                    .await
+                    .unwrap(),
+                email::SentCopy::Confirmed
+            );
+            assert!(
+                !email::bounced(&mut conn, &message_id, &recipients, "退信", at)
+                    .await
+                    .unwrap()
+            );
+        }
+    }
+    assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn cancellation_of_uncertain_mail_finishes_without_retry_after_mentor_restored(
+    db: SqlitePool,
+) {
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    send::step(&db, &net, nowhere(), || T).await.unwrap();
+    assert!(!email::confirm_unsent(&db, id, T).await.unwrap());
+    mentor::trash::trash(&db, &[mentor], T + MINUTE)
+        .await
+        .unwrap();
+    mentor::trash::restore(&db, &[mentor], T + MINUTE)
+        .await
+        .unwrap();
+    let email = first_email(&db, mentor).await;
+    assert!(
+        matches!(email.delivery, Delivery::MaybeSent { cancel_reason: Some(ref reason), .. }
+        if reason == mentor::trash::CANCELED)
+    );
+    assert!(!email::retry(&db, id, T + MINUTE).await.unwrap());
+    assert!(email::confirm_unsent(&db, id, T + MINUTE).await.unwrap());
+    assert!(!email::confirm_unsent(&db, id, T + MINUTE).await.unwrap());
+    assert_eq!(
+        sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            "SELECT state, cancel_reason, error FROM email WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        (
+            "canceled".into(),
+            Some(mentor::trash::CANCELED.into()),
+            None
+        )
+    );
+    assert!(!email::retry(&db, id, T + MINUTE).await.unwrap());
+    assert!(!email::withdraw(&db, id, T + MINUTE).await.unwrap());
+    assert!(
+        !email::schedule::reschedule(&db, id, T + DAY, T + MINUTE)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !email::schedule::send_now(&db, id, T + MINUTE)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        send::step(&db, &net, nowhere(), || T + DAY).await.unwrap(),
+        Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
 }

@@ -293,7 +293,7 @@ async fn send(
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, m.mentor_id, mailbox_id, &outcome, answered).await {
+    while let Err(e) = record(db, id, mailbox_id, &m, &outcome, answered).await {
         tracing::error!("record email {id}: {e}");
         tokio::time::sleep(RETRY).await;
     }
@@ -338,15 +338,44 @@ struct BeforeHandover {
 }
 
 impl BeforeHandover {
+    /// A known rejection proves nothing about this attempt; only the previous attempt may still
+    /// have a late copy or bounce. Keep the Message-ID for duplicate suppression on another retry.
+    async fn failed(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        id: i64,
+        error: &str,
+        now: i64,
+    ) -> Result<(), sqlx::Error> {
+        email::failed(conn, id, error, now).await?;
+        sqlx::query!(
+            r#"UPDATE email SET mailbox_id = (SELECT id FROM mailbox WHERE id = ?1),
+                 from_address = ?2, to_address = ?3, message_id = coalesce(?4, message_id),
+                 sent_at = ?5
+               WHERE id = ?6 AND state IN ('failed', 'canceled')"#,
+            self.mailbox_id,
+            self.from_address,
+            self.to_address,
+            self.message_id,
+            self.sent_at,
+            id,
+        )
+        .execute(conn)
+        .await?;
+        Ok(())
+    }
+
     async fn restore(&self, db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
         sqlx::query!(
-            r#"UPDATE email SET state = CASE WHEN error IS NULL THEN 'approved' ELSE 'canceled' END,
-                 planned_at = CASE WHEN error IS NULL THEN planned_at END, latest_at = CASE WHEN
-                 error IS NULL THEN ?1 END, mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
-                 from_address = ?3, to_address = ?4, message_id = ?5, sent_at = ?6, updated_at = CASE
-                 WHEN error IS NULL THEN ?7 ELSE updated_at END
-               WHERE id = ?8
-                 AND state = 'sending'"#,
+            r#"UPDATE email SET
+                 state = CASE WHEN cancel_reason IS NULL THEN 'approved' ELSE 'canceled' END,
+                 planned_at = CASE WHEN cancel_reason IS NULL THEN planned_at END,
+                 latest_at = CASE WHEN cancel_reason IS NULL THEN ?1 END,
+                 mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
+                 from_address = ?3, to_address = ?4, message_id = ?5, sent_at = ?6,
+                 error = NULL,
+                 updated_at = CASE WHEN cancel_reason IS NULL THEN ?7 ELSE updated_at END
+               WHERE id = ?8 AND state = 'sending'"#,
             self.latest_at,
             self.mailbox_id,
             self.from_address,
@@ -432,7 +461,7 @@ async fn mark_sending(
     let outgoing = match outgoing {
         Ok(outgoing) => outgoing,
         Err(error) => {
-            email::failed(&mut tx, id, &error, now()).await?;
+            before.failed(&mut tx, id, &error, now()).await?;
             tx.commit().await?;
             return Ok(None);
         }
@@ -456,8 +485,8 @@ enum Outcome {
 async fn record(
     db: &SqlitePool,
     id: i64,
-    mentor_id: i64,
     mailbox_id: i64,
+    marked: &Marked,
     outcome: &Outcome,
     now: i64,
 ) -> Result<(), sqlx::Error> {
@@ -466,12 +495,12 @@ async fn record(
         Outcome::Sent => email::sent(&mut tx, id, now).await?,
         Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
         Outcome::Failed(error) => {
-            email::failed(&mut tx, id, error, now).await?;
+            marked.before.failed(&mut tx, id, error, now).await?;
             return tx.commit().await;
         }
     }
     // It went out, or may have: later emails to this mentor go from the same mailbox.
-    mentor::assign_mailbox(&mut tx, mentor_id, mailbox_id).await?;
+    mentor::assign_mailbox(&mut tx, marked.mentor_id, mailbox_id).await?;
     tx.commit().await
 }
 

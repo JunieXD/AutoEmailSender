@@ -178,9 +178,12 @@ pub async fn run(path: &Path) -> Result {
         home,
     );
     // Review text includes all rules, aliases, attachment counts and other task mentor names.
-    sqlx::query("UPDATE email SET state='review',error=NULL WHERE task_id=1")
-        .execute(&db)
-        .await?;
+    sqlx::query(
+        r#"UPDATE email SET state = 'review', error = NULL, cancel_reason = NULL
+           WHERE task_id = 1"#,
+    )
+    .execute(&db)
+    .await?;
     let query = task::DraftQuery {
         task_id: 1,
         filter: task::DraftFilter::All,

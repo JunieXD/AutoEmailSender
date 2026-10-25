@@ -636,6 +636,12 @@ function DraftDetail({
               改回草稿
             </Button>
           )}
+          {d.cancelReason && (
+            <p className="w-full text-sm text-warning">
+              已取消：{d.cancelReason}
+              {d.state !== "canceled" && "，等待发送结果。"}
+            </p>
+          )}
           {d.error && d.state !== "generation_failed" && <p className="w-full text-sm text-warning">{d.error}</p>}
           {action.error && <p className="w-full text-sm text-destructive">{errorMessage(action.error)}</p>}
         </div>

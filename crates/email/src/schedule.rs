@@ -280,13 +280,10 @@ pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Err
     let Some(task) = sqlx::query!(
         r#"UPDATE email SET state = 'approved', planned_at = ?1, latest_at = NULL,
              manual_schedule = 0, error = NULL, updated_at = ?1
-           WHERE id = ?2
-             AND state IN ('failed', 'maybe_sent')
-             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))
-             AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)
+           WHERE id = ?2 AND state IN ('failed', 'maybe_sent') AND cancel_reason IS NULL
            RETURNING task_id"#,
         now,
-        id
+        id,
     )
     .fetch_optional(&mut *tx)
     .await?

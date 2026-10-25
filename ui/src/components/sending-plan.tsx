@@ -94,7 +94,7 @@ function PlanList({ column, label, hidden }: { column: PlanColumn; label: string
 function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn }) {
   const client = useQueryClient();
   const action = useMutation({
-    mutationFn: async (op: "withdrawEmail" | "retryEmail" | "retryTaskGeneration") => {
+    mutationFn: async (op: "withdrawEmail" | "retryEmail" | "confirmUnsentEmail" | "retryTaskGeneration") => {
       if (op === "retryTaskGeneration") {
         if (e.taskId !== null) await call(op, { taskId: e.taskId, id: e.id });
       } else await call(op, { id: e.id });
@@ -142,6 +142,7 @@ function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn })
               : e.state === "maybe_sent"
                 ? `可能已发出：${e.error}`
                 : `发送失败：${e.error}`}
+          {e.cancelReason !== null && ` 已取消：${e.cancelReason}。确认没发出后，不再发送。`}
         </p>
       )}
       {column !== "history" && (
@@ -176,12 +177,16 @@ function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn })
             <Confirm
               trigger={
                 <Button variant="quiet" size="sm" disabled={action.isPending}>
-                  确认未发出后重新发送
+                  {e.cancelReason === null ? "确认没发出后重新发送" : "确认没发出"}
                 </Button>
               }
-              message="确认这封邮件未发出？如果之前已经发出，导师会收到两封。"
-              action="重新发送"
-              onConfirm={() => action.mutate("retryEmail")}
+              message={
+                e.cancelReason === null
+                  ? "确认这封邮件没发出？如果之前已经发出，导师会收到两封。"
+                  : `已取消：${e.cancelReason}。确认这封邮件没发出后，将结束这封邮件，不再发送。`
+              }
+              action={e.cancelReason === null ? "重新发送" : "确认没发出"}
+              onConfirm={() => action.mutate(e.cancelReason === null ? "retryEmail" : "confirmUnsentEmail")}
             />
           )}
         </div>

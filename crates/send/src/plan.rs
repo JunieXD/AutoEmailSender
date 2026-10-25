@@ -47,6 +47,7 @@ pub struct PlanEmail {
     pub sent_at: Option<i64>,
     pub from_address: Option<String>,
     pub error: Option<String>,
+    pub cancel_reason: Option<String>,
     pub waiting: Option<Waiting>,
 }
 
@@ -146,15 +147,14 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
     let rows = sqlx::query!(
         r#"SELECT e.id, e.mentor_id, m.name, e.subject, e.task_id, t.name AS task_name, e.state
              AS "state: DraftState", e.planned_at, e.latest_at, e.sent_at, e.from_address,
-             e.error, e.resend_of, t.state AS task_state, t.generation_paused_at, CASE WHEN
+             e.error, e.cancel_reason, e.resend_of, t.state AS task_state, t.generation_paused_at, CASE WHEN
              e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT r.mailbox_id FROM message r
              JOIN message_mentor mm ON mm.message_id = r.id WHERE mm.mentor_id = e.mentor_id AND
              r.message_id = e.reply_to AND r.kind = 'reply')) ELSE m.mailbox_id END AS own
            FROM json_each(?1) j
            JOIN email e ON e.id = j.value
            JOIN mentor m ON m.id = e.mentor_id
-           LEFT
-           JOIN task t ON t.id = e.task_id
+           LEFT JOIN task t ON t.id = e.task_id
            ORDER BY j.key"#,
         sqlx::types::Json(ids)
     )
@@ -213,6 +213,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
                 sent_at: r.sent_at,
                 from_address: r.from_address,
                 error: r.error,
+                cancel_reason: r.cancel_reason,
                 waiting,
             }
         })

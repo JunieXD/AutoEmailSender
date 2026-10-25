@@ -329,6 +329,7 @@ pub struct TaskDraft {
     pub attachments: Vec<i64>,
     pub state: DraftState,
     pub error: Option<String>,
+    pub cancel_reason: Option<String>,
     pub planned_at: Option<i64>,
     pub latest_at: Option<i64>,
 }
@@ -339,7 +340,7 @@ pub async fn draft(
     let mut tx = db.begin().await?;
     let Some(r) = sqlx::query!(
         r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String", coalesce(body_md,
-             '') AS "body_md!: String", state AS "state: DraftState", error, planned_at,
+             '') AS "body_md!: String", state AS "state: DraftState", error, cancel_reason, planned_at,
              latest_at
            FROM email
            WHERE id = ?
@@ -359,6 +360,7 @@ pub async fn draft(
         body_md: r.body_md,
         state: r.state,
         error: r.error,
+        cancel_reason: r.cancel_reason,
         planned_at: r.planned_at,
         latest_at: r.latest_at,
         attachments: email::attached(&mut tx, r.id).await?,
@@ -661,6 +663,7 @@ pub async fn pending(
                     attachments: r.attachments.0,
                     state: r.state,
                     error: None,
+                    cancel_reason: None,
                     planned_at: None,
                     latest_at: None,
                 },

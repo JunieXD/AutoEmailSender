@@ -2,7 +2,7 @@
 
 export type Affiliation = { university: string | null, school: string | null, department: string | null, title: string | null, };
 
-export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, plannedAt: number | null, latestAt: number | null, };
+export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
 
@@ -60,7 +60,7 @@ resendOf: number | null,
 /**
  * Whether this bounced email has been sent again, as an email in any state.
  */
-resent: boolean, } & ({ "state": "approved" } | { "state": "sending" } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
+resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, });
 
 export type EmailId = { id: number, };
 
@@ -351,7 +351,7 @@ export type NotificationSetting = { on: boolean, };
 
 export type PlanColumn = "pending" | "upcoming" | "history";
 
-export type PlanEmail = { id: number, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, waiting: Waiting | null, };
+export type PlanEmail = { id: number, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, cancelReason: string | null, waiting: Waiting | null, };
 
 export type PlanPage = { emails: Array<PlanEmail>, total: number, };
 
@@ -448,7 +448,7 @@ export type TagName = { id: number, name: string, };
 
 export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
 
-export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, plannedAt: number | null, latestAt: number | null, };
+export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, };
 
 export type TaskEmail = { taskId: number, id: number, };
 
@@ -608,6 +608,7 @@ export interface Operations {
   markRead: { input: MentorId; output: null };
   withdrawEmail: { input: EmailId; output: null };
   retryEmail: { input: EmailId; output: null };
+  confirmUnsentEmail: { input: EmailId; output: null };
   resendEmail: { input: EmailId; output: null };
   listModelProviders: { input: Nothing; output: Array<ModelProvider> };
   listModelConfigs: { input: Nothing; output: Array<ModelConfig> };

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, mentor_id, coalesce(subject, '') AS \"subject!: String\", coalesce(body_md,\n             '') AS \"body_md!: String\", state AS \"state: DraftState\", error, planned_at,\n             latest_at\n           FROM email\n           WHERE id = ?\n             AND task_id = ?",
+  "query": "SELECT id, mentor_id, coalesce(subject, '') AS \"subject!: String\", coalesce(body_md,\n             '') AS \"body_md!: String\", state AS \"state: DraftState\", error, cancel_reason, planned_at,\n             latest_at\n           FROM email\n           WHERE id = ?\n             AND task_id = ?",
   "describe": {
     "columns": [
       {
@@ -60,8 +60,19 @@
         }
       },
       {
-        "name": "planned_at",
+        "name": "cancel_reason",
         "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cancel_reason"
+          }
+        }
+      },
+      {
+        "name": "planned_at",
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -72,7 +83,7 @@
       },
       {
         "name": "latest_at",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -93,8 +104,9 @@
       false,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "5f758691e6c885017cedbbc45955892ad381a851c3b1d0a514bc305e1e23f478"
+  "hash": "aa0b14cc9e694f1090ac9fccc0f0257df56e5b2cc9cf0dfd07422d9ae438b5f7"
 }

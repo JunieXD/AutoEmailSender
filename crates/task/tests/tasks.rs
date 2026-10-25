@@ -534,7 +534,7 @@ async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePoo
     .unwrap();
     writer.join().unwrap();
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
-        r#"SELECT state, error, planned_at, latest_at
+        r#"SELECT state, cancel_reason, planned_at, latest_at
            FROM email
            WHERE id = ?"#,
     )
@@ -653,14 +653,20 @@ async fn stop_remove_trash_and_delete_preserve_only_delivery_evidence(db: Sqlite
     )
     .await
     .unwrap();
-    assert_eq!(items(&db, task).await[0].error.as_deref(), Some("移出任务"));
+    assert_eq!(
+        items(&db, task).await[0].cancel_reason.as_deref(),
+        Some("移出任务")
+    );
     stop(&db, task, T).await.unwrap();
     resume(&db, task).await.unwrap();
     assert_eq!(
         get(&db, task).await.unwrap().unwrap().state,
         TaskState::Stopped
     );
-    assert_eq!(items(&db, task).await[1].error.as_deref(), Some("任务停止"));
+    assert_eq!(
+        items(&db, task).await[1].cancel_reason.as_deref(),
+        Some("任务停止")
+    );
     delete(&db, task).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM email")
