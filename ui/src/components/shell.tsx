@@ -2,7 +2,7 @@ import { refreshCrawls, findSearch } from "@/pages/find";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search } from "lucide-react";
+import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search, ChartNoAxesColumn } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
@@ -20,6 +20,7 @@ const NAV = [
   { to: "/conversations", label: "往来", icon: MessagesSquare },
   { to: "/tasks", label: "任务", icon: ListTodo },
   { to: "/find", label: "找导师", icon: Search },
+  { to: "/stats", label: "统计", icon: ChartNoAxesColumn },
 ] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
@@ -109,7 +110,7 @@ export function Shell() {
         )}
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
-        {[...NAV.filter((n) => n.to !== "/find"), MORE].map(({ to, label, icon: Icon }) => (
+        {[...NAV.filter((n) => n.to !== "/find" && n.to !== "/stats"), MORE].map(({ to, label, icon: Icon }) => (
           <Link
             key={to}
             to={to}
@@ -133,6 +134,7 @@ function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTIN
   return (
     <Link
       to={to}
+      search={to === "/stats" ? { page: 1 } : undefined}
       className="flex h-10 items-center gap-3 rounded-md px-3"
       activeProps={{ className: "bg-background font-medium text-brand-text" }}
       inactiveProps={{ className: "text-muted-foreground hover:bg-press" }}
@@ -316,6 +318,10 @@ export function MorePage() {
       <Link to="/find" search={findSearch({})} className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Search className="size-5" />
         找导师
+      </Link>
+      <Link to="/stats" search={{ page: 1 }} className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
+        <ChartNoAxesColumn className="size-5" />
+        统计
       </Link>
       <Link to="/settings" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Settings className="size-5" />
