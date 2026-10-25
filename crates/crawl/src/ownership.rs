@@ -1,4 +1,4 @@
-use crate::Material;
+use crate::{EmailLocation, Material};
 
 fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
@@ -7,6 +7,8 @@ fn compact(text: &str) -> String {
 struct Occurrence<'a> {
     name: &'a str,
     unit: usize,
+    start: usize,
+    end: usize,
 }
 
 /// Checks one proposed address against all mentor names extracted from this page.
@@ -16,12 +18,18 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
         .units
         .iter()
         .enumerate()
-        .filter_map(|(unit, block)| {
+        .flat_map(|(unit, block)| {
             block
                 .emails
                 .iter()
-                .any(|email| email.address.eq_ignore_ascii_case(address))
-                .then_some(unit)
+                .filter(|email| email.address.eq_ignore_ascii_case(address))
+                .map(move |email| {
+                    let offset = match email.location {
+                        EmailLocation::Text { start, .. } => start,
+                        EmailLocation::Attribute { offset, .. } => offset,
+                    };
+                    (unit, compact(&block.text[..offset]).len())
+                })
         })
         .collect();
     if evidence.is_empty() {
@@ -39,8 +47,13 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
     for (unit, block) in material.units.iter().enumerate() {
         let text = compact(&block.text);
         for name in &names {
-            if text.contains(name.as_str()) {
-                occurrences.push(Occurrence { name, unit });
+            for (start, matched) in text.match_indices(name.as_str()) {
+                occurrences.push(Occurrence {
+                    name,
+                    unit,
+                    start,
+                    end: start + matched.len(),
+                });
             }
         }
     }
@@ -48,7 +61,7 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
         .iter()
         .filter(|found| found.name == name)
         .any(|found| {
-            evidence.iter().any(|&unit| {
+            evidence.iter().any(|&(unit, offset)| {
                 let name_path = &material.units[found.unit].path;
                 let email_path = &material.units[unit].path;
                 let common = name_path
@@ -62,6 +75,15 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                 });
                 if !contains_other {
                     return true;
+                }
+                if found.unit == unit {
+                    return offset >= found.end
+                        && !occurrences.iter().any(|other| {
+                            other.unit == unit
+                                && other.name != name
+                                && other.start >= found.end
+                                && other.start <= offset
+                        });
                 }
                 let (Some(&name_child), Some(&email_child)) =
                     (name_path.get(common), email_path.get(common))

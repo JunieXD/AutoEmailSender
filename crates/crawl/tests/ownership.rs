@@ -137,11 +137,13 @@ fn table_rows_and_obfuscated_addresses_keep_ownership() {
 }
 
 #[test]
-fn flat_headings_and_contacts_use_direct_children() {
+fn flat_headings_and_contacts_keep_ownership() {
     for html in [
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
         "<main><div><h2>Alice</h2></div><p>Research: AI</p><p><a href='mailto:a@pku.edu.cn'>联系</a></p><h2>Bob</h2><p><a href='mailto:b@pku.edu.cn'>联系</a></p></main>",
         "<main><h2>Alice</h2><p>a@pku.edu.cn</p><aside><h2>Bob</h2></aside><p>b@pku.edu.cn</p></main>",
+        "<p>Alice a@pku.edu.cn Bob b@pku.edu.cn</p>",
+        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a> Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
     ] {
         check(
             html,
@@ -151,11 +153,39 @@ fn flat_headings_and_contacts_use_direct_children() {
 }
 
 #[test]
-fn shared_name_blocks_cannot_use_the_flat_fallback() {
+fn line_break_separated_people_in_a_paragraph_keep_ownership() {
+    check(
+        "<p>张三 教授 邮箱：zs@pku.edu.cn<br>李四 副教授 邮箱：ls@pku.edu.cn</p>",
+        &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
+    );
+}
+
+#[test]
+fn line_break_separated_people_in_a_table_cell_keep_ownership() {
+    check(
+        "<table><tr><td>张三 教授 邮箱：zs@pku.edu.cn<br>李四 副教授 邮箱：ls@pku.edu.cn</td></tr></table>",
+        &[("张三", &["zs@pku.edu.cn"]), ("李四", &["ls@pku.edu.cn"])],
+    );
+}
+
+#[test]
+fn same_block_mailto_positions_handle_whitespace_and_repeated_names() {
     for html in [
-        "<p>Alice a@pku.edu.cn Bob b@pku.edu.cn</p>",
+        "<p>张 <span>三</span> 教授 <a href='mailto:zs@pku.edu.cn'>邮箱</a><br>李 四 副教授 <a href='mailto:ls@pku.edu.cn'>邮箱</a></p>",
+        "<table><tr><td>张 <span>三</span> 教授 <a href='mailto:zs@pku.edu.cn'>邮箱</a><br>李 四 副教授 <a href='mailto:ls@pku.edu.cn'>邮箱</a></td></tr></table>",
+        "<p>张三、李四<br>张 <span>三</span> 教授 <a href='mailto:zs@pku.edu.cn'>邮箱</a><br>李 四 副教授 <a href='mailto:ls@pku.edu.cn'>邮箱</a></p>",
+    ] {
+        check(
+            html,
+            &[("张三", &["zs@pku.edu.cn"]), ("李 四", &["ls@pku.edu.cn"])],
+        );
+    }
+}
+
+#[test]
+fn shared_name_blocks_without_ordered_contacts_are_rejected() {
+    for html in [
         "<p><a href='mailto:a@pku.edu.cn'>Alice</a> <a href='mailto:b@pku.edu.cn'>Bob</a></p>",
-        "<p>Alice <a href='mailto:a@pku.edu.cn'>联系</a> Bob <a href='mailto:b@pku.edu.cn'>联系</a></p>",
         "<main><div><h2>Alice</h2><h2>Bob</h2></div><p>a@pku.edu.cn b@pku.edu.cn</p></main>",
     ] {
         let page = parse(&url(), html).unwrap();
