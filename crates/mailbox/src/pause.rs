@@ -78,25 +78,35 @@ pub fn throttle(reply: &str) -> Option<Throttle> {
     )
 }
 
+/// Mail quotas and today's sending summary must agree even when the local midnight is skipped.
+pub fn next_day_start<T: TimeZone>(now: i64, zone: &T) -> i64 {
+    let midnight = zone
+        .timestamp_millis_opt(now)
+        .single()
+        .and_then(|at| at.date_naive().succ_opt())
+        .map(|date| date.and_time(chrono::NaiveTime::MIN));
+    if let Some(midnight) = midnight {
+        for step in 0..=96 {
+            if let Some(at) = midnight
+                .checked_add_signed(chrono::TimeDelta::minutes(step * 15))
+                .and_then(|local| zone.from_local_datetime(&local).earliest())
+            {
+                return at.timestamp_millis();
+            }
+        }
+    }
+    // Even Chrono's date bounds must not prevent recording a confirmed SMTP rejection.
+    now.saturating_add(24 * 60 * MINUTE)
+}
+
 impl PauseKind {
-    pub fn at(self, now: i64) -> Result<Pause, sqlx::Error> {
+    pub fn at(self, now: i64) -> Pause {
         self.in_zone(now, &chrono::Local)
     }
 
-    pub fn in_zone<T: TimeZone>(self, now: i64, zone: &T) -> Result<Pause, sqlx::Error> {
+    pub fn in_zone<T: TimeZone>(self, now: i64, zone: &T) -> Pause {
         let until = match self {
-            Self::Throttled(Throttle::Daily) => {
-                let date = zone
-                    .timestamp_millis_opt(now)
-                    .single()
-                    .ok_or_else(|| sqlx::Error::Decode("invalid current time".into()))?;
-                date.date_naive()
-                    .succ_opt()
-                    .and_then(|d| d.and_hms_opt(0, 0, 0))
-                    .and_then(|d| zone.from_local_datetime(&d).earliest())
-                    .ok_or_else(|| sqlx::Error::Decode("invalid next local day".into()))?
-                    .timestamp_millis()
-            }
+            Self::Throttled(Throttle::Daily) => next_day_start(now, zone),
             Self::Throttled(Throttle::Hour) | Self::LoginRejected => now + 60 * MINUTE,
             Self::Connection => now + MINUTE,
         };
@@ -112,10 +122,10 @@ impl PauseKind {
                 "连不上邮箱服务器。检查网络和代理，以及服务器地址、端口和加密方式。"
             }
         };
-        Ok(Pause {
+        Pause {
             until,
             reason: reason.into(),
-        })
+        }
     }
 }
 
@@ -296,24 +306,19 @@ mod tests {
             .with_ymd_and_hms(2026, 10, 26, 23, 59, 0)
             .unwrap()
             .timestamp_millis();
-        let daily = PauseKind::Throttled(Throttle::Daily)
-            .in_zone(now, &zone)
-            .unwrap();
+        let daily = PauseKind::Throttled(Throttle::Daily).in_zone(now, &zone);
         assert_eq!(daily.until, now + MINUTE);
         assert_eq!(
             PauseKind::Throttled(Throttle::Hour)
                 .in_zone(now, &zone)
-                .unwrap()
                 .until,
             now + 60 * MINUTE
         );
         assert_eq!(
-            PauseKind::Connection.in_zone(now, &zone).unwrap().until,
+            PauseKind::Connection.in_zone(now, &zone).until,
             now + MINUTE
         );
-        let midnight = PauseKind::Throttled(Throttle::Daily)
-            .in_zone(daily.until, &zone)
-            .unwrap();
+        let midnight = PauseKind::Throttled(Throttle::Daily).in_zone(daily.until, &zone);
         assert_eq!(midnight.until, daily.until + 24 * 60 * MINUTE);
     }
 }

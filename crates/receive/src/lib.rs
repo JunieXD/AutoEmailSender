@@ -708,7 +708,7 @@ impl Session<'_> {
                 .fetch_one(&mut *tx)
                 .await?;
                 if let Some(mailbox) = mailbox {
-                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(sent_at)?;
+                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(sent_at);
                     pause.reason = format!("退信说明{}", pause.reason);
                     if pause.until > self.now {
                         mailbox::pause::apply(&mut tx, mailbox, &pause).await?;

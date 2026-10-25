@@ -276,7 +276,7 @@ async fn send<T: chrono::TimeZone>(
             tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
             return match pause::classify(&err) {
                 Failure::Pause(kind) => {
-                    let pause = kind.in_zone(now(), zone)?;
+                    let pause = kind.in_zone(now(), zone);
                     pause::apply_for_account(
                         &mut *db.acquire().await?,
                         mailbox_id,
@@ -312,7 +312,7 @@ async fn send<T: chrono::TimeZone>(
             tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
             match err {
                 SendError::NotSent(ref error) => match pause::classify(error) {
-                    Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)?),
+                    Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)),
                     Failure::Email => Outcome::Failed(err.message()),
                 },
                 SendError::Unknown(_) => Outcome::MaybeSent(err.message()),

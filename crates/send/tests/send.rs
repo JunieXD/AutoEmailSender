@@ -731,6 +731,107 @@ async fn emails_left_sending_may_have_gone_out(db: SqlitePool) {
     assert_eq!(own_mailbox(&db, wang).await, Some(1));
 }
 
+mod midnight_gap {
+    use super::*;
+    use chrono::{FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
+
+    // Only the Santiago transition on 2026-09-06 is needed by these regressions.
+    #[derive(Clone)]
+    struct Santiago;
+
+    impl TimeZone for Santiago {
+        type Offset = FixedOffset;
+
+        fn from_offset(_: &Self::Offset) -> Self {
+            Self
+        }
+
+        fn offset_from_local_date(&self, date: &NaiveDate) -> LocalResult<Self::Offset> {
+            self.offset_from_local_datetime(&date.and_hms_opt(12, 0, 0).unwrap())
+        }
+
+        fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> LocalResult<Self::Offset> {
+            let start = NaiveDate::from_ymd_opt(2026, 9, 6)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap();
+            if *local < start {
+                LocalResult::Single(FixedOffset::west_opt(4 * 3600).unwrap())
+            } else if *local < start + chrono::TimeDelta::hours(1) {
+                LocalResult::None
+            } else {
+                LocalResult::Single(FixedOffset::west_opt(3 * 3600).unwrap())
+            }
+        }
+
+        fn offset_from_utc_date(&self, date: &NaiveDate) -> Self::Offset {
+            self.offset_from_utc_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+        }
+
+        fn offset_from_utc_datetime(&self, utc: &NaiveDateTime) -> Self::Offset {
+            let change = NaiveDate::from_ymd_opt(2026, 9, 6)
+                .unwrap()
+                .and_hms_opt(4, 0, 0)
+                .unwrap();
+            FixedOffset::west_opt(if *utc < change { 4 * 3600 } else { 3 * 3600 }).unwrap()
+        }
+    }
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn daily_rejection_before_santiagos_missing_midnight_restores_the_email(db: SqlitePool) {
+        let (net, inbox) = mailbox(&db, SECRET).await;
+        let at = Santiago
+            .with_ymd_and_hms(2026, 9, 5, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let tomorrow = Santiago
+            .with_ymd_and_hms(2026, 9, 6, 1, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let owner = approve(&db, "daily@example.edu.cn", &[], at).await;
+        assert_eq!(
+            send::step_in_zone(&db, &net, nowhere(), || at, &Santiago, &mut |_| 0)
+                .await
+                .unwrap(),
+            Next::Now
+        );
+        assert_eq!(first_email(&db, owner).await.delivery, Delivery::Approved);
+        assert_eq!(
+            mailbox::list(&db, at).await.unwrap()[0]
+                .pause
+                .as_ref()
+                .unwrap()
+                .until,
+            tomorrow
+        );
+        assert_eq!(
+            send::step_in_zone(&db, &net, nowhere(), || at, &Santiago, &mut |_| 0)
+                .await
+                .unwrap(),
+            Next::At(tomorrow)
+        );
+        assert!(inbox.lock().unwrap().is_empty());
+    }
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn scheduled_work_before_santiagos_missing_midnight_counts_only_today(db: SqlitePool) {
+        let at = Santiago
+            .with_ymd_and_hms(2026, 9, 5, 12, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        let tomorrow = Santiago
+            .with_ymd_and_hms(2026, 9, 6, 1, 0, 0)
+            .unwrap()
+            .timestamp_millis();
+        approve(&db, "today@example.edu.cn", &[], tomorrow - 1).await;
+        approve(&db, "tomorrow@example.edu.cn", &[], tomorrow).await;
+        let work = send::plan::work_in_zone(&db, at, &Santiago).await.unwrap();
+        assert_eq!(work.pending, 0);
+        assert_eq!(work.next_at, Some(tomorrow - 1));
+        assert_eq!(work.today, 1);
+    }
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn an_email_left_sending_to_no_address_failed(db: SqlitePool) {
     let (_, _) = mailbox(&db, SECRET).await;
