@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+comrak = { version = "0.57.0", default-features = false }
 hickory-resolver = "0.26"
 serde.workspace = true
 template.workspace = true

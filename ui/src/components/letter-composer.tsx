@@ -146,7 +146,7 @@ export function LetterSend({
 
 function problemText(p: Problem): string {
   if (p.kind === "placeholder") {
-    const marker = p.name.startsWith("【请补充：") ? p.name : `{${p.name}}`;
+    const marker = p.name.startsWith("【请") ? p.name : `{${p.name}}`;
     return `“${marker}”没有替换，请改成具体内容或删掉。`;
   }
   if (p.kind === "no_salutation") return "正文里没有称呼导师。";
