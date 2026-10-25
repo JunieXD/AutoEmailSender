@@ -7,7 +7,7 @@ CREATE TABLE model_config (
   provider TEXT NOT NULL,
   base_url TEXT,
   model TEXT NOT NULL,
-  api_key TEXT NOT NULL,        -- never sent to the UI
+  api_key TEXT,        -- never sent to the UI
   input_price REAL,
   output_price REAL,
   -- The user was told what AI features send to this provider and agreed.
@@ -37,7 +37,7 @@ CREATE TABLE mailbox (
   imap_port INTEGER NOT NULL,
   imap_security TEXT NOT NULL CHECK (imap_security IN ('tls', 'starttls')),
   auth TEXT NOT NULL CHECK (auth IN ('password', 'oauth')),
-  secret TEXT NOT NULL,         -- password, app password or OAuth token; never sent to the UI
+  secret TEXT,         -- password, app password or OAuth token; never sent to the UI
   daily_limit INTEGER NOT NULL,
   min_interval_s INTEGER NOT NULL,
   rotation_order INTEGER NOT NULL,

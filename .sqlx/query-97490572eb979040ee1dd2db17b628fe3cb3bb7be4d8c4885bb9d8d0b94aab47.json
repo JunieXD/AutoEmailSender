@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT address, sender_name, secret,\n             smtp_host, smtp_port AS \"smtp_port: u16\", smtp_security AS \"smtp_security: Security\",\n             imap_host, imap_port AS \"imap_port: u16\", imap_security AS \"imap_security: Security\"\n           FROM mailbox WHERE id = ?",
+  "query": "SELECT address, sender_name, secret AS \"secret!\",\n             smtp_host, smtp_port AS \"smtp_port: u16\", smtp_security AS \"smtp_security: Security\",\n             imap_host, imap_port AS \"imap_port: u16\", imap_security AS \"imap_security: Security\"\n           FROM mailbox WHERE id = ? AND secret IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -26,7 +26,7 @@
         }
       },
       {
-        "name": "secret",
+        "name": "secret!",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
@@ -109,7 +109,7 @@
     "nullable": [
       false,
       false,
-      false,
+      true,
       false,
       false,
       false,
@@ -118,5 +118,5 @@
       false
     ]
   },
-  "hash": "319acf5dba9e9b46ebc9c3a6e0b325a1c48289107bf348710cfdf2e78b448a33"
+  "hash": "97490572eb979040ee1dd2db17b628fe3cb3bb7be4d8c4885bb9d8d0b94aab47"
 }

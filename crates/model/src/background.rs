@@ -41,7 +41,7 @@ pub enum Failure {
 pub fn classify(error: ModelError) -> Failure {
     let message = error.message();
     let (status, reply, retry_after) = match error {
-        ModelError::Unreachable { .. } | ModelError::TimedOut { .. } => {
+        ModelError::MissingKey | ModelError::Unreachable { .. } | ModelError::TimedOut { .. } => {
             return Failure::Pause(message);
         }
         ModelError::Refused {

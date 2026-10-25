@@ -22,7 +22,10 @@ async fn a_saved_key_is_only_for_where_it_was_saved(db: SqlitePool) {
     let key = async |source| model::api_key(&db, id, &source).await.unwrap();
 
     assert_eq!(
-        key(Source::check("deepseek", "").unwrap()).await.as_deref(),
+        key(Source::check("deepseek", "").unwrap())
+            .await
+            .flatten()
+            .as_deref(),
         Some("sk-deepseek")
     );
     assert_eq!(key(Source::check("openai", "").unwrap()).await, None);
@@ -87,8 +90,44 @@ async fn what_the_user_agreed_to_holds_only_for_the_same_provider(db: SqlitePool
 fn a_custom_address_must_be_a_web_address() {
     let source = Source::check("custom", " https://api.example.com/v1/ ").unwrap();
     assert_eq!(
-        source.access("k".into()).base_url,
+        source.access(Some("k".into())).base_url,
         "https://api.example.com/v1"
     );
     assert!(Source::check("custom", "api.example.com/v1").is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn missing_key_is_distinct_from_a_keyless_model_and_pauses_background_work(db: SqlitePool) {
+    let fields = form("custom", "http://127.0.0.1:1/v1").check().unwrap();
+    let id = model::create(&db, &fields, "", 0).await.unwrap();
+    assert!(!model::list(&db).await.unwrap()[0].needs_api_key);
+    assert_eq!(
+        model::chosen(&db).await.unwrap().unwrap().access.api_key,
+        Some(String::new())
+    );
+    sqlx::query("UPDATE model_config SET api_key = NULL WHERE id = ?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(model::list(&db).await.unwrap()[0].needs_api_key);
+    let chosen = model::chosen(&db).await.unwrap().unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let error = model::ask(&net, &chosen.access, &chosen.model, "system", "user")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, model::ModelError::MissingKey));
+    assert!(error.message().contains("设置 › AI › 模型"));
+    assert!(matches!(
+        model::background::classify(error),
+        model::background::Failure::Pause(_)
+    ));
+    assert!(matches!(
+        model::list_models(&net, &chosen.access).await,
+        Err(model::ModelError::MissingKey)
+    ));
+    assert!(matches!(
+        model::test(&net, &chosen.access, &chosen.model).await,
+        Err(model::ModelError::MissingKey)
+    ));
 }
