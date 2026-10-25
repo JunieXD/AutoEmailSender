@@ -91,7 +91,7 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
         .collect();
     occurrences
         .iter()
-        .filter(|found| found.name == name)
+        .filter(|found| found.name == name && found.leading)
         .any(|found| {
             evidence.iter().any(|&(unit, offset)| {
                 let name_path = &material.units[found.unit].path;
@@ -107,9 +107,6 @@ pub fn owns_email(material: &Material, names: &[&str], name: &str, address: &str
                 });
                 if !contains_other {
                     return true;
-                }
-                if !found.leading {
-                    return false;
                 }
                 if found.unit == unit {
                     return offset >= found.start

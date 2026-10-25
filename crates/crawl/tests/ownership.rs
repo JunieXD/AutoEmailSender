@@ -257,6 +257,41 @@ fn prose_mentions_block_ownership_without_starting_it() {
 }
 
 #[test]
+fn english_nonleading_mention_cannot_claim_an_email_in_the_same_block() {
+    assert_eq!(
+        pairings(
+            r#"<main>
+              <article><h2>Alice Chen</h2>
+                <p>Works with Bob Li on machine learning.<br>
+                   Email: achen@pku.edu.cn</p>
+              </article>
+              <article><h2>Bob Li</h2><p>Email: bli@pku.edu.cn</p></article>
+            </main>"#,
+            ["Alice Chen", "Bob Li"],
+            ["achen@pku.edu.cn", "bli@pku.edu.cn"],
+        ),
+        [[false, false], [false, true]]
+    );
+}
+
+#[test]
+fn chinese_nonleading_mention_cannot_claim_an_email_in_the_same_block() {
+    assert_eq!(
+        pairings(
+            r#"<main>
+              <article><h2>张三</h2>
+                <p>与李四共同指导研究生。<br>邮箱：zs@pku.edu.cn</p>
+              </article>
+              <article><h2>李四</h2><p>邮箱：ls@pku.edu.cn</p></article>
+            </main>"#,
+            ["张三", "李四"],
+            ["zs@pku.edu.cn", "ls@pku.edu.cn"],
+        ),
+        [[false, false], [false, true]]
+    );
+}
+
+#[test]
 fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
     for region in ["footer", "nav"] {
         for contact in [
