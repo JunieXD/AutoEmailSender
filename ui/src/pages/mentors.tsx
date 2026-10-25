@@ -1,3 +1,4 @@
+import { findSearch } from "@/pages/find";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Download, Merge, Plus, Search, Trash2 } from "lucide-react";
@@ -108,6 +109,13 @@ export function MentorsPage() {
             <span className="phone:hidden">添加导师</span>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-40 p-1.5">
+            <Link
+              to="/find"
+              search={findSearch({ tab: "crawl" })}
+              className="block rounded-md px-3 py-2 text-sm hover:bg-muted"
+            >
+              智能抓取
+            </Link>
             <Button
               variant="ghost"
               className="w-full justify-start"

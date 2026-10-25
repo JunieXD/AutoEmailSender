@@ -1,13 +1,14 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { refreshCrawls, findSearch } from "@/pages/find";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
-import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle } from "lucide-react";
+import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { cn } from "cn";
 import appIcon from "../../../docs/icon.svg";
 import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
-import type { MatchFinished, DraftsFinished } from "@/api/types";
+import type { MatchFinished, DraftsFinished, CrawlFinished } from "@/api/types";
 import { refreshTasks } from "@/pages/tasks";
 import { scheduledAt } from "@/components/schedule";
 import { refreshMentors } from "@/components/mentor";
@@ -18,6 +19,7 @@ const NAV = [
   { to: "/mentors", label: "导师", icon: Users },
   { to: "/conversations", label: "往来", icon: MessagesSquare },
   { to: "/tasks", label: "任务", icon: ListTodo },
+  { to: "/find", label: "找导师", icon: Search },
 ] as const;
 
 // docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
@@ -34,6 +36,11 @@ export function Shell() {
   const queryClient = useQueryClient();
   const [completed, setCompleted] = useState<string | null>(null);
   useEffect(() => {
+    const crawlChanged = listen("crawl-changed", () => refreshCrawls(queryClient));
+    const crawlFinished = listen<CrawlFinished>("crawl-finished", ({ payload: p }) => {
+      refreshCrawls(queryClient);
+      setCompleted(`抓取完成：找到 ${p.candidates} 位候选，${p.failed} 个页面未打开`);
+    });
     const stop = listen("matching-changed", () => refreshMentors(queryClient));
     const done = listen<MatchFinished>("matching-finished", ({ payload: p }) => {
       refreshMentors(queryClient);
@@ -45,6 +52,8 @@ export function Shell() {
       setCompleted(`任务“${p.name}”的草稿写好了：${p.generated} 封，失败 ${p.failed} 封`);
     });
     return () => {
+      void crawlChanged.then((f) => f());
+      void crawlFinished.then((f) => f());
       void tasksChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());
@@ -100,7 +109,7 @@ export function Shell() {
         )}
       </main>
       <nav className="hidden auto-cols-fr grid-flow-col border-t border-border bg-background px-1 py-1.5 phone:grid">
-        {[...NAV, MORE].map(({ to, label, icon: Icon }) => (
+        {[...NAV.filter((n) => n.to !== "/find"), MORE].map(({ to, label, icon: Icon }) => (
           <Link
             key={to}
             to={to}
@@ -150,6 +159,7 @@ function UnreadBadge({ className }: { className?: string }) {
 }
 
 function Background() {
+  const queryClient = useQueryClient();
   const tasks = useQuery({
     queryKey: ["taskWork"],
     queryFn: () => call("taskWork", {}),
@@ -160,6 +170,23 @@ function Background() {
     queryFn: () => call("matchingProgress", {}),
     refetchInterval: 3000,
   });
+  const crawls = useQuery({
+    queryKey: ["crawlWork"],
+    queryFn: () => {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+      return call("crawlWork", { start, end });
+    },
+    refetchInterval: 3000,
+  });
+  const today = new Date(crawls.dataUpdatedAt).toDateString();
+  const pauseCrawl = useMutation({
+    mutationFn: (id: number) => call("pauseCrawl", { id }),
+    onSuccess: () => refreshCrawls(queryClient),
+  });
+  const crawling = crawls.data?.filter((c) => c.state === "running") ?? [];
+  const crawlPending = crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [];
   const scheduled = useQuery({
     queryKey: ["scheduledWork"],
     queryFn: () => call("scheduledWork", {}),
@@ -172,7 +199,7 @@ function Background() {
   const active = tasks.data?.filter((t) => t.progress.generating > 0) ?? [];
   const pending =
     tasks.data?.filter((t) => t.state === "paused" || t.progress.generationFailed > 0 || t.progress.failed > 0) ?? [];
-  const count = active.length + (matching.data && matching.data.remaining > 0 ? 1 : 0);
+  const count = crawling.length + active.length + (matching.data && matching.data.remaining > 0 ? 1 : 0);
   return (
     <Popover>
       <PopoverTrigger
@@ -184,7 +211,7 @@ function Background() {
       >
         <LoaderCircle className={`size-4 ${count > 0 ? "animate-spin" : ""}`} />
         后台{count > 0 && <span>{count}</span>}
-        {attention > 0 && <span className="text-warning">{attention}</span>}
+        {attention + crawlPending.length > 0 && <span className="text-warning">{attention + crawlPending.length}</span>}
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="max-h-96 w-80 space-y-3 overflow-y-auto p-4 text-sm">
         <h2 className="font-medium">后台工作</h2>
@@ -204,6 +231,43 @@ function Background() {
                 </span>
               </Link>
             ))}
+          </div>
+        )}
+        {crawlPending.length > 0 && (
+          <div>
+            <h3 className="text-warning">抓取待处理</h3>
+            {crawlPending.map((c) => (
+              <Link key={c.id} to="/find" search={findSearch({ tab: "crawl", detail: c.id })} className="block py-2">
+                抓取 #{c.id} · {c.error ?? `${c.failed} 个页面未打开`}
+              </Link>
+            ))}
+          </div>
+        )}
+        {crawling.length > 0 && (
+          <div>
+            <h3 className="text-muted-foreground">智能抓取</h3>
+            {crawling.map((c) => (
+              <div key={c.id} className="py-2">
+                <Link to="/find" search={findSearch({ tab: "crawl", detail: c.id })}>
+                  抓取 #{c.id} · 已读 {c.pages} 页，{c.candidates} 位候选
+                </Link>
+                <button className="ml-2 text-brand-text" onClick={() => pauseCrawl.mutate(c.id)}>
+                  暂停
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {crawls.data?.some((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) && (
+          <div>
+            <h3 className="text-muted-foreground">今天完成</h3>
+            {crawls.data
+              .filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today)
+              .map((c) => (
+                <Link key={c.id} to="/find" search={findSearch({ crawl: c.id })} className="block py-2">
+                  抓取 #{c.id} · {c.candidates} 位候选，去审核
+                </Link>
+              ))}
           </div>
         )}
         {active.length > 0 && (
@@ -230,11 +294,13 @@ function Background() {
             </Link>
           </div>
         )}
-        {count === 0 && attention === 0 && !scheduled.data?.nextAt && (
+        {count === 0 && attention === 0 && crawlPending.length === 0 && !scheduled.data?.nextAt && (
           <p className="text-muted-foreground">当前没有后台工作</p>
         )}
-        {(tasks.error ?? matching.error ?? scheduled.error) && (
-          <p className="text-destructive">{errorMessage(tasks.error ?? matching.error ?? scheduled.error)}</p>
+        {(tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? pauseCrawl.error) && (
+          <p className="text-destructive">
+            {errorMessage(tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? pauseCrawl.error)}
+          </p>
         )}
       </PopoverContent>
     </Popover>
@@ -245,6 +311,10 @@ export function MorePage() {
   return (
     <div className="p-5">
       <h1 className="mb-5 text-2xl font-semibold">更多</h1>
+      <Link to="/find" search={findSearch({})} className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
+        <Search className="size-5" />
+        找导师
+      </Link>
       <Link to="/settings" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
         <Settings className="size-5" />
         设置

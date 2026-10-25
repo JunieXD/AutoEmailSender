@@ -133,7 +133,7 @@ export function ModelAction({
 function notice(model: ModelConfig, providers: ModelProvider[]): string {
   // A custom configuration is known by its address.
   const where = providers.find((p) => p.id === model.provider)?.name ?? model.baseUrl;
-  return `AI 写信、分析匹配度这类功能会把用到的内容发给“${where}”：你的个人资料、材料里的文字、导师的资料，以及要改写、回复或追问参考的邮件。同意后，用这个模型时不再询问。`;
+  return `AI 写信、分析匹配度这类功能会把用到的内容发给“${where}”：你的个人资料、材料里的文字、导师的资料、抓取的网页标题和文字及链接文字，以及要改写、回复或追问参考的邮件。同意后，用这个模型时不再询问。`;
 }
 
 /** What replacing the letter with the one AI wrote would change. */

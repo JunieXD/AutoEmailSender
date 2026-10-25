@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT scope_url AS \"scope!: PageUrl\" FROM crawl_page WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "scope!: PageUrl",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "scope_url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "6aefc8ac9227183626dcd84cff87668b4743ec712837dba842e57dfc64e4afb0"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT evidence AS \"evidence: Json<Vec<Evidence>>\" FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "evidence: Json<Vec<Evidence>>",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "evidence"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "76fb778d78f2464a5905222d4d50b706b7f26a902c775f36b9d41eef5e2def41"
+}

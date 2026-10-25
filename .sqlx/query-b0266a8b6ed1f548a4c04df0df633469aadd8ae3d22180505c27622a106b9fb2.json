@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO crawl_run (crawl_id,app_version,started_at) VALUES (?,?,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "b0266a8b6ed1f548a4c04df0df633469aadd8ae3d22180505c27622a106b9fb2"
+}

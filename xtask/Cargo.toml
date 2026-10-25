@@ -10,7 +10,7 @@ workspace = true
 
 [dependencies]
 api.workspace = true
-crawl = { version = "3.0.0-alpha.0", path = "../crates/crawl" }
+crawl.workspace = true
 db.workspace = true
 send.workspace = true
 fastrand = "2.5.0"

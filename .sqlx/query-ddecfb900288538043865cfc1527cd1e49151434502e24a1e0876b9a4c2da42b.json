@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT candidate_id AS \"candidate_id!: i64\" FROM candidate_profile WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2)) ORDER BY url IS ?3 DESC,candidate_id LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "candidate_id!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate_profile",
+            "name": "candidate_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ddecfb900288538043865cfc1527cd1e49151434502e24a1e0876b9a4c2da42b"
+}
