@@ -118,7 +118,7 @@ export type EnrichPlan = { ids: Array<number>, skipped: Array<EnrichSkip>, };
 
 export type EnrichSkip = { reason: EnrichSkipReason, ids: Array<number>, };
 
-export type EnrichSkipReason = "missing_profile" | "complete" | "active" | "reviewed";
+export type EnrichSkipReason = "missing_profile" | "deleted_crawl" | "complete" | "active" | "reviewed";
 
 export type EnrichState = "none" | "queued" | "running" | "done" | "failed";
 

@@ -288,8 +288,7 @@ async fn read(
         }
         drop(conn);
         let mut data = extract::data(&m, 0..m.units.len());
-        data["target"] =
-            serde_json::json!({"name": candidate.fields.name,"aliases":candidate.fields.aliases});
+        data["target"] = serde_json::json!({"name": candidate.fields.name,"aliases":candidate.fields.aliases,"affiliations":candidate.fields.affiliations});
         data["child"] = serde_json::json!(c.kind == PageKind::EnrichChild);
         let result = reader
             .ask::<extract::Enriched>(extract::ENRICH, data)
@@ -322,11 +321,20 @@ async fn read(
                 .map(String::as_str)
                 .chain(target_names.iter().copied())
                 .collect();
-            person.fields.emails.retain(|email| {
-                target_names
-                    .iter()
-                    .any(|name| crate::owns_email(&m, &names, name, email))
-            });
+            let mut owned = Vec::new();
+            for email in m.units.iter().flat_map(|unit| &unit.emails) {
+                if !owned.contains(&email.address)
+                    && target_names
+                        .iter()
+                        .any(|name| crate::owns_email(&m, &names, name, &email.address))
+                {
+                    owned.push(email.address.clone());
+                }
+            }
+            person
+                .fields
+                .emails
+                .retain(|email| owned.len() == 1 && owned.contains(email));
             person.fields.homepages.retain(|url| url != m.url.as_str());
         }
         return Ok(Page {
@@ -407,10 +415,10 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     if !queue::valid(&mut tx, c).await? {
         return Ok(false);
     }
-    let enrich_redirect_failure;
+    let enrich_identity_failure;
     let outcome = if let Some(id) = c.candidate_id
         && let Outcome::Done(p) = outcome
-        && !p.material.url.is_normalization_of(&c.url)
+        && (c.kind == PageKind::EnrichChild || !p.material.url.is_normalization_of(&c.url))
         && let Some(person) = p.people.first()
     {
         let candidate = review::read(&mut tx, &[id])
@@ -420,13 +428,16 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
         if enrich::matches(&candidate.fields, &person.fields, &p.material) {
             outcome
         } else {
-            enrich_redirect_failure = Outcome::Failed(format!(
-                "页面跳到了 {}，读到的姓名是「{}」，和候选「{}」对不上，没有补入",
-                p.material.url.as_str(),
-                person.fields.name,
-                candidate.fields.name
+            let source = if c.kind == PageKind::EnrichChild {
+                "子页".to_owned()
+            } else {
+                format!("页面跳到了 {}，", p.material.url.as_str())
+            };
+            enrich_identity_failure = Outcome::Failed(format!(
+                "{source}读到的姓名是「{}」，和候选「{}」对不上，或页面未出现匹配姓名，没有补入",
+                person.fields.name, candidate.fields.name
             ));
-            &enrich_redirect_failure
+            &enrich_identity_failure
         }
     } else {
         outcome
@@ -486,9 +497,14 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             };
             sqlx::query!("UPDATE crawl_page SET work_state = 'done',kind = ?,status = ?,error = ?,text = ?,fetched_at = ? WHERE id = ?",p.kind,status,reason,text,now(),c.id).execute(&mut *tx).await?;
             if let Some(id) = c.candidate_id {
-                for url in &p.next {
-                    enrich::enqueue(&mut tx, c.crawl, id, url, &c.scope, PageKind::EnrichChild)
-                        .await?;
+                if c.kind == PageKind::EnrichProfile && !sqlx::query_scalar!(
+                    r#"SELECT EXISTS(SELECT 1 FROM crawl_page WHERE candidate_id=? AND kind='enrich_child') AS "selected!: bool""#,
+                    id
+                ).fetch_one(&mut *tx).await? {
+                    for url in &p.next {
+                        enrich::enqueue(&mut tx, c.crawl, id, url, &c.scope, PageKind::EnrichChild)
+                            .await?;
+                    }
                 }
                 for person in &p.people {
                     enrich::apply(&mut tx, id, p.material.url.as_str(), person).await?;

@@ -577,6 +577,7 @@ function Candidates() {
 }
 const ENRICH_SKIP = {
   missing_profile: "没有个人页",
+  deleted_crawl: "原抓取已删除",
   complete: "资料已全",
   active: "正在补全",
   reviewed: "已处理或已删除",
@@ -637,7 +638,7 @@ function EnrichDialog({
             。仅为估算，以实际页面和服务商报告为准。
           </p>
           <p className="text-muted-foreground">
-            只补空着的资料，保留已有值。网页内容和候选姓名、别名将发给模型服务商。可在后台暂停或取消；所属抓取已暂停时，补全也会等待继续。
+            只补空着的资料，保留已有值。网页内容和候选姓名、别名、已有单位将发给模型服务商。可在后台暂停或取消；所属抓取已暂停时，补全也会等待继续。
           </p>
           <ErrorText error={preview.error ?? models.error ?? start.error} />
         </DialogBody>

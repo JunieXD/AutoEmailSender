@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id!: i64\",crawl_id,profile_url,review,enrich,\n        coalesce(json_array_length(emails),0) AS \"emails!: i64\",research\n        FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
+  "query": "SELECT id AS \"id!: i64\",crawl_id,profile_url,review,enrich AS \"enrich: EnrichState\",\n        coalesce(json_array_length(emails),0) AS \"emails!: i64\",research\n        FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -48,7 +48,7 @@
         }
       },
       {
-        "name": "enrich",
+        "name": "enrich: EnrichState",
         "ordinal": 4,
         "type_info": "Text",
         "origin": {
@@ -89,5 +89,5 @@
       true
     ]
   },
-  "hash": "71be1a72400e6a7b810c050f419af1cabc7dfb35a9f581737416237c81fc6311"
+  "hash": "8d57fa6ea2384bd1f5530819c2f8c46ddb3c14e365d972d6913b49ab48571b44"
 }

@@ -197,7 +197,13 @@ pub async fn control(db: &SqlitePool, id: i64, action: &str, at: i64) -> Result<
     }
     sqlx::query!("UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE crawl_id = ? AND work_state = 'running'",id).execute(&mut *tx).await?;
     if action == "cancel" {
-        sqlx::query!("UPDATE candidate SET enrich='none' WHERE crawl_id=? AND enrich IN ('queued','running')",id).execute(&mut *tx).await?;
+        let ids = sqlx::query_scalar!(
+            "SELECT id FROM candidate WHERE crawl_id=? AND enrich IN ('queued','running')",
+            id
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        crate::enrich::stop(&mut tx, &ids).await?;
         sqlx::query!(
             "DELETE FROM crawl_page WHERE crawl_id = ? AND fetched_at IS NULL",
             id
@@ -375,8 +381,15 @@ pub async fn detail(
     }))
 }
 pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    sqlx::query!(
+        "UPDATE candidate SET enrich='none' WHERE crawl_id=? AND enrich IN ('queued','running')",
+        id
+    )
+    .execute(&mut *tx)
+    .await?;
     sqlx::query!("DELETE FROM crawl WHERE id = ?", id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
-    Ok(())
+    tx.commit().await
 }

@@ -767,3 +767,412 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
         EnrichState::None
     );
 }
+
+fn empty_answer(next: Value) -> Value {
+    let mut a = answer("missing@example.edu", next);
+    a["research"] = Value::Null;
+    a["papers"] = json!([]);
+    a
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_child_checks_identity_before_filling_any_field(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三</p><a href='/child'>实验室成员</a>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    for (html, name, aliases, success) in [
+        (
+            "<p>李四 b@example.edu 肿瘤医学</p>",
+            "李四",
+            json!([]),
+            false,
+        ),
+        ("<p>学院办公室 b@example.edu</p>", "张三", json!([]), false),
+        (
+            "<p>Zhang San a@example.edu 机器学习</p><p>张三</p>",
+            "Zhang San",
+            json!(["张三"]),
+            true,
+        ),
+    ] {
+        site.page("/child", html);
+        let (crawl, id) = candidate(&db, &site, "/p").await;
+        enrich::start(&db, &[id], 2).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([1]))).await;
+        save(&db, &c, &result).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let mut a = answer(
+            if success {
+                "a@example.edu"
+            } else {
+                "b@example.edu"
+            },
+            json!([]),
+        );
+        a["name"] = json!(name);
+        a["aliases"] = aliases;
+        a["research"] = json!(if success {
+            "机器学习"
+        } else {
+            "肿瘤医学"
+        });
+        let result = process_answer(&db, &site, &mut provider, &c, a).await;
+        save(&db, &c, &result).await.unwrap();
+        let d = detail(&db, id).await;
+        assert_eq!(d.candidate.fields.research.is_some(), success);
+        assert_eq!(!d.candidate.papers.is_empty(), success);
+        assert_eq!(!d.candidate.fields.emails.is_empty(), success);
+        let pages = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
+        let child = pages
+            .pages
+            .iter()
+            .find(|p| p.kind == PageKind::EnrichChild)
+            .unwrap();
+        assert_eq!(child.status == PageStatus::Success, success);
+        if !success {
+            assert!(child.error.as_ref().unwrap().contains("没有补入"));
+            assert_eq!(d.evidence.len(), 1);
+            assert!(d.candidate.enrichment.enrich_changes.is_empty());
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_child_with_same_names_requires_unique_email_evidence(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三</p><a href='/contacts'>联系方式</a>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    for (school, multiple) in [
+        ("计算机学院", true),
+        ("医学院", true),
+        ("计算机学院", false),
+    ] {
+        site.page(
+            "/contacts",
+            if multiple {
+                include_str!("../../../tests/pages/enrich-same-name.html")
+            } else {
+                "<table><tr><td>张三</td><td>计算机学院</td><td>cs@example.edu</td></tr></table>"
+            },
+        );
+        let (_, id) = candidate(&db, &site, "/p").await;
+        let affiliations =
+            json!([{"university":"甲大学","school":school,"department":"研究系","title":null}]);
+        sqlx::query("UPDATE candidate SET affiliations=? WHERE id=?")
+            .bind(Json(&affiliations))
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        enrich::start(&db, &[id], 2).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([1]))).await;
+        save(&db, &c, &result).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let mut a = answer("cs@example.edu", json!([]));
+        a["names"] = json!(["张三", "张三"]);
+        let result = process_answer(&db, &site, &mut provider, &c, a).await;
+        save(&db, &c, &result).await.unwrap();
+        let d = detail(&db, id).await;
+        assert_eq!(
+            d.candidate.fields.emails,
+            if multiple {
+                vec![]
+            } else {
+                vec!["cs@example.edu"]
+            }
+        );
+        assert_eq!(d.candidate.fields.research.as_deref(), Some("机器学习"));
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_affiliations_fill_only_unique_pairs(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三 甲大学计算机学院教授；兼任甲大学医学院</p>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let affiliation = |school: Option<&str>, title: Option<&str>| json!({"university":"甲大学","school":school,"department":null,"title":title});
+    for (old, new, titles) in [
+        (
+            vec![
+                affiliation(Some("计算机学院"), None),
+                affiliation(Some("医学院"), None),
+            ],
+            vec![affiliation(None, Some("教授"))],
+            vec![None, None],
+        ),
+        (
+            vec![affiliation(None, None)],
+            vec![affiliation(Some("计算机学院"), Some("教授"))],
+            vec![Some("教授")],
+        ),
+        (
+            vec![
+                affiliation(Some("计算机学院"), None),
+                affiliation(Some("医学院"), None),
+            ],
+            vec![
+                affiliation(Some("医学院"), Some("讲师")),
+                affiliation(Some("计算机学院"), Some("教授")),
+            ],
+            vec![Some("教授"), Some("讲师")],
+        ),
+        (
+            vec![affiliation(None, None)],
+            vec![
+                affiliation(Some("计算机学院"), Some("教授")),
+                affiliation(Some("医学院"), Some("讲师")),
+            ],
+            vec![None],
+        ),
+    ] {
+        let (_, id) = candidate(&db, &site, "/p").await;
+        sqlx::query("UPDATE candidate SET affiliations=? WHERE id=?")
+            .bind(Json(old))
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        enrich::start(&db, &[id], 2).await.unwrap();
+        let c = queue::next(&db).await.unwrap().unwrap();
+        let mut a = empty_answer(json!([]));
+        a["affiliations"] = json!(new);
+        let result = process_answer(&db, &site, &mut provider, &c, a).await;
+        save(&db, &c, &result).await.unwrap();
+        let d = detail(&db, id).await;
+        assert_eq!(
+            d.candidate
+                .fields
+                .affiliations
+                .iter()
+                .map(|a| a.title.as_deref())
+                .collect::<Vec<_>>(),
+            titles
+        );
+        if titles.iter().all(Option::is_none) {
+            assert!(d.candidate.enrichment.enrich_changes.is_empty());
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_deleting_crawl_clears_queued_and_running_candidates(db: SqlitePool) {
+    let site = Site::new().await;
+    let mentor = mentor::create(
+        &db,
+        &MentorFields {
+            name: "张三".into(),
+            ..Default::default()
+        },
+        1,
+    )
+    .await
+    .unwrap();
+    for running in [false, true] {
+        let (crawl, id) = candidate(&db, &site, "/p").await;
+        sqlx::query("UPDATE candidate SET mentor_id=? WHERE id=?")
+            .bind(mentor)
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        enrich::start(&db, &[id], 2).await.unwrap();
+        let claim = if running {
+            queue::next(&db).await.unwrap()
+        } else {
+            None
+        };
+        sqlx::query("UPDATE candidate SET research='已补方向',enrich_changes='[{\"field\":\"research\",\"value\":\"已补方向\"}]' WHERE id=?").bind(id).execute(&db).await.unwrap();
+        queue::delete(&db, crawl).await.unwrap();
+        queue::recover(&db).await.unwrap();
+        let d = detail(&db, id).await;
+        assert_eq!(d.candidate.enrichment.enrich, EnrichState::None);
+        assert_eq!(d.candidate.crawl_id, None);
+        assert_eq!(d.candidate.fields.research.as_deref(), Some("已补方向"));
+        assert_eq!(d.candidate.enrichment.enrich_changes.len(), 1);
+        if let Some(c) = claim {
+            assert!(
+                !save(&db, &c, &Outcome::Failed("迟到结果".into()))
+                    .await
+                    .unwrap()
+            );
+        }
+        let plan = enrich::start(&db, &[id], 3).await.unwrap();
+        assert!(plan.ids.is_empty());
+        assert_eq!(
+            serde_json::to_value(&plan.skipped[0].reason).unwrap(),
+            json!("deleted_crawl")
+        );
+        assert!(queue::work(&db, 0, i64::MAX).await.unwrap().is_empty());
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_review_removes_unfinished_pages_without_failures(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三 a@example.edu</p><a href='/child'>联系</a>");
+    site.page("/child", "<p>张三 b@example.edu</p>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    for action in ["accept", "reject", "cancel"] {
+        for stage in ["queued", "fetched", "child"] {
+            let (crawl, id) = candidate(&db, &site, "/p").await;
+            enrich::start(&db, &[id], 2).await.unwrap();
+            let mut late = None;
+            if stage != "queued" {
+                let c = queue::next(&db).await.unwrap().unwrap();
+                let result = process_answer(
+                    &db,
+                    &site,
+                    &mut provider,
+                    &c,
+                    answer("a@example.edu", json!([1])),
+                )
+                .await;
+                if stage == "child" {
+                    save(&db, &c, &result).await.unwrap();
+                    let c = queue::next(&db).await.unwrap().unwrap();
+                    let result = process_answer(
+                        &db,
+                        &site,
+                        &mut provider,
+                        &c,
+                        answer("b@example.edu", json!([])),
+                    )
+                    .await;
+                    late = Some((c, result));
+                } else {
+                    late = Some((c, result));
+                }
+            }
+            match action {
+                "accept" => {
+                    review::accept(
+                        &db,
+                        &ReviewInput {
+                            ids: vec![id],
+                            decisions: Decisions::default(),
+                        },
+                        3,
+                    )
+                    .await
+                    .unwrap();
+                }
+                "reject" => {
+                    review::reject(&db, &[id]).await.unwrap();
+                }
+                _ => {
+                    queue::control(&db, crawl, "cancel", 3).await.unwrap();
+                }
+            }
+            if let Some((c, result)) = late {
+                assert!(!save(&db, &c, &result).await.unwrap());
+            }
+            finish(&db).await.unwrap();
+            let d = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
+            assert_eq!(d.summary.failed, 0, "{action}/{stage}");
+            assert_eq!(d.summary.remaining, 0);
+            assert_eq!(d.pages.len(), usize::from(stage == "child"));
+            assert_eq!(
+                d.summary.state,
+                if action == "cancel" {
+                    queue::CrawlState::Canceled
+                } else {
+                    queue::CrawlState::Done
+                }
+            );
+            if stage == "child" {
+                let candidate = detail(&db, id).await;
+                assert_eq!(candidate.candidate.fields.emails, vec!["a@example.edu"]);
+                assert_eq!(candidate.evidence.len(), 1);
+            }
+            assert!(queue::work(&db, 0, 1).await.unwrap().is_empty());
+            assert_eq!(queue::retry(&db, crawl, None, 4).await.unwrap(), 0);
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_profile_retry_keeps_first_children(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三</p><button>下一页</button><a href='/a'>甲</a><a href='/b'>乙</a><a href='/c'>丙</a><a href='/d'>丁</a><a href='/e'>戊</a><a href='/f'>己</a>");
+    for path in ["/a", "/b", "/c", "/d", "/e", "/f"] {
+        site.page(path, "<p>张三</p>");
+    }
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let (crawl, id) = candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let profile = c.id;
+    let result = process_answer(
+        &db,
+        &site,
+        &mut provider,
+        &c,
+        empty_answer(json!([1, 2, 3])),
+    )
+    .await;
+    save(&db, &c, &result).await.unwrap();
+    while let Some(c) = queue::next(&db).await.unwrap() {
+        let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([]))).await;
+        save(&db, &c, &result).await.unwrap();
+    }
+    finish(&db).await.unwrap();
+    assert_eq!(queue::retry(&db, crawl, Some(profile), 3).await.unwrap(), 1);
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let result = process_answer(
+        &db,
+        &site,
+        &mut provider,
+        &c,
+        empty_answer(json!([4, 5, 6])),
+    )
+    .await;
+    save(&db, &c, &result).await.unwrap();
+    while let Some(c) = queue::next(&db).await.unwrap() {
+        let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([]))).await;
+        save(&db, &c, &result).await.unwrap();
+    }
+    let d = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
+    assert_eq!(
+        d.pages
+            .iter()
+            .filter(|p| p.kind == PageKind::EnrichChild)
+            .count(),
+        3
+    );
+    assert_eq!(
+        *site.visits.lock().unwrap(),
+        vec!["/p", "/a", "/b", "/c", "/p"]
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn enrichment_cancel_discards_fetched_but_unfinished_page(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三 a@example.edu</p>");
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let (crawl, id) = candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let result = process_answer(
+        &db,
+        &site,
+        &mut provider,
+        &c,
+        answer("a@example.edu", json!([])),
+    )
+    .await;
+    queue::control(&db, crawl, "cancel", 3).await.unwrap();
+    assert!(!save(&db, &c, &result).await.unwrap());
+    let d = queue::detail(&db, crawl, 1).await.unwrap().unwrap();
+    assert_eq!(d.summary.failed, 0);
+    assert!(d.pages.is_empty());
+    assert_eq!(queue::retry(&db, crawl, None, 4).await.unwrap(), 0);
+}

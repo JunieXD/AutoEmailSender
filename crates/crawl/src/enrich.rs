@@ -33,6 +33,7 @@ pub struct Enrichment {
 #[serde(rename_all = "snake_case")]
 pub enum EnrichSkipReason {
     MissingProfile,
+    DeletedCrawl,
     Complete,
     Active,
     Reviewed,
@@ -49,7 +50,7 @@ pub struct EnrichPlan {
 }
 async fn plan(conn: &mut SqliteConnection, ids: &[i64]) -> Result<EnrichPlan, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT id AS "id!: i64",crawl_id,profile_url,review,enrich,
+        r#"SELECT id AS "id!: i64",crawl_id,profile_url,review,enrich AS "enrich: EnrichState",
         coalesce(json_array_length(emails),0) AS "emails!: i64",research
         FROM candidate WHERE id IN (SELECT value FROM json_each(?)) ORDER BY id"#,
         Json(ids)
@@ -69,12 +70,11 @@ async fn plan(conn: &mut SqliteConnection, ids: &[i64]) -> Result<EnrichPlan, sq
         let reason = match row {
             None => Some(EnrichSkipReason::Reviewed),
             Some(r) if r.review != "pending" => Some(EnrichSkipReason::Reviewed),
-            Some(r) if matches!(r.enrich.as_str(), "queued" | "running") => {
+            Some(r) if matches!(r.enrich, EnrichState::Queued | EnrichState::Running) => {
                 Some(EnrichSkipReason::Active)
             }
-            Some(r) if r.crawl_id.is_none() || r.profile_url.is_none() => {
-                Some(EnrichSkipReason::MissingProfile)
-            }
+            Some(r) if r.crawl_id.is_none() => Some(EnrichSkipReason::DeletedCrawl),
+            Some(r) if r.profile_url.is_none() => Some(EnrichSkipReason::MissingProfile),
             Some(r)
                 if r.emails > 0 && r.research.as_deref().is_some_and(|s| !s.trim().is_empty()) =>
             {
@@ -233,12 +233,24 @@ pub(crate) async fn apply(
         fill_list!(f.affiliations, incoming.affiliations, "单位");
     } else {
         let single = f.affiliations.len() == 1 && incoming.affiliations.len() == 1;
-        for a in &mut f.affiliations {
-            if let Some(b) = incoming
-                .affiliations
-                .iter()
-                .find(|b| compatible(a, b, single))
+        let pairs: Vec<Vec<usize>> = f
+            .affiliations
+            .iter()
+            .map(|a| {
+                incoming
+                    .affiliations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| compatible(a, b, single))
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .collect();
+        for (index, a) in f.affiliations.iter_mut().enumerate() {
+            if let [matched] = pairs[index].as_slice()
+                && pairs.iter().filter(|p| p.contains(matched)).count() == 1
             {
+                let b = &incoming.affiliations[*matched];
                 for (target, value, label) in [
                     (&mut a.university, &b.university, "学校"),
                     (&mut a.school, &b.school, "学院"),
@@ -298,7 +310,7 @@ pub(crate) async fn retire(conn: &mut SqliteConnection) -> Result<(), sqlx::Erro
     stop(conn, &ids).await
 }
 pub(crate) async fn stop(conn: &mut SqliteConnection, ids: &[i64]) -> Result<(), sqlx::Error> {
-    sqlx::query!("UPDATE crawl_page SET work_state='done',claim=claim+1,error=CASE WHEN status='success' THEN NULL ELSE '候选已处理，停止补全' END WHERE work_state!='done' AND candidate_id IN (SELECT value FROM json_each(?))",Json(ids)).execute(&mut *conn).await?;
+    sqlx::query!("DELETE FROM crawl_page WHERE work_state!='done' AND candidate_id IN (SELECT value FROM json_each(?))",Json(ids)).execute(&mut *conn).await?;
     sqlx::query!("UPDATE candidate SET enrich='none' WHERE id IN (SELECT value FROM json_each(?)) AND enrich IN ('queued','running')",Json(ids)).execute(conn).await?;
     Ok(())
 }
