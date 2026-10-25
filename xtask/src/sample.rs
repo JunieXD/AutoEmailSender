@@ -538,3 +538,51 @@ pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
     }
     Ok(())
 }
+
+/// Seed-only follow-ups keep a real parent to preview in every state.
+pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
+    let task = sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,state,created_at) VALUES('追问 · 研究方向交流','follow_up','ai','Re: 申请研究方向交流','{导师姓名}老师：想请问您是否方便查看之前的信。','now','paused',?)").bind(now).execute(db).await?.last_insert_rowid();
+    for (i, state) in [
+        "generating",
+        "generation_failed",
+        "review",
+        "approved",
+        "failed",
+        "sent",
+        "canceled",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mentor = mentor::create(
+            db,
+            &MentorFields {
+                name: format!("追问示例{}", i + 1),
+                emails: vec![format!("followup{i}@example.edu.cn")],
+                ..Default::default()
+            },
+            now,
+        )
+        .await?;
+        let parent = format!("<followup-parent-{i}@example.com>");
+        let at = now - 10 * DAY;
+        sqlx::query("INSERT INTO email(mentor_id,kind,state,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,subject,body_md,html,text,created_at,updated_at) VALUES(?,'first','sent',?,1,'linxiao@example.com',?,?,?,'申请研究方向交流','老师您好，我是林晓。','<p>老师您好，我是林晓。</p>','老师您好，我是林晓。',?,?)")
+            .bind(mentor).bind(at).bind(format!("followup{i}@example.edu.cn")).bind(&parent).bind(at).bind(at).bind(at).execute(db).await?;
+        let sent = *state == "sent";
+        sqlx::query("INSERT INTO email(task_id,mentor_id,kind,reply_to,state,subject,body_md,html,text,planned_at,generation_queued_at,mailbox_id,from_address,to_address,message_id,sent_at,error,cancel_reason,created_at,updated_at) VALUES(?,?,'follow_up',?,?,'Re: 申请研究方向交流','老师您好，想请问您是否方便查看之前的申请。','<p>老师您好，想请问您是否方便查看之前的申请。</p>','老师您好，想请问您是否方便查看之前的申请。',?,?,?,?,?,?,?,?,?,?,?)")
+            .bind(task).bind(mentor).bind(&parent).bind(state).bind(matches!(*state,"approved"|"failed"|"sent").then_some(now)).bind((*state=="generating").then_some(now))
+            .bind(sent.then_some(1_i64)).bind(sent.then_some("linxiao@example.com")).bind(sent.then_some(format!("followup{i}@example.edu.cn"))).bind(sent.then_some(format!("<followup-sent-{i}@example.com>"))).bind(sent.then_some(now))
+            .bind(matches!(*state,"generation_failed"|"failed").then_some("示例失败，请重试"))
+            .bind((*state=="canceled").then_some("导师已回信")).bind(now).bind(now).execute(db).await?;
+        if *state == "canceled" {
+            let reply=sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,in_reply_to,sent_at,from_address,from_name,subject,body_text,truncated) VALUES(1,'INBOX',2,?,'reply',?,?,?,?,'导师','回复：申请研究方向交流','林晓同学你好，欢迎进一步交流。',0)")
+                .bind(i as i64).bind(format!("<followup-reply-{i}@example.com>")).bind(parent).bind(now).bind(format!("followup{i}@example.edu.cn")).execute(db).await?.last_insert_rowid();
+            sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
+                .bind(mentor)
+                .bind(reply)
+                .execute(db)
+                .await?;
+        }
+    }
+    Ok(())
+}
