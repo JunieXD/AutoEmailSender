@@ -239,9 +239,8 @@ export function FactCheckStatus({
   // A failure kept from before the setting was turned off is of no more use.
   const on = useQuery(aiFactCheck);
   if (check.latest?.status === "pending") return <p className="text-sm text-muted-foreground">AI 正在核对…</p>;
-  // A result kept since, such as that of a draft written anew, outdates an earlier failure.
   const reason =
-    check.latest?.status === "error" && stored?.state !== "completed"
+    check.latest?.status === "error"
       ? errorMessage(check.latest.error)
       : on.data && stored?.state === "failed"
         ? stored.reason

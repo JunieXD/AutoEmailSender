@@ -70,10 +70,10 @@ function highlightPlaceholders(names: string[], className: string, unfilled: boo
  * links and several paragraphs, which the editor shows without their syntax.
  */
 function shownLines(quote: string): string[] {
-  return quote.split("\n").flatMap((line) => {
-    const text = new DOMParser().parseFromString(toHtml(line), "text/html").body.textContent?.trim();
-    return text ? [text] : [];
-  });
+  const { body } = new DOMParser().parseFromString(toHtml(quote), "text/html");
+  for (const br of body.querySelectorAll("br")) br.replaceWith("\n");
+  for (const block of body.querySelectorAll("p, li")) block.append("\n");
+  return (body.textContent ?? "").split("\n").flatMap((line) => line.trim() || []);
 }
 
 type Quoted = { quotes: string[]; lines: string[] };

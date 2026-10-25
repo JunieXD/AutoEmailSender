@@ -37,8 +37,9 @@ it.each([
 
 it.each([
   ["我有**3 篇论文**", ["我有3 篇论文"]],
-  ["见[主页](https://example.edu)", ["见主页"]],
+  ["[主页](https://example.edu)。", ["主页。"]],
   ["曾获奖。\n\n发表过论文", ["曾获奖。", "发表过论文"]],
+  ["我有**3 篇论文**，见\\\n[主页](https://example.edu)", ["我有3 篇论文，见", "主页"]],
 ])("marks a quote of the Markdown source as the editor shows it: %s", async (quote, marked) => {
   const container = document.createElement("div");
   document.body.append(container);
@@ -48,7 +49,7 @@ it.each([
       root.render(
         <LetterEditor
           id="letter"
-          markdown={"王老师：我有**3 篇论文**，见[主页](https://example.edu)。\n\n曾获奖。\n\n发表过论文。"}
+          markdown={"王老师：我有**3 篇论文**，见\\\n[主页](https://example.edu)。\n\n曾获奖。\n\n发表过论文。"}
           placeholders={[]}
           quotes={[quote]}
           disabled={false}
