@@ -30,8 +30,7 @@ impl Sender {
 }
 
 /// Sends emails as they come due, for as long as the app runs, with the files of the materials
-/// attached from `materials`. `changed` runs after emails have been sent or failed: before waiting,
-/// and every few seconds while they go back to back.
+/// attached from `materials`. `changed` runs once emails have been sent or failed.
 pub async fn run(
     db: SqlitePool,
     net: Net,
@@ -43,42 +42,43 @@ pub async fn run(
         tracing::error!("recover interrupted emails: {e}");
         tokio::time::sleep(RETRY).await;
     }
-    let mut dealt = false;
-    let mut told = tokio::time::Instant::now();
-    loop {
-        let wait = match step(&db, &net, &materials, now).await {
-            Ok(Next::Now) => {
-                dealt = true;
-                if told.elapsed() >= TELL_EVERY {
-                    dealt = false;
-                    told = tokio::time::Instant::now();
-                    changed();
+    let dealt = Notify::new();
+    let sending = async {
+        loop {
+            let wait = match step(&db, &net, &materials, now).await {
+                Ok(Next::Now) => {
+                    dealt.notify_one();
+                    continue;
                 }
-                continue;
+                Ok(Next::At(at)) => Some(at - now()),
+                Ok(Next::Idle) => None,
+                // Nobody to tell but the log; the database is likely to work again in a while.
+                Err(e) => {
+                    tracing::error!("send: {e}");
+                    Some(MINUTE)
+                }
+            };
+            match wait {
+                // Looks again within a minute: the timer stands still while the computer sleeps.
+                Some(ms) => tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
+                    () = sender.0.notified() => {}
+                },
+                None => sender.0.notified().await,
             }
-            Ok(Next::At(at)) => Some(at - now()),
-            Ok(Next::Idle) => None,
-            // Nobody to tell but the log; the database is likely to work again in a while.
-            Err(e) => {
-                tracing::error!("send: {e}");
-                Some(MINUTE)
-            }
-        };
-        // Not once for each of many emails dealt with back to back, such as many failing at once:
-        // each change makes the window read its lists and statistics again.
-        if std::mem::take(&mut dealt) {
-            told = tokio::time::Instant::now();
+        }
+    };
+    // Each telling makes the window read its lists and statistics again, so emails dealt with back
+    // to back, such as many failing at once, are told of together: the first at once, the rest
+    // when a few seconds have passed, however long the email being sent then takes.
+    let telling = async {
+        loop {
+            dealt.notified().await;
             changed();
+            tokio::time::sleep(TELL_EVERY).await;
         }
-        match wait {
-            // Looks again within a minute: the timer stands still while the computer sleeps.
-            Some(ms) => tokio::select! {
-                () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
-                () = sender.0.notified() => {}
-            },
-            None => sender.0.notified().await,
-        }
-    }
+    };
+    tokio::join!(sending, telling);
 }
 
 /// Emails the last run left being sent may have gone out, so they are marked maybe sent, and their
