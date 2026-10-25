@@ -369,7 +369,7 @@ async fn list_mentors(
     ctx: &Context,
     query: mentor::MentorQuery,
 ) -> Result<mentor::MentorPage, CallError> {
-    Ok(mentor::list(&ctx.db, &query).await?)
+    Ok(mentor::list(&ctx.db, &query, now()).await?)
 }
 
 async fn get_mentor(ctx: &Context, input: MentorId) -> Result<mentor::MentorDetail, CallError> {
@@ -1139,7 +1139,7 @@ async fn save_first_draft(
     ctx: &Context,
     input: FirstDraftEdit,
 ) -> Result<Option<email::FirstDraft>, CallError> {
-    Ok(email::save_first_draft(
+    let saved = email::save_first_draft(
         &ctx.db,
         input.mentor_id,
         &input.subject,
@@ -1147,7 +1147,13 @@ async fn save_first_draft(
         &input.attachments,
         now(),
     )
-    .await?)
+    .await?;
+    if saved.is_none() && (!input.subject.trim().is_empty() || !input.body_md.trim().is_empty()) {
+        return Err(CallError::invalid(
+            "还有一封没发出的首封或追问，请先在任务或往来里处理。".into(),
+        ));
+    }
+    Ok(saved)
 }
 
 /// The draft as it is in the composer, which may be ahead of the one saved.
@@ -1188,6 +1194,7 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         writing::Basis {
             chosen: &chosen,
             references: &references,
+            previous: None,
         },
     )
     .await?)
@@ -1672,7 +1679,7 @@ pub struct ExportMentors {
 }
 
 pub async fn export_mentors(ctx: &Context, input: ExportMentors) -> Result<Vec<u8>, CallError> {
-    let rows = mentor::export::export(&ctx.db, &input.scope, input.note).await?;
+    let rows = mentor::export::export(&ctx.db, &input.scope, input.note, now()).await?;
     tokio::task::spawn_blocking(move || write_table(rows, input.format))
         .await
         .map_err(CallError::internal)?

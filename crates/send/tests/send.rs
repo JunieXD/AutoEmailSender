@@ -2298,6 +2298,7 @@ async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
                 &mut tx,
                 empty_task,
                 mentor,
+                None,
                 Some(("申请", "老师您好")),
                 &[],
                 at,

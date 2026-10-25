@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Download, Merge, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { ContactStatus, Imported, Scope } from "@/api/types";
+import type { ContactStatus, Imported, Scope, Kind } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { MergeDialog } from "@/components/merge-dialog";
@@ -16,6 +16,8 @@ import { AddTagButton, useAddTag } from "@/components/tags";
 import { CreateTaskDialog } from "@/components/create-task";
 import { MatchingDialog, MatchingProgress } from "@/components/matching";
 import { AiIcon } from "@/components/ai-writing";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 
@@ -27,13 +29,19 @@ const STATUSES: [ContactStatus | undefined, string][] = [
   ["bounced", "退信"],
 ];
 
-export type MentorSearch = { status?: ContactStatus; q?: string; page?: number };
+export type MentorSearch = { status?: ContactStatus; q?: string; page?: number; unansweredDays?: number };
 
 /** The list's filters live in the URL so they survive going back; anything unexpected is dropped. */
 export function mentorSearch(search: Record<string, unknown>): MentorSearch {
   const status = STATUSES.find(([s]) => s !== undefined && s === search.status)?.[0];
   const q = typeof search.q === "string" && search.q !== "" ? search.q : undefined;
-  return { status, q, page: pageParam(search.page) };
+  const days = Number(search.unansweredDays);
+  return {
+    status,
+    q,
+    page: pageParam(search.page),
+    unansweredDays: status === "contacted" && Number.isInteger(days) && days > 0 && days <= 36500 ? days : undefined,
+  };
 }
 
 export function MentorsPage() {
@@ -42,12 +50,17 @@ export function MentorsPage() {
   const page = search.page ?? 1;
   const query = useQuery({
     queryKey: ["listMentors", search],
-    queryFn: () => call("listMentors", { status: search.status, keyword: search.q, page }),
+    queryFn: () =>
+      call("listMentors", { status: search.status, keyword: search.q, unansweredDays: search.unansweredDays, page }),
     placeholderData: keepPreviousData,
   });
   const total = query.data?.total ?? 0;
   const queryClient = useQueryClient();
-  const [task, setTask] = useState<number[] | null>(null);
+  const [task, setTask] = useState<{ ids: number[]; kind: Kind } | null>(null);
+  const [days, setDays] = useState(() => {
+    const saved = Number(localStorage.getItem("unansweredDays"));
+    return saved > 0 && saved <= 36500 && Number.isInteger(saved) ? saved : 7;
+  });
   const [matching, setMatching] = useState<number[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [addMenu, setAddMenu] = useState(false);
@@ -58,9 +71,9 @@ export function MentorsPage() {
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [merging, setMerging] = useState<[number, number] | null>(null);
   const [first, second] = selected;
-  const [filter, setFilter] = useState({ status: search.status, q: search.q });
-  if (filter.status !== search.status || filter.q !== search.q) {
-    setFilter({ status: search.status, q: search.q });
+  const [filter, setFilter] = useState({ status: search.status, q: search.q, days: search.unansweredDays });
+  if (filter.status !== search.status || filter.q !== search.q || filter.days !== search.unansweredDays) {
+    setFilter({ status: search.status, q: search.q, days: search.unansweredDays });
     setSelected(new Set());
   }
   useLastPage(query.isSuccess && !query.isFetching ? query.data.total : undefined, page, (n) =>
@@ -146,7 +159,9 @@ export function MentorsPage() {
               key={label}
               role="tab"
               aria-selected={search.status === status}
-              onClick={() => navigate({ search: (s) => ({ ...s, status, page: undefined }) })}
+              onClick={() =>
+                navigate({ search: (s) => ({ ...s, status, unansweredDays: undefined, page: undefined }) })
+              }
               className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap phone:h-10 text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
             >
               {label}
@@ -154,6 +169,38 @@ export function MentorsPage() {
           ))}
         </div>
       </div>
+
+      {search.status === "contacted" && (
+        <div className="flex flex-wrap items-center gap-2 px-7 pb-3 text-sm phone:px-4">
+          <label className="flex items-center gap-2">
+            <Checkbox
+              checked={search.unansweredDays !== undefined}
+              onCheckedChange={(checked) =>
+                navigate({ search: (s) => ({ ...s, unansweredDays: checked ? days : undefined, page: undefined }) })
+              }
+            />
+            发出超过
+          </label>
+          <Input
+            aria-label="没回复的天数"
+            type="number"
+            min={1}
+            max={36500}
+            className="w-20"
+            value={search.unansweredDays ?? days}
+            onChange={(e) => {
+              const value = e.target.valueAsNumber;
+              if (Number.isInteger(value) && value > 0 && value <= 36500) {
+                setDays(value);
+                localStorage.setItem("unansweredDays", String(value));
+                if (search.unansweredDays !== undefined)
+                  void navigate({ search: (s) => ({ ...s, unansweredDays: value, page: undefined }) });
+              }
+            }}
+          />
+          天没回复
+        </div>
+      )}
 
       <MatchingProgress />
       <div className="relative flex min-h-0 flex-1 flex-col">
@@ -194,10 +241,13 @@ export function MentorsPage() {
               const id = [...selected][0];
               if (selected.size === 1 && id !== undefined)
                 void navigate({ to: "/mentors/$mentorId", params: { mentorId: id } });
-              else setTask([...selected]);
+              else setTask({ ids: [...selected], kind: "first" });
             }}
           >
             写信
+          </Button>
+          <Button variant="ghost" onClick={() => setTask({ ids: [...selected], kind: "follow_up" })}>
+            追问
           </Button>
           <Button variant="ghost" onClick={() => setMatching([...selected])}>
             <AiIcon />
@@ -229,7 +279,7 @@ export function MentorsPage() {
             onConfirm={() => trash.mutate([...selected])}
           />
         </BatchBar>
-        {task && <CreateTaskDialog ids={task} onClose={() => setTask(null)} />}
+        {task && <CreateTaskDialog {...task} onClose={() => setTask(null)} />}
         {matching && <MatchingDialog ids={matching} onClose={() => setMatching(null)} />}
         {merging && <MergeDialog ids={merging} onClose={() => setMerging(null)} />}
       </div>
@@ -246,7 +296,10 @@ export function MentorsPage() {
             disabled={!query.data}
             onClick={() =>
               setExporting({
-                scope: { kind: "filter", value: { status: search.status, keyword: search.q } },
+                scope: {
+                  kind: "filter",
+                  value: { status: search.status, keyword: search.q, unansweredDays: search.unansweredDays },
+                },
                 count: total,
               })
             }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, mentor_id, coalesce(subject, '') AS \"subject!: String\", coalesce(body_md,\n             '') AS \"body_md!: String\", state AS \"state: DraftState\", error, cancel_reason, planned_at,\n             latest_at\n           FROM email\n           WHERE id = ?\n             AND task_id = ?",
+  "query": "SELECT id, mentor_id, coalesce(subject, '') AS \"subject!: String\", coalesce(body_md,\n             '') AS \"body_md!: String\", state AS \"state: DraftState\", error, cancel_reason, planned_at,\n             latest_at, kind AS \"kind: Kind\", reply_to\n           FROM email\n           WHERE id = ?\n             AND task_id = ?",
   "describe": {
     "columns": [
       {
@@ -91,6 +91,28 @@
             "name": "latest_at"
           }
         }
+      },
+      {
+        "name": "kind: Kind",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "reply_to",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "reply_to"
+          }
+        }
       }
     ],
     "parameters": {
@@ -105,8 +127,10 @@
       true,
       true,
       true,
+      true,
+      false,
       true
     ]
   },
-  "hash": "aa0b14cc9e694f1090ac9fccc0f0257df56e5b2cc9cf0dfd07422d9ae438b5f7"
+  "hash": "66b357f1089c643dd20412d426f9c81fd764b23e18ad756ca9c8b1dcc9ca7ab4"
 }

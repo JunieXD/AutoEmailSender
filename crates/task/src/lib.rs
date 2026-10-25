@@ -1,4 +1,4 @@
-//! Batch first-letter tasks: fixed inputs, explicit approvals and persisted generation.
+//! Batch first-letter and follow-up tasks: fixed inputs, explicit approvals and persisted generation.
 pub mod generation;
 mod review;
 use email::tasks as emails;
@@ -26,9 +26,19 @@ pub enum Writer {
     Ai,
     Template,
 }
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub enum Kind {
+    #[default]
+    First,
+    FollowUp,
+}
+
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct NewTask {
+    pub kind: Kind,
     pub name: String,
     pub schedule: email::schedule::Schedule,
     pub ids: Vec<i64>,
@@ -46,6 +56,7 @@ pub struct Candidate {
     pub reason: Option<String>,
     pub contact_count: i64,
     pub last_contact_at: Option<i64>,
+    pub previous: Option<PreviousLetter>,
 }
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -58,19 +69,65 @@ pub struct TaskPlan {
     pub cost: Option<f64>,
 }
 
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousLetter {
+    pub subject: Option<String>,
+    pub sent_at: i64,
+}
+
 async fn candidates(
     conn: &mut SqliteConnection,
     ids: &[i64],
+    kind: Kind,
 ) -> std::result::Result<Vec<Candidate>, sqlx::Error> {
-    sqlx::query_as!(Candidate, r#"SELECT m.id, m.name,
+    let rows = sqlx::query!(r#"SELECT m.id, m.name,
         CASE WHEN m.trashed_at IS NOT NULL THEN '导师在回收站里'
           WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id) THEN '导师尚未填写邮箱'
-          WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id AND kind = 'first' AND task_id IS NOT NULL AND state IN ('generating','generation_failed','review','approved','cloud','sending','failed')) THEN '别的任务里有未发出的首封'
-          WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id AND kind = 'first' AND task_id IS NULL AND state = 'review') THEN '导师详情里有未完成的首封草稿'
+          WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id AND kind IN ('first','follow_up') AND state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')) THEN '还有一封没发出的首封或追问'
           ELSE NULL END AS "reason: String",
-        coalesce(c.contact_count, 0) AS "contact_count!: i64", c.last_out_at AS last_contact_at
+        coalesce(c.contact_count, 0) AS "contact_count!: i64", c.last_out_at AS last_contact_at,
+        c.last_reply_at
         FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-        WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.name, m.id"#, Json(ids)).fetch_all(conn).await
+        WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.name, m.id"#, Json(ids)).fetch_all(&mut *conn).await?;
+    let mut candidates = Vec::new();
+    for row in rows {
+        let previous = if kind == Kind::FollowUp {
+            email::thread::previous(conn, row.id, None, false).await?
+        } else {
+            None
+        };
+        let reason = if kind == Kind::FollowUp {
+            if row.last_reply_at.is_some() {
+                Some("导师已回信，请到往来里回复".into())
+            } else if previous.as_ref().is_some_and(|p| p.bounced) {
+                Some("上一封被退回，请先核对邮箱".into())
+            } else if previous.as_ref().is_some_and(|p| p.uncertain) {
+                Some("上一封说不清发没发出，请先在往来里确认".into())
+            } else {
+                row.reason.or_else(|| {
+                    previous
+                        .as_ref()
+                        .is_none_or(|p| p.message_id.is_none())
+                        .then(|| "没有可追问的已发邮件（需要 Message-ID）".into())
+                })
+            }
+        } else {
+            row.reason
+        };
+        candidates.push(Candidate {
+            id: row.id,
+            name: row.name,
+            reason,
+            contact_count: row.contact_count,
+            last_contact_at: row.last_contact_at,
+            previous: previous.map(|p| PreviousLetter {
+                subject: p.subject,
+                sent_at: p.sent_at,
+            }),
+        });
+    }
+    Ok(candidates)
 }
 
 pub async fn references(
@@ -80,9 +137,22 @@ pub async fn references(
     sqlx::query_as!(material::Reference, r#"SELECT file_name, extracted_text AS "text!" FROM material WHERE id IN (SELECT value FROM json_each(?)) AND extracted_text IS NOT NULL ORDER BY id"#, Json(ids)).fetch_all(conn).await
 }
 
+/// Newest sent letters first; the writing boundary caps their combined text.
+pub async fn history(
+    conn: &mut SqliteConnection,
+    mentor: i64,
+) -> std::result::Result<Vec<writing::Letter>, sqlx::Error> {
+    sqlx::query_as!(writing::Letter, r#"SELECT coalesce(subject,'') AS "subject!: String", coalesce(body,'') AS "body_md!: String" FROM (
+        SELECT subject,substr(text,1,10000) AS body,sent_at,id,1 AS source FROM email
+          WHERE mentor_id=?1 AND kind IN ('first','follow_up') AND state IN ('sent','bounced')
+        UNION ALL SELECT m.subject,substr(m.body_text,1,10000),m.sent_at,m.id,0 FROM message m JOIN message_mentor mm ON mm.message_id=m.id
+          WHERE mm.mentor_id=?1 AND m.kind='sent'
+    ) ORDER BY sent_at DESC,source DESC,id DESC LIMIT 20"#, mentor).fetch_all(conn).await
+}
+
 pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
     let mut tx = db.begin().await?;
-    let mentors = candidates(&mut tx, &form.ids).await?;
+    let mentors = candidates(&mut tx, &form.ids, form.kind).await?;
     let refs = references(&mut tx, &form.references).await?;
     let chosen = model::selected(&mut *tx, form.model_config_id).await?;
     tx.commit().await?;
@@ -109,7 +179,19 @@ pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
                         me.name.as_deref(),
                     )
                 });
-                let (i, o) = writing::estimate(&me, &refs, &attached, &m, current.as_ref());
+                let previous = if form.kind == Kind::FollowUp {
+                    Some(history(&mut *db.acquire().await?, m.id).await?)
+                } else {
+                    None
+                };
+                let (i, o) = writing::estimate(
+                    &me,
+                    &refs,
+                    &attached,
+                    &m,
+                    current.as_ref(),
+                    previous.as_deref(),
+                );
                 input_tokens += i;
                 output_tokens += o;
             }
@@ -186,7 +268,7 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     };
     let mut tx = db.begin().await?;
     // Take the write lock before reading template content or checking membership.
-    let id = sqlx::query_scalar!("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,'first','ai','now','active',?) RETURNING id AS \"id!\"",form.name.trim(),now).fetch_one(&mut *tx).await?;
+    let id = sqlx::query_scalar!("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,?,'ai','now','active',?) RETURNING id AS \"id!\"",form.name.trim(),form.kind,now).fetch_one(&mut *tx).await?;
     email::schedule::save(&mut tx, id, &form.schedule).await?;
     let template = match form.template_id {
         Some(id) => Some(
@@ -205,7 +287,7 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         template.as_ref().map(|t| t.body_md.as_str()),
     );
     sqlx::query!("UPDATE task SET writer=?,template_id=?,template_subject=?,template_body_md=?,model_config_id=? WHERE id=?",writer,form.template_id,subject,body,form.model_config_id,id).execute(&mut *tx).await?;
-    let mentors = candidates(&mut tx, &form.ids).await?;
+    let mentors = candidates(&mut tx, &form.ids, form.kind).await?;
     let mut ids = form.ids.clone();
     ids.sort_unstable();
     ids.dedup();
@@ -261,10 +343,17 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         } else {
             None
         };
-        emails::create(
+        let parent = if form.kind == Kind::FollowUp {
+            email::thread::previous(&mut tx, candidate.id, None, false).await?
+        } else {
+            None
+        };
+        let reply_to = parent.as_ref().and_then(|p| p.message_id.as_deref());
+        let email = emails::create(
             &mut tx,
             id,
             candidate.id,
+            reply_to,
             letter
                 .as_ref()
                 .map(|l| (l.subject.as_str(), l.body_md.as_str())),
@@ -272,6 +361,12 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
             now,
         )
         .await?;
+        if let Some(parent) = parent {
+            let subject = email::reply_subject(parent.subject.as_deref().unwrap_or_default());
+            sqlx::query!("UPDATE email SET subject=? WHERE id=?", subject, email)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
     tx.commit().await?;
     Ok(id)

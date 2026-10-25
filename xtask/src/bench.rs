@@ -77,11 +77,15 @@ pub async fn run(path: &Path) -> Result {
 
     let home = Duration::from_millis(30);
     let page = |status, keyword: Option<&str>, n: u32| MentorQuery {
+        unanswered_days: None,
         status,
         keyword: keyword.map(Into::into),
         page: NonZeroU32::MIN.saturating_add(n - 1),
     };
+    let mut unanswered = page(Some(ContactStatus::Contacted), None, 1);
+    unanswered.unanswered_days = std::num::NonZeroU32::new(7);
     for (label, query) in [
+        ("首页，发出超过 7 天没回复", unanswered),
         ("首页，全部，第 1 页", page(None, None, 1)),
         ("首页，全部，第 100 页", page(None, None, 100)),
         ("首页，全部，第 1900 页", page(None, None, 1900)),
@@ -97,7 +101,7 @@ pub async fn run(path: &Path) -> Result {
     ] {
         report(
             label,
-            median(async || mentor::list(&db, &query).await.map(drop)).await?,
+            median(async || mentor::list(&db, &query, NOW).await.map(drop)).await?,
             home,
         );
     }

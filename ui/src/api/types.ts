@@ -2,7 +2,7 @@
 
 export type Affiliation = { university: string | null, school: string | null, department: string | null, title: string | null, };
 
-export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, };
+export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: ThreadMessage | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
 
@@ -10,7 +10,7 @@ export type Attachment = { fileName: string, size: number, };
 
 export type CallError = { code: ErrorCode, message: string, };
 
-export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, };
+export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, previous: PreviousLetter | null, };
 
 export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
@@ -74,7 +74,7 @@ export type Field = "name" | "email" | "university" | "school" | "department" | 
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
 
-export type Filter = { status?: ContactStatus, keyword?: string, };
+export type Filter = { unansweredDays?: number, status?: ContactStatus, keyword?: string, };
 
 export type FirstDraft = { subject: string | null, bodyMd: string | null,
 /**
@@ -105,6 +105,8 @@ export type ImportProfile = { name: string, affiliations: Array<Affiliation>, em
 export type ImportSetup = { sheet: number | null, columns: Array<Field | null> | null, };
 
 export type Imported = { created: number, updated: number, };
+
+export type Kind = "first" | "follow_up";
 
 export type Letter = { subject: string, bodyMd: string, };
 
@@ -223,7 +225,7 @@ export type MentorQuery = {
 /**
  * All mentors when absent.
  */
-status?: ContactStatus, keyword?: string,
+status?: ContactStatus, keyword?: string, unansweredDays?: number,
 /**
  * Starts at 1.
  */
@@ -343,7 +345,7 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
-export type NewTask = { name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
+export type NewTask = { kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
 
 export type Nothing = Record<symbol, never>;
 
@@ -360,6 +362,8 @@ export type PlanQuery = { column: PlanColumn, page: number, };
 export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Column>, issue: string | null, created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
 
 export type PreviewImport = { decisions?: Decisions, fileName: string, data: string, setup: ImportSetup, };
+
+export type PreviousLetter = { subject: string | null, sentAt: number, };
 
 export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "no_mail_server", domain: string, };
 
@@ -448,7 +452,7 @@ export type TagName = { id: number, name: string, };
 
 export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
 
-export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, };
+export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: ThreadMessage | null, };
 
 export type TaskEmail = { taskId: number, id: number, };
 
@@ -466,7 +470,7 @@ export type TaskRetry = { taskId: number, id: number | null, };
 
 export type TaskState = "active" | "paused" | "stopped" | "completed";
 
-export type TaskSummary = { id: number, name: string, writer: Writer, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, schedule: Schedule, };
+export type TaskSummary = { id: number, name: string, writer: Writer, kind: Kind, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, schedule: Schedule, };
 
 export type Template = { id: number, name: string, subject: string, bodyMd: string, };
 
@@ -483,6 +487,8 @@ export type TemplateSummary = { id: number, name: string, subject: string,
  * The one a first email starts from.
  */
 isDefault: boolean, };
+
+export type ThreadMessage = { messageId: string | null, subject: string | null, sentAt: number, fromAddress: string, fromName: string | null, bodyText: string | null, };
 
 export type TrashQuery = {
 /**

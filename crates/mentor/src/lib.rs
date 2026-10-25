@@ -41,6 +41,8 @@ pub struct MentorQuery {
     pub status: Option<ContactStatus>,
     #[ts(optional)]
     pub keyword: Option<String>,
+    #[ts(optional)]
+    pub unanswered_days: Option<NonZeroU32>,
     /// Starts at 1.
     pub page: NonZeroU32,
 }
@@ -194,7 +196,14 @@ fn match_state(
 /// The filters test only the mentor row: each `IN` set is built once per query, whereas joining the
 /// contact summary for every mentor made counting 100 000 mentors ten times slower. For the same
 /// reason the page is cut before `rows` joins anything, so skipped rows are never joined.
-pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sqlx::Error> {
+pub async fn list(
+    db: &SqlitePool,
+    query: &MentorQuery,
+    now: i64,
+) -> Result<MentorPage, sqlx::Error> {
+    let before = query
+        .unanswered_days
+        .map(|days| now - i64::from(days.get()) * 86_400_000);
     let keyword = query.keyword.as_deref().and_then(keyword);
     // One snapshot for the page, the total and the rows; read only, so it simply ends when dropped.
     let mut tx = db.begin().await?;
@@ -204,6 +213,7 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
         keyword.as_deref(),
         i64::from(PAGE_SIZE),
         offset(query.page),
+        before,
     )
     .await?;
     let total = sqlx::query_scalar!(
@@ -213,9 +223,11 @@ pub async fn list(db: &SqlitePool, query: &MentorQuery) -> Result<MentorPage, sq
              AND (?1 IS NULL
                   OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
                   OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))"#,
+             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
+             AND (?3 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?3))"#,
         query.status,
         keyword,
+        before,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -231,6 +243,7 @@ async fn filtered_ids(
     keyword: Option<&str>,
     limit: i64,
     skip: i64,
+    before: Option<i64>,
 ) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         "SELECT m.id FROM mentor m
@@ -239,12 +252,14 @@ async fn filtered_ids(
                 OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
                 OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
            AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
+           AND (?5 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?5))
          ORDER BY m.match_score DESC, m.id
          LIMIT ?3 OFFSET ?4",
         status,
         keyword,
         limit,
         skip,
+        before,
     )
     .fetch_all(conn)
     .await

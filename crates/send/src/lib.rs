@@ -104,10 +104,11 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     let at = now();
     email::schedule::rollover(db, at, zone, random).await?;
     let due = sqlx::query!(
-        r#"SELECT e.id, CASE WHEN e.kind = 'reply' THEN coalesce(m.mailbox_id, (SELECT
-             r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id = r.id WHERE
-             mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to AND r.kind = 'reply')) ELSE
-             m.mailbox_id END AS own, e.kind = 'reply' AS "reply!: bool"
+        r#"SELECT e.id, CASE WHEN e.kind IN ('reply','follow_up') THEN coalesce(m.mailbox_id,
+             (SELECT p.mailbox_id FROM email p WHERE p.mentor_id=e.mentor_id AND (p.message_id=e.reply_to OR p.copy_message_id=e.reply_to)),
+             (SELECT r.mailbox_id FROM message r JOIN message_mentor mm ON mm.message_id=r.id
+              WHERE mm.mentor_id=e.mentor_id AND r.message_id=e.reply_to AND r.kind=CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
+             ELSE m.mailbox_id END AS own, e.kind IN ('reply','follow_up') AS "reply!: bool"
            FROM email e
            JOIN mentor m ON m.id = e.mentor_id
            WHERE e.state = 'approved'

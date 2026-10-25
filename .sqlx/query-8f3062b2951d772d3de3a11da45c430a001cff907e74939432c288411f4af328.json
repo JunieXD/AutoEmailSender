@@ -1,0 +1,102 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT message_id, subject, sent_at AS \"sent_at!\", from_address AS \"from_address!\", from_name,\n        body_text, refs, bounced AS \"bounced!: bool\", uncertain AS \"uncertain!: bool\"\n        FROM (\n          SELECT coalesce(?2,e.copy_message_id,e.message_id) AS message_id, e.subject, e.sent_at, e.from_address,\n            b.sender_name AS from_name, CASE WHEN ?3 THEN e.text END AS body_text, CASE WHEN ?3 THEN e.refs END AS refs, e.state = 'bounced' AS bounced,\n            e.state = 'maybe_sent' AS uncertain, e.id AS id, 1 AS source\n          FROM email e LEFT JOIN mailbox b ON b.id=e.mailbox_id\n          WHERE e.mentor_id=?1 AND e.kind IN ('first','follow_up') AND e.state IN ('sent','bounced','maybe_sent')\n            AND (?2 IS NULL OR e.message_id=?2 OR e.copy_message_id=?2)\n          UNION ALL\n          SELECT m.message_id,m.subject,m.sent_at,m.from_address,m.from_name,CASE WHEN ?3 THEN m.body_text END,CASE WHEN ?3 THEN m.refs END,\n            mm.bounce_reason IS NOT NULL,0,m.id,0\n          FROM message m JOIN message_mentor mm ON mm.message_id=m.id\n          WHERE mm.mentor_id=?1 AND m.kind='sent' AND (?2 IS NULL OR m.message_id=?2)\n        ) ORDER BY sent_at DESC, source DESC, id DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "message_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "sent_at!",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "from_address!",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "from_name",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_name"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "refs",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "bounced!: bool",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "uncertain!: bool",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "8f3062b2951d772d3de3a11da45c430a001cff907e74939432c288411f4af328"
+}

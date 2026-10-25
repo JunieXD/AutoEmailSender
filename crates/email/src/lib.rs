@@ -6,6 +6,7 @@ pub mod tasks;
 use std::collections::HashMap;
 
 mod reply;
+pub mod thread;
 pub use reply::*;
 
 use serde::{Deserialize, Serialize};
@@ -71,7 +72,10 @@ pub async fn save_first_draft(
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query!(
         "INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject, body_md)
-         SELECT id, 'first', 'review', ?2, ?2, ?3, ?4 FROM mentor WHERE id = ?1 AND trashed_at IS NULL
+         SELECT id, 'first', 'review', ?2, ?2, ?3, ?4 FROM mentor m WHERE id = ?1 AND trashed_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM email e WHERE e.mentor_id=m.id AND e.kind IN ('first','follow_up')
+             AND e.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')
+             AND NOT (e.kind='first' AND e.task_id IS NULL AND e.state='review'))
          ON CONFLICT (mentor_id) WHERE kind = 'first' AND task_id IS NULL AND state = 'review'
          DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
          RETURNING id AS \"id!\", subject, body_md",
@@ -222,6 +226,8 @@ pub async fn approve_first(
              WHERE m.id = ?1 AND m.trashed_at IS NULL AND NOT EXISTS (
                SELECT 1 FROM email e WHERE e.mentor_id = m.id AND e.kind = 'first'
                  AND e.task_id IS NULL AND e.state <> 'canceled')
+               AND NOT EXISTS (SELECT 1 FROM email e WHERE e.mentor_id=m.id AND e.kind IN ('first','follow_up')
+                 AND e.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed'))
              RETURNING id AS \"id!\"",
             mentor_id,
             now,
@@ -488,7 +494,14 @@ pub async fn confirm_unsent(db: &SqlitePool, id: i64, now: i64) -> Result<bool, 
 
 pub enum CancelScope<'a> {
     Mentors(&'a [i64]),
-    Task { task: i64, email: Option<i64> },
+    Task {
+        task: i64,
+        email: Option<i64>,
+    },
+    FollowUps {
+        mentor: i64,
+        parent: Option<&'a str>,
+    },
 }
 
 /// An uncertain attempt keeps its state and failure reason until delivery is settled. Keeping
@@ -499,9 +512,10 @@ pub async fn cancel(
     reason: &str,
     now: i64,
 ) -> Result<u64, sqlx::Error> {
-    let (task, id, mentors) = match scope {
-        CancelScope::Mentors(ids) => (None, None, Some(Json(ids))),
-        CancelScope::Task { task, email } => (Some(task), email, None),
+    let (task, id, mentors, follow_up, parent) = match scope {
+        CancelScope::Mentors(ids) => (None, None, Some(Json(ids)), None, None),
+        CancelScope::Task { task, email } => (Some(task), email, None, None, None),
+        CancelScope::FollowUps { mentor, parent } => (None, None, None, Some(mentor), parent),
     };
     Ok(sqlx::query!(
         r#"UPDATE email SET
@@ -511,7 +525,11 @@ pub async fn cancel(
              error = CASE WHEN state IN ('sending', 'maybe_sent') THEN error END,
              generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ?2
            WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4))
-               OR mentor_id IN (SELECT value FROM json_each(?5)))
+               OR mentor_id IN (SELECT value FROM json_each(?5))
+               OR (mentor_id=?6 AND kind='follow_up' AND (?7 IS NULL OR reply_to=?7
+                 OR EXISTS (SELECT 1 FROM email parent
+                   WHERE parent.mentor_id=email.mentor_id AND (parent.message_id=?7 OR parent.copy_message_id=?7)
+                     AND (parent.message_id=email.reply_to OR parent.copy_message_id=email.reply_to)))))
              AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending',
                'maybe_sent', 'failed')"#,
         reason,
@@ -519,6 +537,8 @@ pub async fn cancel(
         task,
         id,
         mentors,
+        follow_up,
+        parent,
     )
     .execute(conn)
     .await?
@@ -537,6 +557,8 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
            e.subject, e.body_md, e.html, e.text, e.refs
          FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL
+           AND (e.kind = 'reply' OR NOT EXISTS (SELECT 1 FROM email pending WHERE pending.mentor_id=e.mentor_id
+             AND pending.kind IN ('first','follow_up') AND pending.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')))
          ON CONFLICT (resend_of) DO NOTHING
          RETURNING id AS \"id!\"",
         id,

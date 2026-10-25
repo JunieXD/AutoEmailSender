@@ -150,7 +150,7 @@ export function TasksPage() {
             {query.error ? (
               <Notice title="任务列表未能加载" detail={errorMessage(query.error)} />
             ) : query.data?.total === 0 ? (
-              <Notice title="尚未创建任务" detail="在导师列表勾选多位导师，按“写信”创建任务。" />
+              <Notice title="尚未创建任务" detail="在导师列表勾选导师，按“写信”或“追问”创建任务。" />
             ) : (
               query.data?.tasks.map((t) => (
                 <Link
@@ -640,6 +640,11 @@ function DraftDetail({
             <p className="w-full text-sm text-warning">
               已取消：{d.cancelReason}
               {d.state !== "canceled" && "，等待发送结果。"}
+              {task.kind === "follow_up" && ["导师已回信", "上一封被退回"].includes(d.cancelReason) && (
+                <Link to="/mentors/$mentorId" params={{ mentorId: mentor.id }} className="ml-3 text-brand-text">
+                  去回复
+                </Link>
+              )}
             </p>
           )}
           {d.error && d.state !== "generation_failed" && <p className="w-full text-sm text-warning">{d.error}</p>}

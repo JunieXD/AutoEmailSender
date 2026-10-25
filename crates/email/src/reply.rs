@@ -214,7 +214,7 @@ pub async fn approve_reply(
     Ok(Approved::Yes)
 }
 
-fn reply_subject(subject: &str) -> String {
+pub fn reply_subject(subject: &str) -> String {
     let lower = subject.to_lowercase();
     if ["re:", "re：", "回复:", "回复：", "答复:", "答复："]
         .iter()
@@ -226,7 +226,7 @@ fn reply_subject(subject: &str) -> String {
     }
 }
 
-fn quote<T: TimeZone>(
+pub(super) fn quote<T: TimeZone>(
     html: &str,
     text: &str,
     at: &DateTime<T>,
@@ -265,7 +265,7 @@ fn escape(text: &str) -> String {
 
 /// RFC 5322 §3.6.4: the parent's References followed by its Message-ID. Keep the root and the
 /// nearest ancestors within a conservative header size; the mail builder folds the lines.
-fn references(parent: Option<&str>, id: &str) -> String {
+pub(super) fn references(parent: Option<&str>, id: &str) -> String {
     let mut ids: Vec<_> = parent.unwrap_or_default().split_whitespace().collect();
     ids.push(id);
     while ids.len() > 2 && ids.iter().map(|id| id.len() + 1).sum::<usize>() > 900 {

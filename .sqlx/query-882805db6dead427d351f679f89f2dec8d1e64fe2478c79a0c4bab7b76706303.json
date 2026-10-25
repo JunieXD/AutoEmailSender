@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id,name,writer AS \"writer: Writer\",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task WHERE id = ?",
+  "query": "SELECT id,name,kind AS \"kind: Kind\",writer AS \"writer: Writer\",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task ORDER BY id DESC LIMIT ? OFFSET ?",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "writer: Writer",
+        "name": "kind: Kind",
         "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "writer: Writer",
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "state",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "created_at",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -60,7 +71,7 @@
       },
       {
         "name": "generation_paused_at",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "generation_pause_reason",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +93,7 @@
       },
       {
         "name": "model_config_id",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -93,9 +104,10 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
+      false,
       false,
       false,
       false,
@@ -106,5 +118,5 @@
       true
     ]
   },
-  "hash": "60635fcd369d24354531c4db87032e48a214a4dbc7b8ddf50a30076b64140e7f"
+  "hash": "882805db6dead427d351f679f89f2dec8d1e64fe2478c79a0c4bab7b76706303"
 }

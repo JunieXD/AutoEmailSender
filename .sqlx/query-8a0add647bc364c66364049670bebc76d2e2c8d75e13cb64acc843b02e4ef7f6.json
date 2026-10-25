@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT coalesce(subject,'') AS \"subject!: String\", coalesce(body,'') AS \"body_md!: String\" FROM (\n        SELECT subject,substr(text,1,10000) AS body,sent_at,id,1 AS source FROM email\n          WHERE mentor_id=?1 AND kind IN ('first','follow_up') AND state IN ('sent','bounced')\n        UNION ALL SELECT m.subject,substr(m.body_text,1,10000),m.sent_at,m.id,0 FROM message m JOIN message_mentor mm ON mm.message_id=m.id\n          WHERE mm.mentor_id=?1 AND m.kind='sent'\n    ) ORDER BY sent_at DESC,source DESC,id DESC LIMIT 20",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "body_md!: String",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "8a0add647bc364c66364049670bebc76d2e2c8d75e13cb64acc843b02e4ef7f6"
+}

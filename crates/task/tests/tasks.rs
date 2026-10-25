@@ -36,6 +36,7 @@ async fn form(db: &SqlitePool, ids: Vec<i64>) -> NewTask {
     .await
     .unwrap();
     NewTask {
+        kind: task::Kind::First,
         schedule: email::schedule::Schedule::Now,
         name: "首封 10月25日".into(),
         ids,
@@ -83,6 +84,435 @@ fn approval(d: &TaskDraft) -> RenderedApproval {
         body_md: d.body_md.clone(),
         html: format!("<p>{}</p>", d.body_md),
         text: d.body_md.clone(),
+    }
+}
+
+async fn previous(db: &SqlitePool, mentor: i64, external: bool, at: i64) -> String {
+    let mid = format!("<previous-{mentor}-{at}@example.com>");
+    if external {
+        let id = sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,sent_at,from_address,from_name,subject,body_text,refs,truncated) VALUES(1,'Sent',1,?,'sent',?,?,'me@example.com','林晓','RE：申请','之前的信 <script>data</script>','<root@example.com>',0)")
+            .bind(mentor).bind(&mid).bind(at).execute(db).await.unwrap().last_insert_rowid();
+        sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
+            .bind(mentor)
+            .bind(id)
+            .execute(db)
+            .await
+            .unwrap();
+    } else {
+        sqlx::query("INSERT INTO email(mentor_id,kind,state,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,subject,body_md,html,text,refs,created_at,updated_at) VALUES(?,'first','sent',?,1,'me@example.com','mentor@example.com',?,?,'申请','之前的信','<p>之前的信</p>','之前的信 <script>data</script>','<root@example.com>',?,?)")
+            .bind(mentor).bind(at).bind(&mid).bind(at).bind(at).bind(at).execute(db).await.unwrap();
+    }
+    mid
+}
+
+async fn follow_form(db: &SqlitePool, ids: Vec<i64>) -> NewTask {
+    let mut f = form(db, ids).await;
+    f.kind = Kind::FollowUp;
+    f.name = "追问".into();
+    f
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn follow_up_eligibility_and_concurrent_task_creation(db: SqlitePool) {
+    // A mailbox need not connect during planning.
+    sqlx::query("INSERT INTO mailbox(address,sender_name,provider,smtp_host,smtp_port,smtp_security,imap_host,imap_port,imap_security,auth,secret,daily_limit,min_interval_s,rotation_order,created_at) VALUES('me@example.com','我','custom','localhost',465,'tls','localhost',993,'tls','password','test',50,0,1,0)").execute(&db).await.unwrap();
+    let mut ids = vec![];
+    for n in 1..=7 {
+        let id = mentor(&db, n, n != 5).await;
+        previous(&db, id, n == 7, T - 10 * 86_400_000).await;
+        ids.push(id);
+    }
+    let reply = sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,sent_at,from_address,truncated) VALUES(1,'INBOX',1,1,'reply','<reply@example.com>',?,'m1@example.com',0)").bind(T).execute(&db).await.unwrap().last_insert_rowid();
+    sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
+        .bind(ids[0])
+        .bind(reply)
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE email SET state='bounced',error='退信' WHERE mentor_id=?")
+        .bind(ids[1])
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE email SET state='maybe_sent',error='连接断开' WHERE mentor_id=?")
+        .bind(ids[2])
+        .execute(&db)
+        .await
+        .unwrap();
+    email::save_first_draft(&db, ids[3], "草稿", "您好", &[], T)
+        .await
+        .unwrap();
+    let p = plan(&db, &follow_form(&db, ids.clone()).await)
+        .await
+        .unwrap();
+    for (i, reason) in [
+        "已回信",
+        "被退回",
+        "说不清",
+        "没发出的首封或追问",
+        "尚未填写邮箱",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(
+            p.mentors
+                .iter()
+                .find(|m| m.id == ids[i])
+                .unwrap()
+                .reason
+                .as_ref()
+                .unwrap()
+                .contains(reason)
+        );
+    }
+    for id in &ids[5..] {
+        let c = p.mentors.iter().find(|m| m.id == *id).unwrap();
+        assert!(c.reason.is_none());
+        assert_eq!(c.previous.as_ref().unwrap().sent_at, T - 10 * 86_400_000);
+    }
+    let follow = follow_form(&db, vec![ids[5]]).await;
+    let first = form(&db, vec![ids[5]]).await;
+    let (a, b) = tokio::join!(create(&db, &follow, T), create(&db, &first, T));
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM email WHERE mentor_id=? AND state='review'")
+            .bind(ids[5])
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(pending, 1);
+    assert!(
+        email::save_first_draft(&db, ids[5], "另一封", "正文", &[], T)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    stop(&db, a.or(b).unwrap(), T).await.unwrap();
+    let (a, b) = tokio::join!(create(&db, &follow, T), create(&db, &follow, T));
+    assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn follow_up_sends_in_the_original_thread_for_app_and_external_mail(db: SqlitePool) {
+    let pki = fakemail::pki();
+    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let server = |port| mailbox::Server {
+        host: "localhost".into(),
+        port,
+        security: mailbox::Security::Tls,
+    };
+    mailbox::create(
+        &db,
+        &mailbox::MailboxForm {
+            address: fakemail::ADDRESS.into(),
+            sender_name: "林晓".into(),
+            provider: "custom".into(),
+            smtp: server(port),
+            imap: server(993),
+            daily_limit: 50,
+            min_interval_s: 0,
+        }
+        .check()
+        .unwrap(),
+        fakemail::SECRET,
+        T,
+    )
+    .await
+    .unwrap();
+    let net = net::Net::new(vec![pki.root.clone()]).unwrap();
+    for external in [false, true] {
+        let m = mentor(&db, if external { 2 } else { 1 }, true).await;
+        let parent = previous(&db, m, external, T - 1000).await;
+        let f = follow_form(&db, vec![m]).await;
+        let task = create(&db, &f, T).await.unwrap();
+        if !external {
+            sqlx::query(
+                "UPDATE email SET copy_message_id='<renamed-copy@example.com>' WHERE message_id=?",
+            )
+            .bind(&parent)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        let d = items(&db, task).await.remove(0);
+        assert_eq!(
+            d.subject,
+            if external {
+                "RE：申请"
+            } else {
+                "Re: 申请"
+            }
+        );
+        let edit = DraftEdit {
+            task_id: task,
+            id: d.id,
+            subject: "不应改变主题".into(),
+            body_md: "导师老师：想请问您是否方便查看之前的信。".into(),
+            attachments: vec![],
+        };
+        save(&db, &edit, T).await.unwrap();
+        reapply(
+            &db,
+            &TaskEmail {
+                task_id: task,
+                id: d.id,
+            },
+            T,
+        )
+        .await
+        .unwrap();
+        let d = items(&db, task).await.remove(0);
+        assert_eq!(
+            d.subject,
+            if external {
+                "RE：申请"
+            } else {
+                "Re: 申请"
+            }
+        );
+        let checks = check(
+            &db,
+            &DraftEdit {
+                task_id: task,
+                id: d.id,
+                subject: d.subject.clone(),
+                body_md: d.body_md.clone(),
+                attachments: vec![],
+            },
+            T,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !checks
+                .iter()
+                .any(|p| matches!(p, check::Problem::RecentlyContacted { .. }))
+        );
+        assert_eq!(
+            approve(
+                &db,
+                &TaskApprovals {
+                    task_id: task,
+                    emails: vec![approval(&d)]
+                },
+                T
+            )
+            .await
+            .unwrap(),
+            1
+        );
+        let (refs, text, html): (String, String, String) =
+            sqlx::query_as("SELECT refs,text,html FROM email WHERE id=?")
+                .bind(d.id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(refs, format!("<root@example.com> {parent}"));
+        assert!(text.contains("写道：\n> 之前的信 <script>data</script>"));
+        assert!(html.contains("&lt;script&gt;data&lt;/script&gt;"));
+        // Changing the source after approval cannot change the approved quote.
+        sqlx::query("UPDATE message SET body_text='后来改了原信' WHERE message_id=?")
+            .bind(&parent)
+            .execute(&db)
+            .await
+            .unwrap();
+        send::step(&db, &net, std::path::Path::new("unused"), || T)
+            .await
+            .unwrap();
+        let raw = inbox.lock().unwrap().last().unwrap().clone();
+        let headers = raw.split("\r\n\r\n").next().unwrap();
+        assert!(
+            headers.contains(&format!("In-Reply-To: {parent}")),
+            "{headers}"
+        );
+        assert!(
+            headers.contains(&format!("References: <root@example.com> {parent}")),
+            "{headers}"
+        );
+        assert!(!raw.contains("后来改了原信"));
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn receiving_reply_cancels_unsent_follow_ups_and_fences_inflight_generation(db: SqlitePool) {
+    let pki = fakemail::pki();
+    let (imap, store) = fakemail::imap(&pki, false).await;
+    let (smtp, inbox) = fakemail::smtp(&pki, false).await;
+    let server = |port| mailbox::Server {
+        host: "localhost".into(),
+        port,
+        security: mailbox::Security::Tls,
+    };
+    mailbox::create(
+        &db,
+        &mailbox::MailboxForm {
+            address: fakemail::ADDRESS.into(),
+            sender_name: "我".into(),
+            provider: "custom".into(),
+            smtp: server(smtp),
+            imap: server(imap),
+            daily_limit: 50,
+            min_interval_s: 0,
+        }
+        .check()
+        .unwrap(),
+        fakemail::SECRET,
+        T,
+    )
+    .await
+    .unwrap();
+    let net = net::Net::new(vec![pki.root.clone()]).unwrap();
+    receive::round(&db, &net, T).await.unwrap();
+    let states = [
+        "generating",
+        "generation_failed",
+        "review",
+        "approved",
+        "failed",
+        "sending",
+        "maybe_sent",
+    ];
+    let mut ids = vec![];
+    for n in 1..=states.len() as i64 + 1 {
+        let m = mentor(&db, n, true).await;
+        previous(&db, m, false, T - 86_400_000).await;
+        ids.push(m);
+    }
+    let t = create(&db, &follow_form(&db, ids.clone()).await, T)
+        .await
+        .unwrap();
+    let ds = items(&db, t).await;
+    for (d, state) in ds.iter().zip(states) {
+        sqlx::query("UPDATE email SET state=?,generation_queued_at=?,planned_at=?,from_address='me@example.com',to_address='m@example.com',message_id=?,sent_at=?,html='<p>追问</p>',text='追问',error=? WHERE id=?")
+            .bind(state).bind((state=="generating").then_some(T)).bind(T).bind(format!("<follow-{}@example.com>",d.id)).bind(T)
+            .bind(matches!(state,"generation_failed"|"failed"|"maybe_sent").then_some("示例失败")).bind(d.id).execute(&db).await.unwrap();
+    }
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    for &m in &ids[..states.len()] {
+        store.deliver("INBOX", T+1, &format!("From: m{m}@example.com\nMessage-ID: <reply-{m}@example.com>\nSubject: 回复\n\n收到，欢迎联系。"));
+    }
+    let automatic = *ids.last().unwrap();
+    store.deliver("INBOX", T+1, &format!("From: m{automatic}@example.com\nMessage-ID: <auto@example.com>\nAuto-Submitted: auto-replied\nSubject: 自动回复\n\n暂时不在办公室。"));
+    receive::round(&db, &net, T + 2).await.unwrap();
+    for d in items(&db, t).await {
+        if d.mentor_id == automatic {
+            assert_eq!(d.state, DraftState::Review);
+            continue;
+        }
+        assert_eq!(d.cancel_reason.as_deref(), Some("导师已回信"));
+        assert!(matches!(
+            d.state,
+            DraftState::Canceled | DraftState::Sending | DraftState::MaybeSent
+        ));
+    }
+    assert!(
+        !queue::complete(
+            &mut db.acquire().await.unwrap(),
+            claim,
+            "迟到主题",
+            "迟到正文",
+            "fixed",
+            T + 3
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+            .await
+            .unwrap(),
+        send::Next::Idle
+    );
+    assert!(inbox.lock().unwrap().is_empty());
+    let maybe = ds.iter().find(|d| d.mentor_id == ids[6]).unwrap();
+    assert!(!email::retry(&db, maybe.id, T + 3).await.unwrap());
+    assert!(email::confirm_unsent(&db, maybe.id, T + 3).await.unwrap());
+    assert_eq!(
+        draft(
+            &db,
+            &TaskEmail {
+                task_id: t,
+                id: maybe.id
+            }
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .state,
+        DraftState::Canceled
+    );
+    let sending = ds.iter().find(|d| d.mentor_id == ids[5]).unwrap();
+    email::sent(&mut db.acquire().await.unwrap(), sending.id, T + 3)
+        .await
+        .unwrap();
+    assert!(
+        draft(
+            &db,
+            &TaskEmail {
+                task_id: t,
+                id: sending.id
+            }
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .cancel_reason
+        .is_none()
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn receiving_a_bounce_cancels_only_follow_ups_of_that_parent(db: SqlitePool) {
+    let pki = fakemail::pki();
+    let (port, store) = fakemail::imap(&pki, false).await;
+    let server = |port| mailbox::Server {
+        host: "localhost".into(),
+        port,
+        security: mailbox::Security::Tls,
+    };
+    mailbox::create(
+        &db,
+        &mailbox::MailboxForm {
+            address: fakemail::ADDRESS.into(),
+            sender_name: "我".into(),
+            provider: "custom".into(),
+            smtp: server(465),
+            imap: server(port),
+            daily_limit: 50,
+            min_interval_s: 0,
+        }
+        .check()
+        .unwrap(),
+        fakemail::SECRET,
+        T,
+    )
+    .await
+    .unwrap();
+    let net = net::Net::new(vec![pki.root.clone()]).unwrap();
+    receive::round(&db, &net, T).await.unwrap();
+    for external in [false, true] {
+        let m = mentor(&db, if external { 2 } else { 1 }, true).await;
+        let parent = previous(&db, m, external, T - 1000).await;
+        let t = create(&db, &follow_form(&db, vec![m]).await, T)
+            .await
+            .unwrap();
+        let d = items(&db, t).await.remove(0);
+        store.deliver("INBOX",T+1,&format!("From: MAILER-DAEMON@example.com\nMessage-ID: <bounce-{m}@example.com>\nContent-Type: multipart/report; report-type=delivery-status; boundary=b\n\n--b\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; example.com\n\nAction: failed\nStatus: 5.1.1\nDiagnostic-Code: smtp; 550 address unknown\n--b\nContent-Type: text/rfc822-headers\n\nMessage-ID: {parent}\n--b--\n"));
+        receive::round(&db, &net, T + 2).await.unwrap();
+        let d = draft(
+            &db,
+            &TaskEmail {
+                task_id: t,
+                id: d.id,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(d.state, DraftState::Canceled);
+        assert_eq!(d.cancel_reason.as_deref(), Some("上一封被退回"));
     }
 }
 

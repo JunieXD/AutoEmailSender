@@ -682,6 +682,22 @@ impl Session<'_> {
             if linked.rows_affected() == 1 {
                 self.round.changed = true;
                 mentor::assign_mailbox(tx, mentor, self.mailbox_id).await?;
+                if sqlx::query_scalar!("SELECT kind FROM message WHERE id=?", id)
+                    .fetch_one(&mut *tx)
+                    .await?
+                    == "reply"
+                {
+                    email::cancel(
+                        tx,
+                        email::CancelScope::FollowUps {
+                            mentor,
+                            parent: None,
+                        },
+                        "导师已回信",
+                        self.now,
+                    )
+                    .await?;
+                }
             }
         }
         Ok(())
@@ -718,6 +734,23 @@ impl Session<'_> {
             .await?
             .rows_affected()
                 > 0;
+        }
+        if marked {
+            let mentors = sqlx::query_scalar!(r#"SELECT mentor_id FROM email WHERE state='bounced' AND (message_id=?1 OR copy_message_id=?1)
+                UNION SELECT mm.mentor_id FROM message_mentor mm JOIN message m ON m.id=mm.message_id
+                WHERE m.message_id=?1 AND mm.bounce_reason IS NOT NULL"#, bounce.original).fetch_all(&mut *tx).await?;
+            for mentor in mentors {
+                email::cancel(
+                    &mut tx,
+                    email::CancelScope::FollowUps {
+                        mentor,
+                        parent: Some(&bounce.original),
+                    },
+                    "上一封被退回",
+                    self.now,
+                )
+                .await?;
+            }
         }
         tx.commit().await?;
         self.round.changed |= marked;

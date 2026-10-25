@@ -164,7 +164,7 @@ export function TaskLetter({
           aria-label="主题"
           placeholder="主题"
           value={letter.subject}
-          disabled={locked}
+          disabled={locked || task.kind === "follow_up"}
           onChange={(e) => edit({ ...letter, subject: e.target.value })}
         />
         <LazyLetterEditor
@@ -177,6 +177,16 @@ export function TaskLetter({
           onChange={(bodyMd) => edit({ ...letter, bodyMd })}
         />
       </div>
+      {draft.previous && (
+        <details className="rounded-lg bg-muted p-3 text-sm">
+          <summary className="cursor-pointer">上一封 · {draft.previous.subject ?? "（无主题）"}</summary>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {draft.previous.fromName} &lt;{draft.previous.fromAddress}&gt; ·{" "}
+            {new Date(draft.previous.sentAt).toLocaleString()}
+          </p>
+          <p className="mt-2 whitespace-pre-wrap break-words">{draft.previous.bodyText}</p>
+        </details>
+      )}
       <Attachments
         files={attached}
         onRemove={
