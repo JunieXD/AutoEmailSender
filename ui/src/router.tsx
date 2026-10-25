@@ -13,7 +13,7 @@ import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
-import { AboutSection, NotificationsSection, SettingsPage } from "./pages/settings";
+import { AboutSection, BackgroundSection, NotificationsSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 import { WelcomePage } from "./pages/welcome";
 
@@ -146,6 +146,12 @@ const notificationsRoute = createRoute({
   component: NotificationsSection,
 });
 
+const backgroundRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "background",
+  component: BackgroundSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -174,6 +180,7 @@ export const router = createRouter({
       mailboxesRoute,
       modelsRoute,
       notificationsRoute,
+      backgroundRoute,
       aboutRoute,
     ]),
   ]),

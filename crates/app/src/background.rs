@@ -2,13 +2,10 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Window, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 
 pub const AUTOSTART_ARG: &str = "--autostart";
-
-// Close requests can arrive again before the first notice has been persisted.
-struct BackgroundNotice(tauri::async_runtime::Mutex<()>);
 
 #[tauri::command]
 pub async fn autostart_enabled(app: AppHandle) -> Result<bool, String> {
@@ -29,7 +26,6 @@ pub async fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> 
 }
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    app.manage(BackgroundNotice(tauri::async_runtime::Mutex::new(())));
     let open = MenuItem::with_id(app, "open", "打开 Auto Email Sender", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
@@ -70,31 +66,27 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     }
     if let WindowEvent::CloseRequested { api, .. } = event {
         api.prevent_close();
-        let app = window.app_handle();
+        // Left open, the window shows the user it did not close.
         if let Err(e) = window.hide() {
-            report_error(app, format!("窗口未能隐藏：{e}，请重试"));
+            tracing::error!("hide window: {e}");
             return;
         }
-        let app = app.clone();
+        let app = window.app_handle().clone();
         tauri::async_runtime::spawn(async move {
-            if let Err(e) = notify_background(&app).await {
-                report_error(&app, e);
+            if let Err(e) = tell_still_running(&app).await {
+                tracing::error!("background notice: {e}");
             }
         });
     }
 }
 
-async fn notify_background(app: &AppHandle) -> Result<(), String> {
+/// Tells the user once that closing the window left the app running.
+async fn tell_still_running(app: &AppHandle) -> Result<(), sqlx::Error> {
     // Startup failures have no profile to read; the tray still lets the user reopen or quit.
     let Some(ctx) = app.try_state::<api::Context>() else {
         return Ok(());
     };
-    let notice = app.state::<BackgroundNotice>();
-    let _guard = notice.0.lock().await;
-    if profile::background_notice_shown(&ctx.db)
-        .await
-        .map_err(|e| format!("无法读取后台运行提示状态：{e}，请重新打开应用后重试"))?
-    {
+    if profile::background_notice_shown(&ctx.db).await? {
         return Ok(());
     }
     let icon = if cfg!(target_os = "macos") {
@@ -102,26 +94,20 @@ async fn notify_background(app: &AppHandle) -> Result<(), String> {
     } else {
         "托盘图标"
     };
-    app.notification()
+    let text = format!("Auto Email Sender 还在后台运行，可以从{icon}打开或退出。");
+    let shown = app
+        .notification()
         .builder()
         .title("Auto Email Sender")
-        .body(format!(
-            "Auto Email Sender 还在后台运行，可以从{icon}打开或退出。"
-        ))
-        .show()
-        .map_err(|e| {
-            format!("后台运行通知未能显示：{e}，应用仍在后台运行，请从{icon}打开或退出")
-        })?;
-    profile::mark_background_notice_shown(&ctx.db)
-        .await
-        .map_err(|e| format!("后台运行提示状态未能保存：{e}，下次关闭窗口时可能会再次提示"))
-}
-
-fn report_error(app: &AppHandle, message: String) {
-    tracing::error!("background window handling: {message}");
-    app.dialog()
-        .message(message)
-        .title("Auto Email Sender")
-        .kind(MessageDialogKind::Error)
-        .show(|_| {});
+        .body(&text)
+        .show();
+    if let Err(e) = shown {
+        // Without notifications the user still has to learn where the app went.
+        tracing::warn!("background notification: {e}");
+        app.dialog()
+            .message(text)
+            .title("Auto Email Sender")
+            .show(|_| {});
+    }
+    profile::mark_background_notice_shown(&ctx.db).await
 }
