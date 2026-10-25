@@ -1216,6 +1216,7 @@ async fn check_first_draft(
 
 /// Drafts the letter when it is blank and rewrites it otherwise.
 async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let current = writing::Letter {
         subject: input.subject,
         body_md: input.body_md,
@@ -1225,7 +1226,6 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    let _permit = ctx.model_limit.acquire().await;
     Ok(writing::write(
         &ctx.db,
         &ctx.net,
@@ -1568,12 +1568,12 @@ async fn write_follow_up(
     ctx: &Context,
     input: FirstDraftEdit,
 ) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
-    let _permit = ctx.model_limit.acquire().await;
     Ok(writing::write(
         &ctx.db,
         &ctx.net,
@@ -1605,11 +1605,11 @@ impl From<writing::reply::Error> for CallError {
 }
 
 async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Letter, CallError> {
+    let _permit = ctx.model_limit.acquire().await;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    let _permit = ctx.model_limit.acquire().await;
     let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
     Ok(writing::write(
         &ctx.db,
@@ -1949,8 +1949,125 @@ mod table_tests {
 }
 
 #[cfg(test)]
+#[path = "../../model/tests/common/provider.rs"]
+mod provider;
+
+#[cfg(test)]
 mod writing_tests {
     use super::*;
+    use std::{
+        future::{Future, poll_fn},
+        sync::Arc,
+        task::Poll,
+    };
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn queued_letter_uses_the_model_address_saved_before_its_turn(db: SqlitePool) {
+        let mentor = mentor::create(
+            &db,
+            &mentor::MentorFields {
+                name: "王伟".into(),
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        let ctx = Context {
+            db,
+            net: net::Net::new(vec![]).unwrap(),
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            crawler: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+            materials: Default::default(),
+        };
+        let (old_address, old_received) = provider::scripted(vec![(
+            "<subject>申请</subject><body>旧地址的信</body>",
+            "stop",
+        )])
+        .await;
+        let (new_address, new_received) = provider::scripted(vec![(
+            "<subject>申请</subject><body>新地址的信</body>",
+            "stop",
+        )])
+        .await;
+        let form = |address: &str| model::ModelForm {
+            name: String::new(),
+            provider: model::providers::CUSTOM.into(),
+            base_url: address.into(),
+            model: "m".into(),
+            input_price: None,
+            output_price: None,
+        };
+        let id = model::create(&ctx.db, &form(&old_address).check().unwrap(), "", 0)
+            .await
+            .unwrap();
+        assert!(
+            model::agree(&ctx.db, id, "custom", Some(&old_address))
+                .await
+                .unwrap()
+        );
+
+        let mut permits = Vec::new();
+        for _ in 0..model::background::CONCURRENCY {
+            permits.push(ctx.model_limit.acquire().await);
+        }
+        let owners = Arc::strong_count(permits[0].semaphore());
+        let mut writing = std::pin::pin!(call(
+            &ctx,
+            "writeLetter",
+            serde_json::json!({
+                "mentorId": mentor, "subject": "", "bodyMd": "", "attachments": []
+            }),
+        ));
+        // An owned acquire retains the semaphore while queued. Wait for that so the edit
+        // cannot race with database reads that precede acquiring capacity.
+        poll_fn(|cx| {
+            assert!(writing.as_mut().poll(cx).is_pending());
+            if Arc::strong_count(permits[0].semaphore()) > owners {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await;
+
+        update_model_config(
+            &ctx,
+            ModelConfigEdit {
+                id,
+                form: form(&new_address),
+                api_key: String::new(),
+            },
+        )
+        .await
+        .unwrap();
+        agree_model(
+            &ctx,
+            ModelAgreement {
+                id,
+                provider: "custom".into(),
+                base_url: Some(new_address),
+            },
+        )
+        .await
+        .unwrap();
+        drop(permits);
+        let letter = writing.await.unwrap();
+
+        assert!(
+            old_received.lock().unwrap().is_empty(),
+            "queued request reached the old model address"
+        );
+        assert_eq!(new_received.lock().unwrap().len(), 1);
+        assert_eq!(
+            letter,
+            serde_json::json!({"subject": "申请", "bodyMd": "新地址的信"})
+        );
+    }
 
     #[sqlx::test(migrator = "db::MIGRATOR")]
     async fn first_follow_up_and_reply_checks_report_student_decisions(db: SqlitePool) {
