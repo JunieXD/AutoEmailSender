@@ -94,6 +94,7 @@ pub async fn restart(
     .fetch_all(&mut *tx)
     .await?;
     Ok(Some(NewTask {
+        source_task_id: Some(id),
         kind: t.kind,
         name: format!("{} · 重新发起", t.name),
         schedule: email::schedule::Schedule::Now,

@@ -719,6 +719,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             writer: task::Writer::Ai,
             template_id: None,
             template_source_id: None,
+            source_task_id: None,
             model_config_id: Some(config),
             references: vec![],
             attachments: vec![],

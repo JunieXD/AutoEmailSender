@@ -78,6 +78,7 @@ function TaskSteps({
     if (initial) return initial;
     const date = new Date();
     return {
+      sourceTaskId: null,
       kind,
       schedule: { kind: "now" },
       name: `${kind === "follow_up" ? "追问" : "首封"} ${date.getMonth() + 1}月${date.getDate()}日`,
@@ -106,6 +107,7 @@ function TaskSteps({
       form.writer,
       form.templateId,
       form.templateSourceId,
+      form.sourceTaskId,
       form.references,
       form.attachments,
       form.modelConfigId,
@@ -149,6 +151,11 @@ function TaskSteps({
           {step === 0 && (
             <>
               <p className="text-base font-medium">将联系 {eligible.length} 位导师</p>
+              {form.sourceTaskId !== null && (
+                <p className="text-muted-foreground">
+                  创建新任务时，所选导师在原任务中仍为发送失败或生成失败的邮件会取消。关闭此窗口不会改变原任务。
+                </p>
+              )}
               {unavailable.length > 0 && (
                 <details className="rounded-lg bg-muted p-3">
                   <summary className="cursor-pointer">有 {unavailable.length} 位不能加入</summary>

@@ -38,6 +38,7 @@ pub enum Kind {
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct NewTask {
+    pub source_task_id: Option<i64>,
     pub kind: Kind,
     pub name: String,
     pub schedule: email::schedule::Schedule,
@@ -81,6 +82,7 @@ async fn candidates(
     conn: &mut SqliteConnection,
     ids: &[i64],
     kind: Kind,
+    source_task: Option<i64>,
 ) -> std::result::Result<Vec<Candidate>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.name,
@@ -88,25 +90,31 @@ async fn candidates(
                WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id)
                  THEN '导师尚未填写邮箱'
                WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
+                 AND task_id = ?2 AND state = 'sent')
+                 THEN '原任务中的邮件已发出'
+               WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
                  AND kind IN ('first', 'follow_up')
                  AND state IN ('generating', 'generation_failed', 'review', 'approved',
-                   'cloud', 'sending', 'maybe_sent', 'failed'))
+                   'cloud', 'sending', 'maybe_sent', 'failed')
+                 AND NOT (task_id IS ?2 AND ?2 IS NOT NULL
+                   AND state IN ('failed', 'generation_failed')))
                  THEN '还有一封没发出的首封或追问'
                ELSE NULL END AS "reason: String",
              coalesce(c.contact_count, 0) AS "contact_count!: i64",
              c.last_out_at AS last_contact_at
            FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           WHERE m.id IN (SELECT value FROM json_each(?))
+           WHERE m.id IN (SELECT value FROM json_each(?1))
            ORDER BY m.name, m.id"#,
-        Json(ids)
+        Json(ids),
+        source_task,
     )
     .fetch_all(&mut *conn)
     .await?;
     let mut candidates = Vec::new();
     for row in rows {
         let (previous, reason) = if kind == Kind::FollowUp {
-            let e = email::follow_up::eligibility(conn, row.id).await?;
-            (e.previous, e.reason)
+            let e = email::follow_up::eligibility(conn, row.id, source_task).await?;
+            (e.previous, e.reason.or(row.reason))
         } else {
             (None, row.reason)
         };
@@ -197,7 +205,7 @@ async fn template_content(
 
 pub async fn plan(db: &SqlitePool, form: &NewTask) -> Result<TaskPlan> {
     let mut tx = db.begin().await?;
-    let mentors = candidates(&mut tx, &form.ids, form.kind).await?;
+    let mentors = candidates(&mut tx, &form.ids, form.kind, form.source_task_id).await?;
     let refs = references(&mut tx, &form.references).await?;
     let template = template_content(&mut tx, form).await?;
     let chosen = model::selected(&mut *tx, form.model_config_id).await?;
@@ -347,7 +355,29 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     )
     .execute(&mut *tx)
     .await?;
-    let mentors = candidates(&mut tx, &form.ids, form.kind).await?;
+    if let Some(source) = form.source_task_id {
+        let failures = sqlx::query_scalar!(
+            "SELECT id FROM email WHERE task_id = ? AND mentor_id IN (SELECT value FROM json_each(?))
+               AND state IN ('failed', 'generation_failed') ORDER BY id",
+            source,
+            Json(&form.ids),
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for failure in failures {
+            email::cancel(
+                &mut tx,
+                email::CancelScope::Task {
+                    task: source,
+                    email: Some(failure),
+                },
+                "已在新任务重新发起",
+                now,
+            )
+            .await?;
+        }
+    }
+    let mentors = candidates(&mut tx, &form.ids, form.kind, form.source_task_id).await?;
     let mut ids = form.ids.clone();
     ids.sort_unstable();
     ids.dedup();

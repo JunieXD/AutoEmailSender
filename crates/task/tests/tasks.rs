@@ -43,6 +43,7 @@ async fn form(db: &SqlitePool, ids: Vec<i64>) -> NewTask {
         writer: Writer::Template,
         template_id: Some(t),
         template_source_id: None,
+        source_task_id: None,
         model_config_id: None,
         references: vec![],
         attachments: vec![],
@@ -2198,6 +2199,7 @@ async fn restart_selects_only_unsuccessful_and_reuses_saved_inputs(db: SqlitePoo
     template::delete(&db, f.template_id.unwrap()).await.unwrap();
     let mut next = restart(&db, t).await.unwrap().unwrap();
     assert_eq!(next.ids, &ids[..4]);
+    assert_eq!(next.source_task_id, Some(t));
     assert_eq!(next.name, format!("{} · 重新发起", f.name));
     assert_eq!(next.kind, f.kind);
     assert_eq!(next.writer, f.writer);
@@ -2213,10 +2215,23 @@ async fn restart_selects_only_unsuccessful_and_reuses_saved_inputs(db: SqlitePoo
             .filter(|m| m.reason.is_none())
             .map(|m| m.id)
             .collect::<Vec<_>>(),
-        [ids[0], ids[3]]
+        ids[..4]
     );
-    next.ids = vec![ids[0], ids[3]];
+    next.ids = ids[..4].to_vec();
     let new = create(&db, &next, T + 1).await.unwrap();
+    let old = items(&db, t).await;
+    assert_eq!(
+        old.iter()
+            .find(|d| d.mentor_id == ids[0])
+            .unwrap()
+            .cancel_reason
+            .as_deref(),
+        Some("停止任务")
+    );
+    assert_eq!(
+        old.iter().find(|d| d.mentor_id == ids[3]).unwrap().state,
+        DraftState::Bounced
+    );
     for d in items(&db, new).await {
         assert!(d.subject.starts_with("给导师"));
         assert!(d.body_md.contains("老师：我是"));
@@ -2294,4 +2309,276 @@ async fn standalone_follow_up_keeps_target_files_and_empty_draft_until_discarded
             .unwrap()
             .is_some()
     );
+}
+
+async fn failed_task(db: &SqlitePool, ids: Vec<i64>, generation: bool, kind: Kind) -> i64 {
+    if kind == Kind::FollowUp {
+        for &id in &ids {
+            previous(db, id, false, T - 1000).await;
+        }
+    }
+    let mut f = form(db, ids).await;
+    f.kind = kind;
+    if generation {
+        f.writer = Writer::Ai;
+        f.model_config_id = Some(sqlx::query_scalar("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES ('custom','http://localhost:1/v1','fixed','',1,0) RETURNING id").fetch_one(db).await.unwrap());
+    }
+    let t = create(db, &f, T).await.unwrap();
+    if generation {
+        while let Some(claim) = queue::next(db).await.unwrap() {
+            queue::fail(&mut db.acquire().await.unwrap(), claim, "模型失败", T + 1)
+                .await
+                .unwrap();
+        }
+    } else {
+        let drafts = items(db, t).await;
+        approve(
+            db,
+            &TaskApprovals {
+                task_id: t,
+                emails: drafts.iter().map(approval).collect(),
+            },
+            T,
+        )
+        .await
+        .unwrap();
+        for d in drafts {
+            email::failed(&mut db.acquire().await.unwrap(), d.id, "连接失败", T + 1)
+                .await
+                .unwrap();
+        }
+    }
+    t
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restart_replaces_only_selected_failed_letters_at_creation(db: SqlitePool) {
+    let (net, _, inbox) = detail_mail(&db).await;
+    for (n, generation, kind) in [
+        (241, false, Kind::First),
+        (243, true, Kind::First),
+        (245, false, Kind::FollowUp),
+        (247, true, Kind::FollowUp),
+    ] {
+        let selected = mentor(&db, n, true).await;
+        let excluded = mentor(&db, n + 1, true).await;
+        let t = failed_task(&db, vec![selected, excluded], generation, kind).await;
+        let before = items(&db, t).await;
+        let mut next = restart(&db, t).await.unwrap().unwrap();
+        let p = plan(&db, &next).await.unwrap();
+        assert!(p.mentors.iter().all(|m| m.reason.is_none()));
+        assert!(items(&db, t).await.iter().all(|d| d.state
+            == if generation {
+                DraftState::GenerationFailed
+            } else {
+                DraftState::Failed
+            }));
+        next.ids = vec![selected];
+        let new = create(&db, &next, T + 2).await.unwrap();
+        let old = items(&db, t).await;
+        let replaced = old.iter().find(|d| d.mentor_id == selected).unwrap();
+        let untouched = old.iter().find(|d| d.mentor_id == excluded).unwrap();
+        assert_eq!(replaced.state, DraftState::Canceled);
+        assert_eq!(
+            replaced.cancel_reason.as_deref(),
+            Some("已在新任务重新发起")
+        );
+        assert_eq!(
+            untouched.state,
+            if generation {
+                DraftState::GenerationFailed
+            } else {
+                DraftState::Failed
+            }
+        );
+        assert_eq!(
+            replaced.body_md,
+            before.iter().find(|d| d.id == replaced.id).unwrap().body_md
+        );
+        assert!(!email::retry(&db, replaced.id, T + 3).await.unwrap());
+        assert_eq!(
+            regenerate(&db, t, Some(replaced.id), true, T + 3)
+                .await
+                .unwrap(),
+            0
+        );
+        if generation {
+            let claim = queue::next(&db).await.unwrap().unwrap();
+            assert_eq!(claim.task, new);
+            queue::complete(
+                &mut db.acquire().await.unwrap(),
+                claim,
+                "申请",
+                "固定草稿",
+                "fixed",
+                T + 3,
+            )
+            .await
+            .unwrap();
+        }
+        let d = items(&db, new).await.remove(0);
+        approve(
+            &db,
+            &TaskApprovals {
+                task_id: new,
+                emails: vec![approval(&d)],
+            },
+            T + 4,
+        )
+        .await
+        .unwrap();
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+            .await
+            .unwrap();
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 6)
+            .await
+            .unwrap();
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 4);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restart_refuses_retried_original_letters_without_canceling_other_failures(db: SqlitePool) {
+    let _ = detail_mail(&db).await;
+    for (n, generation) in [(251, false), (253, true)] {
+        let retried = mentor(&db, n, true).await;
+        let failed = mentor(&db, n + 1, true).await;
+        let t = failed_task(&db, vec![retried, failed], generation, Kind::First).await;
+        let next = restart(&db, t).await.unwrap().unwrap();
+        assert!(
+            plan(&db, &next)
+                .await
+                .unwrap()
+                .mentors
+                .iter()
+                .all(|m| m.reason.is_none())
+        );
+        let d = items(&db, t)
+            .await
+            .into_iter()
+            .find(|d| d.mentor_id == retried)
+            .unwrap();
+        if generation {
+            assert_eq!(
+                regenerate(&db, t, Some(d.id), true, T + 2).await.unwrap(),
+                1
+            );
+        } else {
+            assert!(email::retry(&db, d.id, T + 2).await.unwrap());
+        }
+        let p = plan(&db, &next).await.unwrap();
+        assert!(
+            p.mentors
+                .iter()
+                .find(|m| m.id == retried)
+                .unwrap()
+                .reason
+                .is_some()
+        );
+        assert!(matches!(
+            create(&db, &next, T + 3).await,
+            Err(Error::Invalid(_))
+        ));
+        let old = items(&db, t).await;
+        assert_eq!(
+            old.iter().find(|d| d.mentor_id == retried).unwrap().state,
+            if generation {
+                DraftState::Generating
+            } else {
+                DraftState::Approved
+            }
+        );
+        assert_eq!(
+            old.iter().find(|d| d.mentor_id == failed).unwrap().state,
+            if generation {
+                DraftState::GenerationFailed
+            } else {
+                DraftState::Failed
+            }
+        );
+        assert!(old.iter().all(|d| d.cancel_reason.is_none()));
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restarting_and_retrying_the_same_failure_can_only_send_once(db: SqlitePool) {
+    let (net, _, inbox) = detail_mail(&db).await;
+    for n in 261..271 {
+        let generation = n % 2 == 0;
+        let m = mentor(&db, n, true).await;
+        let t = failed_task(&db, vec![m], generation, Kind::First).await;
+        let d = items(&db, t).await.remove(0);
+        let next = restart(&db, t).await.unwrap().unwrap();
+        let retry = async {
+            if generation {
+                regenerate(&db, t, Some(d.id), true, T + 2).await.unwrap() == 1
+            } else {
+                email::retry(&db, d.id, T + 2).await.unwrap()
+            }
+        };
+        let (created, retried) = tokio::join!(create(&db, &next, T + 2), retry);
+        assert_ne!(created.is_ok(), retried);
+        let winner = match created {
+            Ok(id) => id,
+            Err(Error::Invalid(_)) => t,
+            Err(e) => panic!("{e:?}"),
+        };
+        if generation {
+            let claim = queue::next(&db).await.unwrap().unwrap();
+            assert_eq!(claim.task, winner);
+            queue::complete(
+                &mut db.acquire().await.unwrap(),
+                claim,
+                "申请",
+                "固定草稿",
+                "fixed",
+                T + 3,
+            )
+            .await
+            .unwrap();
+        }
+        let d = items(&db, winner).await.remove(0);
+        if d.state == DraftState::Review {
+            approve(
+                &db,
+                &TaskApprovals {
+                    task_id: winner,
+                    emails: vec![approval(&d)],
+                },
+                T + 4,
+            )
+            .await
+            .unwrap();
+        }
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+            .await
+            .unwrap();
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 6)
+            .await
+            .unwrap();
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 10);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn restart_refuses_an_original_retry_that_finished_sending(db: SqlitePool) {
+    let (net, _, inbox) = detail_mail(&db).await;
+    for (n, kind) in [(281, Kind::First), (282, Kind::FollowUp)] {
+        let m = mentor(&db, n, true).await;
+        let t = failed_task(&db, vec![m], false, kind).await;
+        let next = restart(&db, t).await.unwrap().unwrap();
+        let d = items(&db, t).await.remove(0);
+        assert!(email::retry(&db, d.id, T + 2).await.unwrap());
+        send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+            .await
+            .unwrap();
+        assert_eq!(items(&db, t).await[0].state, DraftState::Sent);
+        assert!(plan(&db, &next).await.unwrap().mentors[0].reason.is_some());
+        assert!(matches!(
+            create(&db, &next, T + 4).await,
+            Err(Error::Invalid(_))
+        ));
+        assert_eq!(items(&db, t).await[0].state, DraftState::Sent);
+    }
+    assert_eq!(inbox.lock().unwrap().len(), 2);
 }

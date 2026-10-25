@@ -405,7 +405,7 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
-export type NewTask = { kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, templateSourceId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
+export type NewTask = { sourceTaskId: number | null, kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, templateSourceId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
 
 export type Nothing = Record<symbol, never>;
 

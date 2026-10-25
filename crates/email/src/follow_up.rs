@@ -44,6 +44,7 @@ pub async fn cancel_replied(
 pub async fn eligibility(
     conn: &mut SqliteConnection,
     mentor: i64,
+    source_task: Option<i64>,
 ) -> Result<Eligibility, sqlx::Error> {
     let row = sqlx::query!(
         r#"SELECT m.trashed_at,
@@ -51,9 +52,12 @@ pub async fn eligibility(
              EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id
                AND kind IN ('first', 'follow_up')
                AND state IN ('generating', 'generation_failed', 'review', 'approved',
-                 'cloud', 'sending', 'maybe_sent', 'failed')) AS "pending!: bool"
-           FROM mentor m WHERE m.id = ?"#,
-        mentor
+                 'cloud', 'sending', 'maybe_sent', 'failed')
+               AND NOT (task_id IS ?2 AND ?2 IS NOT NULL
+                 AND state IN ('failed', 'generation_failed'))) AS "pending!: bool"
+           FROM mentor m WHERE m.id = ?1"#,
+        mentor,
+        source_task,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -121,7 +125,7 @@ pub struct FollowUpEntry {
 }
 pub async fn entry(db: &SqlitePool, mentor: i64) -> Result<FollowUpEntry, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let e = eligibility(&mut tx, mentor).await?;
+    let e = eligibility(&mut tx, mentor, None).await?;
     Ok(FollowUpEntry {
         reason: e.reason,
         pending: e.pending,
@@ -184,7 +188,7 @@ pub async fn create(db: &SqlitePool, mentor: i64, now: i64) -> Result<FollowUpDr
     .fetch_optional(&mut *tx)
     .await?;
     if own.is_none() {
-        let e = eligibility(&mut tx, mentor).await?;
+        let e = eligibility(&mut tx, mentor, None).await?;
         if let Some(reason) = e.reason {
             return Err(Error::Invalid(reason));
         }
