@@ -24,6 +24,7 @@ const GROUPS = [
     label: "应用",
     sections: [
       { to: "/settings/notifications", label: "通知" },
+      { to: "/settings/backup", label: "备份" },
       { to: "/settings/about", label: "关于和日志" },
     ],
   },

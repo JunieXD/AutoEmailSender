@@ -75,11 +75,12 @@ export function ModelDialog({
   // The core only uses the saved key where it was saved for.
   const keySaved =
     config !== null &&
+    !config.needsApiKey &&
     form.provider === initial.provider &&
     (form.provider !== CUSTOM || form.baseUrl === initial.baseUrl);
   const reachable =
     (provider !== undefined || (form.provider === CUSTOM && form.baseUrl.trim() !== "")) &&
-    (keySaved || form.provider === CUSTOM || form.apiKey.trim() !== "");
+    (keySaved || (form.provider === CUSTOM && !config?.needsApiKey) || form.apiKey.trim() !== "");
   const complete = reachable && form.model.trim() !== "";
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
@@ -142,7 +143,15 @@ export function ModelDialog({
                   id="model-api-key"
                   type="password"
                   autoComplete="off"
-                  placeholder={keySaved ? "不修改就留空" : form.provider === CUSTOM ? "本机的模型可以不填" : undefined}
+                  placeholder={
+                    keySaved
+                      ? "不修改就留空"
+                      : config?.needsApiKey
+                        ? "从备份恢复后需要重新填写"
+                        : form.provider === CUSTOM
+                          ? "本机的模型可以不填"
+                          : undefined
+                  }
                   value={form.apiKey}
                   onChange={(e) => edit({ ...form, apiKey: e.target.value })}
                 />
