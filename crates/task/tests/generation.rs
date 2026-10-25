@@ -477,3 +477,261 @@ async fn pause_keeps_completed_drafts_and_stop_discards_in_flight_results(db: Sq
         0
     );
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn fact_check_switch_controls_generation_and_token_estimates(db: SqlitePool) {
+    let mut p = Provider::start().await;
+    let (id, ids) = setup(&db, &p.address, 1).await;
+    let form = NewTask {
+        kind: task::Kind::First,
+        schedule: email::schedule::Schedule::Now,
+        name: "预计用量".into(),
+        ids: vec![],
+        writer: Writer::Ai,
+        template_id: None,
+        template_source_id: None,
+        source_task_id: None,
+        model_config_id: None,
+        references: vec![],
+        attachments: vec![],
+    };
+    // A second eligible mentor makes both previews describe the same unsent letter.
+    let eligible = mentor::create(
+        &db,
+        &mentor::MentorFields {
+            name: "王二".into(),
+            emails: vec!["second@example.com".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let form = NewTask {
+        ids: vec![eligible],
+        ..form
+    };
+    let off = task::plan(&db, &form).await.unwrap();
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let on = task::plan(&db, &form).await.unwrap();
+    assert!(on.input_tokens > off.input_tokens + off.output_tokens);
+    assert_eq!(on.output_tokens - off.output_tokens, 300);
+    let mut run = Runner::start(&db, Default::default());
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(LETTER))
+        .ok()
+        .unwrap();
+    let check = request(&mut p).await;
+    assert_eq!(
+        task::get(&db, id)
+            .await
+            .unwrap()
+            .unwrap()
+            .progress
+            .generating,
+        1
+    );
+    assert_eq!(
+        task::get(&db, id).await.unwrap().unwrap().progress.review,
+        0
+    );
+    let message: serde_json::Value =
+        serde_json::from_str(check.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(message["信"]["主题"], "申请");
+    check
+        .respond
+        .send(Response::answer(
+            r#"[{"quote":"希望申请读研","reason":"资料未说明"}]"#,
+        ))
+        .ok()
+        .unwrap();
+    run.finished().await;
+    let email: i64 = sqlx::query_scalar("SELECT id FROM email WHERE mentor_id=?")
+        .bind(ids[0])
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let key = task::TaskEmail {
+        task_id: id,
+        id: email,
+    };
+    assert!(
+        matches!(task::draft(&db,&key).await.unwrap().unwrap().fact_check,
+        Some(email::fact_check::FactCheck::Completed { findings }) if findings.len()==1)
+    );
+    let purposes: Vec<(String, Option<i64>)> =
+        sqlx::query_as("SELECT purpose,email_id FROM usage ORDER BY id")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        purposes,
+        vec![("draft".into(), None), ("fact_check".into(), Some(email))]
+    );
+    profile::set_ai_fact_check(&db, false).await.unwrap();
+    task::regenerate(&db, id, Some(email), false, 2)
+        .await
+        .unwrap();
+    run.handle.wake();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(LETTER))
+        .ok()
+        .unwrap();
+    run.finished().await;
+    assert!(
+        task::draft(&db, &key)
+            .await
+            .unwrap()
+            .unwrap()
+            .fact_check
+            .is_none()
+    );
+    assert!(p.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn failed_fact_check_enters_review_and_stale_check_cannot_replace_a_new_claim(
+    db: SqlitePool,
+) {
+    let mut p = Provider::start().await;
+    let (id, _) = setup(&db, &p.address, 1).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(LETTER))
+        .ok()
+        .unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 401,
+            message: "wrong key".into(),
+            retry_after: None,
+        })
+        .ok()
+        .unwrap();
+    let done = run.finished().await;
+    assert_eq!((done.generated, done.failed), (1, 0));
+    let email: i64 = sqlx::query_scalar("SELECT id FROM email WHERE task_id=?")
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let key = task::TaskEmail {
+        task_id: id,
+        id: email,
+    };
+    let draft = task::draft(&db, &key).await.unwrap().unwrap();
+    assert_eq!(draft.state, email::tasks::DraftState::Review);
+    assert!(
+        matches!(draft.fact_check,Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty())
+    );
+    task::regenerate(&db, id, Some(email), false, 2)
+        .await
+        .unwrap();
+    run.handle.wake();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(LETTER))
+        .ok()
+        .unwrap();
+    let stale = request(&mut p).await;
+    email::tasks::recover(&db).await.unwrap();
+    stale.respond.send(Response::answer("[]")).ok().unwrap();
+    // The scheduler must regenerate instead of accepting the expired check and draft.
+    let fresh = request(&mut p).await;
+    assert_eq!(
+        task::draft(&db, &key).await.unwrap().unwrap().state,
+        email::tasks::DraftState::Generating
+    );
+    fresh
+        .respond
+        .send(Response::answer(
+            "<subject>新主题</subject><body>王老师：新稿</body>",
+        ))
+        .ok()
+        .unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer("[]"))
+        .ok()
+        .unwrap();
+    run.finished().await;
+    let draft = task::draft(&db, &key).await.unwrap().unwrap();
+    assert_eq!(draft.subject, "新主题");
+    assert_eq!(
+        draft.fact_check,
+        Some(email::fact_check::FactCheck::Completed { findings: vec![] })
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn fact_check_refreshes_configuration_and_consent_after_writing(db: SqlitePool) {
+    let mut writing = Provider::start().await;
+    let (id, _) = setup(&db, &writing.address, 1).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut checking = Provider::start().await;
+    sqlx::query("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'replacement','',1,1)")
+        .bind(&checking.address).execute(&db).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let old = request(&mut writing).await;
+    sqlx::query("DELETE FROM model_config WHERE model='fixture'")
+        .execute(&db)
+        .await
+        .unwrap();
+    old.respond.send(Response::answer(LETTER)).ok().unwrap();
+    request(&mut checking)
+        .await
+        .respond
+        .send(Response::answer("[]"))
+        .ok()
+        .unwrap();
+    run.finished().await;
+    let email: i64 = sqlx::query_scalar("SELECT id FROM email WHERE task_id=?")
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    let usage: (String, Option<i64>) =
+        sqlx::query_as("SELECT model,email_id FROM usage WHERE purpose='fact_check'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(usage, ("replacement".into(), Some(email)));
+    task::regenerate(&db, id, Some(email), false, 2)
+        .await
+        .unwrap();
+    run.handle.wake();
+    let rewrite = request(&mut checking).await;
+    sqlx::query("UPDATE model_config SET agreed=0")
+        .execute(&db)
+        .await
+        .unwrap();
+    rewrite.respond.send(Response::answer(LETTER)).ok().unwrap();
+    run.finished().await;
+    let draft = task::draft(
+        &db,
+        &task::TaskEmail {
+            task_id: id,
+            id: email,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(draft.state, email::tasks::DraftState::Review);
+    assert!(matches!(
+        draft.fact_check,
+        Some(email::fact_check::FactCheck::Failed { .. })
+    ));
+    assert!(checking.requests.try_recv().is_err());
+}
