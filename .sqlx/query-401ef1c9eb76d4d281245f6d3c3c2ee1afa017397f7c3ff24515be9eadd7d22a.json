@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET reply_processing_paused_at = ?, reply_processing_pause_reason = ?\n        WHERE reply_processing_paused_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "401ef1c9eb76d4d281245f6d3c3c2ee1afa017397f7c3ff24515be9eadd7d22a"
+}

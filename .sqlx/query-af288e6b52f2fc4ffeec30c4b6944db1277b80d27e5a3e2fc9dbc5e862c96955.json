@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET reply_processing_claim = reply_processing_claim + 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "af288e6b52f2fc4ffeec30c4b6944db1277b80d27e5a3e2fc9dbc5e862c96955"
+}

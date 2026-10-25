@@ -39,6 +39,7 @@ pub async fn open(dir: &Path) -> Result<Context, Error> {
         sender: Default::default(),
         receiver: Default::default(),
         matcher: Default::default(),
+        reply_processor: Default::default(),
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),

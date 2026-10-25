@@ -8,6 +8,8 @@ export type Affiliation = { university: string | null, school: string | null, de
 
 export type AffiliationAddition = { before: Affiliation | null, added: Affiliation, };
 
+export type AiReplyOutcome = { enabled: boolean, };
+
 export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
@@ -138,7 +140,11 @@ export type Field = "name" | "email" | "university" | "school" | "department" | 
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
 
-export type Filter = { unansweredDays?: number, status?: ContactStatus, keyword?: string, };
+export type Filter = { unansweredDays?: number, status?: ContactStatus,
+/**
+ * Applied only with status = replied.
+ */
+replyOutcome?: ReplyOutcomeFilter, keyword?: string, };
 
 export type FirstDraft = { subject: string | null, bodyMd: string | null,
 /**
@@ -299,7 +305,11 @@ export type MentorQuery = {
 /**
  * All mentors when absent.
  */
-status?: ContactStatus, keyword?: string, unansweredDays?: number,
+status?: ContactStatus,
+/**
+ * Only applied with status = replied; ignored for other contact states.
+ */
+replyOutcome?: ReplyOutcomeFilter, keyword?: string, unansweredDays?: number,
 /**
  * Starts at 1.
  */
@@ -313,7 +323,7 @@ affiliation: Affiliation | null, affiliationCount: number,
 /**
  * The start of the research description, enough for the two lines the list shows.
  */
-research: string | null, matchState: MatchSummary, contact: Contact, tags: Array<Tag>, };
+research: string | null, matchState: MatchSummary, contact: Contact, outcome: ReplyOutcome | null, tags: Array<Tag>, };
 
 export type MergePreview = { emails: number, affiliations: number, discardedDrafts: Array<DraftKind>, };
 
@@ -329,7 +339,7 @@ quote: string | null,
 /**
  * Only its start was read, which may leave out some of the text.
  */
-truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
+truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, outcome: ReplyOutcome | null, marking: OutcomeMarking | null, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
@@ -425,6 +435,8 @@ export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
 
+export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
+
 export type PageKind = "entry" | "list" | "profile" | "enrich_profile" | "enrich_child";
 
 export type PageState = "queued" | "running" | "done";
@@ -473,6 +485,18 @@ export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, a
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
 export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+
+export type ReplyMessage = { messageId: number, };
+
+export type ReplyOutcome = "interested" | "no_slot" | "declined" | "unclear";
+
+export type ReplyOutcomeEdit = { messageId: number, outcome: ReplyOutcome, };
+
+export type ReplyOutcomeFilter = "interested" | "no_slot" | "declined" | "unclear" | "unmarked";
+
+export type ReplyProcessing = { remaining: number, failed: number, pause: ReplyProcessingPause | null, };
+
+export type ReplyProcessingPause = { at: number, reason: string, };
 
 export type ReplyTarget = { id: number, messageId: string | null, fromAddress: string, fromName: string | null, subject: string | null, sentAt: number, };
 
@@ -721,6 +745,12 @@ export interface Operations {
   writeLetter: { input: FirstDraftEdit; output: Letter };
   checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
+  getAiReplyOutcome: { input: Nothing; output: boolean };
+  setAiReplyOutcome: { input: AiReplyOutcome; output: null };
+  setReplyOutcome: { input: ReplyOutcomeEdit; output: null };
+  retryReplyOutcome: { input: ReplyMessage; output: null };
+  replyProcessing: { input: Nothing; output: ReplyProcessing };
+  resumeReplyProcessing: { input: Nothing; output: null };
   listCorrespondence: { input: MentorId; output: Array<Entry> };
   markRead: { input: MentorId; output: null };
   withdrawEmail: { input: EmailId; output: null };

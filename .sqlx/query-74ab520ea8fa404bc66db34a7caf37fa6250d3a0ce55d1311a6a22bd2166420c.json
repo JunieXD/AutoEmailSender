@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id FROM mentor m\n         WHERE m.trashed_at IS NULL\n           AND (?1 IS NULL\n                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))\n                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))\n           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))\n           AND (?5 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?5))\n           AND (?1 IS NOT 'replied' OR ?6 IS NULL OR m.id IN (\n             SELECT mentor_id FROM mentor_contact WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?6))\n         ORDER BY m.match_score DESC, m.id\n         LIMIT ?3 OFFSET ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "74ab520ea8fa404bc66db34a7caf37fa6250d3a0ce55d1311a6a22bd2166420c"
+}

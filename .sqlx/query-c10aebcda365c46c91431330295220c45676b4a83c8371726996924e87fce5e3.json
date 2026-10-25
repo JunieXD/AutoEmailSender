@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT email_id AS \"email_id?: i64\", subject AS \"subject?: String\", body AS \"body?: String\" FROM (\n        SELECT e.id AS email_id, e.subject, e.body_md AS body, r.key AS priority, 1 AS source\n        FROM json_each(?1) r JOIN email e ON e.message_id = r.value OR e.copy_message_id = r.value\n        WHERE e.sent_at IS NOT NULL\n        UNION ALL\n        SELECT NULL, m.subject, m.body_text, r.key, 0\n        FROM json_each(?1) r JOIN message m ON m.message_id = r.value WHERE m.kind = 'sent'\n        ) ORDER BY priority, source DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "email_id?: i64",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "subject?: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body?: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "c10aebcda365c46c91431330295220c45676b4a83c8371726996924e87fce5e3"
+}

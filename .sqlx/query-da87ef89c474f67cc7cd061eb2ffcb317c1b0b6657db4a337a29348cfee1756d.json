@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM reply_processing WHERE action = 'outcome'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "da87ef89c474f67cc7cd061eb2ffcb317c1b0b6657db4a337a29348cfee1756d"
+}

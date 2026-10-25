@@ -73,8 +73,13 @@ CREATE TABLE profile (
   match_basis_changed_at INTEGER,
   match_paused_at INTEGER,
   match_pause_reason TEXT,
+  reply_processing_paused_at INTEGER,
+  reply_processing_pause_reason TEXT,
+  reply_processing_claim INTEGER NOT NULL DEFAULT 0 CHECK (reply_processing_claim >= 0),
   background_notifications INTEGER NOT NULL DEFAULT 1 CHECK (background_notifications IN (0, 1)),
-  CHECK (match_paused_at IS NOT NULL OR match_pause_reason IS NULL)
+  CHECK (match_paused_at IS NOT NULL OR match_pause_reason IS NULL),
+  CHECK ((reply_processing_paused_at IS NULL) = (reply_processing_pause_reason IS NULL)),
+  CHECK (reply_processing_pause_reason IS NULL OR reply_processing_pause_reason <> '')
 ) STRICT;
 
 -- The one profile, with defaults.
@@ -352,6 +357,18 @@ CREATE TABLE message_mentor (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX message_mentor_message ON message_mentor (message_id);
 
+CREATE TABLE reply_processing (
+  message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  action TEXT NOT NULL CHECK (action IN ('outcome')),
+  queued_at INTEGER NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'failed')),
+  claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0),
+  error TEXT,
+  PRIMARY KEY (message_id, action),
+  CHECK ((state = 'failed') = (error IS NOT NULL)),
+  CHECK (error IS NULL OR error <> '')
+) STRICT, WITHOUT ROWID;
+
 CREATE TABLE todo (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
@@ -535,9 +552,11 @@ CREATE TABLE mentor_contact (
   last_out_at INTEGER,
   last_reply_at INTEGER,
   contact_count INTEGER NOT NULL,
-  unread INTEGER NOT NULL CHECK (unread IN (0, 1))
+  unread INTEGER NOT NULL CHECK (unread IN (0, 1)),
+  outcome TEXT CHECK (outcome IN ('interested', 'no_slot', 'declined', 'unclear')),
+  CHECK (status = 'replied' OR outcome IS NULL)
 ) STRICT;
-CREATE INDEX mentor_contact_status ON mentor_contact (status);
+CREATE INDEX mentor_contact_status ON mentor_contact (status, outcome);
 CREATE INDEX mentor_contact_unread ON mentor_contact (mentor_id) WHERE unread = 1;
 
 -- The one definition of the contact summary (docs/data-model.md#联系状态). Each column filters by
@@ -549,7 +568,7 @@ SELECT mentor_id,
             WHEN last_bounced_at = last_out_at THEN 'bounced'
             ELSE 'contacted' END AS status,
        last_out_at, last_reply_at, contact_count,
-       coalesce(last_unread_at > coalesce(last_out_at, 0), 0) AS unread
+       coalesce(last_unread_at > coalesce(last_out_at, 0), 0) AS unread, outcome
 FROM (SELECT m.id AS mentor_id,
              (SELECT max(at) FROM (
                 SELECT max(sent_at) AS at FROM email
@@ -570,7 +589,10 @@ FROM (SELECT m.id AS mentor_id,
              (SELECT max(msg.sent_at) FROM message_mentor mm JOIN message msg ON msg.id = mm.message_id
               WHERE mm.mentor_id = m.id AND msg.kind = 'reply') AS last_reply_at,
              (SELECT max(msg.sent_at) FROM message_mentor mm JOIN message msg ON msg.id = mm.message_id
-              WHERE mm.mentor_id = m.id AND msg.kind = 'reply' AND msg.read_at IS NULL) AS last_unread_at
+              WHERE mm.mentor_id = m.id AND msg.kind = 'reply' AND msg.read_at IS NULL) AS last_unread_at,
+             (SELECT msg.outcome FROM message_mentor mm JOIN message msg ON msg.id = mm.message_id
+              WHERE mm.mentor_id = m.id AND msg.kind = 'reply' AND msg.outcome IS NOT NULL
+              ORDER BY msg.sent_at DESC, msg.id DESC LIMIT 1) AS outcome
       FROM mentor m)
 WHERE last_out_at IS NOT NULL OR last_reply_at IS NOT NULL;
 
@@ -606,7 +628,7 @@ CREATE TRIGGER message_mentor_au AFTER UPDATE ON message_mentor BEGIN
   INSERT INTO mentor_contact SELECT * FROM mentor_contact_live WHERE mentor_id IN (OLD.mentor_id, NEW.mentor_id);
 END;
 
-CREATE TRIGGER message_au AFTER UPDATE OF kind, sent_at, read_at, in_reply_to ON message BEGIN
+CREATE TRIGGER message_au AFTER UPDATE OF kind, sent_at, read_at, in_reply_to, outcome ON message BEGIN
   DELETE FROM mentor_contact
   WHERE mentor_id IN (SELECT mentor_id FROM message_mentor WHERE message_id = NEW.id);
   INSERT INTO mentor_contact SELECT * FROM mentor_contact_live

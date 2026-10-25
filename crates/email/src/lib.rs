@@ -1,6 +1,7 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
 pub mod follow_up;
+pub mod outcome;
 pub mod schedule;
 pub mod tasks;
 

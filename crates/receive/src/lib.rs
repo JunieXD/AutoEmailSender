@@ -16,6 +16,7 @@ use tokio::sync::{Mutex, MutexGuard, Notify, watch};
 use ts_rs::TS;
 
 mod mail;
+pub mod outcome;
 pub mod quote;
 
 const MINUTE: i64 = 60_000;
@@ -114,6 +115,7 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
             // while.
             Some(Err(e)) => {
                 tracing::error!("receive: {e}");
+                changed(Vec::new());
                 shared
                     .ended
                     .send_modify(|ended| ended.error = Some(Arc::new(e)));
@@ -685,6 +687,7 @@ impl Session<'_> {
                 email::follow_up::cancel_replied(tx, mentor, self.now).await?;
             }
         }
+        email::outcome::enqueue(tx, id, self.now).await?;
         Ok(())
     }
 
@@ -808,6 +811,8 @@ pub enum MessageKind {
     Reply {
         unread: bool,
         can_reply: bool,
+        outcome: Option<email::outcome::ReplyOutcome>,
+        marking: Option<email::outcome::OutcomeMarking>,
     },
     AutoReply,
     /// Sent to the mentor by the user from elsewhere, such as the mailbox's website.
@@ -820,8 +825,10 @@ pub enum MessageKind {
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at, m.read_at,
-             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS "truncated: bool"
+             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS "truncated: bool",
+             m.outcome AS "outcome: email::outcome::ReplyOutcome", q.state, q.error
            FROM message m JOIN message_mentor mm ON mm.message_id = m.id
+           LEFT JOIN reply_processing q ON q.message_id = m.id AND q.action = 'outcome'
            WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id"#,
         mentor_id
     )
@@ -844,6 +851,18 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx:
                     Kind::Reply => MessageKind::Reply {
                         unread: r.read_at.is_none(),
                         can_reply: r.message_id.is_some(),
+                        outcome: r.outcome,
+                        marking: match r.state.as_deref() {
+                            Some("queued" | "running") => {
+                                Some(email::outcome::OutcomeMarking::Marking)
+                            }
+                            Some("failed") => Some(email::outcome::OutcomeMarking::Failed {
+                                reason: r
+                                    .error
+                                    .unwrap_or_else(|| unreachable!("failed work has an error")),
+                            }),
+                            _ => None,
+                        },
                     },
                     Kind::AutoReply => MessageKind::AutoReply,
                     Kind::Sent => MessageKind::Sent {

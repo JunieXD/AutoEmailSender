@@ -12,6 +12,7 @@ use test_fixtures::mail::first_email;
 
 fn query(status: Option<ContactStatus>, keyword: Option<&str>, page: u32) -> MentorQuery {
     MentorQuery {
+        reply_outcome: None,
         unanswered_days: None,
         status,
         keyword: keyword.map(Into::into),
@@ -115,6 +116,7 @@ async fn unanswered_filter_uses_latest_sent_time_and_ignores_automatic_replies(d
     let rows = mentor::export::export(
         &db,
         &mentor::export::Scope::Filter(mentor::export::Filter {
+            reply_outcome: None,
             status: q.status,
             keyword: None,
             unanswered_days: q.unanswered_days,
