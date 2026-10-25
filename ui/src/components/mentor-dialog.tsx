@@ -91,6 +91,7 @@ export function MentorDialog<T>({
               <Rows
                 label="别名"
                 add="添加别名"
+                optional
                 items={form.aliases}
                 blank=""
                 onChange={(aliases) => setForm({ ...form, aliases })}
@@ -171,6 +172,7 @@ function Rows<T>({
   label,
   add,
   first,
+  optional = false,
   items,
   blank,
   onChange,
@@ -180,13 +182,15 @@ function Rows<T>({
   add: string;
   /** What marks the first row, and what moves another row first. */
   first?: [mark: string, promote: string];
+  /** Most mentors have none, so an empty list is only its add button. */
+  optional?: boolean;
   items: T[];
   blank: T;
   onChange: (items: T[]) => void;
   children: (item: T, update: (item: T) => void) => ReactNode;
 }) {
   // An empty list shows one blank row to type in.
-  const rows = items.length > 0 ? items : [blank];
+  const rows = items.length > 0 || optional ? items : [blank];
   const several = rows.length > 1;
   const list = useRef<HTMLDivElement>(null);
   // Keyboard and screen reader users stay with the row they moved, the one after the row they took
@@ -197,7 +201,7 @@ function Rows<T>({
   };
   return (
     <div role="group" aria-label={label}>
-      <div className="mb-1.5 text-sm text-muted-foreground">{label}</div>
+      {rows.length > 0 && <div className="mb-1.5 text-sm text-muted-foreground">{label}</div>}
       <div ref={list} className="flex flex-col gap-2">
         {rows.map((item, i) => (
           // Rows have nothing steadier than their place to tell them apart.
@@ -217,7 +221,7 @@ function Rows<T>({
                 {first[1]}
               </Button>
             )}
-            {several && (
+            {(several || optional) && (
               <Button
                 type="button"
                 variant="ghost"
