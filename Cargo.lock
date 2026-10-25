@@ -989,6 +989,7 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "db",
  "ego-tree",
+ "email",
  "encoding_rs",
  "matching",
  "mentor",
