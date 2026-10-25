@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET task_id = NULL\n         WHERE mentor_id = ?2 AND task_id IS NOT NULL\n           AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.task_id = email.task_id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d6a7e6effddbaf38e2ee3697bdad8a279bec969a361f3b4b3680e37c26f6fc82"
+}

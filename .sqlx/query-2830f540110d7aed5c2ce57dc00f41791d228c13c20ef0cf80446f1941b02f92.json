@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT template_subject,template_body_md FROM task WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "template_subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_subject"
+          }
+        }
+      },
+      {
+        "name": "template_body_md",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_body_md"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "2830f540110d7aed5c2ce57dc00f41791d228c13c20ef0cf80446f1941b02f92"
+}

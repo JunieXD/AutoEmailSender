@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'generation_failed', error = ?, generation_queued_at = NULL, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'generating'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "5f2a6d2840907c07e9acf1662c94403a865b8e7f212b991beae1acda9fce6548"
+}

@@ -2,12 +2,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod logs;
+mod save;
 
 use std::error::Error;
 use std::fs::{File, TryLockError};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -37,6 +40,42 @@ async fn export_logs(app: AppHandle) -> Result<bool, String> {
         .map_err(|e| format!("日志未能导出：{e}"))?
         .join("logs");
     logs::export(&app, &dir).map_err(|e| format!("日志未能导出：{e}"))
+}
+
+/// Saves the exported table through the native file picker, away from the async executor.
+#[tauri::command]
+async fn export_mentors(
+    app: AppHandle,
+    ctx: tauri::State<'_, api::Context>,
+    input: api::ExportMentors,
+    file_name: String,
+) -> Result<bool, String> {
+    let extension = match input.format {
+        api::TableFormat::Xlsx => "xlsx",
+        api::TableFormat::Csv => "csv",
+    };
+    let data = api::export_mentors(&ctx, input)
+        .await
+        .map_err(|e| e.message)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(target) = app
+            .dialog()
+            .file()
+            .add_filter("导师表格", &[extension])
+            .set_file_name(format!("{file_name}.{extension}"))
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let path = target
+            .into_path()
+            .map_err(|e| format!("无法保存到这个位置：{e}，请选择其他位置"))?;
+        save::replace(&path, |file| file.write_all(&data))
+            .map_err(|e| format!("表格未能保存：{e}，请检查保存位置是否可写后重试"))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| format!("表格未能导出：{e}，请重试"))?
 }
 
 /// Where the app keeps its data, for the about page.
@@ -77,6 +116,7 @@ fn main() -> tauri::Result<()> {
             call,
             startup_failure,
             export_logs,
+            export_mentors,
             data_location,
             open_data_location
         ])
@@ -146,6 +186,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             }
         },
     ));
+    let model_limit = model::background::Limit::default();
     let matcher = matching::Matcher::default();
     let (ui, done_ui) = (app.clone(), app.clone());
     let matching_notifications_db = db.clone();
@@ -153,6 +194,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         db.clone(),
         net.clone(),
         matcher.clone(),
+        model_limit.clone(),
         move || {
             if let Err(e) = ui.emit("matching-changed", ()) {
                 tracing::warn!("refresh matching: {e}");
@@ -168,14 +210,59 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
+    let generator = task::generation::Generator::default();
+    let (ui, done_ui) = (app.clone(), app.clone());
+    let drafts_db = db.clone();
+    tauri::async_runtime::spawn(task::generation::run(
+        db.clone(),
+        net.clone(),
+        generator.clone(),
+        model_limit.clone(),
+        move || {
+            if let Err(e) = ui.emit("tasks-changed", ()) {
+                tracing::warn!("refresh tasks: {e}");
+            }
+        },
+        move |result| {
+            let (app, db) = (done_ui.clone(), drafts_db.clone());
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = finish_drafts(&app, &db, result).await {
+                    tracing::warn!("draft completion notification: {e}");
+                }
+            });
+        },
+    ));
     Ok(api::Context {
         db,
         net,
         sender,
         receiver,
         matcher,
+        generator,
+        model_limit,
         materials,
     })
+}
+
+async fn finish_drafts(
+    app: &AppHandle,
+    db: &sqlx::SqlitePool,
+    result: task::generation::DraftsFinished,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    if let Some(window) = app.get_webview_window("main")
+        && window.is_focused()?
+    {
+        app.emit("drafts-finished", result)?;
+    } else if profile::background_notifications(db).await? {
+        app.notification()
+            .builder()
+            .title(format!(
+                "任务“{}”的草稿写好了：{} 封，失败 {} 封",
+                result.name, result.generated, result.failed
+            ))
+            .show()?;
+    }
+    Ok(())
 }
 
 async fn finish_matching(

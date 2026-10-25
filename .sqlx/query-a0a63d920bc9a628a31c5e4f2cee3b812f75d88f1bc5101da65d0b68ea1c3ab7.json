@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.name FROM task t JOIN task_material m ON m.task_id = t.id\n         WHERE m.material_id = ? AND m.role = 'reference'\n           AND EXISTS (SELECT 1 FROM email e WHERE e.task_id = t.id AND e.state = 'generating')\n         ORDER BY t.id LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a0a63d920bc9a628a31c5e4f2cee3b812f75d88f1bc5101da65d0b68ea1c3ab7"
+}

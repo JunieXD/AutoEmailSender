@@ -8,7 +8,8 @@
 |---|---|
 | `crates/db` | 迁移和打开数据库 |
 | `crates/net` | 网络：系统代理、TLS 设置 |
-| `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站 |
+| `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站、表格导入导出 |
+| `crates/sheet` | CSV、XLSX、XLS 表格的读写 |
 | `crates/crawl` | 抓取基础：网址边界、HTTP、页面材料、邮箱证据和归属核对、翻页和页面存取 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试 |
 | `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
@@ -20,6 +21,7 @@
 | `crates/receive` | 收信：常驻的收信任务，把邮件归到导师，自动回复、退信和引用的原文 |
 | `crates/check` | 发送前检查：规则和收件域名 |
 | `crates/matching` | 匹配分析：持久队列、结构化结果校验、用量估算 |
+| `crates/task` | 首封任务：固定输入、审核、草稿生成队列 |
 | `crates/writing` | AI 写信：给模型的资料和规则，解析写好的信 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具 |

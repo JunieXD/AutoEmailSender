@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT model_config_id,template_subject,template_body_md FROM task WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "model_config_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "model_config_id"
+          }
+        }
+      },
+      {
+        "name": "template_subject",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_subject"
+          }
+        }
+      },
+      {
+        "name": "template_body_md",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_body_md"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "236ebcc5477615655fcfba6d4bbfdcd838c390dc9e04b64e61959b83e0fe01de"
+}

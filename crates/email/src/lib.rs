@@ -1,5 +1,7 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
+pub mod tasks;
+
 use std::collections::HashMap;
 
 mod reply;
@@ -94,7 +96,7 @@ pub async fn save_first_draft(
 
 /// Attaches these materials, named as their files are now, in place of what the email had. A
 /// material deleted meanwhile is left out, and of two files with one name, the first.
-async fn attach(
+pub async fn attach(
     conn: &mut SqliteConnection,
     email_id: i64,
     materials: &[i64],
@@ -118,7 +120,7 @@ async fn attach(
 }
 
 /// The materials attached to an email, leaving out any deleted since.
-async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<i64>, sqlx::Error> {
+pub async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT material_id AS "material_id!" FROM email_attachment
            WHERE email_id = ? AND material_id IS NOT NULL ORDER BY file_name"#,
@@ -419,7 +421,8 @@ pub async fn withdraw(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::
         "UPDATE email SET state = 'review', planned_at = NULL, mailbox_id = NULL, from_address = NULL,
            to_address = NULL, message_id = NULL, copy_message_id = NULL, sent_at = NULL, error = NULL,
            html = NULL, text = NULL, refs = NULL, updated_at = ?
-         WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL",
+         WHERE id = ? AND state IN ('approved', 'failed') AND resend_of IS NULL
+           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))",
         now,
         id,
     )
@@ -435,6 +438,7 @@ pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Err
     let done = sqlx::query!(
         "UPDATE email SET state = 'approved', planned_at = ?1, error = NULL, updated_at = ?1
          WHERE id = ?2 AND state IN ('failed', 'maybe_sent')
+           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state <> 'stopped'))
            AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
         now,
         id,
@@ -452,7 +456,7 @@ pub async fn resend(db: &SqlitePool, id: i64, now: i64) -> Result<Approved, sqlx
     let Some(again) = sqlx::query_scalar!(
         "INSERT INTO email (mentor_id, task_id, kind, reply_to, resend_of, state, planned_at,
            created_at, updated_at, subject, body_md, html, text, refs)
-         SELECT e.mentor_id, e.task_id, e.kind, e.reply_to, e.id, 'approved', ?2, ?2, ?2,
+         SELECT e.mentor_id, NULL, e.kind, e.reply_to, e.id, 'approved', ?2, ?2, ?2,
            e.subject, e.body_md, e.html, e.text, e.refs
          FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.id = ?1 AND e.state = 'bounced' AND m.trashed_at IS NULL
@@ -557,6 +561,7 @@ pub async fn start_sending(
                ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?3), sent_at = ?4, updated_at = ?4
            WHERE id = ?5 AND state = 'approved'
+             AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
            RETURNING mentor_id, to_address, message_id AS "message_id!", reply_to, refs, subject AS "subject!",
              html AS "html!", text AS "text!""#,
         mailbox_id,

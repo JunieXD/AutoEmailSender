@@ -1,0 +1,71 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.id,t.name,t.state,\n                (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generating') AS remaining,\n                (SELECT count(*) FROM email WHERE task_id = t.id AND model IS NOT NULL AND state NOT IN ('generating','generation_failed','canceled')) AS generated,\n                (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generation_failed') AS failed\n                FROM task t WHERE t.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "remaining",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "generated",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "failed",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "bb7bc4abdee96b5a9f14572a0c1ec257ac1ee0b892b8df1771df0501dd5bc710"
+}

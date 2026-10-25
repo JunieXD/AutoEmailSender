@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'approved', html = ?, text = ?, planned_at = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND trim(coalesce(subject, '')) <> '' AND trim(coalesce(body_md, '')) <> '' AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT mentor_id FROM mentor_email)) AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "9573f33141603fb32a0e9425ed0f22f0e6fa27e7172cd776b3a6ca73c741f768"
+}

@@ -14,6 +14,8 @@ crawl = { version = "3.0.0-alpha.0", path = "../crates/crawl" }
 db.workspace = true
 fastrand = "2.5.0"
 mentor.workspace = true
+sheet.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+task.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -14,11 +14,11 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-[rgb(20_17_16/0.4)] transition-opacity duration-150 data-ending-style:opacity-0 data-starting-style:opacity-0" />
-      <div className="fixed inset-0 z-50 grid place-items-center p-6 phone:p-0">
+      <div className="fixed inset-0 z-50 grid grid-cols-[minmax(0,1fr)] place-items-center p-6 phone:p-0">
         <DialogPrimitive.Popup
           data-slot="dialog-content"
           className={cn(
-            "flex max-h-full w-[660px] max-w-full flex-col rounded-xl bg-background shadow-pop transition-opacity duration-150 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0 phone:h-full phone:w-full phone:rounded-none",
+            "flex max-h-[calc(100dvh-3rem)] min-h-0 w-[660px] max-w-full min-w-0 flex-col rounded-xl bg-background shadow-pop transition-opacity duration-150 outline-none data-ending-style:opacity-0 data-starting-style:opacity-0 phone:h-full phone:max-h-dvh phone:w-full phone:rounded-none",
             className,
           )}
           {...props}

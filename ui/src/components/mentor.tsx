@@ -65,6 +65,11 @@ export const BASIS_CHANGED = "材料或意向研究方向改过，可以重新�
 export function refreshMentors(queryClient: QueryClient) {
   for (const queryKey of [
     ["matchingProgress"],
+    ["getTask"],
+    ["listTasks"],
+    ["listTaskDrafts"],
+    ["getTaskDraft"],
+    ["planTask"],
     ["planMatching"],
     ["listMentors"],
     ["listTrash"],

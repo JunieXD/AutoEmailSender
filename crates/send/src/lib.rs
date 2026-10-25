@@ -93,13 +93,15 @@ pub async fn step(
            ELSE m.mailbox_id END AS own,
            e.kind = 'reply' AS "reply!: bool" FROM email e JOIN mentor m ON m.id = e.mentor_id
          WHERE e.state = 'approved' AND e.planned_at <= ?
+           AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
          ORDER BY e.planned_at, e.id"#,
         at
     )
     .fetch_all(db)
     .await?;
     let mut next = sqlx::query_scalar!(
-        r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?"#,
+        r#"SELECT min(planned_at) AS "at: i64" FROM email WHERE state = 'approved' AND planned_at > ?
+           AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))"#,
         at
     )
     .fetch_one(db)

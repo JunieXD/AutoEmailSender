@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO task_material (task_id,material_id,role) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "a795c4838fecf9ce50e2268712efc95056a633c21b702bb3ce1608c2878b8e14"
+}
