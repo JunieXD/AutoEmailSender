@@ -76,6 +76,7 @@ async fn request(p: &mut Provider) -> provider::Request {
         .unwrap()
 }
 async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
+    profile::set_ai_fact_check(db, false).await.unwrap();
     let config=sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'fixture','',1,0) RETURNING id").bind(address).fetch_one(db).await.unwrap();
     let mut ids = vec![];
     for i in 0..n {

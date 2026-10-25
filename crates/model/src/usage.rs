@@ -19,6 +19,7 @@ pub enum Purpose {
     Match,
     Draft,
     Rewrite,
+    FactCheck,
 }
 
 pub async fn record(
@@ -57,5 +58,34 @@ pub async fn record_crawl(
     now: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!("INSERT INTO usage (at, model_config_id, model, purpose, crawl_id, input_tokens, cached_tokens, output_tokens) VALUES (?, (SELECT id FROM model_config WHERE id = ?), ?, 'crawl', (SELECT id FROM crawl WHERE id = ?), ?, ?, ?)", now, config_id, model, crawl_id, usage.input, usage.cached, usage.output).execute(db).await?;
+    Ok(())
+}
+
+/// Keep billed checks even if their email was deleted while the provider was answering.
+pub async fn record_fact_check(
+    db: &SqlitePool,
+    config_id: i64,
+    model: &str,
+    email_id: i64,
+    usage: Usage,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let purpose = Purpose::FactCheck;
+    sqlx::query!(
+        "INSERT INTO usage (at, model_config_id, model, purpose, email_id,
+           input_tokens, cached_tokens, output_tokens)
+         VALUES (?, (SELECT id FROM model_config WHERE id = ?), ?, ?,
+           (SELECT id FROM email WHERE id = ?), ?, ?, ?)",
+        now,
+        config_id,
+        model,
+        purpose,
+        email_id,
+        usage.input,
+        usage.cached,
+        usage.output,
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }

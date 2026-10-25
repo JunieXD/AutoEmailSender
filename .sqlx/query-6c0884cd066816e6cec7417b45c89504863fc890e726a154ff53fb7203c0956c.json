@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, reply_to AS \"reply_to!\", body_md FROM email\n           WHERE mentor_id = ? AND kind = 'follow_up' AND task_id IS NULL AND state = 'review'",
+  "query": "SELECT id, reply_to AS \"reply_to!\", body_md, fact_check AS \"fact_check: Json<FactCheck>\" FROM email\n           WHERE mentor_id = ? AND kind = 'follow_up' AND task_id IS NULL AND state = 'review'",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "body_md"
           }
         }
+      },
+      {
+        "name": "fact_check: Json<FactCheck>",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "fact_check"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "9926e3b3fa7e6be5cb6ef22217d21e071c006f5e7f3034f0eafd589cb948e364"
+  "hash": "6c0884cd066816e6cec7417b45c89504863fc890e726a154ff53fb7203c0956c"
 }

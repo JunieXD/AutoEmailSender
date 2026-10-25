@@ -153,6 +153,7 @@ function problemText(p: Problem): string {
   if (p.kind === "other_mentor") return `草稿里出现了任务中另一位导师的姓名“${p.name}”，请核对。`;
   if (p.kind === "recently_contacted") return "最近 7 天内已经联系过这位导师，请核对是否需要再次联系。";
   if (p.kind === "no_attachment") return "正文提到了附件，但还没有添加附件。";
+  if (p.kind === "unsupported_claim") return p.quote;
   return `查不到 ${p.domain} 的收信服务器，请核对导师的邮箱地址。`;
 }
 

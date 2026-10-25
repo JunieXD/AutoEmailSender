@@ -8,7 +8,7 @@ export type Affiliation = { university: string | null, school: string | null, de
 
 export type AffiliationAddition = { before: Affiliation | null, added: Affiliation, };
 
-export type ApprovalCandidate = { problems: number, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
+export type ApprovalCandidate = { problems: number, factCheck: FactCheck | null, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
 
@@ -134,13 +134,17 @@ export type Evidence = { url: string, name: string, emails: Array<string>, resea
 
 export type ExportMentors = { scope: Scope, format: TableFormat, note: boolean, };
 
+export type FactCheck = { "state": "completed", findings: Array<Finding>, } | { "state": "failed", reason: string, };
+
 export type Field = "name" | "email" | "university" | "school" | "department" | "title" | "homepage" | "alias" | "research" | "papers" | "sourceUrl" | "tags" | "note";
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
 
 export type Filter = { unansweredDays?: number, status?: ContactStatus, keyword?: string, };
 
-export type FirstDraft = { subject: string | null, bodyMd: string | null,
+export type Finding = { quote: string, reason: string, };
+
+export type FirstDraft = { id: number, factCheck: FactCheck | null, subject: string | null, bodyMd: string | null,
 /**
  * The materials attached, by id.
  */
@@ -158,7 +162,7 @@ export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: 
  */
 attachments: Array<number>, };
 
-export type FollowUpDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: FollowUpTarget | null, };
+export type FollowUpDraft = { factCheck: FactCheck | null, id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: FollowUpTarget | null, };
 
 export type FollowUpEdit = { draftId: number, mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
@@ -447,7 +451,7 @@ export type PreviousLetter = { subject: string | null, sentAt: number, };
 
 export type PreviousPreview = { subject: string | null, sentAt: number, attribution: string, bodyText: string | null, };
 
-export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "no_mail_server", domain: string, };
+export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_salutation", salutation: string, } | { "kind": "no_attachment" } | { "kind": "other_mentor", name: string, } | { "kind": "recently_contacted", count: number, lastAt: number, } | { "kind": "unsupported_claim", quote: string, reason: string, } | { "kind": "no_mail_server", domain: string, };
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, };
 
@@ -468,7 +472,7 @@ export type ReceiveStatus = { receivedAt: number | null, };
 
 export type RenderedApproval = { attachments: Array<number>, id: number, html: string, text: string, subject: string, bodyMd: string, };
 
-export type ReplyDraft = { id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
+export type ReplyDraft = { factCheck: FactCheck | null, id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
 
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
@@ -538,7 +542,7 @@ export type TagName = { id: number, name: string, };
 
 export type TaskApprovals = { taskId: number, emails: Array<RenderedApproval>, };
 
-export type TaskDraft = { id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
+export type TaskDraft = { factCheck: FactCheck | null, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type TaskEmail = { taskId: number, id: number, };
 
@@ -643,6 +647,9 @@ export interface Operations {
   receiveStatus: { input: Nothing; output: ReceiveStatus };
   getBackgroundNotifications: { input: Nothing; output: boolean };
   setBackgroundNotifications: { input: NotificationSetting; output: null };
+  getAiFactCheck: { input: Nothing; output: boolean };
+  setAiFactCheck: { input: NotificationSetting; output: null };
+  factCheckEmail: { input: EmailId; output: FactCheck };
   getReplyNotifications: { input: Nothing; output: boolean };
   setReplyNotifications: { input: NotificationSetting; output: null };
   planMatching: { input: MatchBatch; output: MatchEstimate };
@@ -711,6 +718,7 @@ export interface Operations {
   getReplyDraft: { input: MentorId; output: ReplyDraft | null };
   getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
+  checkFollowUpDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   approveReply: { input: ReplyEmail; output: null };
   writeReply: { input: ReplyDraftEdit; output: Letter };

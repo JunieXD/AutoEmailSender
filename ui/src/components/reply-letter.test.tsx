@@ -65,7 +65,7 @@ vi.mock("@/api/call", () => ({
     if (op === "writeReply" && remote.write) return remote.write(input);
     if (op === "saveReplyDraft") {
       remote.saves.push(input);
-      remote.draft = { ...input, id: 5, target: remote.target };
+      remote.draft = { ...input, id: 5, target: remote.target, factCheck: null };
       return remote.draft;
     }
     if (op === "listCorrespondence") return remote.entries;
@@ -94,7 +94,13 @@ vi.mock("@/api/call", () => ({
       remote.draft = null;
       return null;
     }
-    if (op === "listMaterials" || op === "listPlaceholders" || op === "checkReplyDraft" || op === "listModelProviders")
+    if (
+      op === "listMaterials" ||
+      op === "listPlaceholders" ||
+      op === "checkReplyDraft" ||
+      op === "checkFollowUpDraft" ||
+      op === "listModelProviders"
+    )
       return [];
     if (op === "checkMailDomain") return null;
     if (op === "getLetterStyle")
@@ -216,6 +222,7 @@ it.each([
       waiting: null,
     };
     remote.draft = {
+      factCheck: null,
       id: 5,
       replyTo: remote.target.messageId ?? "",
       bodyMd: "王老师，原回复",
@@ -274,6 +281,7 @@ it.each(["correspondence", "sending plan"])(
       waiting: null,
     };
     remote.withdrawnDraft = {
+      factCheck: null,
       id: email.id,
       replyTo: original.messageId ?? "",
       bodyMd: email.bodyMd,
@@ -328,6 +336,7 @@ it("discards the kept mentor's hidden reply AI when merging, so approving the ad
   const original = remote.target;
   const adoptedTarget = { ...original, id: 2, messageId: "<adopted@example.edu>", subject: "合并来的来信" };
   remote.mergedDraft = {
+    factCheck: null,
     id: 6,
     replyTo: adoptedTarget.messageId,
     bodyMd: "王老师，合并来的回复",

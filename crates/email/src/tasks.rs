@@ -1,6 +1,7 @@
 //! Task email transitions. Claims fence off late model responses after cancellation or regeneration.
+use super::fact_check::FactCheck;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::{SqliteConnection, SqlitePool, types::Json};
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS, sqlx::Type)]
@@ -114,7 +115,7 @@ pub async fn regenerate(
     failed_only: bool,
     now: i64,
 ) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'generating', generation_claim = generation_claim + 1, generation_queued_at = ?, error = NULL, updated_at = ? WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND (state = 'generation_failed' OR (?5 = 0 AND state = 'review')) AND task_id IN (SELECT id FROM task WHERE writer = 'ai' AND state <> 'stopped')", now, now, task, id, failed_only).execute(conn).await?.rows_affected())
+    Ok(sqlx::query!("UPDATE email SET state = 'generating', generation_claim = generation_claim + 1, generation_queued_at = ?, error = NULL, fact_check = NULL, updated_at = ? WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND (state = 'generation_failed' OR (?5 = 0 AND state = 'review')) AND task_id IN (SELECT id FROM task WHERE writer = 'ai' AND state <> 'stopped')", now, now, task, id, failed_only).execute(conn).await?.rows_affected())
 }
 
 pub async fn reapply(
@@ -160,9 +161,11 @@ pub async fn complete(
     subject: &str,
     body: &str,
     model: &str,
+    fact_check: Option<&FactCheck>,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'review', subject = CASE WHEN kind='follow_up' THEN subject ELSE ? END, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'generating'", subject, body, model, now, c.id, c.version).execute(conn).await?.rows_affected() > 0)
+    let fact_check = fact_check.map(Json);
+    Ok(sqlx::query!("UPDATE email SET fact_check = ?, state = 'review', subject = CASE WHEN kind='follow_up' THEN subject ELSE ? END, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'generating'", fact_check, subject, body, model, now, c.id, c.version).execute(conn).await?.rows_affected() > 0)
 }
 
 pub async fn fail(

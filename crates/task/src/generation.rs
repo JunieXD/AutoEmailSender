@@ -27,7 +27,11 @@ pub struct DraftsFinished {
     pub failed: i64,
 }
 enum Outcome {
-    Done(writing::Letter, String),
+    Done(
+        writing::Letter,
+        String,
+        Option<email::fact_check::FactCheck>,
+    ),
     Failed(String),
     Pause(String, Option<Chosen>),
     RateLimit(Duration),
@@ -71,6 +75,13 @@ async fn generate(
         None
     };
     let attachments = email::attached(&mut tx, claim.id).await?;
+    let subject = if t.kind == Kind::FollowUp {
+        sqlx::query_scalar!("SELECT subject FROM email WHERE id = ?", claim.id)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        None
+    };
     tx.commit().await?;
     let Some(m) = mentor::get(db, claim.mentor).await? else {
         return Ok(Outcome::Requeue);
@@ -100,7 +111,31 @@ async fn generate(
     )
     .await;
     Ok(match answer {
-        Ok(l) => Outcome::Done(l, chosen.model),
+        Ok(mut l) => {
+            if let Some(subject) = subject {
+                l.subject = subject;
+            }
+            let fact_check = if profile::ai_fact_check(db).await? {
+                // The configuration or consent may have changed while writing the letter.
+                let result = match model::selected(db, t.model_config_id).await? {
+                    Some(chosen) => {
+                        writing::fact_check::check(db, net, claim.id, &l, &chosen, &refs, now())
+                            .await
+                    }
+                    None => Err(writing::fact_check::Error::NoModel),
+                };
+                Some(match result {
+                    Ok(findings) => email::fact_check::FactCheck::Completed { findings },
+                    Err(writing::fact_check::Error::Db(error)) => return Err(error),
+                    Err(error) => email::fact_check::FactCheck::Failed {
+                        reason: error.message(),
+                    },
+                })
+            } else {
+                None
+            };
+            Outcome::Done(l, chosen.model, fact_check)
+        }
         Err(writing::Error::Model(error)) => match model::background::classify(error) {
             Failure::Pause(reason) => Outcome::Pause(reason, Some(chosen)),
             Failure::RateLimit(wait) => Outcome::RateLimit(wait),
@@ -239,7 +274,7 @@ pub async fn run(
                         let at=now();
                         let applied=loop {
                             let result=match &outcome {
-                                Outcome::Done(l,model)=>emails::complete(&mut *connection(&db).await,claim,&l.subject,&l.body_md,model,at).await,
+                                Outcome::Done(l,model,fact_check)=>emails::complete(&mut *connection(&db).await,claim,&l.subject,&l.body_md,model,fact_check.as_ref(),at).await,
                                 Outcome::Failed(reason)=>emails::fail(&mut *connection(&db).await,claim,reason,at).await,
                                 Outcome::Pause(reason,config)=>requeue(&db,claim,Some((reason,config.as_ref())),at).await,
                                 Outcome::RateLimit(_)|Outcome::Requeue=>requeue(&db,claim,None,at).await,

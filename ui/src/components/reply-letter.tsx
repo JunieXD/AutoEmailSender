@@ -213,8 +213,8 @@ function Composer({
   }, [selection]);
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const checks = useQuery({
-    queryKey: ["checkReplyDraft", letter, mentor.name, mentor.aliases],
-    queryFn: () => call("checkReplyDraft", letter),
+    queryKey: [followUp ? "checkFollowUpDraft" : "checkReplyDraft", letter, mentor.name, mentor.aliases],
+    queryFn: () => call(followUp ? "checkFollowUpDraft" : "checkReplyDraft", letter),
     placeholderData: keepPreviousData,
     gcTime: 0,
   });

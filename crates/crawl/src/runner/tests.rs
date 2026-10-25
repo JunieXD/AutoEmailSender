@@ -773,8 +773,8 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             .is_err()
     );
     tokio::time::resume();
-    let (mut matches, mut drafts, mut routes, mut profiles) = (0, 0, 0, 0);
-    for _ in 0..21 {
+    let (mut matches, mut drafts, mut routes, mut profiles, mut checks) = (0, 0, 0, 0, 0);
+    for _ in 0..27 {
         // A route's next call needs its response first; do not hold that response while
         // waiting for a replacement call after the other two queues have drained.
         let r = if active.is_empty() {
@@ -797,6 +797,9 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             answer["names"] = json!(["张三"]);
             answer["next"] = json!([]);
             answer.to_string()
+        } else if system.starts_with("核对学生") {
+            checks += 1;
+            "[]".into()
         } else if system.contains("分数不是录取") {
             matches += 1;
             r#"{"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]}"#.into()
@@ -806,7 +809,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         };
         r.respond.send(Response::answer(&answer)).ok().unwrap();
     }
-    assert_eq!((matches, drafts, routes, profiles), (6, 6, 3, 3));
+    assert_eq!((matches, drafts, routes, profiles, checks), (6, 6, 3, 3, 6));
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let completed = sqlx::query_scalar::<_, i64>(

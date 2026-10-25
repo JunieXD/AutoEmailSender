@@ -22,7 +22,7 @@
 | `crates/check` | 发送前检查：规则和收件域名 |
 | `crates/matching` | 匹配分析：持久队列、结构化结果校验、用量估算 |
 | `crates/task` | 首封和追问任务：固定输入、审核、草稿生成队列 |
-| `crates/writing` | AI 写信：给模型的资料和规则，解析写好的信 |
+| `crates/writing` | AI 写信和核对：给模型的资料和规则，校验模型输出 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；界面用的 TypeScript 类型从这里生成 |
