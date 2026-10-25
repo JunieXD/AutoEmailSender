@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl SET reported_at=? WHERE id=?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e9fbbd2eef5852c997d123e90c2f445a2d848769a1e9441b573f0caa57b09a7f"
+}

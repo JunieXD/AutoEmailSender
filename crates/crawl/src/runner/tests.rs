@@ -278,8 +278,8 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
     ));
     changed_until(&db, crawl, &mut events, "done").await;
     let result = finished.recv().await.unwrap();
-    assert_eq!(result.candidates, 3);
-    assert_eq!(result.failed, 2);
+    assert!(result.message.contains("3 位候选"));
+    assert!(result.message.contains("2 个页面未打开"));
     let candidates = review::list(
         &db,
         &CandidateQuery {
@@ -686,6 +686,12 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     }
     let urls: Vec<_> = (0..3).map(|n| site.url(&format!("/p{n}"))).collect();
     queue::start(&db, &urls, config, 1).await.unwrap();
+    let mut enriched = Vec::new();
+    for n in 0..3 {
+        let (_, id) = enrichment::candidate(&db, &site, &format!("/p{n}")).await;
+        enriched.push(id);
+    }
+    crate::enrich::start(&db, &enriched, 1).await.unwrap();
     let mut ids = Vec::new();
     for n in 0..6 {
         ids.push(
@@ -768,7 +774,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     );
     tokio::time::resume();
     let (mut matches, mut drafts, mut routes, mut profiles) = (0, 0, 0, 0);
-    for _ in 0..18 {
+    for _ in 0..21 {
         // A route's next call needs its response first; do not hold that response while
         // waiting for a replacement call after the other two queues have drained.
         let r = if active.is_empty() {
@@ -786,6 +792,11 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         } else if system.starts_with("你整理一位") {
             profiles += 1;
             person("张三", "a@school.example.edu").to_string()
+        } else if system.starts_with("你补全指定") {
+            let mut answer = person("张三", "a@school.example.edu");
+            answer["names"] = json!(["张三"]);
+            answer["next"] = json!([]);
+            answer.to_string()
         } else if system.contains("分数不是录取") {
             matches += 1;
             r#"{"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]}"#.into()
@@ -796,6 +807,22 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         r.respond.send(Response::answer(&answer)).ok().unwrap();
     }
     assert_eq!((matches, drafts, routes, profiles), (6, 6, 3, 3));
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let completed = sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM candidate WHERE enrich='done' AND emails!='[]'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap();
+            if completed == 3 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     crawl.abort();
     matching.abort();
     writing.abort();
@@ -1087,7 +1114,11 @@ async fn a_run_with_only_failed_pages_can_retry_without_losing_its_page(db: Sqli
     save(&db, &claim, &Outcome::Failed("读取网页超时，请重试".into()))
         .await
         .unwrap();
-    assert_eq!(finish(&db).await.unwrap()[0].failed, 1);
+    assert!(
+        finish(&db, now()).await.unwrap()[0]
+            .message
+            .contains("1 个页面未打开")
+    );
     assert_eq!(
         queue::list(&db, 1).await.unwrap()[0].state,
         queue::CrawlState::Failed
@@ -2579,7 +2610,7 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
             assert!(matches!(outcome, Outcome::Failed(ref reason) if reason.contains("姓名")));
         }
         save(&db, &c, &outcome).await.unwrap();
-        finish(&db).await.unwrap();
+        finish(&db, now()).await.unwrap();
         let detail = queue::detail(&db, id, 1).await.unwrap().unwrap();
         assert_eq!(
             detail.pages[0].status,
@@ -2706,7 +2737,7 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
         };
         let (outcome, ()) = tokio::join!(read, answer);
         save(&db, &fresh, &outcome.unwrap()).await.unwrap();
-        finish(&db).await.unwrap();
+        finish(&db, now()).await.unwrap();
     }
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -3000,3 +3031,5 @@ async fn candidate_categories_do_not_depend_on_other_rows_on_the_page(db: Sqlite
         assert_eq!(page.candidates[0].category, filter);
     }
 }
+
+mod enrichment;

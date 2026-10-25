@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=?1 AND (?2 IS NULL OR id=?2) AND candidate_id IS NULL AND status!='success') AS \"present!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "present!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "47f7ff3269fb80c224feb6e1a2b7348cc11dc01bb390fdda2608e2e9248e0cb3"
+}

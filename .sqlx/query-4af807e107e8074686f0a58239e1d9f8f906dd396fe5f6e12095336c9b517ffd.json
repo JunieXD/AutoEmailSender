@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM crawl_page WHERE candidate_id=?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4af807e107e8074686f0a58239e1d9f8f906dd396fe5f6e12095336c9b517ffd"
+}

@@ -39,7 +39,7 @@ export function Shell() {
     const crawlChanged = listen("crawl-changed", () => refreshCrawls(queryClient));
     const crawlFinished = listen<CrawlFinished>("crawl-finished", ({ payload: p }) => {
       refreshCrawls(queryClient);
-      setCompleted(`抓取完成：找到 ${p.candidates} 位候选，${p.failed} 个页面未打开`);
+      setCompleted(p.message);
     });
     const stop = listen("matching-changed", () => refreshMentors(queryClient));
     const done = listen<MatchFinished>("matching-finished", ({ payload: p }) => {
@@ -249,7 +249,9 @@ function Background() {
             {crawling.map((c) => (
               <div key={c.id} className="py-2">
                 <Link to="/find" search={findSearch({ tab: "crawl", detail: c.id })}>
-                  抓取 #{c.id} · 已读 {c.pages} 页，{c.candidates} 位候选
+                  {c.stage === "enrich"
+                    ? `信息补全 · 还剩 ${c.enrichRemaining} 位`
+                    : `抓取 #${c.id} · 已读 ${c.pages} 页，${c.candidates} 位候选${c.enrichRemaining > 0 ? ` · 信息补全还剩 ${c.enrichRemaining} 位` : ""}`}
                 </Link>
                 <button className="ml-2 text-brand-text" onClick={() => pauseCrawl.mutate(c.id)}>
                   暂停

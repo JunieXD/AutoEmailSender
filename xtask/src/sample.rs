@@ -471,6 +471,40 @@ pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
         sqlx::query("INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,research,source_url,match_names) VALUES (?,'pending','none',?,?,'[]','机器学习与智能系统','https://example.edu.cn/faculty',?)").bind(id).bind(&name).bind(sqlx::types::Json(emails)).bind(sqlx::types::Json(vec![mentor::intake::comparable(&name)])).execute(&mut *tx).await?;
     }
     sqlx::query("INSERT INTO crawl (kind,start_urls,state,created_at,error) VALUES ('site','[\"https://example.edu.cn/teachers\"]','paused',?,'模型额度不足，请补充额度后继续')").bind(at).execute(&mut *tx).await?;
+    for (name, state, changes, error) in [
+        ("正在补全的导师", "queued", serde_json::json!([]), None),
+        (
+            "补全完成的导师",
+            "done",
+            serde_json::json!([{"field":"email","value":["enriched@example.edu.cn"]},{"field":"research","value":"计算机视觉"}]),
+            None,
+        ),
+        (
+            "未补到资料的导师",
+            "done",
+            serde_json::json!([]),
+            Some("页面上没有可补充的资料"),
+        ),
+    ] {
+        let url = format!(
+            "https://example.edu.cn/people/{state}/{}",
+            if error.is_some() { "empty" } else { "profile" }
+        );
+        let candidate:i64=sqlx::query_scalar("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,emails,homepages,research,enrich_changes,enrich_error,match_names) VALUES(?,?,'pending',?,?,?,?,?,?,?,?) RETURNING id")
+            .bind(id).bind(&url).bind(state).bind(name)
+            .bind(sqlx::types::Json(if state=="done" && error.is_none(){vec!["enriched@example.edu.cn"]}else{vec![]}))
+            .bind(sqlx::types::Json(vec![&url])).bind(if state=="done" && error.is_none(){Some("计算机视觉")}else{None})
+            .bind(sqlx::types::Json(changes)).bind(error).bind(sqlx::types::Json(vec![mentor::intake::comparable(name)]))
+            .fetch_one(&mut *tx).await?;
+        if state == "queued" {
+            sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,scope_url,kind,mode,status,error,work_state) VALUES(?,?,?,?,'enrich_profile','http','failed','尚未读取','queued')")
+                .bind(id).bind(candidate).bind(&url).bind(&url).execute(&mut *tx).await?;
+            sqlx::query("UPDATE crawl SET state='paused',finished_at=NULL WHERE id=?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     tx.commit().await?;
     Ok(())
 }

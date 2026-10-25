@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM crawl_page WHERE work_state!='done' AND candidate_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "47d4db68b9b19255bafdd4f37096b8708441a5124d9f08e149cca8c2e5b1ed74"
+}

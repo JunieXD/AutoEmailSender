@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate SET enrich='none' WHERE crawl_id=? AND enrich IN ('queued','running')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "753ce54ed6eb08302eabd56207b33086ad3e4ce960eb571f12410ff540d2d8d3"
+}

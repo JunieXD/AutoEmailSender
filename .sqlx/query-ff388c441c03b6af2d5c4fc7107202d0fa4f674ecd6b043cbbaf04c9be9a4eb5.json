@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: PageKind\", mode AS \"method: PageMethod\",\n             status AS \"status: PageStatus\", error, fetched_at AS \"fetched_at!\"\n           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND fetched_at IS NOT NULL",
+  "query": "SELECT id, kind AS \"kind: PageKind\", mode AS \"method: PageMethod\",\n             status AS \"status: PageStatus\", error, fetched_at AS \"fetched_at!\"\n           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL AND fetched_at IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -82,5 +82,5 @@
       true
     ]
   },
-  "hash": "fafc56adec3e299bbf89135215342fcc56ec84230269025906363024cb72a728"
+  "hash": "ff388c441c03b6af2d5c4fc7107202d0fa4f674ecd6b043cbbaf04c9be9a4eb5"
 }

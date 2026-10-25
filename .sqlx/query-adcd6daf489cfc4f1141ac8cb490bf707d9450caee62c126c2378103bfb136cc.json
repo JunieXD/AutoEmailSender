@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT evidence AS \"evidence: Json<Vec<review::Evidence>>\" FROM candidate WHERE id=?",
+  "describe": {
+    "columns": [
+      {
+        "name": "evidence: Json<Vec<review::Evidence>>",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "evidence"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "adcd6daf489cfc4f1141ac8cb490bf707d9450caee62c126c2378103bfb136cc"
+}
