@@ -677,8 +677,7 @@ fn segments_preserve_blocks_and_external_output_is_checked() {
             "甲".repeat(4000),
             "乙".repeat(4000)
         ),
-    )
-    .unwrap();
+    );
     let segments = extract::segments(&m);
     assert_eq!(segments.len(), 2);
     assert!(
@@ -1814,8 +1813,7 @@ async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
     let material = crate::parse(
         &site.url("/"),
         &format!("<a href='{}'>张三</a>", old.as_str()),
-    )
-    .unwrap();
+    );
     let scope = Scope::new(&site.url("/"));
     let listed = extract::listed(
         &material,
@@ -3201,7 +3199,7 @@ async fn deleting_a_crawl_removes_pages_and_pending_candidates_but_keeps_reviewe
     let model = config(&db, "http://127.0.0.1:1").await;
     let crawl = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
-    let material = crate::parse(&site.url("/"), "<p>导师名单</p>").unwrap();
+    let material = crate::parse(&site.url("/"), "<p>导师名单</p>");
     save_material(&db, &claim, &material, PageMethod::Http)
         .await
         .unwrap();

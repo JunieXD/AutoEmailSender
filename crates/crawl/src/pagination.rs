@@ -1,7 +1,8 @@
 use regex::Regex;
 use scraper::{ElementRef, Selector};
 
-use crate::{CrawlError, PageUrl, Pagination, page::visible_text};
+use crate::{PageUrl, Pagination, page::visible_text};
+use std::sync::LazyLock;
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -183,17 +184,20 @@ struct Context<'a> {
     last_page: Option<u32>,
 }
 
-pub(crate) fn extract(
-    controls: &[Control<'_>],
-    url: &PageUrl,
-    has_scripts: bool,
-) -> Result<Pagination, CrawlError> {
-    let current = super::page::selector(
-        ".curr_page, .current_page, .current-page, .current, [aria-current='page']",
-    )?;
-    let total = super::page::selector(".all_pages, .total_pages, .total-pages")?;
-    let page_counts = Regex::new(r"(?:第\s*)?(\d+)\s*(?:页\s*)?/\s*(?:共\s*)?(\d+)\s*页?")
-        .map_err(|e| CrawlError::Parse(e.to_string()))?;
+static CURRENT: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(".curr_page, .current_page, .current-page, .current, [aria-current='page']")
+        .unwrap_or_else(|_| unreachable!("fixed current page selector is valid"))
+});
+static TOTAL: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(".all_pages, .total_pages, .total-pages")
+        .unwrap_or_else(|_| unreachable!("fixed total pages selector is valid"))
+});
+static PAGE_COUNTS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:第\s*)?(\d+)\s*(?:页\s*)?/\s*(?:共\s*)?(\d+)\s*页?")
+        .unwrap_or_else(|_| unreachable!("fixed page count pattern is valid"))
+});
+
+pub(crate) fn extract(controls: &[Control<'_>], url: &PageUrl, has_scripts: bool) -> Pagination {
     let mut contexts: Vec<Context<'_>> = Vec::new();
     let mut pagination = Pagination::default();
     for control in controls {
@@ -237,9 +241,9 @@ pub(crate) fn extract(
                     let marked = marked_container(element);
                     let counts = (marked || group)
                         .then(|| {
-                            number(&current).zip(number(&total)).or_else(|| {
+                            number(&CURRENT).zip(number(&TOTAL)).or_else(|| {
                                 let text = visible_text(element);
-                                let found = page_counts.captures(&text)?;
+                                let found = PAGE_COUNTS.captures(&text)?;
                                 Some((found[1].parse().ok()?, found[2].parse().ok()?))
                             })
                         })
@@ -249,7 +253,7 @@ pub(crate) fn extract(
                     if recognized {
                         numbers.extend(
                             element
-                                .select(&current)
+                                .select(&CURRENT)
                                 .filter_map(|e| visible_text(e).parse::<u32>().ok()),
                         );
                         numbers.sort_unstable();
@@ -330,7 +334,7 @@ pub(crate) fn extract(
             }
         }
     }
-    Ok(pagination)
+    pagination
 }
 
 fn javascript_control(href: &str, has_scripts: bool) -> bool {

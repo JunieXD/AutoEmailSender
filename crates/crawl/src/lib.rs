@@ -30,7 +30,6 @@ pub enum CrawlError {
     Status(u16),
     ContentType,
     Http(reqwest::Error),
-    Parse(String),
     Worker(tokio::task::JoinError),
 }
 
@@ -45,7 +44,6 @@ impl std::fmt::Display for CrawlError {
             Self::Status(code) => write!(f, "page returned HTTP {code}"),
             Self::ContentType => f.write_str("response is not an HTML or text page"),
             Self::Http(error) => write!(f, "fetch page: {error}"),
-            Self::Parse(error) => write!(f, "parse page: {error}"),
             Self::Worker(error) => write!(f, "page worker: {error}"),
         }
     }
@@ -74,9 +72,7 @@ impl CrawlError {
             }
             Self::ContentType => "这个地址返回的不是网页，请改用名单页或导师个人页。".into(),
             Self::Http(_) => "连不上网页。请检查网络和系统代理，稍后重试。".into(),
-            Self::Parse(_) | Self::Worker(_) => {
-                "读取网页内容失败，请重试；一直失败时请导出日志。".into()
-            }
+            Self::Worker(_) => "读取网页内容失败，请重试；一直失败时请导出日志。".into(),
         }
     }
 }

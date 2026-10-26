@@ -148,8 +148,7 @@ impl Pages {
         let mut material =
             tokio::task::spawn_blocking(move || crate::parse_rendered(&url, &rendered.html))
                 .await
-                .map_err(|e| ReadError::Failed(crate::CrawlError::Worker(e).message()))?
-                .map_err(|e| ReadError::Failed(e.message()))?;
+                .map_err(|e| ReadError::Failed(crate::CrawlError::Worker(e).message()))?;
         // Interactive pagination remains present after rendering, and is now replayable.
         if material.needs_browser == Some(crate::BrowserReason::Pagination)
             && !material.pagination.buttons.is_empty()
