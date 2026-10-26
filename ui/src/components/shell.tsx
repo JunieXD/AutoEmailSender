@@ -248,6 +248,11 @@ function useBackground() {
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
     emails: scheduled.data?.pending ?? 0,
     mailboxes: mailboxes.data?.flatMap(({ id, address, pause }) => (pause ? [{ id, address, pause }] : [])) ?? [],
+    // A round that could not reach a mailbox still counts as received; the reason stays on the mailbox.
+    unreceived:
+      mailboxes.data?.flatMap(({ id, address, receiveError }) =>
+        receiveError ? [{ id, address, receiveError }] : [],
+      ) ?? [],
     paused: tasks.data?.filter((t) => t.state === "paused") ?? [],
     crawlsPending: crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [],
     crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
@@ -286,6 +291,7 @@ function useBackground() {
       (work.storage ? 1 : 0) +
       (work.emails > 0 ? 1 : 0) +
       work.mailboxes.length +
+      work.unreceived.length +
       work.paused.length +
       work.crawlsPending.length +
       (work.matching > 0 && work.matchingPause ? 1 : 0) +
@@ -377,6 +383,11 @@ function Background({ className }: { className?: string }) {
                   恢复
                 </Button>
               </div>
+            ))}
+            {work.unreceived.map((m) => (
+              <Link key={m.id} to="/settings/mailboxes" className={ITEM}>
+                <Entry title={m.address} detail={`收信失败：${m.receiveError}`} />
+              </Link>
             ))}
             {work.paused.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
