@@ -38,7 +38,7 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
       <DialogContent className="w-[480px]">
         <DialogHeader>Agent 请求</DialogHeader>
         <DialogBody className="space-y-3 py-4">
-          <p className="text-base">{request.description.action}</p>
+          <p className="text-base wrap-anywhere">{request.description.action}</p>
           <p className="text-sm text-muted-foreground">
             这是你接入的 Agent 要做的事，允许后马上执行。5 分钟内不回应，就当作拒绝。
             {queued > 0 && `之后还有 ${queued} 条请求。`}
