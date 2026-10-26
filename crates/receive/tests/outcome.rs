@@ -356,6 +356,56 @@ async fn references_find_external_parent_strip_quotes_and_limit_total_characters
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn model_input_excludes_interleaved_quotes(db: SqlitePool) {
+    assert_fresh_input(
+        db,
+        "在 2026年10月20日，张三 写道：\n> 可以报考吗？\n欢迎报考。\n\nOn Mon, Oct 20, 2026,\nZhang <me@example.edu> wrote:\n\n> 需要材料吗？\n请发成绩单。",
+        "欢迎报考。\n\n请发成绩单。",
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn model_input_keeps_only_subjects_when_bodies_are_all_quotes(db: SqlitePool) {
+    assert_fresh_input(db, "> 上一轮讨论中的旧内容\n> 另一段旧内容", "").await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn model_input_removes_long_quotes_before_spending_the_budget(db: SqlitePool) {
+    assert_fresh_input(
+        db,
+        &format!("> {}\n欢迎报考，请发成绩单。", "旧".repeat(6500)),
+        "欢迎报考，请发成绩单。",
+    )
+    .await;
+}
+
+async fn assert_fresh_input(db: SqlitePool, body: &str, fresh: &str) {
+    let m = setup(&db).await;
+    message(&db, m, "sent", 1, body).await;
+    let id = message(&db, m, "reply", 2, body).await;
+    sqlx::query("UPDATE message SET in_reply_to='<m1@example.edu>' WHERE id=?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    let mut p = Provider::start().await;
+    config(&db, &p.address).await;
+    queue::set_enabled(&db, true, 3).await.unwrap();
+    let mut runner = Runner::start(&db, Default::default());
+    let req = request(&mut p).await;
+    let data: Value =
+        serde_json::from_str(req.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    for letter in [&data["reply"], &data["student"]] {
+        assert_eq!(letter["subject"], "回信");
+        assert_eq!(letter["text"], fresh);
+    }
+    req.respond.send(Response::answer(VALID)).ok().unwrap();
+    runner.until(&db, |p| p.remaining == 0).await;
+    assert_eq!(outcome(&db, id).await.as_deref(), Some("interested"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn invalid_output_retries_once_fails_then_user_retry_succeeds(db: SqlitePool) {
     let m = setup(&db).await;
     let id = message(&db, m, "reply", 1, "答复").await;

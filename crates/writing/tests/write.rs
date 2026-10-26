@@ -407,7 +407,10 @@ async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purpose
         "reply",
         1,
         "面谈",
-        "下周方便面谈吗？\n\n> 引用 wangwei@example.edu.cn",
+        &format!(
+            "On Mon, Oct 20, 2026,\nZhang <me@example.edu> wrote:\n> {}\n下周方便面谈吗？\n\n> 引用 wangwei@example.edu.cn",
+            "旧引用".repeat(4000)
+        ),
     )
     .await;
     received_message(
