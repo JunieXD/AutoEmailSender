@@ -184,6 +184,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
         sender,
         receiver,
         matcher,
+        reply_processor,
         crawler,
         generator,
         model_limit,
@@ -202,12 +203,14 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     ));
     let ui = app.clone();
     let notifications_db = db.clone();
+    let received_processor = reply_processor.clone();
     tauri::async_runtime::spawn(receive::run(
         db.clone(),
         net.clone(),
         receiver.clone(),
         // The UI reads again what new mail may have changed.
         move |replies| {
+            received_processor.wake();
             if let Err(e) = ui.emit("received", ()) {
                 tracing::warn!("tell the window about new mail: {e}");
             }
@@ -219,6 +222,18 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
                         tracing::warn!("reply notification: {e}");
                     }
                 });
+            }
+        },
+    ));
+    let ui = app.clone();
+    tauri::async_runtime::spawn(receive::outcome::run(
+        db.clone(),
+        net.clone(),
+        reply_processor.clone(),
+        model_limit.clone(),
+        move || {
+            if let Err(e) = ui.emit("reply-processing-changed", ()) {
+                tracing::warn!("refresh reply processing: {e}");
             }
         },
     ));

@@ -2,6 +2,7 @@
 
 pub mod fact_check;
 pub mod follow_up;
+pub mod outcome;
 pub mod schedule;
 pub mod tasks;
 

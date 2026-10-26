@@ -700,6 +700,40 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
     Ok(())
 }
 
+/// Explicit reply scenarios keep every outcome and work state visible in development.
+pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM message WHERE kind = 'reply' ORDER BY sent_at DESC, id DESC LIMIT 6",
+    )
+    .fetch_all(db)
+    .await?;
+    sqlx::query("UPDATE message SET outcome = CASE id % 4 WHEN 0 THEN 'interested' WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' ELSE 'unclear' END WHERE kind = 'reply'").execute(db).await?;
+    for (id, outcome) in ids
+        .iter()
+        .zip(["interested", "no_slot", "declined", "unclear"])
+    {
+        sqlx::query("UPDATE message SET outcome = ? WHERE id = ?")
+            .bind(outcome)
+            .bind(id)
+            .execute(db)
+            .await?;
+    }
+    sqlx::query("UPDATE message SET body_text = CASE outcome WHEN 'interested' THEN '欢迎报考，请发成绩单，下周可以面谈。' WHEN 'no_slot' THEN '抱歉，今年的名额已经招满。' WHEN 'declined' THEN '你的研究方向和本组不符，无法接收。' ELSE '来信已收到，谢谢。' END WHERE kind = 'reply' AND outcome IS NOT NULL").execute(db).await?;
+    sqlx::query("UPDATE profile SET ai_reply_outcome = 1")
+        .execute(db)
+        .await?;
+    for (id, state) in ids.iter().skip(4).zip(["queued", "failed"]) {
+        sqlx::query("UPDATE message SET outcome = NULL WHERE id = ?")
+            .bind(id)
+            .execute(db)
+            .await?;
+        sqlx::query("INSERT INTO reply_processing(message_id, action, queued_at, state, error) VALUES (?, 'outcome', ?, ?, ?)")
+            .bind(id).bind(now).bind(state).bind((state == "failed").then_some("模型没有按要求标出回信结果，可以重试或换个模型。"))
+            .execute(db).await?;
+    }
+    Ok(())
+}
+
 /// Show both unresolved findings and checks that can be retried.
 pub async fn fact_checks(db: &SqlitePool) -> Result {
     let ids: Vec<i64> =

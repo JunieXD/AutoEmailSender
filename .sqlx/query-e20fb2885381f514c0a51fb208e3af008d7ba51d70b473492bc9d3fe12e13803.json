@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT reply_processing_paused_at AS \"at!\", reply_processing_pause_reason AS \"reason!\"\n           FROM profile WHERE reply_processing_paused_at IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "at!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "reply_processing_paused_at"
+          }
+        }
+      },
+      {
+        "name": "reason!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "reply_processing_pause_reason"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "e20fb2885381f514c0a51fb208e3af008d7ba51d70b473492bc9d3fe12e13803"
+}

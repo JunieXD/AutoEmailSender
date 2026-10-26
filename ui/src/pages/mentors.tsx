@@ -4,20 +4,21 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Download, Merge, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { ContactStatus, Imported, Scope, Kind } from "@/api/types";
+import type { ContactStatus, Imported, ReplyOutcomeFilter, Scope, Kind } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { MergeDialog } from "@/components/merge-dialog";
 import { ImportDialog } from "@/components/import-dialog";
 import { ExportDialog } from "@/components/export-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { dropDrafts, refreshMentors } from "@/components/mentor";
+import { dropDrafts, OUTCOME_ORDER, OUTCOMES, refreshMentors } from "@/components/mentor";
 import { MentorTable, Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { AddTagButton, useAddTag } from "@/components/tags";
 import { CreateTaskDialog } from "@/components/create-task";
 import { MatchingDialog, MatchingProgress } from "@/components/matching";
 import { AiIcon } from "@/components/ai-writing";
 import { Checkbox } from "@/components/ui/checkbox";
+import { NativeSelect } from "@/components/ui/native-select";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -30,7 +31,18 @@ const STATUSES: [ContactStatus | undefined, string][] = [
   ["bounced", "退信"],
 ];
 
-export type MentorSearch = { status?: ContactStatus; q?: string; page?: number; unansweredDays?: number };
+export type MentorSearch = {
+  status?: ContactStatus;
+  outcome?: ReplyOutcomeFilter;
+  q?: string;
+  page?: number;
+  unansweredDays?: number;
+};
+
+const OUTCOME_FILTERS: [ReplyOutcomeFilter, string][] = [
+  ...OUTCOME_ORDER.map((o): [ReplyOutcomeFilter, string] => [o, OUTCOMES[o]]),
+  ["unmarked", "未标出"],
+];
 
 /** The list's filters live in the URL so they survive going back; anything unexpected is dropped. */
 export function mentorSearch(search: Record<string, unknown>): MentorSearch {
@@ -39,6 +51,7 @@ export function mentorSearch(search: Record<string, unknown>): MentorSearch {
   const days = Number(search.unansweredDays);
   return {
     status,
+    outcome: status === "replied" ? OUTCOME_FILTERS.find(([o]) => o === search.outcome)?.[0] : undefined,
     q,
     page: pageParam(search.page),
     unansweredDays: status === "contacted" && Number.isInteger(days) && days > 0 && days <= 36500 ? days : undefined,
@@ -52,7 +65,13 @@ export function MentorsPage() {
   const query = useQuery({
     queryKey: ["listMentors", search],
     queryFn: () =>
-      call("listMentors", { status: search.status, keyword: search.q, unansweredDays: search.unansweredDays, page }),
+      call("listMentors", {
+        status: search.status,
+        replyOutcome: search.outcome,
+        keyword: search.q,
+        unansweredDays: search.unansweredDays,
+        page,
+      }),
     placeholderData: keepPreviousData,
   });
   const total = query.data?.total ?? 0;
@@ -72,9 +91,14 @@ export function MentorsPage() {
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [merging, setMerging] = useState<[number, number] | null>(null);
   const [first, second] = selected;
-  const [filter, setFilter] = useState({ status: search.status, q: search.q, days: search.unansweredDays });
-  if (filter.status !== search.status || filter.q !== search.q || filter.days !== search.unansweredDays) {
-    setFilter({ status: search.status, q: search.q, days: search.unansweredDays });
+  const [filter, setFilter] = useState(search);
+  if (
+    filter.status !== search.status ||
+    filter.outcome !== search.outcome ||
+    filter.q !== search.q ||
+    filter.unansweredDays !== search.unansweredDays
+  ) {
+    setFilter(search);
     setSelected(new Set());
   }
   useLastPage(query.isSuccess && !query.isFetching ? query.data.total : undefined, page, (n) =>
@@ -168,7 +192,9 @@ export function MentorsPage() {
               role="tab"
               aria-selected={search.status === status}
               onClick={() =>
-                navigate({ search: (s) => ({ ...s, status, unansweredDays: undefined, page: undefined }) })
+                navigate({
+                  search: (s) => ({ ...s, status, outcome: undefined, unansweredDays: undefined, page: undefined }),
+                })
               }
               className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap phone:h-10 text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
             >
@@ -178,6 +204,31 @@ export function MentorsPage() {
         </div>
       </div>
 
+      {search.status === "replied" && (
+        <div className="px-7 pb-3 phone:px-4">
+          <NativeSelect
+            aria-label="回信结果"
+            className="w-40"
+            value={search.outcome ?? ""}
+            onChange={(e) =>
+              navigate({
+                search: (s) => ({
+                  ...s,
+                  outcome: OUTCOME_FILTERS.find(([o]) => o === e.target.value)?.[0],
+                  page: undefined,
+                }),
+              })
+            }
+          >
+            <option value="">全部回信结果</option>
+            {OUTCOME_FILTERS.map(([o, label]) => (
+              <option key={o} value={o}>
+                {label}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+      )}
       {search.status === "contacted" && (
         <div className="flex flex-wrap items-center gap-2 px-7 pb-3 text-sm phone:px-4">
           <label className="flex items-center gap-2">
@@ -306,7 +357,12 @@ export function MentorsPage() {
               setExporting({
                 scope: {
                   kind: "filter",
-                  value: { status: search.status, keyword: search.q, unansweredDays: search.unansweredDays },
+                  value: {
+                    status: search.status,
+                    replyOutcome: search.outcome,
+                    keyword: search.q,
+                    unansweredDays: search.unansweredDays,
+                  },
                 },
                 count: total,
               })

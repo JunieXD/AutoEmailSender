@@ -21,6 +21,7 @@ fn context(db: SqlitePool, materials: &Path) -> Context {
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),
+        reply_processor: Default::default(),
     }
 }
 

@@ -89,7 +89,16 @@ pub async fn check(
     tracing::info!(email_id, model = chosen.model, usage = ?answer.usage,
         finish_reason = answer.finish_reason, "the model checked the letter");
     if let Some(usage) = answer.usage {
-        model::usage::record_fact_check(db, chosen.id, &chosen.model, email_id, usage, now).await?;
+        model::usage::record_for_email(
+            db,
+            chosen.id,
+            &chosen.model,
+            model::usage::Purpose::FactCheck,
+            Some(email_id),
+            usage,
+            now,
+        )
+        .await?;
     }
     if answer.finish_reason.as_deref() == Some("length") {
         return Err(Error::InvalidAnswer);

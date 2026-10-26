@@ -406,6 +406,8 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
                 "li@pku.edu.cn",
                 Some("回复：申请读博"),
                 &MessageKind::Reply {
+                    outcome: None,
+                    marking: None,
                     unread: true,
                     can_reply: true
                 }
@@ -414,6 +416,8 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
                 "secretary@pku.edu.cn",
                 Some("Re: 申请读博"),
                 &MessageKind::Reply {
+                    outcome: None,
+                    marking: None,
                     unread: true,
                     can_reply: true
                 }
@@ -867,6 +871,8 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
             (
                 "secretary@pku.edu.cn",
                 &MessageKind::Reply {
+                    outcome: None,
+                    marking: None,
                     unread: true,
                     can_reply: true
                 }
@@ -874,6 +880,8 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
             (
                 "secretary@pku.edu.cn",
                 &MessageKind::Reply {
+                    outcome: None,
+                    marking: None,
                     unread: true,
                     can_reply: true
                 }
@@ -1405,6 +1413,8 @@ async fn replies_without_a_message_id_are_readable_but_cannot_be_replied_to(db: 
     assert_eq!(
         mail[0].kind,
         MessageKind::Reply {
+            outcome: None,
+            marking: None,
             unread: true,
             can_reply: false
         }
@@ -1412,8 +1422,54 @@ async fn replies_without_a_message_id_are_readable_but_cannot_be_replied_to(db: 
     assert_eq!(
         mail[1].kind,
         MessageKind::Reply {
+            outcome: None,
+            marking: None,
             unread: true,
             can_reply: true
         }
     );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePool) {
+    use email::outcome as queue;
+    let (net, store) = mailbox(&db, SECRET).await;
+    let m = mentor(&db, "李明", "li@pku.edu.cn").await;
+    store.deliver("INBOX", T, REPLY);
+    round(&db, &net, T + MINUTE).await;
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
+    queue::set_enabled(&db, true, T + MINUTE).await.unwrap();
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 1);
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        &REPLY.replace("r1@pku.edu.cn", "r2@pku.edu.cn"),
+    );
+    store.deliver("INBOX",T+2*MINUTE,"From: li@pku.edu.cn\nAuto-Submitted: auto-replied\nSubject: 自动回复\nMessage-ID: <auto@edu>\n\n休假中");
+    round(&db, &net, T + 3 * MINUTE).await;
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 2);
+    // An address added later causes historical messages to be found by the lookup queue.
+    store.deliver(
+        "INBOX",
+        T - 10 * DAY,
+        "From: old@pku.edu.cn\nSubject: 以前的回信\nMessage-ID: <old@edu>\n\n欢迎报考",
+    );
+    round(&db, &net, T + 4 * MINUTE).await;
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 2);
+    mentor::add_email(&db, m, "old@pku.edu.cn", T + 5 * MINUTE)
+        .await
+        .unwrap();
+    let found = round(&db, &net, T + 6 * MINUTE).await;
+    assert!(found.replies.is_empty());
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 3);
+    queue::set_enabled(&db, false, T + 7 * MINUTE)
+        .await
+        .unwrap();
+    store.deliver(
+        "INBOX",
+        T + 8 * MINUTE,
+        &REPLY.replace("r1@pku.edu.cn", "r3@pku.edu.cn"),
+    );
+    round(&db, &net, T + 9 * MINUTE).await;
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
 }

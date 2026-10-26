@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   type MutationState,
   type QueryClient,
@@ -108,17 +108,22 @@ export function AiButton({
   );
 }
 
-/** The same provider consent for every AI entry point. */
+/**
+ * The same provider consent for every AI entry point. The entry point is an AI button unless
+ * `renderTrigger` draws another control.
+ */
 export function ModelAction({
   modelId,
   modelIds,
   children,
+  renderTrigger,
   disabled,
   onWrite,
 }: {
   modelId?: number | null;
   modelIds?: number[];
-  children: ReactNode;
+  children?: ReactNode;
+  renderTrigger?: (props: { disabled: boolean; onClick?: () => void }) => ReactElement;
   disabled: boolean;
   onWrite: () => void;
 }) {
@@ -136,16 +141,16 @@ export function ModelAction({
       ? modelIds.map((id) => models.data?.find((m) => m.id === id) ?? fallback).filter((m) => m !== undefined)
       : [models.data?.find((m) => m.id === modelId) ?? fallback].filter((m) => m !== undefined);
   const chosen = required.find((m) => !m.agreed) ?? required[0];
-  const button = (onClick?: () => void) => (
-    <Button
-      variant="ai"
-      className="px-3"
-      disabled={disabled || !models.data || !providers.data || agree.isPending}
-      onClick={onClick}
-    >
-      {children}
-    </Button>
-  );
+  const button = (onClick?: () => void) => {
+    const off = disabled || !models.data || !providers.data || agree.isPending;
+    return renderTrigger ? (
+      renderTrigger({ disabled: off, onClick })
+    ) : (
+      <Button variant="ai" className="px-3" disabled={off} onClick={onClick}>
+        {children}
+      </Button>
+    );
+  };
   const error = models.error ?? providers.error ?? agree.error;
   return (
     <>
@@ -185,7 +190,7 @@ export function ModelAction({
 function notice(model: ModelConfig, providers: ModelProvider[]): string {
   // A custom configuration is known by its address.
   const where = providers.find((p) => p.id === model.provider)?.name ?? model.baseUrl;
-  return `AI 写信、分析匹配度这类功能会把用到的内容发给“${where}”：你的个人资料、材料里的文字、导师的资料、抓取的网页标题和文字及链接文字，以及要改写、回复或追问参考的邮件。同意后，用这个模型时不再询问。`;
+  return `AI 写信、分析匹配度这类功能会把用到的内容发给“${where}”：你的个人资料、材料里的文字、导师的资料、抓取的网页标题和文字及链接文字，以及要改写、回复或追问参考的邮件和导师的回信。同意后，用这个模型时不再询问。`;
 }
 
 const aiFactCheck = { queryKey: ["getAiFactCheck"], queryFn: () => call("getAiFactCheck", {}) };

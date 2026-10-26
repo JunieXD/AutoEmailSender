@@ -16,6 +16,7 @@ async fn restored_credentials_must_be_refilled_before_editing_or_testing(db: Sql
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),
+        reply_processor: Default::default(),
     };
     let mailbox = json!({"address":"me@example.invalid","senderName":"学生","provider":"custom",
         "smtp":{"host":"localhost","port":1,"security":"tls"},

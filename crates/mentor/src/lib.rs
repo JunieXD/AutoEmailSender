@@ -19,6 +19,7 @@ mod supplement;
 pub mod tags;
 pub mod trash;
 
+use email::outcome::ReplyOutcome;
 use tags::Tag;
 
 pub const PAGE_SIZE: u32 = 50;
@@ -34,12 +35,26 @@ pub enum ContactStatus {
     Bounced,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub enum ReplyOutcomeFilter {
+    Interested,
+    NoSlot,
+    Declined,
+    Unclear,
+    Unmarked,
+}
+
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MentorQuery {
     /// All mentors when absent.
     #[ts(optional)]
     pub status: Option<ContactStatus>,
+    /// Only applied with status = replied; ignored for other contact states.
+    #[ts(optional)]
+    pub reply_outcome: Option<ReplyOutcomeFilter>,
     #[ts(optional)]
     pub keyword: Option<String>,
     #[ts(optional)]
@@ -67,6 +82,7 @@ pub struct MentorRow {
     pub research: Option<String>,
     pub match_state: MatchSummary,
     pub contact: Contact,
+    pub outcome: Option<ReplyOutcome>,
     pub tags: Vec<Tag>,
 }
 
@@ -211,6 +227,7 @@ pub async fn list(
     let ids = filtered_ids(
         &mut tx,
         query.status,
+        query.reply_outcome,
         keyword.as_deref(),
         i64::from(PAGE_SIZE),
         offset(query.page),
@@ -225,10 +242,13 @@ pub async fn list(
                   OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
                   OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
              AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-             AND (?3 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?3))"#,
+             AND (?3 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?3))
+             AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (
+               SELECT mentor_id FROM mentor_contact WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4))"#,
         query.status,
         keyword,
         before,
+        query.reply_outcome,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -241,6 +261,7 @@ pub async fn list(
 async fn filtered_ids(
     conn: &mut SqliteConnection,
     status: Option<ContactStatus>,
+    reply_outcome: Option<ReplyOutcomeFilter>,
     keyword: Option<&str>,
     limit: i64,
     skip: i64,
@@ -254,6 +275,8 @@ async fn filtered_ids(
                 OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
            AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
            AND (?5 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?5))
+           AND (?1 IS NOT 'replied' OR ?6 IS NULL OR m.id IN (
+             SELECT mentor_id FROM mentor_contact WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?6))
          ORDER BY m.match_score DESC, m.id
          LIMIT ?3 OFFSET ?4",
         status,
@@ -261,6 +284,7 @@ async fn filtered_ids(
         limit,
         skip,
         before,
+        reply_outcome,
     )
     .fetch_all(conn)
     .await
@@ -280,7 +304,7 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
                   m.match_state AS "match_state: MatchColumn", m.match_score, m.match_error,
                   coalesce(m.matched_at < (SELECT match_basis_changed_at FROM profile), 0) AS "basis_changed!: bool",
                   c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
-                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
+                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool", c.outcome AS "outcome?: ReplyOutcome"
            FROM json_each(?) page
            JOIN mentor m ON m.id = page.value
            LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id
@@ -314,6 +338,7 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
                 affiliation_count: r.affiliation_count,
                 research: r.research,
                 match_state,
+                outcome: r.outcome,
                 contact: contact(
                     r.id,
                     r.status,

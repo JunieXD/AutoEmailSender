@@ -5,6 +5,8 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 import { autostartEnabled, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
+import { ModelAction } from "@/components/ai-writing";
+import { refreshReplyOutcomes } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
@@ -23,6 +25,7 @@ const GROUPS = [
     sections: [
       { to: "/settings/mailboxes", label: "邮箱" },
       { to: "/settings/checks", label: "发送前检查" },
+      { to: "/settings/replies", label: "回信处理" },
     ],
   },
   { label: "AI", sections: [{ to: "/settings/models", label: "模型" }] },
@@ -213,7 +216,15 @@ function Toggle({
   });
   return (
     <div>
-      <Switch label={label} checked={query.data} disabled={save.isPending} onChange={(on) => save.mutate(on)} />
+      <label className="flex items-center justify-between gap-4">
+        <span>{label}</span>
+        <SwitchButton
+          label={label}
+          checked={query.data ?? false}
+          disabled={query.data === undefined || save.isPending}
+          onClick={() => save.mutate(!query.data)}
+        />
+      </label>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
       {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
       {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
@@ -221,33 +232,68 @@ function Toggle({
   );
 }
 
-/** A labelled on/off switch, disabled until its state is known. */
-function Switch({
+function SwitchButton({
   label,
   checked,
   disabled,
-  onChange,
+  onClick,
 }: {
   label: string;
-  checked: boolean | undefined;
+  checked: boolean;
   disabled: boolean;
-  onChange: (on: boolean) => void;
+  onClick?: () => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-4">
-      <span>{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-label={label}
-        aria-checked={checked ?? false}
-        disabled={checked === undefined || disabled}
-        onClick={() => onChange(!checked)}
-        className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
-      >
-        <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
-      </button>
-    </label>
+    <button
+      type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onClick}
+      className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
+    >
+      <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
+    </button>
+  );
+}
+
+/** Replies the AI reads as they come (docs/ui.md#交互); turning it on asks the provider consent first. */
+export function ReplyProcessingSection() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["getAiReplyOutcome"], queryFn: () => call("getAiReplyOutcome", {}) });
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => call("setAiReplyOutcome", { enabled }),
+    onSuccess: async (_, enabled) => {
+      await queryClient.cancelQueries({ queryKey: ["getAiReplyOutcome"] });
+      queryClient.setQueryData(["getAiReplyOutcome"], enabled);
+      refreshReplyOutcomes(queryClient);
+    },
+  });
+  const label = "AI 标记回信结果";
+  const busy = query.data === undefined || save.isPending;
+  return (
+    <Section title="回信处理">
+      <div>
+        <div className="flex items-center justify-between gap-4">
+          <span>{label}</span>
+          {query.data ? (
+            <SwitchButton label={label} checked disabled={busy} onClick={() => save.mutate(false)} />
+          ) : (
+            <ModelAction
+              disabled={busy}
+              onWrite={() => save.mutate(true)}
+              renderTrigger={(props) => <SwitchButton label={label} checked={false} {...props} />}
+            />
+          )}
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          开启后，导师的回信（包括已经收到的）会发给默认模型的服务商，标出有意向、无名额、拒绝或无法判断。不开也可以在往来里自己标。
+        </p>
+        {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
+        {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
+      </div>
+    </Section>
   );
 }
 
@@ -262,12 +308,15 @@ export function BackgroundSection() {
   return (
     <Section title="后台运行">
       <div>
-        <Switch
-          label="开机时自动启动"
-          checked={query.data}
-          disabled={save.isPending}
-          onChange={(on) => save.mutate(on)}
-        />
+        <label className="flex items-center justify-between gap-4">
+          <span>开机时自动启动</span>
+          <SwitchButton
+            label="开机时自动启动"
+            checked={query.data ?? false}
+            disabled={query.data === undefined || save.isPending}
+            onClick={() => save.mutate(!query.data)}
+          />
+        </label>
         <p className="mt-2 text-sm text-muted-foreground">开机后在后台运行，不打开窗口，定时发送和收信照常进行。</p>
         {query.error && (
           <p className="mt-2 text-sm text-destructive">开机启动的设置未能读取：{errorMessage(query.error)}</p>

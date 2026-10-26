@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT subject, body_text, in_reply_to, refs FROM message WHERE id = ? AND kind = 'reply'",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      },
+      {
+        "name": "in_reply_to",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "in_reply_to"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "refs"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c11a6e3e2bc8a38d62295d6a2e50e2a3e7aab7d6526a09e109190bd17b607f8a"
+}

@@ -134,7 +134,7 @@ export function MentorTable({
             </Link>
           </div>
           <div role="cell" className="min-w-0 text-sm cards:max-w-[45cqw] cards:text-right cards:[grid-area:contact]">
-            <ContactLabel contact={m.contact} className="cards:justify-end" />
+            <ContactLabel contact={m.contact} outcome={m.outcome} className="cards:justify-end" />
             {contactDetail(m.contact) && (
               <div className="truncate text-muted-foreground">{contactDetail(m.contact)}</div>
             )}
