@@ -272,21 +272,18 @@ pub async fn complete(
     claim: Claim,
     answer: &MatchAnswer,
     model: &str,
-    started_at: i64,
-    completed_at: i64,
+    now: i64,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = db.begin().await?;
     let r = sqlx::query!(
         r#"UPDATE mentor
         SET match_state = NULL, match_error = NULL, match_queued_at = NULL,
-            match_priority = NULL, match_score = ?, matched_at = ?, match_model = ?,
-            match_completed_at = ?
+            match_priority = NULL, match_score = ?, matched_at = ?, match_model = ?
         WHERE id = ? AND match_claim = ? AND (match_state = 'running'
         OR match_state IS NULL) AND trashed_at IS NULL"#,
         answer.score,
-        started_at,
+        now,
         model,
-        completed_at,
         claim.id,
         claim.claim
     )

@@ -317,7 +317,7 @@ async fn extracted_material_invalidates_results_only_when_stored(db: SqlitePool)
         highlights: vec![],
         risks: vec![],
     };
-    mentor::matching::complete(&db, claim, &answer, "m", 150, 151)
+    mentor::matching::complete(&db, claim, &answer, "m", 150)
         .await
         .unwrap();
     assert!(

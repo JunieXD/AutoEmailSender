@@ -33,7 +33,7 @@ pub async fn today_work(db: &SqlitePool, start: i64, end: i64) -> Result<TodayWo
     let matched = sqlx::query_scalar!(
         r#"SELECT count(*) AS "count!: i64"
         FROM mentor
-        WHERE match_completed_at >= ? AND match_completed_at < ? AND trashed_at IS NULL"#,
+        WHERE matched_at >= ? AND matched_at < ? AND trashed_at IS NULL"#,
         start,
         end
     )

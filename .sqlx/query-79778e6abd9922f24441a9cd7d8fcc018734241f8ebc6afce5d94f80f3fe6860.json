@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT count(*) AS \"count!: i64\"\n        FROM mentor\n        WHERE match_completed_at >= ? AND match_completed_at < ? AND trashed_at IS NULL",
+  "query": "SELECT count(*) AS \"count!: i64\"\n        FROM mentor\n        WHERE matched_at >= ? AND matched_at < ? AND trashed_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "92ec9d26203f31949b39fe508efaab66ecc2ca530109354fa405a18065c081cd"
+  "hash": "79778e6abd9922f24441a9cd7d8fcc018734241f8ebc6afce5d94f80f3fe6860"
 }

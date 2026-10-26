@@ -29,7 +29,7 @@ async fn result(db: &SqlitePool, id: i64, at: i64) {
     enqueue(db, &[id], true, true, 1).await.unwrap();
     let claim = next(db).await.unwrap().unwrap();
     assert_eq!(claim.id, id);
-    assert!(complete(db, claim, &answer(), "m", at, at).await.unwrap());
+    assert!(complete(db, claim, &answer(), "m", at).await.unwrap());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -122,7 +122,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     assert_eq!(retry(&db, 41).await.unwrap(), 0);
     cancel(&db).await.unwrap();
     assert!(
-        !complete(&db, claim.unwrap(), &answer(), "late", 50, 50)
+        !complete(&db, claim.unwrap(), &answer(), "late", 50)
             .await
             .unwrap()
     );
@@ -142,7 +142,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     claim = next(&db).await.unwrap();
     cancel(&db).await.unwrap();
     assert!(
-        complete(&db, claim.unwrap(), &answer(), "after cancel", 70, 70)
+        complete(&db, claim.unwrap(), &answer(), "after cancel", 70)
             .await
             .unwrap()
     );
@@ -151,7 +151,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     mentor::trash::trash(&db, &[id], 81).await.unwrap();
     mentor::trash::restore(&db, &[id], 82).await.unwrap();
     assert!(
-        !complete(&db, claim.unwrap(), &answer(), "late", 90, 90)
+        !complete(&db, claim.unwrap(), &answer(), "late", 90)
             .await
             .unwrap()
     );
