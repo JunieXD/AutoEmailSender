@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearch, useParams, useBlocker } from "@tanstack/r
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { ChevronLeft, MoreHorizontal } from "lucide-react";
 import { call, errorMessage } from "@/api/call";
+import { refreshTasks } from "@/components/task-cache";
 import type { DraftFilter, DraftState, PlanColumn, Progress, TaskSummary, NewTask } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
@@ -50,21 +51,6 @@ export function taskSearch(s: Record<string, unknown>): { email?: number; page?:
         ? s.filter
         : undefined,
   };
-}
-export function refreshTasks(client: ReturnType<typeof useQueryClient>) {
-  for (const key of [
-    "taskWork",
-    "listTasks",
-    "getTask",
-    "listTaskDrafts",
-    "getTaskDraft",
-    "planTask",
-    "restartTask",
-    "sendingPlan",
-    "scheduledWork",
-    "stats",
-  ])
-    void client.invalidateQueries({ queryKey: [key] });
 }
 const SEGMENTS: [keyof Progress, string, string][] = [
   ["generating", "生成中", "bg-info"],

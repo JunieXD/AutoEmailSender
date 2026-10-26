@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { call, errorMessage } from "@/api/call";
 import type { Schedule, TaskSummary } from "@/api/types";
 import { Field, formClose } from "@/components/form";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Confirm } from "@/components/batch-bar";
 import { day, time } from "@/format";
+import { refreshTasks } from "@/components/task-cache";
 
 export function localDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -273,18 +274,9 @@ export function DateTimeDialog({
   );
 }
 
-export function refreshSchedule(client: ReturnType<typeof useQueryClient>) {
-  for (const key of [
-    "sendingPlan",
-    "scheduledWork",
-    "getTask",
-    "listTasks",
-    "getTaskDraft",
-    "listTaskDrafts",
-    "listCorrespondence",
-    "taskWork",
-  ])
-    void client.invalidateQueries({ queryKey: [key] });
+export function refreshSchedule(client: QueryClient) {
+  refreshTasks(client);
+  void client.invalidateQueries({ queryKey: ["listCorrespondence"] });
 }
 export function ScheduleActions({ id, initial }: { id: number; initial?: number }) {
   const client = useQueryClient();
