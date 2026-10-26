@@ -533,7 +533,6 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
     )
     .await
     .unwrap();
-    let _ = third;
     let same = mentor::create(
         &db,
         &MentorFields {
@@ -592,7 +591,11 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
     let maybe = page.candidates.iter().find(|c| c.name == "张三").unwrap();
     assert_eq!(maybe.category, CandidateFilter::Maybe);
     let conflict = page.candidates.iter().find(|c| c.name == "冲突").unwrap();
-    assert!(conflict.issue.is_some());
+    let reason = conflict.issue.as_ref().unwrap();
+    for (name, id) in [("王五", other), ("赵六", third)] {
+        assert!(reason.contains(name));
+        assert!(reason.contains(&format!("编号 {id}")));
+    }
     let input = ReviewInput {
         ids: vec![new.id, supplement.id, maybe.id, conflict.id],
         decisions: Decisions::default(),
