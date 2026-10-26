@@ -19,6 +19,8 @@ let callbackId = 0;
 
 Object.assign(window, {
   __TAURI_INTERNALS__: {
+    // What `getCurrentWindow()` reads; the desktop app has one window, "main".
+    metadata: { currentWindow: { label: "main" } },
     invoke,
     transformCallback: () => ++callbackId,
     unregisterCallback: () => {},
@@ -48,6 +50,7 @@ async function invoke(command: string, args: Record<string, unknown> = {}): Prom
     case "plugin:event|listen":
       return args.handler;
     case "plugin:event|unlisten":
+    case "plugin:window|set_theme":
       return undefined;
     case "plugin:opener|open_url": {
       if (typeof args.url !== "string") throw new Error("链接无效。");

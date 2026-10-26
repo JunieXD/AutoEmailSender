@@ -5,6 +5,10 @@ import { createRoot } from "react-dom/client";
 import { queryClient } from "./query-client";
 import { router } from "./router";
 import "./index.css";
+import { followTheme } from "./theme";
+
+// Before the first render, so the page never shows in the other appearance.
+followTheme();
 
 const root = document.getElementById("root");
 if (root) {

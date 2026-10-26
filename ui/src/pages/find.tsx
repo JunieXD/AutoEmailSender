@@ -309,6 +309,18 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
     onError: () => client.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
   const exported = useMutation({ mutationFn: () => exportCrawlLog(id) });
+  const navigate = useNavigate({ from: "/find" });
+  const remove = useMutation({
+    mutationFn: () => call("deleteCrawl", { id }),
+    onSuccess: () => {
+      // The candidates may be filtered by this crawl, which is gone now.
+      void navigate({
+        search: (s) =>
+          s.crawl === id ? { ...s, detail: undefined, crawl: undefined, page: 1 } : { ...s, detail: undefined },
+      });
+      refreshCrawls(client);
+    },
+  });
   return (
     <div className="mt-4 space-y-3 border-t border-border pt-4 text-sm">
       <ErrorText error={detail.error ?? retry.error} />
@@ -371,7 +383,18 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
               导出这次抓取的日志
             </Button>
             {exported.data && <span className="text-muted-foreground">已导出</span>}
+            <Confirm
+              trigger={
+                <Button variant="ghost" className="ml-auto text-destructive" disabled={remove.isPending}>
+                  删除这次抓取
+                </Button>
+              }
+              message="删除这次抓取？运行记录、读过的页面和还没处理的候选会一起删除；已经接受的导师不受影响。"
+              action="删除"
+              onConfirm={() => remove.mutate()}
+            />
             <ErrorText error={exported.error} />
+            <ErrorText error={remove.error} />
           </div>
         </>
       )}

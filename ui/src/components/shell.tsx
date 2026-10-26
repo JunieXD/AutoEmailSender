@@ -1,6 +1,6 @@
 import { crawlName, refreshCrawls, findSearch } from "@/pages/find";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import { MessagesSquare, Settings, Users, ListTodo, LoaderCircle, Search, ChartNoAxesColumn } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -36,10 +36,29 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
  * Sidebar on the window background, content on a rounded page; on a phone-width window the
  * sidebar becomes a tab bar under the page (docs/ui.md#布局).
  */
+const focusSearch = () => document.getElementById("mentor-search")?.focus();
+// macOS keeps Ctrl+K for deleting to the end of the line; Windows takes Win+K for itself.
+const SEARCH_KEY = navigator.userAgent.includes("Mac") ? "metaKey" : "ctrlKey";
+
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
   const queryClient = useQueryClient();
   const [completed, setCompleted] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (l) => l.pathname });
+  // docs/ui.md#快捷键: ⌘K (Ctrl+K on Windows) searches mentors from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e[SEARCH_KEY] || e.key.toLowerCase() !== "k" || e.defaultPrevented) return;
+      // Leaving the page would close the dialog and lose what was typed in it.
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      if (pathname === "/mentors") focusSearch();
+      else void navigate({ to: "/mentors" }).then(focusSearch);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate, pathname]);
   useEffect(() => {
     const crawlChanged = listen("crawl-changed", () => refreshCrawls(queryClient));
     const crawlFinished = listen<CrawlFinished>("crawl-finished", ({ payload: p }) => {

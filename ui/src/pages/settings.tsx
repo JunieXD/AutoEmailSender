@@ -2,12 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-router";
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { autostartEnabled, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import { ModelAction } from "@/components/ai-writing";
 import { refreshReplyOutcomes } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
+import { Segments } from "@/components/ui/segments";
+import { savedTheme, setTheme } from "@/theme";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
 const GROUPS = [
@@ -32,6 +34,7 @@ const GROUPS = [
   {
     label: "应用",
     sections: [
+      { to: "/settings/appearance", label: "外观" },
       { to: "/settings/notifications", label: "通知" },
       { to: "/settings/background", label: "后台运行" },
       { to: "/settings/backup", label: "备份" },
@@ -112,6 +115,30 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
       <h2 className="font-medium">{label}</h2>
       {children}
     </div>
+  );
+}
+
+export function AppearanceSection() {
+  const [theme, setShown] = useState(savedTheme);
+  return (
+    <Section title="外观">
+      <Row label="颜色">
+        <Segments
+          label="颜色"
+          className="self-start"
+          value={theme}
+          options={[
+            ["system", "跟随系统"],
+            ["light", "浅色"],
+            ["dark", "深色"],
+          ]}
+          onChange={(t) => {
+            setTheme(t);
+            setShown(t);
+          }}
+        />
+      </Row>
+    </Section>
   );
 }
 
