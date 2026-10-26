@@ -64,17 +64,9 @@ fn parse(text: &str) -> Result<ReplyOutcome, &'static str> {
 }
 
 pub(crate) fn json_text(text: &str) -> Result<&str, &'static str> {
-    let mut text = text.trim();
-    while let Some(rest) = text.strip_prefix("<think>") {
+    let mut text = model::output::thinking_blocks(text.trim())?;
+    if let Some(rest) = model::output::fence_content(text)? {
         text = rest
-            .split_once("</think>")
-            .ok_or("思考块没有结束")?
-            .1
-            .trim_start();
-    }
-    if let Some(rest) = text.strip_prefix("```") {
-        text = rest.split_once('\n').ok_or("代码围栏没有内容")?.1;
-        text = text
             .trim_end()
             .strip_suffix("```")
             .ok_or("代码围栏没有结束")?
@@ -356,4 +348,19 @@ pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reply_outcomes_require_a_complete_fence_and_exact_json() {
+        assert!(matches!(
+            parse("<think>one</think><think>two</think>```json\n{\"outcome\":\"interested\"}\n```"),
+            Ok(ReplyOutcome::Interested)
+        ));
+        assert!(parse("```json\n{\"outcome\":\"interested\"}").is_err());
+        assert!(parse("说明：{\"outcome\":\"interested\"}").is_err());
+    }
 }

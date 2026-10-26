@@ -132,17 +132,9 @@ fn parse(text: &str) -> Result<queue::MatchAnswer, String> {
         highlights: Vec<String>,
         risks: Vec<String>,
     }
-    let mut text = text.trim();
-    while let Some(rest) = text.strip_prefix("<think>") {
-        text = rest
-            .split_once("</think>")
-            .ok_or("思考块没有结束")?
-            .1
-            .trim_start();
-    }
-    if let Some(rest) = text.strip_prefix("```") {
-        text = rest.split_once('\n').ok_or("代码围栏没有内容")?.1;
-        text = text.trim_end().strip_suffix("```").unwrap_or(text).trim();
+    let mut text = model::output::thinking_blocks(text.trim())?;
+    if let Some(rest) = model::output::fence_content(text)? {
+        text = rest.trim_end().strip_suffix("```").unwrap_or(rest).trim();
     }
     let start = text.find('{').ok_or("缺少 JSON 对象")?;
     let end = text.rfind('}').ok_or("JSON 对象没有结束")?;
@@ -484,6 +476,16 @@ mod tests {
         MatchState, MentorFields,
         matching::{MatchAnswer, cancel, complete, enqueue, fail, next, progress, recover},
     };
+    #[test]
+    fn matching_accepts_explanations_and_an_unclosed_fence() {
+        let answer = parse(concat!(
+            "<think>one</think><think>two</think>```json\n",
+            r#"说明：{"score":80,"reason":"相关","directions":[],"highlights":[],"risks":[]}结束"#,
+        ))
+        .unwrap();
+        assert_eq!(answer.score, 80);
+    }
+
     #[test]
     fn validates_external_fields_and_limits_each_list() {
         let valid =

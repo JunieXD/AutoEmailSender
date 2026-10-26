@@ -133,14 +133,13 @@ pub async fn write(
         return Err(Error::NotALetter { finish_reason });
     }
     if kind.body_only() {
-        let answer = answer.text.trim();
-        let answer = if let Some(thinking) = answer.strip_prefix("<think>") {
-            thinking.split_once("</think>").map(|(_, body)| body.trim())
-        } else {
-            Some(answer)
-        };
+        let answer =
+            model::output::thinking_block(answer.text.trim()).map_err(|_| Error::NotALetter {
+                finish_reason: finish_reason.clone(),
+            })?;
         let body = answer
-            .and_then(|a| a.strip_prefix("<body>"))
+            .trim()
+            .strip_prefix("<body>")
             .and_then(|a| a.strip_suffix("</body>"))
             .map(str::trim)
             .filter(|b| !b.is_empty())
@@ -359,10 +358,8 @@ fn filled(value: &Value) -> bool {
 /// The subject and body the model wrote, when it answered as told: after any thinking it wrote out
 /// first, the subject, then the body, which may itself mention the tags.
 fn letter(answer: &str) -> Option<Letter> {
-    let answer = answer.trim_start();
-    let answer = match answer.strip_prefix("<think>") {
-        Some(thinking) => thinking.split_once("</think>")?.1,
-        None => answer,
+    let Ok(answer) = model::output::thinking_block(answer) else {
+        return None;
     };
     let (_, rest) = answer.split_once("<subject>")?;
     let (subject, rest) = rest.split_once("</subject>")?;

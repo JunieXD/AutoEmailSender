@@ -13,7 +13,7 @@
 | `crates/crawl` | 抓取基础：网址边界、HTTP、页面材料、邮箱证据和归属核对、翻页和页面存取 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试、限流与暂停分类 |
 | `crates/stats` | 统计：联系进度、导师概览、Token 用量的本地查询 |
-| `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
+| `crates/model` | 模型：服务商表、调用和测试、Token 用量；`output` 共用开头思考块和代码围栏的借用字符串处理，业务解析器决定块数、围栏闭合要求和字段规则 |
 | `crates/profile` | 个人资料和信件样式 |
 | `crates/material` | 材料：存文件、提取文字 |
 | `crates/template` | 模板和占位符 |
