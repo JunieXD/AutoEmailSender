@@ -114,7 +114,8 @@ fn main() -> tauri::Result<()> {
         .manage(backup::Commands::default())
         .setup(|app| {
             background::init(app.handle())?;
-            let restored = match tauri::async_runtime::block_on(start(app.handle())) {
+            // A login launch stays in the tray unless there is something the user must see.
+            let must_show = match tauri::async_runtime::block_on(start(app.handle())) {
                 Ok((ctx, restored)) => {
                     app.manage(ctx);
                     restored
@@ -122,10 +123,10 @@ fn main() -> tauri::Result<()> {
                 Err(e) => {
                     tracing::error!("startup failed: {e}");
                     app.manage(StartupFailure(e.message()));
-                    false
+                    true
                 }
             };
-            if restored || !std::env::args_os().any(|arg| arg == autostart::ARG) {
+            if must_show || !std::env::args_os().any(|arg| arg == autostart::ARG) {
                 show(app.handle());
             }
             Ok(())

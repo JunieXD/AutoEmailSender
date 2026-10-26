@@ -105,12 +105,9 @@ fn registration_matches(app: &AppHandle, executable: &Path) -> Result<bool> {
                 }
                 found = true;
             }
-            Err(e) => {
-                let error = std::io::Error::from(e);
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    return Err(error.into());
-                }
-            }
+            // HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND): this hive has no such value.
+            Err(e) if e.code().0 == 0x8007_0002_u32.cast_signed() => {}
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(found)
