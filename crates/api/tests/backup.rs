@@ -239,6 +239,7 @@ async fn added_missing_and_changed_schema_objects_are_rejected() {
 
 #[tokio::test]
 async fn older_database_is_upgraded_during_prepare_and_starts_after_confirmation() {
+    std::sync::LazyLock::force(&db::MIGRATOR);
     let source = tempfile::tempdir().unwrap();
     let db = SqlitePool::connect_with(
         SqliteConnectOptions::new()
