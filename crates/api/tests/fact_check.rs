@@ -94,14 +94,15 @@ async fn check_errors_are_saved_and_retry_replaces_them(db: SqlitePool) {
     let mut p = Provider::start().await.unwrap();
     config(&ctx.db, &p.address).await;
     let (result, ()) = tokio::join!(call(&ctx, "factCheckEmail", json!({"id":id})), async {
-        p.requests
-            .recv()
-            .await
-            .unwrap()
-            .respond
-            .send(Response::answer("不是核对结果"))
-            .ok()
-            .unwrap();
+        for _ in 0..2 {
+            p.requests
+                .recv()
+                .await
+                .unwrap()
+                .respond
+                .send(Response::answer("不是核对结果"))
+                .unwrap();
+        }
     });
     let error = result.unwrap_err();
     assert!(matches!(error.code, ErrorCode::External));
@@ -121,6 +122,49 @@ async fn check_errors_are_saved_and_retry_replaces_them(db: SqlitePool) {
         stored(&ctx.db, id).await,
         json!({"state":"completed","findings":[]})
     );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn manual_writing_and_checks_report_usage_storage_errors(db: SqlitePool) {
+    let ctx = context(db);
+    let id = draft(&ctx.db).await;
+    let mentor: i64 = sqlx::query_scalar("SELECT mentor_id FROM email WHERE id = ?")
+        .bind(id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    let mut p = Provider::start().await.unwrap();
+    config(&ctx.db, &p.address).await;
+    sqlx::query(
+        r#"CREATE TRIGGER block_usage BEFORE INSERT ON usage
+        BEGIN
+            SELECT RAISE(FAIL, 'usage storage unavailable');
+        END"#,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    for (op, input, answer) in [
+        (
+            "writeLetter",
+            json!({"mentorId":mentor,"subject":"","bodyMd":"","attachments":[]}),
+            "<subject>申请</subject><body>王老师：您好。</body>",
+        ),
+        ("factCheckEmail", json!({"id":id}), "[]"),
+    ] {
+        let (result, ()) = tokio::join!(call(&ctx, op, input), async {
+            p.requests
+                .recv()
+                .await
+                .unwrap()
+                .respond
+                .send(Response::answer(answer))
+                .unwrap();
+        });
+        assert!(matches!(result.unwrap_err().code, ErrorCode::Internal));
+        assert_eq!(ctx.writes.failure(), None);
+        assert!(p.requests.try_recv().is_err());
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -308,6 +352,15 @@ async fn manual_checks_cannot_overwrite_a_regenerated_drafts_findings(db: Sqlite
                 .unwrap()
             );
             request.respond.send(Response::answer(answer)).ok().unwrap();
+            if answer != "[]" {
+                p.requests
+                    .recv()
+                    .await
+                    .unwrap()
+                    .respond
+                    .send(Response::answer(answer))
+                    .unwrap();
+            }
         });
         assert!(matches!(result.unwrap_err().code, ErrorCode::Invalid));
         assert_eq!(

@@ -116,15 +116,25 @@ pub async fn write_task_draft(
         },
     )
     .await?;
+    let at = now();
     let mut letter = writing::write(
-        &ctx.db,
         &ctx.net,
         &prepared,
         &writing::Letter {
             subject: edit.subject,
             body_md: edit.body_md,
         },
-        now(),
+        |purpose, usage| {
+            model::usage::record_for_email(
+                &ctx.db,
+                chosen.id,
+                &chosen.model,
+                purpose,
+                Some(edit.id),
+                usage,
+                at,
+            )
+        },
     )
     .await?;
     if t.kind == "follow_up" {

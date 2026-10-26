@@ -84,6 +84,39 @@ async fn a_test_asks_the_model_not_to_think() {
 }
 
 #[tokio::test]
+async fn business_calls_disable_thinking_only_when_the_provider_supports_it() {
+    let net = Net::new(Vec::new()).unwrap();
+    for no_thinking in [Some(NoThinking::ThinkingDisabled), None] {
+        let (address, received) = provider(
+            200,
+            concat!(
+                r#"data: {"choices":[{"delta":{"content":"好"},"finish_reason":"stop"}]}"#,
+                "\n\ndata: [DONE]\n\n",
+            ),
+        )
+        .await;
+        let answer = model::ask(
+            &net,
+            &access(address, no_thinking),
+            "deepseek-chat",
+            "规则",
+            "资料",
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer.text, "好");
+        let received = received.lock().unwrap();
+        let body = &received[0].body;
+        if no_thinking.is_some() {
+            assert_eq!(body["thinking"], json!({"type": "disabled"}));
+        } else {
+            assert!(body.get("thinking").is_none());
+            assert!(body.get("enable_thinking").is_none());
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_refusal_says_what_the_provider_said() {
     let (address, _) = provider(
         401,

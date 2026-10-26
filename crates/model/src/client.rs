@@ -60,14 +60,11 @@ pub struct Answer {
 
 /// Asks the model for a one-word answer, which proves the address, the key and the model name.
 pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelError> {
-    let mut body = json!({
+    let body = json!({
         "model": model,
         "messages": [{"role": "user", "content": "请只回复一个字：好"}],
         "stream": true,
     });
-    if let Some(no_thinking) = access.no_thinking {
-        no_thinking.apply(&mut body);
-    }
     let answer = chat(net, access, body).await?;
     if answer.text.trim().is_empty() {
         return Err(ModelError::NoAnswer {
@@ -101,7 +98,7 @@ pub async fn ask(
 /// Sends a chat request and puts the answer together. Streamed, as some models only think that
 /// way and not all can stop thinking. What the provider wrote stays out of the errors, which go to
 /// the log: it may be the user's letter.
-async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelError> {
+async fn chat(net: &Net, access: &Access, mut body: Value) -> Result<Answer, ModelError> {
     #[derive(Deserialize)]
     struct Chunk {
         #[serde(default)]
@@ -140,6 +137,9 @@ async fn chat(net: &Net, access: &Access, body: Value) -> Result<Answer, ModelEr
     #[derive(Deserialize)]
     struct Details {
         cached_tokens: Option<i64>,
+    }
+    if let Some(no_thinking) = access.no_thinking {
+        no_thinking.apply(&mut body);
     }
     let request = net
         .http()

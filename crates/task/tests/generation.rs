@@ -16,6 +16,7 @@ const MATCH: &str =
     r#"{"score":80,"reason":"方向相近","directions":[],"highlights":[],"risks":[]}"#;
 struct Runner {
     handle: Generator,
+    writes: db::Writes,
     changes: mpsc::UnboundedReceiver<()>,
     done: mpsc::UnboundedReceiver<DraftsFinished>,
     worker: JoinHandle<()>,
@@ -30,9 +31,10 @@ impl Runner {
         let handle = Generator::default();
         let (tx, changes) = mpsc::unbounded_channel();
         let (done_tx, done) = mpsc::unbounded_channel();
+        let writes = db::Writes::default();
         let worker = tokio::spawn(generation::run(
             db.clone(),
-            db::Writes::default(),
+            writes.clone(),
             net::Net::new(vec![]).unwrap(),
             handle.clone(),
             limit,
@@ -45,6 +47,7 @@ impl Runner {
         ));
         Self {
             handle,
+            writes,
             changes,
             done,
             worker,
@@ -128,6 +131,99 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
     .await
     .unwrap();
     (task, ids)
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn usage_write_failures_keep_the_letter_and_findings_without_calling_again(db: SqlitePool) {
+    for block_check in [false, true] {
+        let mut p = Provider::start().await.unwrap();
+        let (id, _) = setup(&db, &p.address, 1).await;
+        profile::set_ai_fact_check(&db, true).await.unwrap();
+        let mut run = Runner::start(&db, Default::default());
+        let writing = request(&mut p).await;
+        let pending = if block_check {
+            writing.respond.send(Response::answer(LETTER)).unwrap();
+            request(&mut p).await
+        } else {
+            writing
+        };
+        sqlx::query(
+            r#"CREATE TRIGGER block_usage BEFORE INSERT ON usage
+            BEGIN
+                SELECT RAISE(FAIL, 'usage storage unavailable');
+            END"#,
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let guard = tokio::spawn(async {
+            loop {
+                tokio::task::yield_now().await;
+            }
+        });
+        tokio::time::pause();
+        pending
+            .respond
+            .send(Response::answer(if block_check {
+                r#"[{"quote":"申请读研","reason":"材料未提到"}]"#
+            } else {
+                LETTER
+            }))
+            .unwrap();
+        timeout(Duration::from_secs(10), async {
+            while run.writes.failure().is_none() {
+                assert!(
+                    task::get(&db, id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .pause_reason
+                        .is_none()
+                );
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(p.requests.try_recv().is_err());
+        sqlx::query("DROP TRIGGER block_usage")
+            .execute(&db)
+            .await
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::time::resume();
+        guard.abort();
+        if !block_check {
+            request(&mut p)
+                .await
+                .respond
+                .send(Response::answer(
+                    r#"[{"quote":"申请读研","reason":"材料未提到"}]"#,
+                ))
+                .unwrap();
+        }
+        assert_eq!(run.finished().await.generated, 1);
+        let drafts = task::pending(&db, id, 1).await.unwrap();
+        assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
+        assert!(matches!(
+            &drafts[0].draft.fact_check,
+            Some(email::fact_check::FactCheck::Completed { findings })
+                if findings.len() == 1 && findings[0].quote == "申请读研"
+        ));
+        let calls: i64 = sqlx::query_scalar(
+            r#"SELECT count(*)
+            FROM usage u
+            JOIN email e ON e.id = u.email_id
+            WHERE e.task_id = ?"#,
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(run.writes.failure(), None);
+        assert!(p.requests.try_recv().is_err());
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -619,7 +715,10 @@ async fn fact_check_switch_controls_generation_and_token_estimates(db: SqlitePoo
             .unwrap();
     assert_eq!(
         purposes,
-        vec![("draft".into(), None), ("fact_check".into(), Some(email))]
+        vec![
+            ("draft".into(), Some(email)),
+            ("fact_check".into(), Some(email))
+        ]
     );
     profile::set_ai_fact_check(&db, false).await.unwrap();
     task::regenerate(&db, id, Some(email), false, 2)

@@ -1436,7 +1436,23 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         },
     )
     .await?;
-    Ok(writing::write(&ctx.db, &ctx.net, &prepared, &current, at).await?)
+    let email_id = email::first_draft(&ctx.db, input.mentor_id)
+        .await?
+        .map(|draft| draft.id);
+    Ok(
+        writing::write(&ctx.net, &prepared, &current, |purpose, usage| {
+            model::usage::record_for_email(
+                &ctx.db,
+                chosen.id,
+                &chosen.model,
+                purpose,
+                email_id,
+                usage,
+                at,
+            )
+        })
+        .await?,
+    )
 }
 
 impl From<writing::Error> for CallError {
@@ -1796,15 +1812,28 @@ async fn write_follow_up(
         },
     )
     .await?;
+    let email_id = email::follow_up::draft(&ctx.db, input.mentor_id)
+        .await?
+        .map(|draft| draft.id);
+    let at = now();
     Ok(writing::write(
-        &ctx.db,
         &ctx.net,
         &prepared,
         &writing::Letter {
             subject: String::new(),
             body_md: input.body_md,
         },
-        now(),
+        |purpose, usage| {
+            model::usage::record_for_email(
+                &ctx.db,
+                chosen.id,
+                &chosen.model,
+                purpose,
+                email_id,
+                usage,
+                at,
+            )
+        },
     )
     .await?)
 }
@@ -1839,15 +1868,29 @@ async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Le
         },
     )
     .await?;
+    let email_id = email::reply_draft(&ctx.db, input.mentor_id)
+        .await?
+        .filter(|draft| draft.reply_to == input.reply_to)
+        .map(|draft| draft.id);
+    let at = now();
     Ok(writing::write(
-        &ctx.db,
         &ctx.net,
         &prepared,
         &writing::Letter {
             subject: String::new(),
             body_md: input.body_md,
         },
-        now(),
+        |purpose, usage| {
+            model::usage::record_for_email(
+                &ctx.db,
+                chosen.id,
+                &chosen.model,
+                purpose,
+                email_id,
+                usage,
+                at,
+            )
+        },
     )
     .await?)
 }

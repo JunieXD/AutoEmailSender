@@ -3,6 +3,7 @@
 
 //! Writing letters with a small HTTP server that runs in the test and answers like a provider.
 
+use email::fact_check::Finding;
 use mentor::{Affiliation, MentorForm};
 use model::{ModelError, ModelForm};
 use net::Net;
@@ -115,9 +116,16 @@ async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePo
     )
     .await
     .unwrap();
-    let letter = writing::write(&db, &Net::new(Vec::new()).unwrap(), &prepared, &blank(), T)
-        .await
-        .unwrap();
+    let letter = writing::write(
+        &Net::new(Vec::new()).unwrap(),
+        &prepared,
+        &blank(),
+        |purpose, usage| {
+            model::usage::record_for_email(&db, chosen.id, &chosen.model, purpose, None, usage, T)
+        },
+    )
+    .await
+    .unwrap();
     assert!(letter.subject.is_empty());
     assert!(letter.body_md.contains("之前的申请"));
     let (system, message) = received.lock().unwrap()[0].clone();
@@ -359,7 +367,32 @@ async fn current_write(
         },
     )
     .await?;
-    writing::write(db, net, &prepared, current, now).await
+    writing::write(net, &prepared, current, |purpose, usage| {
+        model::usage::record_for_email(db, chosen.id, &chosen.model, purpose, None, usage, now)
+    })
+    .await
+}
+
+async fn check(
+    db: &SqlitePool,
+    net: &Net,
+    email: i64,
+    letter: &Letter,
+    chosen: &model::Chosen,
+    references: &[material::Reference],
+) -> Result<Vec<Finding>, writing::fact_check::Error> {
+    writing::fact_check::check(db, net, email, letter, chosen, references, |usage| {
+        model::usage::record_for_email(
+            db,
+            chosen.id,
+            &chosen.model,
+            model::usage::Purpose::FactCheck,
+            Some(email),
+            usage,
+            T,
+        )
+    })
+    .await
 }
 
 async fn received_message(
@@ -478,9 +511,11 @@ async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purpose
         )
         .await
         .unwrap();
-        let answer = writing::write(&db, &net, &prepared, letter, T)
-            .await
-            .unwrap();
+        let answer = writing::write(&net, &prepared, letter, |purpose, usage| {
+            model::usage::record_for_email(&db, chosen.id, &chosen.model, purpose, None, usage, T)
+        })
+        .await
+        .unwrap();
         assert!(answer.subject.is_empty());
         assert!(answer.body_md.contains("【请补充：方便面谈的时间】"));
     }
@@ -562,9 +597,11 @@ async fn reply_context_stops_at_twenty_letters_and_ten_thousand_characters(db: S
         )
         .await
         .unwrap();
-        writing::write(&db, &net, &prepared, &blank(), T)
-            .await
-            .unwrap();
+        writing::write(&net, &prepared, &blank(), |purpose, usage| {
+            model::usage::record_for_email(&db, chosen.id, &chosen.model, purpose, None, usage, T)
+        })
+        .await
+        .unwrap();
     }
     let calls = received.lock().unwrap();
     let short: Value = serde_json::from_str(&calls[0].1).unwrap();
@@ -651,7 +688,7 @@ async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: Sqlit
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let references = material::for_writing(&db).await.unwrap();
     let net = Net::new(vec![]).unwrap();
-    let work = writing::fact_check::check(&db, &net, email, &letter, &chosen, &references, T);
+    let work = check(&db, &net, email, &letter, &chosen, &references);
     let respond = async {
         let request = provider.requests.recv().await.unwrap();
         let data: Value =
@@ -705,11 +742,48 @@ async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: Sqlit
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn incomplete_fact_check_is_an_error_and_still_records_usage(db: SqlitePool) {
+async fn invalid_fact_check_is_corrected_once_and_records_both_calls(db: SqlitePool) {
     let (mentor, _) = setup(&db).await;
-    let (address, _) = provider(vec![("[]", "length"), ("不是 JSON", "stop")])
+    let (address, received) = provider(vec![
+        (r#"[{"quote":"正文","reason":123}]"#, "stop"),
+        (r#"[{"quote":"正文","reason":"材料缺少依据"}]"#, "stop"),
+    ])
+    .await
+    .unwrap();
+    model(&db, &address, true).await;
+    let letter = Letter {
+        subject: "申请".into(),
+        body_md: "正文".into(),
+    };
+    let email = email::save_first_draft(&db, mentor, &letter.subject, &letter.body_md, &[], T)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let chosen = model::chosen(&db).await.unwrap().unwrap();
+    let net = Net::new(vec![]).unwrap();
+    let findings = check(&db, &net, email, &letter, &chosen, &[])
         .await
         .unwrap();
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].quote, "正文");
+    assert_eq!(usage(&db).await.len(), 2);
+    let calls = received.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].1, calls[1].1);
+    assert!(calls[1].0.contains("字段类型不符合要求"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn incomplete_fact_check_is_an_error_and_still_records_usage(db: SqlitePool) {
+    let (mentor, _) = setup(&db).await;
+    let (address, _) = provider(vec![
+        ("[]", "length"),
+        ("不是 JSON", "stop"),
+        ("{}", "stop"),
+    ])
+    .await
+    .unwrap();
     model(&db, &address, true).await;
     let letter = Letter {
         subject: "申请".into(),
@@ -724,14 +798,14 @@ async fn incomplete_fact_check_is_an_error_and_still_records_usage(db: SqlitePoo
     let net = Net::new(vec![]).unwrap();
     for _ in 0..2 {
         assert!(matches!(
-            writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], T).await,
+            check(&db, &net, email, &letter, &chosen, &[]).await,
             Err(writing::fact_check::Error::InvalidAnswer)
         ));
     }
     chosen.agreed = false;
     assert!(matches!(
-        writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], T).await,
+        check(&db, &net, email, &letter, &chosen, &[]).await,
         Err(writing::fact_check::Error::NotAgreed)
     ));
-    assert_eq!(usage(&db).await.len(), 2);
+    assert_eq!(usage(&db).await.len(), 3);
 }

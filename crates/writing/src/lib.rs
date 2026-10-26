@@ -9,6 +9,7 @@ use model::usage::Purpose;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
+use std::future::Future;
 use ts_rs::TS;
 
 #[derive(Debug, Serialize, TS)]
@@ -108,12 +109,12 @@ pub async fn prepare<'a>(
 
 /// Drafts a letter when `current` is blank, and otherwise rewrites it using the same inputs that
 /// filled its template.
-pub async fn write(
-    db: &SqlitePool,
+/// The caller controls usage persistence so background retries keep the answer in memory.
+pub async fn write<F: Future<Output = Result<(), sqlx::Error>>>(
     net: &net::Net,
     input: &Prepared<'_>,
     current: &Letter,
-    now: i64,
+    record_usage: impl Fn(Purpose, model::usage::Usage) -> F,
 ) -> Result<Letter, Error> {
     let Prepared {
         mentor,
@@ -147,7 +148,7 @@ pub async fn write(
         } else {
             Purpose::Rewrite
         };
-        model::usage::record(db, chosen.id, &chosen.model, purpose, usage, now).await?;
+        record_usage(purpose, usage).await?;
     }
     let finish_reason = answer.finish_reason;
     if answer.text.trim().is_empty() {
