@@ -32,22 +32,25 @@ async fn mailbox(db: &SqlitePool, secret: &str) -> (Net, Inbox) {
         secret,
         || std::future::ready(()),
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await
 }
 
-async fn mailbox_with_hooks<R, B>(
+async fn mailbox_with_hooks<R, B, E>(
     db: &SqlitePool,
     secret: &str,
     on_rcpt: impl Fn() -> R + Send + Sync + 'static,
     on_body: impl Fn() -> B + Send + Sync + 'static,
+    on_reject: impl Fn() -> E + Send + Sync + 'static,
 ) -> (Net, Inbox)
 where
     R: Future<Output = ()> + Send + 'static,
     B: Future<Output = ()> + Send + 'static,
+    E: Future<Output = ()> + Send + 'static,
 {
     let pki = fakemail::pki();
-    let (port, inbox) = fakemail::smtp_with_hooks(&pki, false, on_rcpt, on_body).await;
+    let (port, inbox) = fakemail::smtp_with_hooks(&pki, false, on_rcpt, on_body, on_reject).await;
     let server = |port| Server {
         host: Cow::Borrowed("localhost"),
         port,
@@ -401,16 +404,35 @@ async fn a_refused_login_pauses_the_mailbox(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn an_old_failure_does_not_pause_saved_mailbox_settings(db: SqlitePool) {
     let writes = db::Writes::default();
-    for (secret, address, recipient, pause_clock_call) in [
-        ("wrong", ADDRESS, "wang@example.edu.cn", 2),
+    for (secret, address, recipient) in [
+        ("wrong", ADDRESS, "wang@example.edu.cn"),
         (
             SECRET,
             fakemail::BACKUP_ADDRESS,
             "throttled-data@example.edu.cn",
-            3,
         ),
     ] {
-        let (net, inbox) = mailbox(&db, secret).await;
+        let rejected = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let first_failure = AtomicBool::new(true);
+        let (entered, proceed) = (rejected.clone(), release.clone());
+        let (net, inbox) = mailbox_with_hooks(
+            &db,
+            secret,
+            || std::future::ready(()),
+            || std::future::ready(()),
+            move || {
+                let (entered, proceed) = (entered.clone(), proceed.clone());
+                let first = first_failure.swap(false, Ordering::SeqCst);
+                async move {
+                    if first {
+                        entered.notify_one();
+                        proceed.notified().await;
+                    }
+                }
+            },
+        )
+        .await;
         let owner = approve(&db, recipient, &[], T).await;
         let primary = mailbox::list(&db, T).await.unwrap().remove(0);
         let fields = MailboxForm {
@@ -424,44 +446,22 @@ async fn an_old_failure_does_not_pause_saved_mailbox_settings(db: SqlitePool) {
         }
         .check()
         .unwrap();
-        let options = db.connect_options().as_ref().clone();
-        let (request, requested) = std::sync::mpsc::channel();
-        let (finish, finished) = std::sync::mpsc::channel();
-        let writer = std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async {
-                    let db = sqlx::sqlite::SqlitePoolOptions::new()
-                        .max_connections(1)
-                        .connect_with(options)
-                        .await
-                        .unwrap();
-                    requested
-                        .recv_timeout(std::time::Duration::from_secs(5))
-                        .unwrap();
-                    assert!(
-                        mailbox::update(&db, primary.id, &fields, SECRET)
-                            .await
-                            .unwrap()
-                    );
-                    db.close().await;
-                    finish.send(()).unwrap();
-                });
-        });
-        let calls = Cell::new(0);
-        send::step(&db, &writes, &net, nowhere(), || {
-            calls.set(calls.get() + 1);
-            if calls.get() == pause_clock_call {
-                request.send(()).unwrap();
-                finished.recv().unwrap();
-            }
-            T
+        let changing = async {
+            rejected.notified().await;
+            assert!(
+                mailbox::update(&db, primary.id, &fields, SECRET)
+                    .await
+                    .unwrap()
+            );
+            release.notify_one();
+        };
+        // Only catches a hang; no timeout arranges the business ordering.
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            tokio::join!(send::step(&db, &writes, &net, nowhere(), || T), changing)
         })
         .await
         .unwrap();
-        writer.join().unwrap();
+        result.unwrap();
         assert_eq!(first_email(&db, owner).await.delivery, Delivery::Approved);
         assert!(mailbox::list(&db, T).await.unwrap()[0].pause.is_none());
         assert!(inbox.lock().unwrap().is_empty());
@@ -1980,6 +1980,7 @@ async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool
             std::future::ready(())
         },
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
@@ -2050,6 +2051,7 @@ async fn review_deadline_crossed_during_envelope_must_not_upload(db: SqlitePool)
             std::future::ready(())
         },
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await;
     let mentor = approve(&db, "envelope@example.edu.cn", &[], T).await;
@@ -2100,6 +2102,7 @@ async fn deadline_crossed_after_body_upload_keeps_the_uncertain_attempt(db: Sqli
             advancing.store(T + 3_600_000, Ordering::SeqCst);
             std::future::ready(())
         },
+        || std::future::ready(()),
     )
     .await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
@@ -2146,6 +2149,7 @@ async fn controlled_mailbox(db: &SqlitePool) -> (Net, Inbox, Arc<Envelope>) {
                 }
             }
         },
+        || std::future::ready(()),
         || std::future::ready(()),
     )
     .await;

@@ -1347,6 +1347,7 @@ async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqliteP
             }
         },
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await;
     let server = |port| mailbox::Server {

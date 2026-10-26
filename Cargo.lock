@@ -6398,8 +6398,10 @@ dependencies = [
 name = "test-fixtures"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "db",
  "serde_json",
  "sqlx",
+ "tempfile",
  "tokio",
 ]
 

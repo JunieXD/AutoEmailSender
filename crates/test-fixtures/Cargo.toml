@@ -9,6 +9,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+db.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+tempfile = "3"
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
