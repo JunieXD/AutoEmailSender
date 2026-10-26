@@ -109,10 +109,11 @@ pub async fn for_writing(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error>
     // The table lets only a material with text be used for writing.
     sqlx::query_as!(
         Reference,
-        r#"SELECT file_name, extracted_text AS "text!"
+        r#"SELECT file_name, substr(extracted_text, 1, ?) AS "text!: String"
         FROM material
         WHERE for_writing = 1
-        ORDER BY id"#
+        ORDER BY id"#,
+        AI_TEXT_LIMIT as i64
     )
     .fetch_all(db)
     .await
@@ -122,12 +123,22 @@ pub async fn for_writing(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error>
 pub async fn for_matching(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error> {
     sqlx::query_as!(
         Reference,
-        r#"SELECT file_name, extracted_text AS "text!"
+        r#"SELECT file_name, substr(extracted_text, 1, ?) AS "text!: String"
         FROM material
         WHERE for_matching = 1
-        ORDER BY id"#
+        ORDER BY id"#,
+        AI_TEXT_LIMIT as i64
     )
     .fetch_all(db)
+    .await
+}
+
+/// Whether matching has any material to draw on, without fetching its text.
+pub async fn has_matching(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM material WHERE for_matching = 1) AS "exists!: bool""#
+    )
+    .fetch_one(db)
     .await
 }
 

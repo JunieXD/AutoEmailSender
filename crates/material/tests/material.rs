@@ -231,6 +231,18 @@ async fn long_material_is_marked_and_truncated_by_unicode_character(db: SqlitePo
     assert!(material::list(&db).await.unwrap()[0].exceeds_ai_limit);
     assert_eq!(material::for_ai(&text).chars().count(), 10_000);
     assert_eq!(material::for_ai("短文"), "短文");
+    for reference in [
+        material::for_writing(&db).await.unwrap(),
+        material::for_matching(&db).await.unwrap(),
+    ] {
+        assert_eq!(reference[0].text, material::for_ai(&text));
+    }
+    assert_eq!(material::text(&db, 1).await.unwrap(), Some(Some(text)));
+    assert!(material::has_matching(&db).await.unwrap());
+    material::set_purpose(&db, 1, Purpose::Matching, false, 2)
+        .await
+        .unwrap();
+    assert!(!material::has_matching(&db).await.unwrap());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

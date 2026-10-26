@@ -37,9 +37,7 @@ pub async fn ready(db: &SqlitePool) -> Result<(), Error> {
     if !chosen.agreed {
         return Err(Error::NotAgreed);
     }
-    if profile::get(db).await?.research_interests.is_none()
-        && material::for_matching(db).await?.is_empty()
-    {
+    if profile::get(db).await?.research_interests.is_none() && !material::has_matching(db).await? {
         return Err(Error::NoBasis);
     }
     Ok(())
