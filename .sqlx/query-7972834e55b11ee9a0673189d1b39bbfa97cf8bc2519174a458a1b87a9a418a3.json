@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"count!: i64\"\n        FROM email\n        WHERE state IN ('sent', 'bounced') AND sent_at >= ? AND sent_at < ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7972834e55b11ee9a0673189d1b39bbfa97cf8bc2519174a458a1b87a9a418a3"
+}

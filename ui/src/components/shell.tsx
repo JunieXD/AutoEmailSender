@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
 import { useResume } from "@/pages/mailboxes";
+import { useReceive } from "@/pages/conversations";
 
 const NAV = [
   { to: "/mentors", label: "导师", icon: Users },
@@ -191,6 +192,15 @@ function UnreadBadge({ className }: { className?: string }) {
 }
 
 /** What runs in the background and what of it waits for the user (docs/ui.md#后台). */
+/** Today in the user's time zone, which the core cannot know. */
+function localToday() {
+  const now = new Date();
+  return {
+    start: new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(),
+    end: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime(),
+  };
+}
+
 function useBackground() {
   const tasks = useQuery({
     queryKey: ["taskWork"],
@@ -204,12 +214,12 @@ function useBackground() {
   });
   const crawls = useQuery({
     queryKey: ["crawlWork"],
-    queryFn: () => {
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
-      return call("crawlWork", { start, end });
-    },
+    queryFn: () => call("crawlWork", localToday()),
+    refetchInterval: 3000,
+  });
+  const done = useQuery({
+    queryKey: ["todayWork"],
+    queryFn: () => call("todayWork", localToday()),
     refetchInterval: 3000,
   });
   const scheduled = useQuery({
@@ -238,15 +248,25 @@ function useBackground() {
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
     emails: scheduled.data?.pending ?? 0,
     mailboxes: mailboxes.data?.flatMap(({ id, address, pause }) => (pause ? [{ id, address, pause }] : [])) ?? [],
+    // A round that could not reach a mailbox still counts as received; the reason stays on the mailbox.
+    unreceived:
+      mailboxes.data?.flatMap(({ id, address, receiveError }) =>
+        receiveError ? [{ id, address, receiveError }] : [],
+      ) ?? [],
     paused: tasks.data?.filter((t) => t.state === "paused") ?? [],
     crawlsPending: crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [],
     crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
-    generating: tasks.data?.filter((t) => t.generating > 0) ?? [],
+    generating: tasks.data?.filter((t) => t.generating > 0 && t.state !== "paused") ?? [],
     matching: matching.data?.remaining ?? 0,
+    matchingPause: matching.data?.pause ?? null,
+    receiving: (mailboxes.data?.length ?? 0) > 0,
     repliesPaused: replies.data?.pause ?? null,
     marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
     crawled:
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
+    drafted: done.data?.drafts ?? [],
+    matched: done.data?.matched ?? 0,
+    sent: done.data?.sent ?? 0,
     next: scheduled.data?.nextAt ?? null,
     nextToday: scheduled.data?.today ?? 0,
     error:
@@ -256,17 +276,25 @@ function useBackground() {
       scheduled.error ??
       crawls.error ??
       mailboxes.error ??
-      replies.error,
+      replies.error ??
+      done.error,
   };
   return {
     ...work,
-    running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0) + (work.marking > 0 ? 1 : 0),
+    finished: work.crawled.length + work.drafted.length + (work.matched > 0 ? 1 : 0) + (work.sent > 0 ? 1 : 0),
+    running:
+      work.crawling.length +
+      work.generating.length +
+      (work.matching > 0 && !work.matchingPause ? 1 : 0) +
+      (work.marking > 0 ? 1 : 0),
     waiting:
       (work.storage ? 1 : 0) +
       (work.emails > 0 ? 1 : 0) +
       work.mailboxes.length +
+      work.unreceived.length +
       work.paused.length +
       work.crawlsPending.length +
+      (work.matching > 0 && work.matchingPause ? 1 : 0) +
       (work.repliesPaused ? 1 : 0),
   };
 }
@@ -284,16 +312,32 @@ function WaitingDot() {
 function Background({ className }: { className?: string }) {
   const queryClient = useQueryClient();
   const work = useBackground();
-  const pauseCrawl = useMutation({
-    mutationFn: (id: number) => call("pauseCrawl", { id }),
+  const crawl = useMutation({
+    mutationFn: ({ op, id }: { op: "pauseCrawl" | "resumeCrawl"; id: number }) => call(op, { id }),
     onSuccess: () => refreshCrawls(queryClient),
+  });
+  const matching = useMutation({
+    mutationFn: (op: "pauseMatching" | "resumeMatching") => call(op, {}),
+    onSettled: () => refreshMentors(queryClient),
+  });
+  const pauseTask = useMutation({
+    mutationFn: (id: number) => call("pauseTask", { id }),
+    onSuccess: () => refreshTasks(queryClient),
   });
   const resumeReplies = useMutation({
     mutationFn: () => call("resumeReplyProcessing", {}),
     onSuccess: () => refreshReplyOutcomes(queryClient),
   });
   const resume = useResume();
-  const error = work.error ?? pauseCrawl.error ?? resume.error ?? resumeReplies.error;
+  const { receive, receiving, receiveError, received } = useReceive();
+  const error =
+    work.error ??
+    crawl.error ??
+    matching.error ??
+    pauseTask.error ??
+    resume.error ??
+    resumeReplies.error ??
+    receiveError;
   return (
     <Popover>
       <PopoverTrigger
@@ -340,19 +384,45 @@ function Background({ className }: { className?: string }) {
                 </Button>
               </div>
             ))}
+            {work.unreceived.map((m) => (
+              <Link key={m.id} to="/settings/mailboxes" className={ITEM}>
+                <Entry title={m.address} detail={`收信失败：${m.receiveError}`} />
+              </Link>
+            ))}
             {work.paused.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
                 <Entry title={t.name} detail={t.pauseReason ?? "已暂停"} />
               </Link>
             ))}
             {work.crawlsPending.map((c) => (
-              <Link key={c.id} to="/find" search={findSearch({ tab: "crawl", detail: c.id })} className={ITEM}>
-                <Entry
-                  title={crawlName(c)}
-                  detail={c.error ?? (c.state === "paused" ? "已暂停" : `${c.failed} 个页面没能打开`)}
-                />
-              </Link>
+              <div key={c.id} className="flex items-center gap-2">
+                <Link to="/find" search={findSearch({ tab: "crawl", detail: c.id })} className={ITEM}>
+                  <Entry
+                    title={crawlName(c)}
+                    detail={c.error ?? (c.state === "paused" ? "已暂停" : `${c.failed} 个页面没能打开`)}
+                  />
+                </Link>
+                {c.state === "paused" && (
+                  <ModelAction
+                    disabled={crawl.isPending}
+                    modelIds={c.modelIds}
+                    onWrite={() => crawl.mutate({ op: "resumeCrawl", id: c.id })}
+                  >
+                    继续
+                  </ModelAction>
+                )}
+              </div>
             ))}
+            {work.matching > 0 && work.matchingPause && (
+              <div className="flex items-center gap-2">
+                <Link to="/mentors" className={ITEM}>
+                  <Entry title="匹配度分析已暂停" detail={work.matchingPause.reason ?? `还剩 ${work.matching} 位`} />
+                </Link>
+                <ModelAction disabled={matching.isPending} onWrite={() => matching.mutate("resumeMatching")}>
+                  继续
+                </ModelAction>
+              </div>
+            )}
             {work.repliesPaused && (
               <div className="flex items-center gap-2">
                 <Link to="/conversations" className={ITEM}>
@@ -382,22 +452,37 @@ function Background({ className }: { className?: string }) {
                 <Button
                   variant="quiet"
                   size="sm"
-                  disabled={pauseCrawl.isPending}
-                  onClick={() => pauseCrawl.mutate(c.id)}
+                  disabled={crawl.isPending}
+                  onClick={() => crawl.mutate({ op: "pauseCrawl", id: c.id })}
                 >
                   暂停
                 </Button>
               </div>
             ))}
             {work.generating.map((t) => (
-              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
-                <Entry title={t.name} detail={`生成草稿，还剩 ${t.generating} 封`} />
-              </Link>
+              <div key={t.id} className="flex items-center gap-2">
+                <Link to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
+                  <Entry title={t.name} detail={`生成草稿，还剩 ${t.generating} 封`} />
+                </Link>
+                <Button variant="quiet" size="sm" disabled={pauseTask.isPending} onClick={() => pauseTask.mutate(t.id)}>
+                  暂停
+                </Button>
+              </div>
             ))}
-            {work.matching > 0 && (
-              <Link to="/mentors" className={ITEM}>
-                <Entry title="匹配度分析" detail={`还剩 ${work.matching} 位`} />
-              </Link>
+            {work.matching > 0 && !work.matchingPause && (
+              <div className="flex items-center gap-2">
+                <Link to="/mentors" className={ITEM}>
+                  <Entry title="匹配度分析" detail={`还剩 ${work.matching} 位`} />
+                </Link>
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  disabled={matching.isPending}
+                  onClick={() => matching.mutate("pauseMatching")}
+                >
+                  暂停
+                </Button>
+              </div>
             )}
             {work.marking > 0 && (
               <Link to="/conversations" className={ITEM}>
@@ -406,23 +491,50 @@ function Background({ className }: { className?: string }) {
             )}
           </Group>
         )}
-        {work.next !== null && (
+        {(work.next !== null || work.receiving) && (
           <Group title="按计划进行">
-            <Link to="/tasks" search={{ tab: "plan", column: "upcoming" }} className={ITEM}>
-              <Entry title={`下一封 ${scheduledAt(work.next)}`} detail={`今天还剩 ${work.nextToday} 封`} />
-            </Link>
+            {work.next !== null && (
+              <Link to="/tasks" search={{ tab: "plan", column: "upcoming" }} className={ITEM}>
+                <Entry title={`下一封 ${scheduledAt(work.next)}`} detail={`今天还剩 ${work.nextToday} 封`} />
+              </Link>
+            )}
+            {work.receiving && (
+              <div className="flex items-center gap-2">
+                <Link to="/conversations" className={ITEM}>
+                  <Entry title="收信" detail={received ?? "还没有收过信"} />
+                </Link>
+                <Button variant="quiet" size="sm" disabled={receiving} onClick={receive}>
+                  立即收信
+                </Button>
+              </div>
+            )}
           </Group>
         )}
-        {work.crawled.length > 0 && (
+        {work.finished > 0 && (
           <Group title="今天完成">
             {work.crawled.map((c) => (
               <Link key={c.id} to="/find" search={findSearch({ crawl: c.id })} className={ITEM}>
                 <Entry title={crawlName(c)} detail={`找到 ${c.candidates} 位候选，去审核`} />
               </Link>
             ))}
+            {work.drafted.map((t) => (
+              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
+                <Entry title={t.name} detail={`写好 ${t.generated} 封草稿，去审核`} />
+              </Link>
+            ))}
+            {work.matched > 0 && (
+              <Link to="/mentors" className={ITEM}>
+                <Entry title="匹配度分析" detail={`分析了 ${work.matched} 位，去导师列表`} />
+              </Link>
+            )}
+            {work.sent > 0 && (
+              <Link to="/tasks" search={{ tab: "plan", column: "history" }} className={ITEM}>
+                <Entry title="发信" detail={`发出 ${work.sent} 封，去发送历史`} />
+              </Link>
+            )}
           </Group>
         )}
-        {work.waiting === 0 && work.running === 0 && work.next === null && work.crawled.length === 0 && (
+        {work.waiting === 0 && work.running === 0 && work.next === null && !work.receiving && work.finished === 0 && (
           <p className="text-muted-foreground">现在没有后台工作</p>
         )}
         {error && <p className="text-destructive">{errorMessage(error)}</p>}

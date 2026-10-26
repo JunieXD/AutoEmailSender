@@ -505,6 +505,24 @@ pub async fn run(path: &Path) -> Result {
         median(async || task::work(&db).await.map(drop)).await?,
         home,
     );
+    sqlx::query(
+        r#"UPDATE email
+        SET generated_at = coalesce(sent_at, ?1) - (id % 3) * 86_400_000
+        WHERE task_id IS NOT NULL"#,
+    )
+    .bind(NOW)
+    .execute(&db)
+    .await?;
+    report(
+        "后台今天完成（20 个任务、10 万导师、6 万封邮件）",
+        median(async || {
+            stats::today_work(&db, NOW - 86_400_000, NOW)
+                .await
+                .map(drop)
+        })
+        .await?,
+        home,
+    );
     // Review text includes all rules, aliases, attachment counts and other task mentor names.
     sqlx::query(
         r#"UPDATE email SET state = 'review', error = NULL, cancel_reason = NULL

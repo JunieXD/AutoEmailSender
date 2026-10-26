@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email\n        SET fact_check = ?, state = 'review',\n            subject = CASE WHEN kind = 'follow_up' THEN subject\n        ELSE ? END, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL,\n            generated_at = ?, updated_at = ?\n        WHERE id = ? AND generation_claim = ? AND state = 'generating'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "76aa5e9e18a8ce9721ae456077d6bb6665f4f96c2253070d2f7c56fc013bc484"
+}
