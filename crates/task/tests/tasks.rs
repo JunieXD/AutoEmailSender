@@ -1316,11 +1316,32 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePool) {
-    use std::cell::Cell;
-    use std::sync::mpsc;
+async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqlitePool) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    };
+    use tokio::sync::Notify;
+    let clock = Arc::new(AtomicI64::new(T));
+    let reached = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let signal = reached.clone();
+    let proceed = release.clone();
     let pki = fakemail::pki();
-    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let (port, inbox) = fakemail::smtp_with_hooks(
+        &pki,
+        false,
+        move || {
+            let signal = signal.clone();
+            let proceed = proceed.clone();
+            async move {
+                signal.notify_one();
+                proceed.notified().await;
+            }
+        },
+        || std::future::ready(()),
+    )
+    .await;
     let server = |port| mailbox::Server {
         host: "localhost".into(),
         port,
@@ -1355,52 +1376,29 @@ async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePoo
     .unwrap();
     let id = draft.id;
     email::schedule::reschedule(&db, id, T, T).await.unwrap();
-    let options = db.connect_options().as_ref().clone();
-    let (request, requested) = mpsc::channel();
-    let (finish, finished) = mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let db = sqlx::sqlite::SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect_with(options)
-                    .await
-                    .unwrap();
-                requested.recv().unwrap();
-                assert_eq!(
-                    sqlx::query_scalar::<_, String>(
-                        r#"SELECT state
-                           FROM email
-                           WHERE id = ?"#
-                    )
-                    .bind(id)
-                    .fetch_one(&db)
-                    .await
-                    .unwrap(),
-                    "sending"
-                );
-                stop(&db, task, T).await.unwrap();
-                db.close().await;
-                finish.send(()).unwrap();
-            });
-    });
-    let calls = Cell::new(0);
     let net = net::Net::new(vec![pki.root.clone()]).unwrap();
     let nowhere = std::path::Path::new("unused");
-    send::step(&db, &net, nowhere, || {
-        calls.set(calls.get() + 1);
-        if calls.get() == 4 {
-            request.send(()).unwrap();
-            finished.recv().unwrap();
-        }
-        if calls.get() < 4 { T } else { T + 3_600_000 }
+    let sending = send::step(&db, &net, nowhere, || clock.load(Ordering::SeqCst));
+    let stopping = async {
+        reached.notified().await;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            "sending"
+        );
+        stop(&db, task, T).await.unwrap();
+        clock.store(T + 3_600_000, Ordering::SeqCst);
+        release.notify_one();
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        tokio::join!(sending, stopping)
     })
     .await
-    .unwrap();
-    writer.join().unwrap();
+    .expect("sending must finish");
+    result.unwrap();
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
         r#"SELECT state, cancel_reason, planned_at, latest_at
            FROM email

@@ -123,33 +123,56 @@ pub type Inbox = Arc<Mutex<Vec<String>>>;
 /// and
 /// hangs up without answering once it has the mail for one named `hangup`.
 pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
-    smtp_with_rcpt_hook(pki, starttls, || {}).await
+    smtp_with_hooks(
+        pki,
+        starttls,
+        || std::future::ready(()),
+        || std::future::ready(()),
+    )
+    .await
 }
 
-/// Runs `on_rcpt` before answering an accepted recipient, so tests can control the envelope stage.
-pub async fn smtp_with_rcpt_hook(
+/// Hooks pause the envelope before a recipient response and the uploaded body before its result.
+pub async fn smtp_with_hooks<R, B>(
     pki: &Pki,
     starttls: bool,
-    on_rcpt: impl Fn() + Send + Sync + 'static,
-) -> (u16, Inbox) {
+    on_rcpt: impl Fn() -> R + Send + Sync + 'static,
+    on_body: impl Fn() -> B + Send + Sync + 'static,
+) -> (u16, Inbox)
+where
+    R: Future<Output = ()> + Send + 'static,
+    B: Future<Output = ()> + Send + 'static,
+{
     let tls = &pki.tls;
     let inbox = Inbox::default();
     let received = inbox.clone();
     let acceptor = tls.clone();
     let on_rcpt = Arc::new(on_rcpt);
+    let on_body = Arc::new(on_body);
     let port = listen(tls, starttls, move |io| {
-        smtp_session(io, acceptor.clone(), received.clone(), on_rcpt.clone())
+        smtp_session(
+            io,
+            acceptor.clone(),
+            received.clone(),
+            on_rcpt.clone(),
+            on_body.clone(),
+        )
     })
     .await;
     (port, inbox)
 }
 
-async fn smtp_session(
+async fn smtp_session<R, B>(
     mut io: BufReader<Box<dyn Stream>>,
     tls: TlsAcceptor,
     inbox: Inbox,
-    on_rcpt: Arc<dyn Fn() + Send + Sync>,
-) -> std::io::Result<()> {
+    on_rcpt: Arc<impl Fn() -> R + Send + Sync>,
+    on_body: Arc<impl Fn() -> B + Send + Sync>,
+) -> std::io::Result<()>
+where
+    R: Future<Output = ()> + Send + 'static,
+    B: Future<Output = ()> + Send + 'static,
+{
     let login = base64::engine::general_purpose::STANDARD.encode(format!("\0{ADDRESS}\0{SECRET}"));
     let backup_login =
         base64::engine::general_purpose::STANDARD.encode(format!("\0{BACKUP_ADDRESS}\0{SECRET}"));
@@ -167,6 +190,12 @@ async fn smtp_session(
             return Ok(());
         }
         let words: Vec<&str> = line.split_whitespace().collect();
+        if words
+            .first()
+            .is_some_and(|word| word.eq_ignore_ascii_case("RCPT"))
+        {
+            on_rcpt().await;
+        }
         let reply = match words.first().map(|w| w.to_ascii_uppercase()).as_deref() {
             Some("EHLO") if encrypted => "250-fake\r\n250 AUTH PLAIN LOGIN\r\n",
             Some("EHLO") => "250-fake\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN\r\n",
@@ -199,7 +228,6 @@ async fn smtp_session(
             Some("RCPT") => {
                 reject_data |= primary && line.contains("<throttled-data@");
                 hangup |= line.contains("<hangup@");
-                on_rcpt();
                 "250 ok\r\n"
             }
             Some("MAIL") => {
@@ -214,6 +242,7 @@ async fn smtp_session(
                         return Ok(());
                     }
                 }
+                on_body().await;
                 if reject_data {
                     io.write_all(b"451 4.7.0 Message rate limit exceeded\r\n")
                         .await?;
