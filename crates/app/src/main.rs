@@ -12,7 +12,7 @@ use std::error::Error;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Local};
+use chrono::DateTime;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
@@ -57,16 +57,12 @@ async fn export_crawl_log(
         .map_err(|e| format!("抓取日志未能导出：{e}"))?
         .ok_or("这次抓取已被删除")?;
     let at = DateTime::from_timestamp_millis(detail.summary.created_at)
-        .ok_or("抓取开始时间不正确，无法导出日志")?
-        .with_timezone(&Local);
-    let date = at.format("%Y-%m-%d").to_string();
-    let started = at.format("%Y-%m-%d %H:%M:%S").to_string();
+        .ok_or("抓取开始时间不正确，无法导出日志")?;
     let dir = data_dir(&app)
         .map_err(|e| format!("抓取日志未能导出：{e}"))?
         .join("logs");
     tauri::async_runtime::spawn_blocking(move || {
-        logs::export_crawl(&app, &dir, &detail, &date, &started)
-            .map_err(|e| format!("抓取日志未能导出：{e}"))
+        logs::export_crawl(&app, &dir, &detail, at).map_err(|e| format!("抓取日志未能导出：{e}"))
     })
     .await
     .map_err(|e| format!("抓取日志未能导出：{e}"))?

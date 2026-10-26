@@ -5,7 +5,7 @@ use std::error::Error;
 use std::io::Write;
 use std::path::Path;
 
-use chrono::{DateTime, SecondsFormat};
+use chrono::{DateTime, Local, SecondsFormat, Utc};
 use crawl::queue::{CrawlDetail, CrawlState};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -90,10 +90,8 @@ fn files(dir: &Path) -> std::io::Result<Vec<String>> {
     Ok(names)
 }
 
-fn crawl_lines(dir: &Path, id: i64, created_at: i64) -> std::io::Result<String> {
-    let start = DateTime::from_timestamp_millis(created_at)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "抓取开始时间不正确"))?
-        .to_rfc3339_opts(SecondsFormat::Micros, true);
+fn crawl_lines(dir: &Path, id: i64, created_at: DateTime<Utc>) -> std::io::Result<String> {
+    let start = created_at.to_rfc3339_opts(SecondsFormat::Micros, true);
     let mut out = String::new();
     let marker = format!("crawl{{id={id}}}:");
     for name in files(dir)? {
@@ -112,7 +110,12 @@ fn crawl_lines(dir: &Path, id: i64, created_at: i64) -> std::io::Result<String> 
     Ok(out)
 }
 
-fn crawl_content(dir: &Path, detail: &CrawlDetail, started: &str) -> std::io::Result<String> {
+fn crawl_content(
+    dir: &Path,
+    detail: &CrawlDetail,
+    created_at: DateTime<Utc>,
+    started: &str,
+) -> std::io::Result<String> {
     let state = match detail.summary.state {
         CrawlState::Running => "运行中",
         CrawlState::Paused => "已暂停",
@@ -136,7 +139,7 @@ fn crawl_content(dir: &Path, detail: &CrawlDetail, started: &str) -> std::io::Re
 ",
         detail.summary.id
     ));
-    let lines = crawl_lines(dir, detail.summary.id, detail.summary.created_at)?;
+    let lines = crawl_lines(dir, detail.summary.id, created_at)?;
     out.push_str(if lines.is_empty() {
         "没有找到这次抓取的日志。\n"
     } else {
@@ -161,18 +164,20 @@ pub fn export_crawl(
     app: &AppHandle,
     dir: &Path,
     detail: &CrawlDetail,
-    date: &str,
-    started: &str,
+    created_at: DateTime<Utc>,
 ) -> Result<bool, Box<dyn Error>> {
+    let local = created_at.with_timezone(&Local);
+    let date = local.format("%Y-%m-%d").to_string();
+    let started = local.format("%Y-%m-%d %H:%M:%S").to_string();
     let Some(target) = app
         .dialog()
         .file()
-        .set_file_name(crawl_filename(detail, date)?)
+        .set_file_name(crawl_filename(detail, &date)?)
         .blocking_save_file()
     else {
         return Ok(false);
     };
-    let out = crawl_content(dir, detail, started)?;
+    let out = crawl_content(dir, detail, created_at, &started)?;
     crate::save::replace(&target.into_path()?, |file| file.write_all(out.as_bytes()))?;
     Ok(true)
 }
@@ -191,7 +196,7 @@ mod tests {
                 model_config_id: None,
                 state: CrawlState::Paused,
                 error: None,
-                created_at: 1_793_001_600_000,
+                created_at: 946_684_800_000,
                 finished_at: None,
                 pages: 2,
                 remaining: 1,
@@ -236,7 +241,8 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.path().join(".DS_Store"), "unrelated").unwrap();
-        let lines = crawl_lines(dir.path(), 5, 1_792_929_600_000).unwrap();
+        let created_at = DateTime::from_timestamp_millis(1_792_929_600_000).unwrap();
+        let lines = crawl_lines(dir.path(), 5, created_at).unwrap();
         assert!(!lines.contains("previous crawl"));
         assert_eq!(lines.lines().count(), 4);
         assert!(lines.starts_with("2026-10-25"));
@@ -250,8 +256,9 @@ mod tests {
     fn export_has_context_and_keeps_an_empty_crawl_useful() {
         let dir = tempfile::tempdir().unwrap();
         let mut detail = detail();
-        let started = "2026-10-26 08:00:00";
-        let empty = crawl_content(dir.path(), &detail, started).unwrap();
+        let created_at = DateTime::from_timestamp_millis(detail.summary.created_at).unwrap();
+        let started = "2000-01-01 08:00:00";
+        let empty = crawl_content(dir.path(), &detail, created_at, started).unwrap();
         for value in [
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
@@ -269,12 +276,15 @@ mod tests {
             crawl_filename(&detail, "2026-10-26").unwrap(),
             "抓取日志 school.example.edu 2026-10-26.txt"
         );
-        std::fs::write(
-            dir.path().join("app.2026-10-26.log"),
-            "2026-10-26T08:00:00.000000Z  INFO crawl{id=5}: crawl: crawl started\n",
-        )
-        .unwrap();
-        let content = crawl_content(dir.path(), &detail, started).unwrap();
+        let file = std::fs::File::create(dir.path().join("app.2026-10-26.log")).unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(std::sync::Mutex::new(file))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            crawl::span(5).in_scope(|| tracing::info!("crawl started"));
+        });
+        let content = crawl_content(dir.path(), &detail, created_at, started).unwrap();
         assert!(content.contains("crawl{id=5}"));
         assert!(content.contains("crawl started"));
         assert!(!content.contains("没有找到"));
@@ -284,7 +294,7 @@ mod tests {
             "抓取日志 Agent 提交 2026-10-26.txt"
         );
         assert!(
-            crawl_content(dir.path(), &detail, started)
+            crawl_content(dir.path(), &detail, created_at, started)
                 .unwrap()
                 .contains("Agent 提交")
         );
