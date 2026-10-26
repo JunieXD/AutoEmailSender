@@ -16,7 +16,7 @@ import { FIELD_NAMES } from "@/components/differences";
 import { refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
-import { base64 } from "@/file";
+import { base64, MAX_UPLOAD } from "@/file";
 import { reconcileChoices, reconcileMatches } from "@/import-decisions";
 
 type ImportFile = Omit<PreviewImport, "decisions">;
@@ -47,8 +47,7 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
       remapping?: Preview;
     }) => {
       const version = ++revision.current;
-      if (selected instanceof File && selected.size > 20 * 1024 * 1024)
-        throw new Error("文件超过 20 MB，请缩小文件后重试");
+      if (selected instanceof File && selected.size > MAX_UPLOAD) throw new Error("文件超过 20 MB，请缩小文件后重试");
       const input =
         selected instanceof File
           ? { fileName: selected.name, data: await base64(selected), setup }

@@ -1,7 +1,7 @@
-import type { Node } from "@tiptap/pm/model";
+import { DOMParser as SchemaParser, type Node } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { type Editor, EditorContent, Extension, useEditor, useEditorState } from "@tiptap/react";
+import { type Editor, EditorContent, Extension, getSchema, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Bold, Braces, Italic, Link, List, ListOrdered } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -23,6 +23,15 @@ export const letterFormats = StarterKit.configure({
   // Not autolinking also keeps what is typed after a link out of it.
   link: { openOnClick: false, autolink: false, isAllowedUri: linkable },
 });
+
+/** What pasting this HTML into a letter would keep of it, as Markdown. */
+export function pastedMarkdown(html: string): string {
+  const { body } = new DOMParser().parseFromString(html, "text/html");
+  // A document's headers, footers and notes are not part of the letter, nor the captions standing
+  // in for its images.
+  for (const e of body.querySelectorAll("header, footer, aside, figure")) e.remove();
+  return toMarkdown(SchemaParser.fromSchema(getSchema([letterFormats])).parse(body));
+}
 
 /** How the editor reads a letter's HTML: spaces typed in it, such as an indent, are text. */
 export const letterParsing = { preserveWhitespace: true } as const;
