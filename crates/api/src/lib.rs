@@ -276,13 +276,14 @@ operations! {
     "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
     "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
     "listMaterials" => list_materials(Nothing) -> Vec<material::Material>;
-    "addMaterial" => add_material(NewMaterial) -> MaterialId;
+    "addMaterial" => add_material(UploadedFile) -> MaterialId;
     "setMaterialPurpose" => set_material_purpose(MaterialPurpose) -> ();
     "getMaterialText" => get_material_text(MaterialId) -> Option<String>;
     "deleteMaterial" => delete_material(MaterialId) -> ();
     "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
     "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
     "getTemplate" => get_template(TemplateId) -> template::Template;
+    "importWordTemplate" => import_word_template(UploadedFile) -> document::WordTemplate;
     "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
     "updateTemplate" => update_template(TemplateEdit) -> ();
     "deleteTemplate" => delete_template(TemplateId) -> ();
@@ -1153,7 +1154,7 @@ pub struct MaterialId {
 /// A file the user picked, as base64: JSON carries no bytes.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct NewMaterial {
+pub struct UploadedFile {
     pub file_name: String,
     pub data: String,
 }
@@ -1194,7 +1195,7 @@ async fn list_materials(ctx: &Context, _: Nothing) -> Result<Vec<material::Mater
     Ok(material::list(&ctx.db).await?)
 }
 
-async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, CallError> {
+async fn add_material(ctx: &Context, input: UploadedFile) -> Result<MaterialId, CallError> {
     let data = uploaded_bytes(&input.data)?;
     let extracted = material::extract(input.file_name.trim(), data).await?;
     let id = material::add(&ctx.db, &ctx.materials, extracted, now()).await?;
@@ -1255,6 +1256,16 @@ async fn add_template(
     let fields = form.check().map_err(CallError::invalid)?;
     let id = template::create(&ctx.db, &fields, now()).await?;
     Ok(TemplateId { id })
+}
+
+async fn import_word_template(
+    _: &Context,
+    input: UploadedFile,
+) -> Result<document::WordTemplate, CallError> {
+    let data = uploaded_bytes(&input.data)?;
+    document::import_word_template(input.file_name.trim(), data)
+        .await
+        .map_err(CallError::invalid)
 }
 
 async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallError> {

@@ -425,8 +425,6 @@ baseUrl: string, model: string, inputPrice: number | null, outputPrice: number |
 
 export type NewMailbox = { secret: string, address: string, senderName: string, provider: string, smtp: Server, imap: Server, dailyLimit: number, minIntervalS: number, };
 
-export type NewMaterial = { fileName: string, data: string, };
-
 export type NewModelConfig = { apiKey: string,
 /**
  * May be blank.
@@ -672,11 +670,15 @@ export type Trashed = { rows: Array<number>, id: number, name: string, };
 
 export type Trend = { date: string, sent: number, replies: number, };
 
+export type UploadedFile = { fileName: string, data: string, };
+
 export type UsagePurpose = "crawl" | "match" | "draft" | "rewrite" | "fact_check" | "reply_outcome" | "reply_todos";
 
 export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused" | "mailbox_interval" | "no_mailbox" | "mailbox_secret" | "ready";
 
 export type Window = { dates: Array<string>, start: string, end: string, perWindow: number, };
+
+export type WordTemplate = { name: string, bodyMd: string, };
 
 export type Writer = "ai" | "template";
 
@@ -791,13 +793,14 @@ export interface Operations {
   getLetterStyle: { input: Nothing; output: LetterStyle };
   updateLetterStyle: { input: LetterStyle; output: null };
   listMaterials: { input: Nothing; output: Array<Material> };
-  addMaterial: { input: NewMaterial; output: MaterialId };
+  addMaterial: { input: UploadedFile; output: MaterialId };
   setMaterialPurpose: { input: MaterialPurpose; output: null };
   getMaterialText: { input: MaterialId; output: string | null };
   deleteMaterial: { input: MaterialId; output: null };
   listPlaceholders: { input: Nothing; output: Array<string> };
   listTemplates: { input: Nothing; output: Array<TemplateSummary> };
   getTemplate: { input: TemplateId; output: Template };
+  importWordTemplate: { input: UploadedFile; output: WordTemplate };
   addTemplate: { input: TemplateForm; output: TemplateId };
   updateTemplate: { input: TemplateEdit; output: null };
   deleteTemplate: { input: TemplateId; output: null };

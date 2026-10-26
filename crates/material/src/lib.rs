@@ -1,10 +1,9 @@
 //! Materials: the user's files, such as a résumé, kept with the text taken out of them
 //! (docs/data-model.md#实体).
 
-use std::io::{self, Cursor};
+use std::io;
 use std::path::{Path, PathBuf};
 
-use office_oxide::format::DocumentFormat;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
@@ -236,15 +235,9 @@ fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
             .and_then(|d| d.extract_all_text())
             .map_err(|e| e.to_string())?
     } else {
-        // By what the file is rather than its name, as a DOCX may be named .doc.
-        let format = if data.starts_with(b"PK") {
-            DocumentFormat::Docx
-        } else {
-            DocumentFormat::Doc
-        };
-        office_oxide::Document::from_reader(Cursor::new(data.to_vec()), format)
+        document::open_word(data)
             .map_err(|e| e.to_string())?
-            .plain_text()
+            .to_markdown()
     };
     // Extractors may emit NUL for symbol fonts; SQLite text functions stop at it.
     text.retain(|c| c != '\0');

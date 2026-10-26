@@ -1,0 +1,20 @@
+[package]
+name = "document"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+office_oxide = "0.1"
+serde.workspace = true
+template.workspace = true
+tokio = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+ts-rs.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

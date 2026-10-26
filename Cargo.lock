@@ -122,6 +122,7 @@ dependencies = [
  "check",
  "crawl",
  "db",
+ "document",
  "email",
  "fakemail",
  "mailbox",
@@ -1494,6 +1495,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "document"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "office_oxide",
+ "serde",
+ "template",
+ "tokio",
+ "tracing",
+ "ts-rs",
 ]
 
 [[package]]
@@ -3331,9 +3344,9 @@ name = "material"
 version = "3.0.0-alpha.0"
 dependencies = [
  "db",
+ "document",
  "email",
  "mentor",
- "office_oxide",
  "pdf_oxide",
  "serde",
  "sqlx",
