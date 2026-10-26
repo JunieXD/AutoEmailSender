@@ -243,7 +243,9 @@ fn open_word(data: &[u8]) -> office_oxide::Result<office_oxide::Document> {
 /// Only the letter body, without page furniture, notes, comments or images.
 /// None when the remaining body has no text.
 pub fn word_body(data: &[u8]) -> office_oxide::Result<Option<DocumentIR>> {
-    let mut document = open_word(data)?.to_ir();
+    let document = open_word(data)?;
+    let doc = document.format() == DocumentFormat::Doc;
+    let mut document = document.to_ir();
     let mut has_text = false;
     for section in &mut document.sections {
         section.header = None;
@@ -252,6 +254,13 @@ pub fn word_body(data: &[u8]) -> office_oxide::Result<Option<DocumentIR>> {
         section.first_page_footer = None;
         section.even_page_header = None;
         section.even_page_footer = None;
+        // A DOC's text boxes, its header's among them, all come out alike; a letterhead is more
+        // likely there than letter text.
+        if doc {
+            section
+                .elements
+                .retain(|element| !matches!(element, Element::TextBox(_)));
+        }
         has_text |= retain_body(&mut section.elements);
     }
     Ok(has_text.then_some(document))
