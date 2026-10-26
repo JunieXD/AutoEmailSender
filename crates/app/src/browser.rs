@@ -25,12 +25,26 @@ const PREFIX: &str = "crawl-browser-";
 const TIMEOUT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(500);
 const STABLE: Duration = Duration::from_millis(1500);
-const SNAPSHOT: &str = "({state:document.readyState,url:location.href,length:document.body?.innerText.length??0,elements:document.getElementsByTagName('*').length})";
-const MATERIAL_SNAPSHOT: &str = r#"({
-    text: document.body?.innerText ?? '',
-    links: [...document.querySelectorAll('a[href]')].map(element => element.href),
-    images: [...document.querySelectorAll('img[alt]')].map(element => element.getAttribute('alt')),
+const PAGE_SNAPSHOT: &str = r#"({
+    state: document.readyState,
+    url: location.href,
+    leaving: document.__aesCrawlLeaving === true,
+    material: {
+        text: document.body?.innerText ?? '',
+        links: [...document.querySelectorAll('a[href]')].map(element => element.href),
+        images: [...document.querySelectorAll('img[alt]')].map(element => element.getAttribute('alt')),
+    },
 })"#;
+const WATCH_NAVIGATION: &str = r#"(() => {
+    if (!window.navigation) return false;
+    if (document.__aesCrawlLeaving === undefined) {
+        document.__aesCrawlLeaving = false;
+        window.navigation.addEventListener('navigate', event => {
+            if (!event.destination.sameDocument) document.__aesCrawlLeaving = true;
+        });
+    }
+    return true;
+})()"#;
 const CLICK_CONTROL: &str = r#"(label => {
     const alternative = element => {
         const attributes = element.tagName === 'IMG' ? ['alt', 'title', 'aria-label'] : ['aria-label', 'title', 'alt'];
@@ -43,6 +57,7 @@ const CLICK_CONTROL: &str = r#"(label => {
         return alternative(element) || [...element.querySelectorAll('img')].map(alternative).find(Boolean) || '无文字链接';
     };
     const control = [...document.querySelectorAll('a,button,input,[role="button"],[onclick]')].find(element => {
+        if (element.tagName === 'INPUT' && !['button', 'submit', 'image'].includes((element.getAttribute('type') || '').toLowerCase())) return false;
         const style = getComputedStyle(element);
         return !element.disabled && !element.closest('[disabled],[aria-disabled="true"],.disabled')
             && element.getClientRects().length && style.visibility !== 'hidden'
@@ -80,9 +95,10 @@ impl Browser {
 struct Slot(tauri::async_runtime::Sender<()>);
 impl Drop for Slot {
     fn drop(&mut self) {
-        self.0
-            .try_send(())
-            .unwrap_or_else(|_| unreachable!("only acquired browser slots are returned"));
+        // Native destruction can finish after the browser queue has shut down.
+        if self.0.try_send(()).is_err() && !self.0.is_closed() {
+            unreachable!("only acquired browser slots are returned");
+        }
     }
 }
 
@@ -90,6 +106,7 @@ impl Drop for Slot {
 struct State {
     stopped: AtomicBool,
     close_requested: AtomicBool,
+    registered: AtomicBool,
     loaded: AtomicBool,
     error: Mutex<Option<String>>,
 }
@@ -127,7 +144,8 @@ struct Window {
 impl Drop for Window {
     fn drop(&mut self) {
         self.state.stopped.store(true, Ordering::Relaxed);
-        if let Some(window) = self.app.get_webview_window(&self.label)
+        if self.state.registered.load(Ordering::Acquire)
+            && let Some(window) = self.app.get_webview_window(&self.label)
             && !self.state.close_requested.swap(true, Ordering::Relaxed)
             && let Err(error) = window.close()
         {
@@ -164,14 +182,13 @@ impl Render for Browser {
                 steps.to_vec(),
             );
             let result = tauri::async_runtime::spawn_blocking(move || {
-                let _slot = slot;
                 // This second guard also covers cancellation during native window creation.
                 let _window = Window {
                     app: app.clone(),
                     label: label.clone(),
                     state: state.clone(),
                 };
-                render(&app, &label, target, &steps, &state)
+                render(&app, &label, target, &steps, &state, slot)
             })
             .await
             .map_err(|error| {
@@ -206,6 +223,7 @@ fn render(
     target: PageTarget,
     steps: &[PageStep],
     state: &Arc<State>,
+    slot: Slot,
 ) -> Result<RenderedPage, BrowserError> {
     state.check()?;
     let nav_state = state.clone();
@@ -271,19 +289,32 @@ fn render(
             tracing::error!("create crawl browser: {error}");
             failed("无法打开浏览器页面，请重试或重启应用")
         })?;
-    state.check()?;
     window.on_window_event({
         let state = state.clone();
+        let slot = Mutex::new(Some(slot));
         move |event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 state.stopped.store(true, Ordering::Relaxed);
+                drop(
+                    slot.lock()
+                        .unwrap_or_else(|_| unreachable!("browser slot updates cannot panic"))
+                        .take(),
+                );
             }
         }
     });
+    // Cancellation may request closure only after the destruction listener owns the slot.
+    state.registered.store(true, Ordering::Release);
+    state.check()?;
     wait(&window, state, None)?;
     for step in steps {
         let deadline = Instant::now() + TIMEOUT;
-        let before = evaluate(&window, state, MATERIAL_SNAPSHOT, deadline)?;
+        if evaluate(&window, state, WATCH_NAVIGATION, deadline)? != json!(true) {
+            return Err(failed(
+                "系统浏览器无法判断网页跳转是否开始，请更新系统浏览器后重试",
+            ));
+        }
+        let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline)?;
         let control =
             serde_json::to_string(&step.control).map_err(|_| failed("无法读取翻页步骤"))?;
         redirects.store(0, Ordering::Relaxed);
@@ -340,23 +371,40 @@ fn wait(window: &WebviewWindow, state: &State, before: Option<&Value>) -> Result
             return Err(BrowserError::TimedOut);
         }
         if state.loaded.load(Ordering::Relaxed) {
-            let snapshot = evaluate(window, state, SNAPSHOT, deadline)?;
-            let changed = if let Some(before) = before {
-                evaluate(window, state, MATERIAL_SNAPSHOT, deadline)? != *before
-            } else {
-                true
-            };
-            if snapshot["state"] == "complete" && changed && snapshot == previous {
-                if unchanged.elapsed() >= STABLE {
-                    return Ok(());
-                }
-            } else {
-                unchanged = Instant::now();
-                previous = snapshot;
+            let snapshot = evaluate(window, state, PAGE_SNAPSHOT, deadline)?;
+            if settled(
+                snapshot,
+                before,
+                &mut previous,
+                &mut unchanged,
+                Instant::now(),
+            ) {
+                return Ok(());
             }
+        } else {
+            previous = Value::Null;
+            unchanged = Instant::now();
         }
         std::thread::sleep(POLL.min(deadline.saturating_duration_since(Instant::now())));
     }
+}
+
+fn settled(
+    snapshot: Value,
+    before: Option<&Value>,
+    previous: &mut Value,
+    unchanged: &mut Instant,
+    at: Instant,
+) -> bool {
+    let ready = snapshot["state"] == "complete"
+        && snapshot["leaving"] != true
+        && before.is_none_or(|before| snapshot != *before);
+    if !ready || snapshot != *previous {
+        *previous = snapshot;
+        *unchanged = at;
+        return false;
+    }
+    at.duration_since(*unchanged) >= STABLE
 }
 
 fn evaluate(
@@ -407,6 +455,92 @@ pub fn close_all(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leaving_document_cannot_settle_before_the_new_document_arrives() {
+        let start = Instant::now();
+        let mut since = start;
+        let mut previous = Value::Null;
+        let before = json!({"state":"complete","url":"https://school.example.edu/first","leaving":false,"material":{"text":"第一页"}});
+        let leaving = json!({"state":"complete","url":"https://school.example.edu/first","leaving":true,"material":{"text":"正在加载"}});
+        assert!(!settled(
+            leaving.clone(),
+            Some(&before),
+            &mut previous,
+            &mut since,
+            start
+        ));
+        assert!(!settled(
+            leaving,
+            Some(&before),
+            &mut previous,
+            &mut since,
+            start + Duration::from_secs(2)
+        ));
+        let arrived = json!({"state":"complete","url":"https://school.example.edu/second","leaving":false,"material":{"text":"第二页"}});
+        let committed = start + Duration::from_millis(4500);
+        assert!(!settled(
+            arrived.clone(),
+            Some(&before),
+            &mut previous,
+            &mut since,
+            committed
+        ));
+        assert!(settled(
+            arrived,
+            Some(&before),
+            &mut previous,
+            &mut since,
+            committed + STABLE
+        ));
+    }
+
+    #[test]
+    fn destroyed_window_can_return_slot_after_browser_shutdown() {
+        let (sender, receiver) = tauri::async_runtime::channel(2);
+        drop(receiver);
+        drop(Slot(sender));
+    }
+
+    #[test]
+    fn changing_material_restarts_the_full_stability_window() {
+        let start = Instant::now();
+        let mut since = start;
+        let mut previous = Value::Null;
+        let before = json!({"state":"complete","url":"https://school.example.edu/list","material":{"links":[],"images":[]}});
+        for page in 1..=8 {
+            let snapshot = json!({"state":"complete","url":"https://school.example.edu/list","material":{"links":[format!("/teacher/{page}")],"images":[format!("导师{page}")]}});
+            assert!(!settled(
+                snapshot,
+                Some(&before),
+                &mut previous,
+                &mut since,
+                start + Duration::from_millis(page * 600)
+            ));
+        }
+        let final_page = previous.clone();
+        assert!(!settled(
+            final_page.clone(),
+            Some(&before),
+            &mut previous,
+            &mut since,
+            start + Duration::from_millis(4800) + STABLE - Duration::from_millis(1)
+        ));
+        assert!(settled(
+            final_page,
+            Some(&before),
+            &mut previous,
+            &mut since,
+            start + Duration::from_millis(4800) + STABLE
+        ));
+        assert!(!settled(
+            before.clone(),
+            Some(&before),
+            &mut previous,
+            &mut since,
+            start + Duration::from_secs(10)
+        ));
+    }
 
     #[test]
     fn navigation_allows_only_exact_in_memory_documents_without_relaxing_network_scope() {

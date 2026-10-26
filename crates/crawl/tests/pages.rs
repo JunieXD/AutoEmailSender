@@ -905,3 +905,16 @@ fn image_pagination_fixtures_preserve_control_labels_and_profile_material() {
         );
     }
 }
+
+#[test]
+fn numbered_replay_ignores_non_button_inputs_with_the_same_label() {
+    let page = parse(&url(), include_str!("pages/number-input-pagination.html")).unwrap();
+    assert_eq!(
+        page.pagination
+            .buttons
+            .iter()
+            .map(|button| (button.page, button.control.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(Some(2), "2"), (Some(3), "3")]
+    );
+}
