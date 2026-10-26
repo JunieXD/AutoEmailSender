@@ -118,7 +118,7 @@ pub(crate) async fn confirmation(
             let targets = mentor_names(ctx, &[input.mentor_id]).await?;
             let kind = match op {
                 "approveFirstEmail" => "首封邮件",
-                "approveFollowUp" => "跟进邮件",
+                "approveFollowUp" => "追问",
                 _ => "回复邮件",
             };
             Description::new(format!("发出给{}的{kind}", names(&targets)), targets)
@@ -155,20 +155,28 @@ pub(crate) async fn confirmation(
         "changeTaskSchedule" => {
             let input: task::ScheduleEdit = parse(input)?;
             let target = task_name(ctx, input.id).await?;
-            let schedule = match input.schedule {
-                email::schedule::Schedule::Now => "立即发送".into(),
-                email::schedule::Schedule::Window(window) => format!(
-                    "{} 的 {}—{}，每个时间段 {} 封",
-                    window.dates.join("、"),
-                    window.start,
-                    window.end,
-                    window.per_window
-                ),
+            let action = match input.schedule {
+                email::schedule::Schedule::Now => format!("把任务“{target}”改为立即发送"),
+                email::schedule::Schedule::Window(window) => {
+                    let dates = window
+                        .dates
+                        .iter()
+                        .map(
+                            |date| match chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                                Ok(date) => date.format("%-m月%-d日").to_string(),
+                                // The dispatcher rejects it when allowed; show what the Agent sent.
+                                Err(_) => date.clone(),
+                            },
+                        )
+                        .collect::<Vec<_>>()
+                        .join("、");
+                    format!(
+                        "把任务“{target}”的发送时间改为 {dates}的 {}–{}，每个窗口最多 {} 封",
+                        window.start, window.end, window.per_window
+                    )
+                }
             };
-            Description::new(
-                format!("把任务“{target}”的发送时间改为{schedule}"),
-                vec![target],
-            )
+            Description::new(action, vec![target])
         }
         "rescheduleEmail" => {
             let input: crate::RescheduleEmail = parse(input)?;
@@ -176,7 +184,7 @@ pub(crate) async fn confirmation(
             let at = chrono::DateTime::from_timestamp_millis(input.planned_at)
                 .map(|at| {
                     at.with_timezone(&chrono::Local)
-                        .format("%Y 年 %-m 月 %-d 日 %H:%M")
+                        .format("%-m月%-d日 %H:%M")
                         .to_string()
                 })
                 .unwrap_or_else(|| "无法识别的时间（请检查所选时间）".into());

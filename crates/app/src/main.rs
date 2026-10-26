@@ -220,7 +220,8 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
             if let Err(e) = ui
                 .notification()
                 .builder()
-                .title(format!("Agent 请求确认：{}", description.action))
+                .title("Agent 请求确认")
+                .body(&description.action)
                 .show()
             {
                 tracing::warn!("agent confirmation notification: {e}");
