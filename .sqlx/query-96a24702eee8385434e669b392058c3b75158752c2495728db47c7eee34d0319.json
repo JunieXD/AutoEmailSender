@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile\n        SET name = ?1, research_interests = ?2, rewrite_preference = ?3,\n            match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(\n            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END\n        RETURNING name, research_interests, rewrite_preference, onboarded AS \"onboarded: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "research_interests",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "research_interests"
+          }
+        }
+      },
+      {
+        "name": "rewrite_preference",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "rewrite_preference"
+          }
+        }
+      },
+      {
+        "name": "onboarded: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "onboarded"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "96a24702eee8385434e669b392058c3b75158752c2495728db47c7eee34d0319"
+}

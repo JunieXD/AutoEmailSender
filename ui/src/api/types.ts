@@ -774,7 +774,7 @@ export interface Operations {
   testReceiving: { input: MailboxTest; output: null };
   sendTestMail: { input: MailboxId; output: null };
   getProfile: { input: Nothing; output: Profile };
-  updateProfile: { input: ProfileForm; output: null };
+  updateProfile: { input: ProfileForm; output: Profile };
   finishOnboarding: { input: Nothing; output: null };
   testLetter: { input: Nothing; output: TestLetter | null };
   sendTestLetter: { input: SendTestLetter; output: null };

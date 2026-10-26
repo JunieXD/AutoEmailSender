@@ -266,7 +266,7 @@ operations! {
     "testReceiving" => test_receiving(MailboxTest) -> ();
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
-    "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "updateProfile" => update_profile(profile::ProfileForm) -> profile::Profile;
     "finishOnboarding" => finish_onboarding(Nothing) -> ();
     "testLetter" => test_letter(Nothing) -> Option<TestLetter>;
     "sendTestLetter" => send_test_letter(SendTestLetter) -> ();
@@ -1085,7 +1085,10 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
     Ok(profile::get(&ctx.db).await?)
 }
 
-async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
+async fn update_profile(
+    ctx: &Context,
+    form: profile::ProfileForm,
+) -> Result<profile::Profile, CallError> {
     Ok(profile::update(&ctx.db, &form, now()).await?)
 }
 

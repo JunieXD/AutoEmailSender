@@ -21,11 +21,6 @@ export function ProfileSection() {
 
 const mutationKey = ["updateProfile"];
 
-/** As the core saves it: trimmed, and blank as nothing. */
-function filled(text: string): string | null {
-  return text.trim() || null;
-}
-
 /**
  * Saves as the user types. Saves run one at a time and outlive this page, so the last text wins
  * even after leaving and coming back quickly, and unsaved text is shown again on return. `basic`
@@ -38,21 +33,12 @@ export function ProfileFields({ profile, basic = false }: { profile: Profile; ba
     scope: { id: "updateProfile" },
     mutationFn: (f: ProfileForm) => call("updateProfile", f),
     // A load still under way may have read the profile before this save, so it must not land afterwards.
-    onSuccess: async (_, f) => {
+    onSuccess: async (saved) => {
       await queryClient.cancelQueries({ queryKey: ["getProfile"] });
-      queryClient.setQueryData<Profile>(
-        ["getProfile"],
-        (p) =>
-          p && {
-            ...p,
-            name: filled(f.name),
-            researchInterests: filled(f.researchInterests),
-            rewritePreference: filled(f.rewritePreference),
-          },
-      );
+      queryClient.setQueryData<Profile>(["getProfile"], saved);
     },
   });
-  const last = useMutationState<MutationState<null, Error, ProfileForm>>({
+  const last = useMutationState<MutationState<Profile, Error, ProfileForm>>({
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
