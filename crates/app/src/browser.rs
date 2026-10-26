@@ -36,14 +36,12 @@ const PAGE_SNAPSHOT: &str = r#"({
     },
 })"#;
 const WATCH_NAVIGATION: &str = r#"(() => {
-    if (!window.navigation) return false;
     if (document.__aesCrawlLeaving === undefined) {
         document.__aesCrawlLeaving = false;
-        window.navigation.addEventListener('navigate', event => {
+        window.navigation?.addEventListener('navigate', event => {
             if (!event.destination.sameDocument) document.__aesCrawlLeaving = true;
         });
     }
-    return true;
 })()"#;
 const CLICK_CONTROL: &str = r#"(label => {
     const alternative = element => {
@@ -309,11 +307,10 @@ fn render(
     wait(&window, state, None)?;
     for step in steps {
         let deadline = Instant::now() + TIMEOUT;
-        if evaluate(&window, state, WATCH_NAVIGATION, deadline)? != json!(true) {
-            return Err(failed(
-                "系统浏览器无法判断网页跳转是否开始，请更新系统浏览器后重试",
-            ));
-        }
+        window.eval(WATCH_NAVIGATION).map_err(|error| {
+            tracing::debug!("watch crawl navigation: {error}");
+            failed("浏览器页面已关闭或无法读取，请重试")
+        })?;
         let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline)?;
         let control =
             serde_json::to_string(&step.control).map_err(|_| failed("无法读取翻页步骤"))?;
