@@ -22,6 +22,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Segments } from "@/components/ui/segments";
 
 const STATUSES: [ContactStatus | undefined, string][] = [
   [undefined, "全部"],
@@ -185,23 +186,16 @@ export function MentorsPage() {
         </p>
       )}
       <div className="px-7 pb-3 phone:overflow-x-auto phone:px-4 phone:pb-2.5 phone:[scrollbar-width:none]">
-        <div role="tablist" aria-label="联系状态" className="inline-flex gap-0.5 rounded-full bg-muted p-[3px]">
-          {STATUSES.map(([status, label]) => (
-            <button
-              key={label}
-              role="tab"
-              aria-selected={search.status === status}
-              onClick={() =>
-                navigate({
-                  search: (s) => ({ ...s, status, outcome: undefined, unansweredDays: undefined, page: undefined }),
-                })
-              }
-              className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap phone:h-10 text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segments
+          label="联系状态"
+          value={search.status}
+          options={STATUSES}
+          onChange={(status) =>
+            navigate({
+              search: (s) => ({ ...s, status, outcome: undefined, unansweredDays: undefined, page: undefined }),
+            })
+          }
+        />
       </div>
 
       {search.status === "replied" && (
@@ -401,6 +395,7 @@ function SearchBox({ value, onChange }: { value: string; onChange: (value: strin
     <label className="flex h-10 w-[320px] items-center gap-2 rounded-full bg-muted px-4 text-muted-foreground focus-within:ring-2 focus-within:ring-ring phone:order-3 phone:w-full">
       <Search className="size-[18px] shrink-0" strokeWidth={1.6} />
       <input
+        id="mentor-search"
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="搜索姓名、学校、研究方向"

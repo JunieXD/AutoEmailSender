@@ -20,6 +20,7 @@ import { TodoCheck, TodoCheckError, dueLabel, dueTone } from "@/components/todos
 import { Button, buttonVariants } from "@/components/ui/button";
 import { day, time } from "@/format";
 import { useNow } from "@/now";
+import { Segments } from "@/components/ui/segments";
 
 export type ConversationSearch = { show?: "unread" | "todos"; page?: number; mentor?: number };
 
@@ -105,30 +106,27 @@ export function ConversationsPage() {
               )}
             </div>
           </div>
-          <div role="tablist" aria-label="往来筛选" className="mt-3 inline-flex gap-0.5 rounded-full bg-muted p-[3px]">
-            {(
+          <Segments
+            label="往来筛选"
+            className="mt-3"
+            value={search.show}
+            options={[
+              [undefined, "全部"],
+              ["unread", "新回信"],
               [
-                [undefined, "全部"],
-                ["unread", "新回信"],
-                ["todos", "待办"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={label}
-                role="tab"
-                aria-selected={search.show === value}
-                onClick={() => navigate({ search: (s) => ({ ...s, show: value, page: undefined }) })}
-                className="flex h-[30px] items-center gap-1.5 rounded-full px-3 text-sm whitespace-nowrap text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm dark:aria-selected:bg-input phone:h-10"
-              >
-                {label}
-                {value === "todos" && todoCount !== undefined && todoCount > 0 && (
-                  <span className="min-w-5 rounded-full bg-warning-soft px-1.5 text-center text-xs leading-5 font-medium text-warning">
-                    {todoCount > 99 ? "99+" : todoCount}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+                "todos",
+                <>
+                  待办
+                  {todoCount !== undefined && todoCount > 0 && (
+                    <span className="min-w-5 rounded-full bg-warning-soft px-1.5 text-center text-xs leading-5 font-medium text-warning">
+                      {todoCount > 99 ? "99+" : todoCount}
+                    </span>
+                  )}
+                </>,
+              ],
+            ]}
+            onChange={(show) => navigate({ search: (s) => ({ ...s, show, page: undefined }) })}
+          />
           {(receiveError || status.error || mailboxes.error) && (
             <p className="mt-2 text-sm text-destructive">
               {errorMessage(receiveError ?? status.error ?? mailboxes.error)}

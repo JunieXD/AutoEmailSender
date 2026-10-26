@@ -5,6 +5,8 @@
 @custom-variant phone (@media (width <= 760px));
 /* Where the mentor table's narrow-window columns no longer fit, its rows become cards. */
 @custom-variant cards (@container (width < 782px));
+/* src/theme.ts sets data-theme from the setting or the system. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /* Tokens from docs/ui.md#颜色; names follow shadcn/ui. */
 :root {
@@ -44,40 +46,38 @@
   --pop-shadow: rgb(41 37 36 / 0.16);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --sidebar: #141110;
-    --background: #1d1a18;
-    --foreground: #ede8e4;
-    --muted-foreground: #aba29c;
-    --faint: #7a716b;
-    --muted: #26211e;
-    --press: #302a26;
-    --border: #2e2825;
-    --input: #3f3733;
-    --primary: #c13b3b;
-    --primary-hover: #d04a48;
-    --brand-text: #f1958c;
-    --selected: #33201e;
-    --mine: #2c2321;
-    --unread: #ff5b52;
-    --info: #88a9dd;
-    --success: #7cc79a;
-    --success-soft: #18291f;
-    --warning: #e8b25a;
-    --warning-soft: #2f2416;
-    --destructive: #ff7a66;
-    --highlight: #574516;
-    --diff-insert: #183626;
-    --diff-delete: #46231f;
-    --avatar-1: #3d2624;
-    --avatar-2: #382d1e;
-    --avatar-3: #232a3a;
-    --avatar-4: #243122;
-    --avatar-5: #302638;
-    --pop-shadow: rgb(0 0 0 / 0.5);
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --sidebar: #141110;
+  --background: #1d1a18;
+  --foreground: #ede8e4;
+  --muted-foreground: #aba29c;
+  --faint: #7a716b;
+  --muted: #26211e;
+  --press: #302a26;
+  --border: #2e2825;
+  --input: #3f3733;
+  --primary: #c13b3b;
+  --primary-hover: #d04a48;
+  --brand-text: #f1958c;
+  --selected: #33201e;
+  --mine: #2c2321;
+  --unread: #ff5b52;
+  --info: #88a9dd;
+  --success: #7cc79a;
+  --success-soft: #18291f;
+  --warning: #e8b25a;
+  --warning-soft: #2f2416;
+  --destructive: #ff7a66;
+  --highlight: #574516;
+  --diff-insert: #183626;
+  --diff-delete: #46231f;
+  --avatar-1: #3d2624;
+  --avatar-2: #382d1e;
+  --avatar-3: #232a3a;
+  --avatar-4: #243122;
+  --avatar-5: #302638;
+  --pop-shadow: rgb(0 0 0 / 0.5);
 }
 
 @theme inline {

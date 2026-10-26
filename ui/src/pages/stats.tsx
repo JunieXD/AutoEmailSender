@@ -7,6 +7,7 @@ import type { ContactProgress, MentorOverview, Range, Trend, TokenUsage, UsagePu
 import { BarChart, Legend, type Point, type Series } from "@/components/bar-chart";
 import { Pager } from "@/components/mentor-table";
 import { findSearch } from "@/pages/find";
+import { Segments } from "@/components/ui/segments";
 
 // docs/ui.md 统计. Only the contact progress and token sections follow the range.
 
@@ -65,24 +66,17 @@ export function StatsPage() {
     <div className="@container flex-1 overflow-y-auto">
       <header className="flex max-w-[1120px] flex-wrap items-center gap-x-4 gap-y-3 px-7 pt-6 pb-2 phone:px-4 phone:pt-3.5">
         <h1 className="grow text-2xl font-semibold phone:text-[22px]">统计</h1>
-        <div role="tablist" aria-label="时间范围" className="inline-flex gap-0.5 rounded-full bg-muted p-[3px]">
-          {RANGES.map(([r, label]) => (
-            <button
-              key={r}
-              role="tab"
-              aria-selected={range === r}
-              onClick={() => {
-                localStorage.setItem("statsRange", r);
-                setRange(r);
-                setNow(Date.now());
-                setPage(1);
-              }}
-              className="h-[30px] rounded-full px-3.5 text-sm whitespace-nowrap text-muted-foreground aria-selected:bg-background aria-selected:font-medium aria-selected:text-foreground aria-selected:shadow-sm phone:h-10 dark:aria-selected:bg-input"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Segments
+          label="时间范围"
+          value={range}
+          options={RANGES}
+          onChange={(r) => {
+            localStorage.setItem("statsRange", r);
+            setRange(r);
+            setNow(Date.now());
+            setPage(1);
+          }}
+        />
       </header>
       <div className="max-w-[1120px] space-y-12 px-7 pt-4 pb-12 phone:space-y-10 phone:px-4">
         <Section
