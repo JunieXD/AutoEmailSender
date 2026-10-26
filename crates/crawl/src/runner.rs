@@ -23,16 +23,24 @@ use std::{
 };
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use ts_rs::TS;
-const RETRY: Duration = Duration::from_secs(5);
 const READ_FAILED: &str = "抓取数据暂时无法读取，请继续或重启应用。";
 const SAVE_FAILED: &str = "网页资料暂时无法保存，请继续或重启应用。";
 const MODEL_READ_FAILED: &str = "模型配置暂时无法读取，请重试。";
 const CANDIDATE_READ_FAILED: &str = "候选资料暂时无法读取，请继续或重启应用。";
 #[derive(Clone, Default)]
-pub struct Crawler(Arc<Notify>);
+pub struct Crawler {
+    wake: Arc<Notify>,
+    writes: db::Writes,
+}
 impl Crawler {
+    pub fn new(writes: db::Writes) -> Self {
+        Self {
+            wake: Arc::default(),
+            writes,
+        }
+    }
     pub fn wake(&self) {
-        self.0.notify_one();
+        self.wake.notify_one();
     }
 }
 #[derive(Debug, Clone, Serialize, TS)]
@@ -42,6 +50,7 @@ pub struct CrawlFinished {
     pub message: String,
 }
 struct Pages {
+    writes: db::Writes,
     http: Fetcher,
     browser: Option<Arc<dyn Browser>>,
 }
@@ -236,6 +245,7 @@ impl Cooldown {
 }
 
 struct Reader<'a> {
+    writes: &'a db::Writes,
     db: &'a SqlitePool,
     net: &'a net::Net,
     limit: &'a Limit,
@@ -295,19 +305,18 @@ impl Reader<'_> {
                 Failure::Failed(r) => ReadError::Failed(r),
             })?;
             if let Some(usage) = answer.usage {
-                while let Err(e) = model::usage::record_crawl(
-                    self.db,
-                    self.chosen.id,
-                    &self.chosen.model,
-                    self.claim.crawl,
-                    usage,
-                    now(),
-                )
-                .await
-                {
-                    tracing::error!("record crawl usage: {e}");
-                    tokio::time::sleep(RETRY).await;
-                }
+                self.writes
+                    .retry("record crawl usage", || {
+                        model::usage::record_crawl(
+                            self.db,
+                            self.chosen.id,
+                            &self.chosen.model,
+                            self.claim.crawl,
+                            usage,
+                            now(),
+                        )
+                    })
+                    .await;
             }
             if answer.finish_reason.as_deref() == Some("length") {
                 return Err(ReadError::Failed(
@@ -389,6 +398,7 @@ async fn read(
     };
     let m = fetcher.fetch(db, c, &target).await?;
     let reader = Reader {
+        writes: &fetcher.writes,
         db,
         net,
         limit,
@@ -925,10 +935,16 @@ pub async fn run(
 ) {
     let fetcher = loop {
         match Fetcher::new(&net) {
-            Ok(f) => break Arc::new(Pages { http: f, browser }),
+            Ok(f) => {
+                break Arc::new(Pages {
+                    writes: crawler.writes.clone(),
+                    http: f,
+                    browser,
+                });
+            }
             Err(e) => {
                 tracing::error!("create crawl fetcher: {e}");
-                tokio::time::sleep(RETRY).await;
+                tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
     };
@@ -943,51 +959,33 @@ async fn run_with_pages(
     changed: impl Fn() + Send + 'static,
     finished: impl Fn(CrawlFinished) + Send + 'static,
 ) {
-    while let Err(e) = queue::recover(&db).await {
-        tracing::error!("recover crawl: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    let writes = &fetcher.writes;
+    writes.retry("recover crawl", || queue::recover(&db)).await;
     let mut workers = JoinSet::new();
     let mut claims = HashMap::new();
     let cooldown = Cooldown::default();
     loop {
-        match finish(&db, now()).await {
-            Ok(results) => {
-                for r in results {
-                    changed();
-                    finished(r)
-                }
-            }
-            Err(e) => {
-                tracing::error!("finish crawl: {e}");
-                tokio::time::sleep(RETRY).await;
-                continue;
-            }
+        for result in writes.retry("finish crawl", || finish(&db, now())).await {
+            changed();
+            finished(result);
         }
         let retry_at = cooldown.until();
         let cooling = retry_at.is_some();
-        if !cooling && workers.len() < CONCURRENCY {
-            match queue::next(&db).await {
-                Ok(Some(c)) => {
-                    let (db, net, limit, fetcher) =
-                        (db.clone(), net.clone(), limit.clone(), fetcher.clone());
-                    let claim = c.clone();
-                    let cooldown = cooldown.clone();
-                    let task = workers.spawn(async move {
-                        let result = process(&db, &net, &fetcher, &limit, &claim, &cooldown).await;
-                        (claim, result)
-                    });
-                    claims.insert(task.id(), c);
-                    changed();
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::error!("claim crawl: {e}");
-                    tokio::time::sleep(RETRY).await;
-                    continue;
-                }
-            }
+        if !cooling
+            && workers.len() < CONCURRENCY
+            && let Some(c) = writes.retry("claim crawl", || queue::next(&db)).await
+        {
+            let (db, net, limit, fetcher) =
+                (db.clone(), net.clone(), limit.clone(), fetcher.clone());
+            let claim = c.clone();
+            let cooldown = cooldown.clone();
+            let task = workers.spawn(async move {
+                let result = process(&db, &net, &fetcher, &limit, &claim, &cooldown).await;
+                (claim, result)
+            });
+            claims.insert(task.id(), c);
+            changed();
+            continue;
         }
         tokio::select! {
             Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
@@ -1017,18 +1015,10 @@ async fn run_with_pages(
                         )
                     }
                 };
-                loop {
-                    match save(&db, &c, &outcome).await {
-                        Ok(_) => break,
-                        Err(e) => {
-                            tracing::error!("save crawl: {e}");
-                            tokio::time::sleep(RETRY).await;
-                        }
-                    }
-                }
+                writes.retry("save crawl", || save(&db, &c, &outcome)).await;
                 changed();
             },
-            () = crawler.0.notified() => {},
+            () = crawler.wake.notified() => {},
             () = async {
                 if let Some(at) = retry_at {
                     tokio::time::sleep_until(at).await;

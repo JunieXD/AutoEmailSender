@@ -243,6 +243,7 @@ async fn follow_up_eligibility_and_concurrent_task_creation(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn follow_up_sends_in_the_original_thread_for_app_and_external_mail(db: SqlitePool) {
+    let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (port, inbox) = fakemail::smtp(&pki, false).await;
     let server = |port| mailbox::Server {
@@ -366,7 +367,7 @@ async fn follow_up_sends_in_the_original_thread_for_app_and_external_mail(db: Sq
             .execute(&db)
             .await
             .unwrap();
-        send::step(&db, &net, std::path::Path::new("unused"), || T)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T)
             .await
             .unwrap();
         let raw = inbox.lock().unwrap().last().unwrap().clone();
@@ -386,6 +387,7 @@ async fn follow_up_sends_in_the_original_thread_for_app_and_external_mail(db: Sq
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn receiving_reply_cancels_unsent_follow_ups_and_fences_inflight_generation(db: SqlitePool) {
+    let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
@@ -504,7 +506,7 @@ async fn receiving_reply_cancels_unsent_follow_ups_and_fences_inflight_generatio
         .unwrap()
     );
     assert_eq!(
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 3)
             .await
             .unwrap(),
         send::Next::Idle
@@ -549,6 +551,7 @@ async fn receiving_reply_cancels_unsent_follow_ups_and_fences_inflight_generatio
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn resend_bounced_follow_up_respects_received_replies_in_both_orders(db: SqlitePool) {
+    let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
@@ -629,7 +632,7 @@ async fn resend_bounced_follow_up_respects_received_replies_in_both_orders(db: S
                 assert_eq!(result, email::Approved::FollowUpReplied);
             }
         }
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 5)
             .await
             .unwrap();
         let state: Option<String> =
@@ -654,6 +657,7 @@ async fn resend_bounced_follow_up_respects_received_replies_in_both_orders(db: S
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn resend_bounced_follow_up_respects_parent_bounces_in_both_orders(db: SqlitePool) {
+    let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
@@ -773,7 +777,7 @@ async fn resend_bounced_follow_up_respects_parent_bounces_in_both_orders(db: Sql
                     email::Approved::FollowUpParentBounced
                 );
             }
-            send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+            send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 5)
                 .await
                 .unwrap();
             let resent: Option<(String, Option<String>)> =
@@ -797,6 +801,7 @@ async fn resend_bounced_follow_up_respects_parent_bounces_in_both_orders(db: Sql
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn missing_parent_mailbox_blocks_follow_up_in_plan_and_sender(db: SqlitePool) {
+    let writes = db::Writes::default();
     for address in ["me@example.com", "backup@example.com"] {
         sqlx::query(
             "INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port,
@@ -850,7 +855,7 @@ async fn missing_parent_mailbox_blocks_follow_up_in_plan_and_sender(db: SqlitePo
     let net = net::Net::new(vec![]).unwrap();
     for _ in ds {
         assert_eq!(
-            send::step(&db, &net, std::path::Path::new("unused"), || T)
+            send::step(&db, &writes, &net, std::path::Path::new("unused"), || T)
                 .await
                 .unwrap(),
             send::Next::Now
@@ -1243,6 +1248,7 @@ async fn group_approval_only_uses_listed_current_review_drafts(db: SqlitePool) {
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(db: SqlitePool) {
+    let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (port, inbox) = fakemail::smtp(&pki, false).await;
     let server = |port| mailbox::Server {
@@ -1281,7 +1287,7 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
     );
     let net = net::Net::new(vec![pki.root.clone()]).unwrap();
     assert_eq!(
-        send::step(&db, &net, std::path::Path::new("unused"), || T)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T)
             .await
             .unwrap(),
         send::Next::Idle
@@ -1301,13 +1307,13 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
     );
     resume(&db, task).await.unwrap();
     assert_eq!(
-        send::step(&db, &net, std::path::Path::new("unused"), || T)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T)
             .await
             .unwrap(),
         send::Next::Now
     );
     assert_eq!(
-        send::step(&db, &net, std::path::Path::new("unused"), || T)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T)
             .await
             .unwrap(),
         send::Next::Idle
@@ -1378,7 +1384,8 @@ async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqliteP
     email::schedule::reschedule(&db, id, T, T).await.unwrap();
     let net = net::Net::new(vec![pki.root.clone()]).unwrap();
     let nowhere = std::path::Path::new("unused");
-    let sending = send::step(&db, &net, nowhere, || clock.load(Ordering::SeqCst));
+    let writes = db::Writes::default();
+    let sending = send::step(&db, &writes, &net, nowhere, || clock.load(Ordering::SeqCst));
     let stopping = async {
         reached.notified().await;
         assert_eq!(
@@ -1413,7 +1420,7 @@ async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqliteP
         ("canceled".into(), Some("任务停止".into()), None, None)
     );
     assert_eq!(
-        send::step(&db, &net, nowhere, || T + 86_400_000)
+        send::step(&db, &writes, &net, nowhere, || T + 86_400_000)
             .await
             .unwrap(),
         send::Next::Idle
@@ -1423,6 +1430,7 @@ async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqliteP
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn changing_task_time_defers_handover_and_retry_reserves_again(db: SqlitePool) {
+    let writes = db::Writes::default();
     use chrono::{Local, TimeZone};
     use email::schedule::{Schedule, Window};
     let pki = fakemail::pki();
@@ -1481,7 +1489,7 @@ async fn changing_task_time_defers_handover_and_retry_reserves_again(db: SqliteP
     let net = net::Net::new(vec![pki.root.clone()]).unwrap();
     let nowhere = std::path::Path::new("unused");
     assert_eq!(
-        send::step(&db, &net, nowhere, || T).await.unwrap(),
+        send::step(&db, &writes, &net, nowhere, || T).await.unwrap(),
         send::Next::At(new)
     );
     assert!(inbox.lock().unwrap().is_empty());
@@ -1494,11 +1502,15 @@ async fn changing_task_time_defers_handover_and_retry_reserves_again(db: SqliteP
     assert!(retried.latest_at.unwrap() > retried.planned_at.unwrap());
     let at = retried.planned_at.unwrap();
     assert_eq!(
-        send::step(&db, &net, nowhere, || at).await.unwrap(),
+        send::step(&db, &writes, &net, nowhere, || at)
+            .await
+            .unwrap(),
         send::Next::Now
     );
     assert_eq!(
-        send::step(&db, &net, nowhere, || at).await.unwrap(),
+        send::step(&db, &writes, &net, nowhere, || at)
+            .await
+            .unwrap(),
         send::Next::Idle
     );
     assert_eq!(inbox.lock().unwrap().len(), 1);
@@ -2006,6 +2018,7 @@ fn detail_approval() -> email::Approval<'static> {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn merging_first_and_follow_up_drafts_keeps_only_the_retained_mentors(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _, inbox) = detail_mail(&db).await;
     for (n, keep_follow_up) in [(201, false), (203, true)] {
         let keep = mentor(&db, n, true).await;
@@ -2063,10 +2076,10 @@ async fn merging_first_and_follow_up_drafts_keeps_only_the_retained_mentors(db: 
                 .unwrap()
         };
         assert_eq!(result, email::Approved::Yes);
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 3)
             .await
             .unwrap();
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 4)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 4)
             .await
             .unwrap();
     }
@@ -2103,6 +2116,7 @@ async fn merging_two_follow_up_drafts_keeps_only_the_retained_mentors(db: Sqlite
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn merging_replied_mentors_cancels_follow_up_in_either_direction(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, store, inbox) = detail_mail(&db).await;
     for (n, reply_on_keep) in [(221, true), (223, false)] {
         let keep = mentor(&db, n, true).await;
@@ -2141,7 +2155,7 @@ async fn merging_replied_mentors_cancels_follow_up_in_either_direction(db: Sqlit
                 .unwrap(),
             email::Approved::Refused
         );
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 5)
             .await
             .unwrap();
     }
@@ -2150,6 +2164,7 @@ async fn merging_replied_mentors_cancels_follow_up_in_either_direction(db: Sqlit
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn adding_an_address_cancels_follow_ups_when_earlier_replies_are_linked(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, store, inbox) = detail_mail(&db).await;
     for (n, standalone, edit) in [
         (231, true, false),
@@ -2208,7 +2223,7 @@ async fn adding_an_address_cancels_follow_ups_when_earlier_replies_are_linked(db
                 .unwrap();
         assert_eq!(state, ("canceled".into(), Some("导师已回信".into())));
         assert!(!email::retry(&db, id, T + 4).await.unwrap());
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 5)
             .await
             .unwrap();
     }
@@ -2353,6 +2368,7 @@ async fn standalone_follow_up_admission_and_concurrent_first_or_task(db: SqliteP
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn standalone_follow_up_receiving_cancels_drafts_and_approved_mail(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, store, inbox) = detail_mail(&db).await;
     for (n, (bounce, approved, external)) in [
         (false, false, false),
@@ -2421,7 +2437,7 @@ async fn standalone_follow_up_receiving_cancels_drafts_and_approved_mail(db: Sql
                 "已写好的追问"
             }
         );
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 4)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 4)
             .await
             .unwrap();
     }
@@ -2430,6 +2446,7 @@ async fn standalone_follow_up_receiving_cancels_drafts_and_approved_mail(db: Sql
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn standalone_follow_up_sends_frozen_thread_and_new_first_letter(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _store, inbox) = detail_mail(&db).await;
     for external in [false, true] {
         let m = mentor(&db, if external { 2 } else { 1 }, true).await;
@@ -2453,9 +2470,11 @@ async fn standalone_follow_up_sends_frozen_thread_and_new_first_letter(db: Sqlit
                 .unwrap(),
             email::Approved::Refused
         );
-        send::step(&db, &net, std::path::Path::new("unused"), || T + m * 10 + 1)
-            .await
-            .unwrap();
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || {
+            T + m * 10 + 1
+        })
+        .await
+        .unwrap();
         let raw = inbox.lock().unwrap().last().unwrap().clone();
         assert!(raw.contains(&format!("In-Reply-To: {parent}")));
         assert!(raw.contains(&format!("References: <root@example.com> {parent}")));
@@ -2484,9 +2503,11 @@ async fn standalone_follow_up_sends_frozen_thread_and_new_first_letter(db: Sqlit
                 .unwrap(),
             email::Approved::Yes
         );
-        send::step(&db, &net, std::path::Path::new("unused"), || T + m * 10 + 3)
-            .await
-            .unwrap();
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || {
+            T + m * 10 + 3
+        })
+        .await
+        .unwrap();
         let raw = inbox.lock().unwrap().last().unwrap().clone();
         assert!(!raw.contains("In-Reply-To:"));
     }
@@ -2744,6 +2765,7 @@ async fn failed_task(db: &SqlitePool, ids: Vec<i64>, generation: bool, kind: Kin
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restart_replaces_only_selected_failed_letters_at_creation(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _, inbox) = detail_mail(&db).await;
     for (n, generation, kind) in [
         (241, false, Kind::First),
@@ -2819,10 +2841,10 @@ async fn restart_replaces_only_selected_failed_letters_at_creation(db: SqlitePoo
         )
         .await
         .unwrap();
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 5)
             .await
             .unwrap();
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 6)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 6)
             .await
             .unwrap();
     }
@@ -2894,6 +2916,7 @@ async fn restart_refuses_retried_original_letters_without_canceling_other_failur
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restarting_and_retrying_the_same_failure_can_only_send_once(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _, inbox) = detail_mail(&db).await;
     for n in 261..271 {
         let generation = n % 2 == 0;
@@ -2943,10 +2966,10 @@ async fn restarting_and_retrying_the_same_failure_can_only_send_once(db: SqliteP
             .await
             .unwrap();
         }
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 5)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 5)
             .await
             .unwrap();
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 6)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 6)
             .await
             .unwrap();
     }
@@ -2955,6 +2978,7 @@ async fn restarting_and_retrying_the_same_failure_can_only_send_once(db: SqliteP
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restart_refuses_an_original_retry_that_finished_sending(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _, inbox) = detail_mail(&db).await;
     for (n, kind) in [(281, Kind::First), (282, Kind::FollowUp)] {
         let m = mentor(&db, n, true).await;
@@ -2962,7 +2986,7 @@ async fn restart_refuses_an_original_retry_that_finished_sending(db: SqlitePool)
         let next = restart(&db, t).await.unwrap().unwrap();
         let d = items(&db, t).await.remove(0);
         assert!(email::retry(&db, d.id, T + 2).await.unwrap());
-        send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 3)
             .await
             .unwrap();
         assert_eq!(items(&db, t).await[0].state, DraftState::Sent);
@@ -2978,6 +3002,7 @@ async fn restart_refuses_an_original_retry_that_finished_sending(db: SqlitePool)
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restart_refuses_a_deleted_source_after_changing_template(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _, inbox) = detail_mail(&db).await;
     for (n, kind) in [(501, Kind::First), (502, Kind::FollowUp)] {
         let at = T + (n - 501) * 100;
@@ -2989,9 +3014,11 @@ async fn restart_refuses_a_deleted_source_after_changing_template(db: SqlitePool
         next.template_source_id = None;
         let letter = items(&db, old).await.remove(0);
         assert!(email::retry(&db, letter.id, at + 2).await.unwrap());
-        send::step(&db, &net, std::path::Path::new("unused"), || at + 3)
-            .await
-            .unwrap();
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || {
+            at + 3
+        })
+        .await
+        .unwrap();
         assert_eq!(items(&db, old).await[0].state, DraftState::Sent);
         assert!(plan(&db, &next).await.unwrap().mentors[0].reason.is_some());
         delete(&db, old).await.unwrap();
@@ -3008,15 +3035,18 @@ async fn restart_refuses_a_deleted_source_after_changing_template(db: SqlitePool
                 .unwrap(),
             0
         );
-        send::step(&db, &net, std::path::Path::new("unused"), || at + 5)
-            .await
-            .unwrap();
+        send::step(&db, &writes, &net, std::path::Path::new("unused"), || {
+            at + 5
+        })
+        .await
+        .unwrap();
     }
     assert_eq!(inbox.lock().unwrap().len(), 2);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restart_requires_an_existing_source_and_all_selected_mentors(db: SqlitePool) {
+    let writes = db::Writes::default();
     let (net, _, inbox) = detail_mail(&db).await;
     let a = mentor(&db, 511, true).await;
     let b = mentor(&db, 512, true).await;
@@ -3050,7 +3080,7 @@ async fn restart_requires_an_existing_source_and_all_selected_mentors(db: Sqlite
             1
         );
     }
-    send::step(&db, &net, std::path::Path::new("unused"), || T + 3)
+    send::step(&db, &writes, &net, std::path::Path::new("unused"), || T + 3)
         .await
         .unwrap();
     assert!(inbox.lock().unwrap().is_empty());

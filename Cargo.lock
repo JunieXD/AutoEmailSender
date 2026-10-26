@@ -1300,6 +1300,7 @@ dependencies = [
  "sqlx",
  "test-fixtures",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

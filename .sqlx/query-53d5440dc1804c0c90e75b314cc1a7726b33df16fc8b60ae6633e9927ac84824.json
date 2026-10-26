@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT DISTINCT task_id FROM email WHERE state = 'generating' AND task_id IS NOT NULL",
+  "query": "SELECT DISTINCT task_id\n                    FROM email\n                    WHERE state = 'generating' AND task_id IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "c95e13e057f70da4fc42c2f4661a70d85719e148a04376760027ab965de905e5"
+  "hash": "53d5440dc1804c0c90e75b314cc1a7726b33df16fc8b60ae6633e9927ac84824"
 }

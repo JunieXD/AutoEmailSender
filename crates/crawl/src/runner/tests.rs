@@ -773,6 +773,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     ));
     let matching = tokio::spawn(matching::run(
         db.clone(),
+        db::Writes::default(),
         net.clone(),
         matching::Matcher::default(),
         limit.clone(),
@@ -781,6 +782,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     ));
     let writing = tokio::spawn(task::generation::run(
         db.clone(),
+        db::Writes::default(),
         net,
         task::generation::Generator::default(),
         limit,
@@ -2714,6 +2716,7 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
         let net = net::Net::new(vec![]).unwrap();
         let cooldown = Cooldown::default();
         let reader = Reader {
+            writes: &fetcher.writes,
             db: &db,
             net: &net,
             limit: &limit,
@@ -3139,6 +3142,7 @@ async fn restored_key_pauses_crawl_instead_of_failing_pages(db: SqlitePool) {
 impl Pages {
     fn local(port: u16) -> Self {
         Self {
+            writes: db::Writes::default(),
             http: Fetcher::local(port),
             browser: None,
         }

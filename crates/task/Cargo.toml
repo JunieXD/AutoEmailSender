@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 check.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+db.workspace = true
 email.workspace = true
 fastrand = "2.5.0"
 material.workspace = true
@@ -28,7 +29,6 @@ ts-rs.workspace = true
 writing.workspace = true
 
 [dev-dependencies]
-db.workspace = true
 fakemail.workspace = true
 mailbox.workspace = true
 matching.workspace = true

@@ -15,20 +15,17 @@ impl Scheduler {
 
 pub async fn run(
     db: SqlitePool,
+    writes: db::Writes,
     scheduler: Scheduler,
     changed: impl Fn() + Send + 'static,
     notify: impl Fn(String) + Send + 'static,
 ) {
     loop {
-        let now = super::outcome::now();
-        let result = match email::todos::local_reminders(&db, now).await {
-            Ok(result) => result,
-            Err(error) => {
-                tracing::error!("todo reminders: {error}");
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                continue;
-            }
-        };
+        let result = writes
+            .retry("todo reminders", || {
+                email::todos::local_reminders(&db, super::outcome::now())
+            })
+            .await;
         for message in result.messages {
             notify(message);
         }

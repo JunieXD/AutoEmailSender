@@ -31,6 +31,7 @@ impl Runner {
         let (done_tx, done) = mpsc::unbounded_channel();
         let task = tokio::spawn(matching::run(
             db.clone(),
+            db::Writes::default(),
             Net::new(Vec::new()).unwrap(),
             matcher.clone(),
             model::background::Limit::default(),

@@ -15,8 +15,6 @@ use tokio::sync::Notify;
 
 const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
-/// How long to wait before trying the database again.
-const RETRY: Duration = Duration::from_secs(5);
 /// How often at most the window hears about emails going out back to back.
 const TELL_EVERY: Duration = Duration::from_secs(5);
 
@@ -34,19 +32,19 @@ impl Sender {
 /// attached from `materials`. `changed` runs once emails have been sent or failed.
 pub async fn run(
     db: SqlitePool,
+    writes: db::Writes,
     net: Net,
     materials: PathBuf,
     sender: Sender,
     changed: impl Fn() + Send + 'static,
 ) {
-    while let Err(e) = recover(&db, now()).await {
-        tracing::error!("recover interrupted emails: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    writes
+        .retry("recover interrupted emails", || recover(&db, now()))
+        .await;
     let dealt = Notify::new();
     let sending = async {
         loop {
-            let wait = match step(&db, &net, &materials, now).await {
+            let wait = match step(&db, &writes, &net, &materials, now).await {
                 Ok(Next::Now) => {
                     dealt.notify_one();
                     continue;
@@ -111,11 +109,12 @@ pub enum Next {
 /// milliseconds; sending takes a while.
 pub async fn step(
     db: &SqlitePool,
+    writes: &db::Writes,
     net: &Net,
     materials: &Path,
     now: impl Fn() -> i64,
 ) -> Result<Next, sqlx::Error> {
-    step_in_zone(db, net, materials, now, &chrono::Local, &mut |n| {
+    step_in_zone(db, writes, net, materials, now, &chrono::Local, &mut |n| {
         fastrand::i64(0..n)
     })
     .await
@@ -123,16 +122,42 @@ pub async fn step(
 
 pub async fn step_in_zone<T: chrono::TimeZone>(
     db: &SqlitePool,
+    writes: &db::Writes,
     net: &Net,
     materials: &Path,
     now: impl Fn() -> i64,
     zone: &T,
     random: &mut impl FnMut(i64) -> i64,
 ) -> Result<Next, sqlx::Error> {
-    let at = now();
-    email::schedule::rollover(db, at, zone, random).await?;
-    let due = sqlx::query!(
-        r#"SELECT e.id,
+    Sending {
+        db,
+        writes,
+        net,
+        materials,
+    }
+    .step(now, zone, random)
+    .await
+}
+
+struct Sending<'a> {
+    db: &'a SqlitePool,
+    writes: &'a db::Writes,
+    net: &'a Net,
+    materials: &'a Path,
+}
+
+impl Sending<'_> {
+    async fn step<T: chrono::TimeZone>(
+        &self,
+        now: impl Fn() -> i64,
+        zone: &T,
+        random: &mut impl FnMut(i64) -> i64,
+    ) -> Result<Next, sqlx::Error> {
+        let db = self.db;
+        let at = now();
+        email::schedule::rollover(db, at, zone, random).await?;
+        let due = sqlx::query!(
+            r#"SELECT e.id,
              own.mailbox_id AS own,
              e.kind IN ('reply', 'follow_up') AS "reply!: bool"
            FROM email e
@@ -143,62 +168,63 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
              AND (e.task_id IS NULL OR e.task_id IN (SELECT id FROM task WHERE state = 'active'
                AND generation_paused_at IS NULL))
            ORDER BY e.planned_at, e.id"#,
-        at
-    )
-    .fetch_all(db)
-    .await?;
-    let mut next = sqlx::query_scalar!(
-        r#"SELECT min(planned_at) AS "at: i64"
+            at
+        )
+        .fetch_all(db)
+        .await?;
+        let mut next = sqlx::query_scalar!(
+            r#"SELECT min(planned_at) AS "at: i64"
            FROM email
            WHERE state = 'approved'
              AND planned_at > ?1
              AND (latest_at IS NULL OR latest_at > ?1)
              AND (task_id IS NULL OR task_id IN (SELECT id FROM task WHERE state = 'active' AND
                generation_paused_at IS NULL))"#,
-        at
-    )
-    .fetch_one(db)
-    .await?;
-    let deadline = sqlx::query_scalar!(
-        r#"SELECT min(latest_at) AS "at: i64"
+            at
+        )
+        .fetch_one(db)
+        .await?;
+        let deadline = sqlx::query_scalar!(
+            r#"SELECT min(latest_at) AS "at: i64"
            FROM email
            WHERE state = 'approved'
              AND latest_at > ?"#,
-        at
-    )
-    .fetch_one(db)
-    .await?;
-    if let Some(deadline) = deadline {
-        next = Some(next.map_or(deadline, |n| n.min(deadline)));
-    }
-    let rotation = profile::rotation(db).await?;
-    let mailboxes = usage_on(&mut *db.acquire().await?, at).await?;
-    for e in due {
-        match choose(rotation, e.own, e.reply, &mailboxes, at) {
-            Some((mailbox, ready)) if ready <= at => {
-                send(db, net, materials, e.id, mailbox, &now, zone).await?;
-                return Ok(Next::Now);
-            }
-            Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
-            None if e.reply
-                && !mailboxes
-                    .iter()
-                    .any(|m| Some(m.id) == e.own && m.needs_secret) =>
-            {
-                email::failed(
-                    &mut *db.acquire().await?,
-                    e.id,
-                    "没有能发信的邮箱，去设置里添加或在导师资料里指定负责邮箱后重试。",
-                    at,
-                )
-                .await?;
-                return Ok(Next::Now);
-            }
-            // Waits for a mailbox to be added.
-            None => {}
+            at
+        )
+        .fetch_one(db)
+        .await?;
+        if let Some(deadline) = deadline {
+            next = Some(next.map_or(deadline, |n| n.min(deadline)));
         }
+        let rotation = profile::rotation(db).await?;
+        let mailboxes = usage_on(&mut *db.acquire().await?, at).await?;
+        for e in due {
+            match choose(rotation, e.own, e.reply, &mailboxes, at) {
+                Some((mailbox, ready)) if ready <= at => {
+                    self.send(e.id, mailbox, &now, zone).await?;
+                    return Ok(Next::Now);
+                }
+                Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
+                None if e.reply
+                    && !mailboxes
+                        .iter()
+                        .any(|m| Some(m.id) == e.own && m.needs_secret) =>
+                {
+                    email::failed(
+                        &mut *db.acquire().await?,
+                        e.id,
+                        "没有能发信的邮箱，去设置里添加或在导师资料里指定负责邮箱后重试。",
+                        at,
+                    )
+                    .await?;
+                    return Ok(Next::Now);
+                }
+                // Waits for a mailbox to be added.
+                None => {}
+            }
+        }
+        Ok(next.map_or(Next::Idle, Next::At))
     }
-    Ok(next.map_or(Next::Idle, Next::At))
 }
 
 /// What a mailbox has sent lately.
@@ -294,76 +320,86 @@ fn choose(
     chosen.map(|m| (m.id, m.ready_at(now)))
 }
 
-/// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
-async fn send<T: chrono::TimeZone>(
-    db: &SqlitePool,
-    net: &Net,
-    materials: &Path,
-    id: i64,
-    mailbox_id: i64,
-    now: &impl Fn() -> i64,
-    zone: &T,
-) -> Result<(), sqlx::Error> {
-    // Deleted since the mailboxes were read; the next step picks another.
-    let Some(account) = mailbox::account(db, mailbox_id).await? else {
-        return Ok(());
-    };
-    let smtp = match mailbox::login(net, &account).await {
-        Ok(smtp) => smtp,
-        Err(err) => {
-            tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
-            return match pause::classify(&err) {
-                Failure::Pause(kind) => {
-                    let pause = kind.in_zone(now(), zone);
-                    pause::apply_for_account(
-                        &mut *db.acquire().await?,
-                        mailbox_id,
-                        &account,
-                        &pause,
-                    )
-                    .await
-                }
-                Failure::Email => {
-                    email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await
-                }
-            };
-        }
-    };
-    let attached = email::attachment_files(&mut *db.acquire().await?, id).await?;
-    let files = files(materials, &attached).await;
-    let Some(m) = mark_sending(db, id, &account, mailbox_id, now, &attached, files).await? else {
-        smtp.quit();
-        return Ok(());
-    };
-    let outcome = match smtp
-        .send(&m.outgoing, || {
-            m.before.latest_at.is_some_and(|latest| now() >= latest)
-        })
-        .await
-    {
-        Ok(SendStatus::Expired) => return m.before.restore(&mut *db.acquire().await?, id).await,
-        Ok(SendStatus::Sent) => {
-            tracing::info!("email {id} sent from mailbox {mailbox_id}");
-            Outcome::Sent
-        }
-        Err(err) => {
-            tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
-            match err {
-                SendError::NotSent(ref error) => match pause::classify(error) {
-                    Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)),
-                    Failure::Email => Outcome::Failed(err.message()),
-                },
-                SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
+impl Sending<'_> {
+    /// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
+    async fn send<T: chrono::TimeZone>(
+        &self,
+        id: i64,
+        mailbox_id: i64,
+        now: &impl Fn() -> i64,
+        zone: &T,
+    ) -> Result<(), sqlx::Error> {
+        let Self {
+            db,
+            writes,
+            net,
+            materials,
+        } = *self;
+        // Deleted since the mailboxes were read; the next step picks another.
+        let Some(account) = mailbox::account(db, mailbox_id).await? else {
+            return Ok(());
+        };
+        let smtp = match mailbox::login(net, &account).await {
+            Ok(smtp) => smtp,
+            Err(err) => {
+                tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
+                return match pause::classify(&err) {
+                    Failure::Pause(kind) => {
+                        let pause = kind.in_zone(now(), zone);
+                        pause::apply_for_account(
+                            &mut *db.acquire().await?,
+                            mailbox_id,
+                            &account,
+                            &pause,
+                        )
+                        .await
+                    }
+                    Failure::Email => {
+                        email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await
+                    }
+                };
             }
-        }
-    };
-    // Only this run knows how SMTP answered, so it keeps trying until that is written.
-    let answered = now();
-    while let Err(e) = record(db, id, mailbox_id, &account, &m, &outcome, answered).await {
-        tracing::error!("record email {id}: {e}");
-        tokio::time::sleep(RETRY).await;
+        };
+        let attached = email::attachment_files(&mut *db.acquire().await?, id).await?;
+        let files = files(materials, &attached).await;
+        let Some(m) = mark_sending(db, id, &account, mailbox_id, now, &attached, files).await?
+        else {
+            smtp.quit();
+            return Ok(());
+        };
+        let outcome = match smtp
+            .send(&m.outgoing, || {
+                m.before.latest_at.is_some_and(|latest| now() >= latest)
+            })
+            .await
+        {
+            Ok(SendStatus::Expired) => {
+                return m.before.restore(&mut *db.acquire().await?, id).await;
+            }
+            Ok(SendStatus::Sent) => {
+                tracing::info!("email {id} sent from mailbox {mailbox_id}");
+                Outcome::Sent
+            }
+            Err(err) => {
+                tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
+                match err {
+                    SendError::NotSent(ref error) => match pause::classify(error) {
+                        Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)),
+                        Failure::Email => Outcome::Failed(err.message()),
+                    },
+                    SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
+                }
+            }
+        };
+        // Only this run knows how SMTP answered, so it keeps trying until that is written.
+        let answered = now();
+        writes
+            .retry("record email", || {
+                record(db, id, mailbox_id, &account, &m, &outcome, answered)
+            })
+            .await;
+        Ok(())
     }
-    Ok(())
 }
 
 /// The files to attach, read now: a material may be attached to emails for days before they go.

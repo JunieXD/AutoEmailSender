@@ -185,6 +185,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     }
     let (ctx, restored) = api::startup::open(&dir).await.map_err(StartupError::Core)?;
     let api::Context {
+        writes,
         db,
         net,
         materials,
@@ -200,6 +201,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let ui = app.clone();
     tauri::async_runtime::spawn(send::run(
         db.clone(),
+        writes.clone(),
         net.clone(),
         materials.clone(),
         sender.clone(),
@@ -237,6 +239,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let changed_todos = todo_reminders.clone();
     tauri::async_runtime::spawn(receive::outcome::run(
         db.clone(),
+        writes.clone(),
         net.clone(),
         reply_processor.clone(),
         model_limit.clone(),
@@ -250,6 +253,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let (ui, notifications) = (app.clone(), app.clone());
     tauri::async_runtime::spawn(receive::reminders::run(
         db.clone(),
+        writes.clone(),
         todo_reminders.clone(),
         move || {
             if let Err(e) = ui.emit("todos-changed", ()) {
@@ -272,6 +276,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let matching_notifications_db = db.clone();
     tauri::async_runtime::spawn(matching::run(
         db.clone(),
+        writes.clone(),
         net.clone(),
         matcher.clone(),
         model_limit.clone(),
@@ -294,6 +299,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let drafts_db = db.clone();
     tauri::async_runtime::spawn(task::generation::run(
         db.clone(),
+        writes.clone(),
         net.clone(),
         generator.clone(),
         model_limit.clone(),

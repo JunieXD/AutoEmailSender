@@ -31,6 +31,7 @@ impl Runner {
         let (tx, changes) = mpsc::unbounded_channel();
         let task = tokio::spawn(receive::outcome::run(
             db.clone(),
+            db::Writes::default(),
             net::Net::new(vec![]).unwrap(),
             processor.clone(),
             limit,

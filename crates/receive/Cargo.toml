@@ -22,9 +22,9 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["macros", "sync", "time"] }
 tracing.workspace = true
 ts-rs.workspace = true
+db.workspace = true
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-db.workspace = true
 fakemail.workspace = true
 tokio = { workspace = true, features = ["rt", "io-util", "net", "rt-multi-thread", "test-util"] }

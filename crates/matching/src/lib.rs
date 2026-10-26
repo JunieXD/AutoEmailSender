@@ -12,7 +12,6 @@ use ts_rs::TS;
 pub use model::background::CONCURRENCY;
 /// Enough for a brief reason and three short lists; an estimate, not an output limit.
 pub const OUTPUT_TOKENS: i64 = 800;
-const RETRY: Duration = Duration::from_secs(5);
 const INVALID: &str = "模型没有按要求回答，可以重试或换个模型";
 pub const NO_MODEL: &str = "尚未添加模型。在“设置 › AI › 模型”里添加后再试。";
 pub const NOT_AGREED: &str = "使用 AI 前，请先确认发给模型服务商的内容。";
@@ -198,6 +197,7 @@ enum Outcome {
 async fn analyze(
     db: &SqlitePool,
     net: &net::Net,
+    writes: &db::Writes,
     claim: queue::Claim,
 ) -> Result<Outcome, sqlx::Error> {
     let id = claim.id;
@@ -239,7 +239,12 @@ async fn analyze(
             "match model answered"
         );
         if let Some(usage) = answer.usage {
-            record_usage(db, &chosen, usage).await;
+            let at = now();
+            writes
+                .retry("record match usage", || {
+                    model::usage::record(db, chosen.id, &chosen.model, Purpose::Match, usage, at)
+                })
+                .await;
         }
         if answer.text.trim().is_empty() {
             return Ok(classify(
@@ -268,16 +273,6 @@ async fn analyze(
         }
     }
     unreachable!("both attempts return")
-}
-
-async fn record_usage(db: &SqlitePool, chosen: &Chosen, usage: model::usage::Usage) {
-    let at = now();
-    while let Err(e) =
-        model::usage::record(db, chosen.id, &chosen.model, Purpose::Match, usage, at).await
-    {
-        tracing::error!("record match usage: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
 }
 
 fn classify(error: ModelError, chosen: Chosen) -> Outcome {
@@ -318,30 +313,25 @@ async fn requeue(
 /// owns the work, so leaving a page does not interrupt it.
 pub async fn run(
     db: SqlitePool,
+    writes: db::Writes,
     net: net::Net,
     matcher: Matcher,
     limit: model::background::Limit,
     changed: impl Fn() + Send + 'static,
     finished: impl Fn(MatchFinished) + Send + 'static,
 ) {
-    while let Err(e) = queue::recover(&db).await {
-        tracing::error!("recover match queue: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    writes
+        .retry("recover match queue", || queue::recover(&db))
+        .await;
     let mut workers = JoinSet::new();
     let mut claims = std::collections::HashMap::new();
     let mut total = MatchFinished::default();
     let mut active = false;
     let mut retry_at: Option<Instant> = None;
     loop {
-        let progress = match queue::progress(&db).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("match progress: {e}");
-                tokio::time::sleep(RETRY).await;
-                continue;
-            }
-        };
+        let progress = writes
+            .retry("match progress", || queue::progress(&db))
+            .await;
         if progress.remaining > 0 {
             active = true;
         }
@@ -353,30 +343,25 @@ pub async fn run(
             active = false;
         }
         let cooling = retry_at.is_some_and(|at| at > Instant::now());
-        if progress.pause.is_none() && !cooling && workers.len() < CONCURRENCY {
-            match queue::next(&db).await {
-                Ok(Some(claim)) => {
-                    let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
-                    let task = workers.spawn(async move {
-                        let _permit = limit.acquire().await;
-                        let result = match queue::running(&db, claim).await {
-                            Ok(true) => analyze(&db, &net, claim).await,
-                            Ok(false) => Ok(Outcome::Gone),
-                            Err(e) => Err(e),
-                        };
-                        (claim, result)
-                    });
-                    claims.insert(task.id(), claim);
-                    changed();
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::error!("claim match: {e}");
-                    tokio::time::sleep(RETRY).await;
-                    continue;
-                }
-            }
+        if progress.pause.is_none()
+            && !cooling
+            && workers.len() < CONCURRENCY
+            && let Some(claim) = writes.retry("claim match", || queue::next(&db)).await
+        {
+            let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
+            let writes = writes.clone();
+            let task = workers.spawn(async move {
+                let _permit = limit.acquire().await;
+                let result = match queue::running(&db, claim).await {
+                    Ok(true) => analyze(&db, &net, &writes, claim).await,
+                    Ok(false) => Ok(Outcome::Gone),
+                    Err(e) => Err(e),
+                };
+                (claim, result)
+            });
+            claims.insert(task.id(), claim);
+            changed();
+            continue;
         }
         tokio::select! {
             Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
@@ -392,32 +377,30 @@ pub async fn run(
                             }
                         };
                         let completed_at = now();
-                        let applied = loop {
-                            let saved = match &outcome {
-                                Outcome::Done(answer, model, started_at) => {
-                                    queue::complete(&db, claim, answer, model, *started_at).await
+                        let applied = writes
+                            .retry("save match", || async {
+                                match &outcome {
+                                    Outcome::Done(answer, model, started_at) => {
+                                        queue::complete(&db, claim, answer, model, *started_at)
+                                            .await
+                                    }
+                                    Outcome::Failed(reason) => {
+                                        queue::fail(&db, claim, reason).await
+                                    }
+                                    Outcome::Pause(reason, model) => {
+                                        requeue(
+                                            &db,
+                                            claim,
+                                            Some((completed_at, reason)),
+                                            model.as_ref(),
+                                        )
+                                        .await
+                                    }
+                                    Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
+                                    Outcome::Gone => Ok(false),
                                 }
-                                Outcome::Failed(reason) => queue::fail(&db, claim, reason).await,
-                                Outcome::Pause(reason, model) => {
-                                    requeue(
-                                        &db,
-                                        claim,
-                                        Some((completed_at, reason)),
-                                        model.as_ref(),
-                                    )
-                                    .await
-                                }
-                                Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
-                                Outcome::Gone => Ok(false),
-                            };
-                            match saved {
-                                Ok(applied) => break applied,
-                                Err(e) => {
-                                    tracing::error!(mentor_id = id, "save match: {e}");
-                                    tokio::time::sleep(RETRY).await;
-                                }
-                            }
-                        };
+                            })
+                            .await;
                         if applied {
                             if matches!(outcome, Outcome::Done(..) | Outcome::Failed(_)) {
                                 total.analyzed += 1;
@@ -433,21 +416,20 @@ pub async fn run(
                     Err(e) => {
                         tracing::error!("match worker: {e}");
                         if let Some(claim) = claims.remove(&e.id()) {
-                            while let Err(e) = requeue(
-                                &db,
-                                claim,
-                                Some((
-                                    now(),
-                                    "匹配分析意外中断，请继续或重启应用；\
+                            writes
+                                .retry("recover match worker", || {
+                                    requeue(
+                                        &db,
+                                        claim,
+                                        Some((
+                                            now(),
+                                            "匹配分析意外中断，请继续或重启应用；\
                                     仍然出错时，导出日志发给开发者。",
-                                )),
-                                None,
-                            )
-                            .await
-                            {
-                                tracing::error!(mentor_id = claim.id, "recover worker: {e}");
-                                tokio::time::sleep(RETRY).await;
-                            }
+                                        )),
+                                        None,
+                                    )
+                                })
+                                .await;
                         }
                         changed();
                     }
