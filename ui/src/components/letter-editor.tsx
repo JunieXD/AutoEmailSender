@@ -27,9 +27,6 @@ export const letterFormats = StarterKit.configure({
 /** What pasting this HTML into a letter would keep of it, as Markdown. */
 export function pastedMarkdown(html: string): string {
   const { body } = new DOMParser().parseFromString(html, "text/html");
-  // A document's headers, footers and notes are not part of the letter, nor the captions standing
-  // in for its images.
-  for (const e of body.querySelectorAll("header, footer, aside, figure")) e.remove();
   return toMarkdown(SchemaParser.fromSchema(getSchema([letterFormats])).parse(body));
 }
 
