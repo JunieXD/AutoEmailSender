@@ -208,18 +208,27 @@ async fn template_content(
     form: &NewTask,
 ) -> Result<Option<TemplateContent>> {
     if let Some(id) = form.template_source_id {
-        let t = sqlx::query!(
-            "SELECT template_id,template_subject,template_body_md FROM task WHERE id=?",
+        let template = sqlx::query_as!(
+            TemplateContent,
+            r#"SELECT template_id, template_subject AS "subject!: String",
+                template_body_md AS "body_md!: String"
+            FROM task
+            WHERE id = ? AND template_subject IS NOT NULL"#,
             id
         )
-        .fetch_optional(conn)
-        .await?
-        .ok_or_else(|| Error::Invalid("原任务已被删除，请重新选择模板。".into()))?;
-        return Ok(t.template_body_md.map(|body_md| TemplateContent {
-            template_id: t.template_id,
-            subject: t.template_subject.unwrap_or_default(),
-            body_md,
-        }));
+        .fetch_optional(&mut *conn)
+        .await?;
+        if template.is_none()
+            && !sqlx::query_scalar!(
+                r#"SELECT EXISTS (SELECT 1 FROM task WHERE id = ?) AS "exists!: bool""#,
+                id
+            )
+            .fetch_one(conn)
+            .await?
+        {
+            return Err(Error::Invalid("原任务已被删除，请重新选择模板。".into()));
+        }
+        return Ok(template);
     }
     match form.template_id {
         Some(id) => Ok(Some(
@@ -377,9 +386,14 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     validate_source(&mut tx, form).await?;
     email::schedule::save(&mut tx, id, &schedule).await?;
     let template = template_content(&mut tx, form).await?;
-    if form.writer == Writer::Template && template.is_none() {
-        return Err(Error::Invalid("请选择模板".into()));
-    }
+    let writing_template = match form.writer {
+        Writer::Template => Some(
+            template
+                .as_ref()
+                .ok_or_else(|| Error::Invalid("请选择模板".into()))?,
+        ),
+        Writer::Ai => None,
+    };
     let (subject, body) = (
         template.as_ref().map(|t| t.subject.as_str()),
         template.as_ref().map(|t| t.body_md.as_str()),
@@ -483,16 +497,9 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         .fetch_one(&mut *tx)
         .await?;
     for candidate in mentors {
-        let letter = if form.writer == Writer::Template {
+        let letter = if let Some(template) = writing_template {
             let m = mentor::detail(&mut tx, candidate.id).await?;
-            m.map(|m| {
-                fill(
-                    subject.unwrap_or_default(),
-                    body.unwrap_or_default(),
-                    &m,
-                    my_name.as_deref(),
-                )
-            })
+            m.map(|m| fill(&template.subject, &template.body_md, &m, my_name.as_deref()))
         } else {
             None
         };

@@ -785,12 +785,17 @@ pub async fn reapply(db: &SqlitePool, key: &TaskEmail, now: i64) -> Result<()> {
     sqlx::query!("UPDATE task SET name = name WHERE id = ?", key.task_id)
         .execute(&mut *tx)
         .await?;
-    let t = sqlx::query!(
-        "SELECT template_subject,template_body_md FROM task WHERE id = ?",
+    let template = sqlx::query_as!(
+        TemplateContent,
+        r#"SELECT template_id, template_subject AS "subject!: String",
+            template_body_md AS "body_md!: String"
+        FROM task
+        WHERE id = ? AND writer = 'template'"#,
         key.task_id
     )
-    .fetch_one(&mut *tx)
-    .await?;
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| Error::Invalid("这封邮件已不在待审核状态。".into()))?;
     let id = sqlx::query_scalar!(
         "SELECT mentor_id FROM email WHERE id = ? AND task_id = ?",
         key.id,
@@ -804,12 +809,7 @@ pub async fn reapply(db: &SqlitePool, key: &TaskEmail, now: i64) -> Result<()> {
     let name = sqlx::query_scalar!("SELECT name FROM profile")
         .fetch_one(&mut *tx)
         .await?;
-    let letter = fill(
-        t.template_subject.as_deref().unwrap_or_default(),
-        t.template_body_md.as_deref().unwrap_or_default(),
-        &m,
-        name.as_deref(),
-    );
+    let letter = fill(&template.subject, &template.body_md, &m, name.as_deref());
     if !emails::reapply(
         &mut tx,
         key.task_id,
