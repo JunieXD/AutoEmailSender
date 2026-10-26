@@ -477,9 +477,13 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
         })
         .collect();
     let has_profile_links = |e: &ElementRef<'_>| {
-        e.descendants()
-            .filter_map(ElementRef::wrap)
-            .any(|child| child.value().name() == "a" && child.value().attr("href").is_some())
+        e.descendants().filter_map(ElementRef::wrap).any(|child| {
+            child.value().name() == "a"
+                && child.value().attr("href").is_some_and(|href| {
+                    let href = href.trim();
+                    !href.is_empty() && !href.starts_with('#') && url.join(href).is_ok()
+                })
+        })
     };
     let dynamic_list = !teacher_regions.iter().any(has_profile_links)
         && teacher_regions

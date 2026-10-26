@@ -867,3 +867,41 @@ fn browser_pagination_keeps_numbers_and_does_not_treat_last_as_next() {
         vec![(Some(4), "尾页"), (None, "下一页")]
     );
 }
+
+#[test]
+fn empty_directory_filters_do_not_count_as_profile_links() {
+    let html = include_str!("pages/teacher-filter.html");
+    for href in ["javascript:void(0)", "", "#all", " JAVASCRIPT:void(0) "] {
+        let sample = html.replace("javascript:void(0)", href);
+        assert_eq!(
+            parse(&url(), &sample).unwrap().needs_browser,
+            Some(BrowserReason::JavaScript),
+            "{href}"
+        );
+    }
+}
+
+#[test]
+fn image_pagination_fixtures_preserve_control_labels_and_profile_material() {
+    let input = parse(&url(), include_str!("pages/input-image-pagination.html")).unwrap();
+    assert_eq!(input.pagination.buttons[0].control, "下一页");
+    let html = include_str!("pages/image-link-pagination.html");
+    for (sample, name, path) in [
+        (html.to_owned(), "张三", "/zhang"),
+        (
+            html.replace("alt=\"张三\"", "alt=\"李四\"")
+                .replace("href=\"/zhang\"", "href=\"/li\""),
+            "李四",
+            "/li",
+        ),
+    ] {
+        let material = parse(&url(), &sample).unwrap();
+        assert!(
+            material
+                .units
+                .iter()
+                .flat_map(|u| &u.links)
+                .any(|l| l.text == name && l.url == url().join(path).unwrap())
+        );
+    }
+}

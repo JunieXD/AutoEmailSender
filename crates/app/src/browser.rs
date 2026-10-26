@@ -26,6 +26,33 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const POLL: Duration = Duration::from_millis(500);
 const STABLE: Duration = Duration::from_millis(1500);
 const SNAPSHOT: &str = "({state:document.readyState,url:location.href,length:document.body?.innerText.length??0,elements:document.getElementsByTagName('*').length})";
+const MATERIAL_SNAPSHOT: &str = r#"({
+    text: document.body?.innerText ?? '',
+    links: [...document.querySelectorAll('a[href]')].map(element => element.href),
+    images: [...document.querySelectorAll('img[alt]')].map(element => element.getAttribute('alt')),
+})"#;
+const CLICK_CONTROL: &str = r#"(label => {
+    const alternative = element => {
+        const attributes = element.tagName === 'IMG' ? ['alt', 'title', 'aria-label'] : ['aria-label', 'title', 'alt'];
+        return attributes.map(name => element.getAttribute(name)).find(value => value?.trim());
+    };
+    const controlText = element => {
+        if (element.tagName === 'INPUT' && element.getAttribute('value')?.trim()) return element.getAttribute('value');
+        const text = element.innerText?.trim();
+        if (text) return text;
+        return alternative(element) || [...element.querySelectorAll('img')].map(alternative).find(Boolean) || '无文字链接';
+    };
+    const control = [...document.querySelectorAll('a,button,input,[role="button"],[onclick]')].find(element => {
+        const style = getComputedStyle(element);
+        return !element.disabled && !element.closest('[disabled],[aria-disabled="true"],.disabled')
+            && element.getClientRects().length && style.visibility !== 'hidden'
+            && controlText(element).trim().replace(/\s+/g, ' ') === label;
+    });
+    if (!control) return false;
+    control.click();
+    return true;
+})"#;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub struct Browser {
@@ -256,7 +283,7 @@ fn render(
     wait(&window, state, None)?;
     for step in steps {
         let deadline = Instant::now() + TIMEOUT;
-        let before = evaluate(&window, state, "document.body?.innerText??''", deadline)?;
+        let before = evaluate(&window, state, MATERIAL_SNAPSHOT, deadline)?;
         let control =
             serde_json::to_string(&step.control).map_err(|_| failed("无法读取翻页步骤"))?;
         redirects.store(0, Ordering::Relaxed);
@@ -267,21 +294,7 @@ fn render(
         let clicked = evaluate(
             &window,
             state,
-            &format!(
-                r#"(() => {{
-            const label = {control};
-            const matches = [...document.querySelectorAll('a,button,input,[role="button"],[onclick]')].filter(e => {{
-                const style = getComputedStyle(e);
-                const text = [e.innerText, e.value, e.getAttribute('aria-label'), e.getAttribute('title'), e.querySelector('img')?.alt].find(v => v?.trim()) || '';
-                return !e.disabled && !e.closest('[disabled],[aria-disabled="true"],.disabled')
-                    && e.getClientRects().length && style.visibility !== 'hidden'
-                    && text.trim().replace(/\s+/g, ' ') === label;
-            }});
-            if (!matches.length) return false;
-            matches[0].click();
-            return true;
-        }})()"#
-            ),
+            &format!("{CLICK_CONTROL}({control})"),
             deadline,
         )?;
         if clicked != json!(true) {
@@ -329,7 +342,7 @@ fn wait(window: &WebviewWindow, state: &State, before: Option<&Value>) -> Result
         if state.loaded.load(Ordering::Relaxed) {
             let snapshot = evaluate(window, state, SNAPSHOT, deadline)?;
             let changed = if let Some(before) = before {
-                evaluate(window, state, "document.body?.innerText??''", deadline)? != *before
+                evaluate(window, state, MATERIAL_SNAPSHOT, deadline)? != *before
             } else {
                 true
             };
