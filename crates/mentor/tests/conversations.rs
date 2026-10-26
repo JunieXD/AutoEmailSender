@@ -34,9 +34,18 @@ async fn list(db: &SqlitePool, unread: bool, page: u32) -> ConversationPage {
 
 async fn message(db: &SqlitePool, mentor: i64, kind: &str, at: i64, subject: Option<&str>) {
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address, subject, truncated)
-         VALUES (1, 'INBOX', 1, ?, ?, ?, 'li@example.com', ?, 0) RETURNING id",
-    ).bind(at).bind(kind).bind(at).bind(subject).fetch_one(db).await.unwrap();
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at,
+            from_address, subject, truncated)
+        VALUES (1, 'INBOX', 1, ?, ?, ?, 'li@example.com', ?, 0)
+        RETURNING id"#,
+    )
+    .bind(at)
+    .bind(kind)
+    .bind(at)
+    .bind(subject)
+    .fetch_one(db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, ?)")
         .bind(mentor)
         .bind(id)

@@ -1364,8 +1364,15 @@ async fn a_new_reply_names_its_mentors_once_in_id_order(db: SqlitePool) {
     mentor(&db, "王伟", "wang@thu.edu.cn").await;
     mentor(&db, "李明", "li@pku.edu.cn").await;
     round(&db, &net, T).await;
-    store.deliver(SENT, T + MINUTE,
-        "From: me@example.com\nTo: li@pku.edu.cn, wang@thu.edu.cn\nMessage-ID: <shared@example.com>\nSubject: 申请\n\n两位老师好");
+    store.deliver(
+        SENT,
+        T + MINUTE,
+        "From: me@example.com\n\
+        To: li@pku.edu.cn, wang@thu.edu.cn\n\
+        Message-ID: <shared@example.com>\n\
+        Subject: 申请\n\n\
+        两位老师好",
+    );
     let reply = "From: secretary@example.com\n\
         In-Reply-To: <shared@example.com>\n\
         Message-ID: <answer@example.com>\n\n\

@@ -504,9 +504,18 @@ async fn paused_mailboxes_fail_over_but_owned_mail_and_follow_ups_wait(db: Sqlit
         assert_eq!(pause.until, at + 60 * MINUTE);
         assert!(!pause.reason.contains(SECRET));
         // This rejection has no prior delivery evidence and must not acquire any.
-        assert_eq!(sqlx::query_as::<_, (Option<i64>, Option<String>, Option<i64>)>(
-            "SELECT mailbox_id, message_id, sent_at FROM email WHERE mentor_id = ? AND kind = 'first'")
-            .bind(blocked).fetch_one(&db).await.unwrap(), (None, None, None));
+        assert_eq!(
+            sqlx::query_as::<_, (Option<i64>, Option<String>, Option<i64>)>(
+                r#"SELECT mailbox_id, message_id, sent_at
+                FROM email
+                WHERE mentor_id = ? AND kind = 'first'"#,
+            )
+            .bind(blocked)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            (None, None, None)
+        );
         // Both this first letter and the next one can now use the backup.
         send::step(&db, &net, nowhere(), || at).await.unwrap();
         assert!(matches!(
@@ -2481,9 +2490,16 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
             matches!(visible[0].delivery, Delivery::Bounced { .. }),
             proof == "bounce"
         );
-        assert_eq!(sqlx::query_scalar::<_, Option<String>>(
-            "SELECT cancel_reason FROM email WHERE id = ?",
-        ).bind(id).fetch_one(&db).await.unwrap(), None);
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT cancel_reason FROM email WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            None
+        );
         assert!(
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS (SELECT 1 FROM mentor_contact WHERE mentor_id = ?)",
