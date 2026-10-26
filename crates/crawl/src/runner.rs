@@ -22,6 +22,7 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
+use tracing::Instrument;
 use ts_rs::TS;
 const RETRY: Duration = Duration::from_secs(5);
 const READ_FAILED: &str = "抓取数据暂时无法读取，请继续或重启应用。";
@@ -101,6 +102,14 @@ impl Pages {
         if !c.steps.is_empty() && m.needs_browser.is_none() {
             m.needs_browser = Some(crate::BrowserReason::Pagination);
         }
+        if let Some(reason) = &m.needs_browser {
+            tracing::info!(
+                url = c.url.as_str(),
+                ?reason,
+                available = self.browser.is_some(),
+                "browser takeover requested"
+            );
+        }
         save_material(db, c, &m, PageMethod::Http).await?;
         let Some(browser) = self
             .browser
@@ -110,6 +119,31 @@ impl Pages {
             return Ok(m);
         };
         save_material(db, c, &m, PageMethod::Webview).await?;
+        let started = Instant::now();
+        let result =
+            Self::render(browser.as_ref(), db, c, target, fetched.relaxed_certificate).await;
+        let status = match &result {
+            Ok(_) => "success",
+            Err(ReadError::Gone) => "canceled",
+            Err(_) => "failed",
+        };
+        tracing::info!(
+            url = c.url.as_str(),
+            method = "browser",
+            result = status,
+            elapsed_ms = started.elapsed().as_millis(),
+            "page fetched"
+        );
+        result
+    }
+
+    async fn render(
+        browser: &dyn Browser,
+        db: &SqlitePool,
+        c: &Claim,
+        target: &PageTarget,
+        relaxed_certificate: bool,
+    ) -> Result<Material, ReadError> {
         let render = browser.render(target, &c.steps);
         let invalidated = async {
             loop {
@@ -128,22 +162,39 @@ impl Pages {
             }
         };
         let rendered = tokio::select! {
-            result = render => result.map_err(|e| ReadError::Failed(match e {
-                BrowserError::TimedOut if fetched.relaxed_certificate => "网站的证书有问题，浏览器打不开".into(),
-                e => e.message(),
-            }))?,
+            result = render => result.map_err(|e| {
+                let category = match &e {
+                    BrowserError::TimedOut if relaxed_certificate => "certificate_timeout",
+                    BrowserError::TimedOut => "timeout",
+                    BrowserError::Failed(_) => "browser_error",
+                };
+                tracing::info!(url = c.url.as_str(), category, "browser read failed");
+                ReadError::Failed(match e {
+                    BrowserError::TimedOut if relaxed_certificate => {
+                        "网站的证书有问题，浏览器打不开".into()
+                    }
+                    e => e.message(),
+                })
+            })?,
             result = invalidated => return result,
         };
-        let url = target
-            .redirect(target.url(), &rendered.url)
-            .map_err(|e| ReadError::Failed(e.message()))?;
+        let url = target.redirect(target.url(), &rendered.url).map_err(|e| {
+            tracing::info!(error = %e, "browser result URL rejected");
+            ReadError::Failed(e.message())
+        })?;
         if rendered.html.len() > crate::fetch::MAX_PAGE_BYTES {
+            tracing::info!(reason = "too_large", "browser content rejected");
             return Err(ReadError::Failed(crate::CrawlError::TooLarge.message()));
         }
-        let mut material =
-            tokio::task::spawn_blocking(move || crate::parse_rendered(&url, &rendered.html))
-                .await
-                .map_err(|e| ReadError::Failed(crate::CrawlError::Worker(e).message()))?;
+        let span = tracing::Span::current();
+        let mut material = tokio::task::spawn_blocking(move || {
+            span.in_scope(|| crate::parse_rendered(&url, &rendered.html))
+        })
+        .await
+        .map_err(|e| {
+            tracing::info!(reason = "parse_worker_failed", "browser content rejected");
+            ReadError::Failed(crate::CrawlError::Worker(e).message())
+        })?;
         // Interactive pagination remains present after rendering, and is now replayable.
         if material.needs_browser == Some(crate::BrowserReason::Pagination)
             && !material.pagination.buttons.is_empty()
@@ -151,12 +202,14 @@ impl Pages {
             material.needs_browser = None;
         }
         if let Some(reason) = &material.needs_browser {
+            tracing::info!(?reason, "browser content still unavailable");
             return Err(ReadError::Failed(format!(
                 "浏览器读取后仍未取得页面内容：{}",
                 self::browser(reason)
             )));
         }
         if material.units.is_empty() {
+            tracing::info!(reason = "empty_page", "browser content still unavailable");
             return Err(ReadError::Failed(
                 "浏览器读取后仍未取得页面内容，网站可能尚未通过验证".into(),
             ));
@@ -246,6 +299,7 @@ struct Reader<'a> {
 impl Reader<'_> {
     async fn ask<T: extract::Output>(
         &self,
+        step: &'static str,
         system: &str,
         data: serde_json::Value,
     ) -> Result<T, ReadError> {
@@ -278,6 +332,7 @@ impl Reader<'_> {
                     break permit;
                 }
             };
+            let started = Instant::now();
             let answer = model::ask(
                 self.net,
                 &self.chosen.access,
@@ -286,14 +341,57 @@ impl Reader<'_> {
                 &data.to_string(),
             )
             .await
-            .map_err(|e| match model::background::classify(e) {
-                Failure::Pause(r) => ReadError::Pause(r),
-                Failure::RateLimit(w) => {
-                    self.cooldown.defer(w);
-                    ReadError::RateLimit
+            .map_err(|e| {
+                let category = match &e {
+                    model::ModelError::MissingKey => "missing_key",
+                    model::ModelError::Unreachable { .. } => "unreachable",
+                    model::ModelError::TimedOut { .. } => "timeout",
+                    model::ModelError::Refused { .. } => "refused",
+                    model::ModelError::Failed(_) => "stream_failed",
+                    model::ModelError::NoAnswer { .. } => "no_answer",
+                    model::ModelError::Broken(_) => "invalid_response",
+                };
+                let status = match &e {
+                    model::ModelError::Refused { status, .. } => Some(*status),
+                    _ => None,
+                };
+                let failure = model::background::classify(e);
+                let action = match &failure {
+                    Failure::Pause(_) => "pause",
+                    Failure::RateLimit(_) => "cooldown",
+                    Failure::Failed(_) => "fail_page",
+                };
+                tracing::info!(
+                    url = self.claim.url.as_str(),
+                    step,
+                    attempt,
+                    category,
+                    status,
+                    action,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "model call failed"
+                );
+                match failure {
+                    Failure::Pause(r) => ReadError::Pause(r),
+                    Failure::RateLimit(w) => {
+                        tracing::info!(wait_ms = w.as_millis(), "model rate limited");
+                        self.cooldown.defer(w);
+                        ReadError::RateLimit
+                    }
+                    Failure::Failed(r) => ReadError::Failed(r),
                 }
-                Failure::Failed(r) => ReadError::Failed(r),
             })?;
+            tracing::info!(
+                url = self.claim.url.as_str(),
+                step,
+                attempt,
+                usage_known = answer.usage.is_some(),
+                input_tokens = answer.usage.map(|u| u.input),
+                cached_tokens = answer.usage.map(|u| u.cached),
+                output_tokens = answer.usage.map(|u| u.output),
+                elapsed_ms = started.elapsed().as_millis(),
+                "model call completed"
+            );
             if let Some(usage) = answer.usage {
                 while let Err(e) = model::usage::record_crawl(
                     self.db,
@@ -310,6 +408,7 @@ impl Reader<'_> {
                 }
             }
             if answer.finish_reason.as_deref() == Some("length") {
+                tracing::info!(step, reason = "output_truncated", "model output rejected");
                 return Err(ReadError::Failed(
                     "模型的回答被截断，请换用支持更长输出的模型后重试。".into(),
                 ));
@@ -317,10 +416,12 @@ impl Reader<'_> {
             match extract::parse(&answer.text) {
                 Ok(v) => return Ok(v),
                 Err(reason) if attempt == 0 => {
+                    tracing::info!(step, reason = "invalid_fields", "retry model output");
                     rules =
                         format!("{system}\n上次输出未通过字段校验：{reason}。请重新输出完整 JSON。")
                 }
                 Err(reason) => {
+                    tracing::info!(step, reason = "invalid_fields", "model output rejected");
                     return Err(ReadError::Failed(format!(
                         "模型返回的资料不合格：{reason}。请重试或换一个模型。"
                     )));
@@ -330,6 +431,7 @@ impl Reader<'_> {
         unreachable!("both attempts return")
     }
 }
+#[tracing::instrument(name = "crawl", parent = None, skip_all, fields(id = c.crawl))]
 async fn process(
     db: &SqlitePool,
     net: &net::Net,
@@ -338,13 +440,16 @@ async fn process(
     c: &Claim,
     cooldown: &Cooldown,
 ) -> Result<Outcome, sqlx::Error> {
+    tracing::info!(url = c.url.as_str(), kind = ?c.kind, "page started");
     let Some(chosen) = model::selected(db, c.model_id).await? else {
+        tracing::info!(reason = "missing_model", "crawl cannot continue");
         return Ok(Outcome::Pause(
             "尚未添加模型，请在“设置 › AI › 模型”中添加后继续。".into(),
             None,
         ));
     };
     if !chosen.agreed {
+        tracing::info!(reason = "model_consent_required", "crawl cannot continue");
         return Ok(Outcome::Pause(
             "模型配置需要确认，请确认网页内容将发往的服务商后继续。".into(),
             Some(chosen),
@@ -437,7 +542,7 @@ async fn read(
         });
         data["child"] = serde_json::json!(c.kind == PageKind::EnrichChild);
         let result = reader
-            .ask::<extract::Enriched>(extract::ENRICH, data)
+            .ask::<extract::Enriched>("enrich", extract::ENRICH, data)
             .await?;
         let mut next = Vec::new();
         if c.kind == PageKind::EnrichProfile {
@@ -456,7 +561,10 @@ async fn read(
                 }
             }
         }
-        let mut person = extract::profile(&m, result.profile).map_err(ReadError::Failed)?;
+        let mut person = extract::profile(&m, result.profile).map_err(|reason| {
+            tracing::info!(reason = "invalid_profile", "enrichment extraction failed");
+            ReadError::Failed(reason)
+        })?;
         if c.kind == PageKind::EnrichChild {
             let target_names: Vec<_> = std::iter::once(candidate.fields.name.as_str())
                 .chain(candidate.fields.aliases.iter().map(String::as_str))
@@ -495,7 +603,7 @@ async fn read(
         }
     } else {
         reader
-            .ask::<extract::Route>(extract::ROUTE, extract::routing(&m, &scope))
+            .ask::<extract::Route>("route", extract::ROUTE, extract::routing(&m, &scope))
             .await?
     };
     let mut next: Vec<PageUrl> = Vec::new();
@@ -522,18 +630,28 @@ async fn read(
             for range in extract::segments(&m) {
                 all.extend(
                     reader
-                        .ask::<extract::People>(extract::LIST, extract::data(&m, range))
+                        .ask::<extract::People>("list", extract::LIST, extract::data(&m, range))
                         .await?
                         .people,
                 );
             }
-            extract::listed(&m, all, &scope).map_err(ReadError::Failed)?
+            extract::listed(&m, all, &scope).map_err(|reason| {
+                tracing::info!(reason = "invalid_people", "page extraction failed");
+                ReadError::Failed(reason)
+            })?
         }
         Kind::Profile => {
             let p = reader
-                .ask::<extract::Profile>(extract::PROFILE, extract::data(&m, 0..m.units.len()))
+                .ask::<extract::Profile>(
+                    "profile",
+                    extract::PROFILE,
+                    extract::data(&m, 0..m.units.len()),
+                )
                 .await?;
-            let mut p = extract::profile(&m, p).map_err(ReadError::Failed)?;
+            let mut p = extract::profile(&m, p).map_err(|reason| {
+                tracing::info!(reason = "invalid_profile", "page extraction failed");
+                ReadError::Failed(reason)
+            })?;
             p.profile = Some(c.url.clone());
             vec![p]
         }
@@ -554,9 +672,11 @@ fn browser(reason: &crate::BrowserReason) -> &'static str {
         crate::BrowserReason::Pagination => "名单需要在浏览器中点击翻页",
     }
 }
+#[tracing::instrument(name = "crawl", parent = None, skip_all, fields(id = c.crawl))]
 async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     if !queue::valid(&mut tx, c).await? {
+        tracing::info!(url = c.url.as_str(), "page claim invalidated");
         return Ok(false);
     }
     let enrich_identity_failure;
@@ -572,6 +692,11 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
         if enrich::matches(&candidate.fields, &person.fields, &p.material) {
             outcome
         } else {
+            tracing::info!(
+                url = c.url.as_str(),
+                reason = "enrichment_identity_mismatch",
+                "page rejected"
+            );
             let source = if c.kind == PageKind::EnrichChild {
                 "子页".to_owned()
             } else {
@@ -614,6 +739,11 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
         if candidates.iter().any(|c| c.matched) {
             outcome
         } else {
+            tracing::info!(
+                url = c.url.as_str(),
+                reason = "profile_identity_mismatch",
+                "page rejected"
+            );
             let original_names = candidates
                 .into_iter()
                 .map(|c| c.name)
@@ -630,6 +760,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     } else {
         outcome
     };
+    let mut paused = false;
     match outcome {
         Outcome::Done(p) => {
             let text = p.material.text();
@@ -786,6 +917,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     .as_ref()
                     .is_some_and(|m| model::background::same_config(m, e))
             }) {
+                paused = true;
                 sqlx::query!(
                     r#"UPDATE crawl
                     SET state = 'paused', error = ?
@@ -825,6 +957,18 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
         enrich::complete(&mut tx, id).await?;
     }
     tx.commit().await?;
+    match outcome {
+        Outcome::Done(p) => tracing::info!(url = c.url.as_str(), kind = ?p.kind,
+            people = p.people.len(), next_pages = p.next.len(),
+            needs_browser = p.material.needs_browser.is_some(), "page completed"),
+        Outcome::Failed(_) => tracing::info!(url = c.url.as_str(), kind = ?c.kind, "page failed"),
+        Outcome::Pause(_, _) if paused => {
+            tracing::info!(reason = "model_or_storage", "crawl paused")
+        }
+        Outcome::Pause(_, _) => {}
+        Outcome::RateLimit => {}
+        Outcome::Gone => tracing::info!(url = c.url.as_str(), "page claim invalidated"),
+    }
     Ok(true)
 }
 async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Error> {
@@ -843,7 +987,7 @@ async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Er
     .fetch_all(&mut *tx)
     .await?;
     let mut result = Vec::new();
-    for id in ids {
+    for &id in &ids {
         sqlx::query!(
             "UPDATE crawl_run SET ended_at = ? WHERE crawl_id = ? AND ended_at IS NULL",
             at,
@@ -911,7 +1055,21 @@ async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Er
             message: messages.join("；"),
         });
     }
+    let summaries = if ids.is_empty() {
+        Vec::new()
+    } else {
+        queue::summaries(&mut tx, &ids).await?
+    };
     tx.commit().await?;
+    for summary in summaries {
+        crate::span(summary.id).in_scope(|| {
+            tracing::info!(
+                state = ?summary.state, candidates = summary.candidates, pages = summary.pages,
+                failed = summary.failed, usage_known = summary.tokens.is_some(),
+                tokens = summary.tokens, "crawl finished"
+            )
+        });
+    }
     Ok(result)
 }
 pub async fn run(
@@ -997,7 +1155,7 @@ async fn run_with_pages(
                         let outcome = match result {
                             Ok(o) => o,
                             Err(e) => {
-                                tracing::error!("crawl database: {e}");
+                                crate::span(c.crawl).in_scope(|| tracing::error!("crawl database: {e}"));
                                 Outcome::Pause(
                                     "抓取数据暂时无法保存，请继续或重启应用。".into(),
                                     None,
@@ -1007,25 +1165,29 @@ async fn run_with_pages(
                         (c, outcome)
                     }
                     Err(e) => {
-                        tracing::error!("crawl worker: {e}");
                         let Some(c) = claims.remove(&e.id()) else {
                             continue;
                         };
+                        crate::span(c.crawl).in_scope(|| tracing::error!("crawl worker: {e}"));
                         (
                             c,
                             Outcome::Pause("抓取意外中断，请继续或重启应用。".into(), None),
                         )
                     }
                 };
-                loop {
-                    match save(&db, &c, &outcome).await {
-                        Ok(_) => break,
-                        Err(e) => {
-                            tracing::error!("save crawl: {e}");
-                            tokio::time::sleep(RETRY).await;
+                async {
+                    loop {
+                        match save(&db, &c, &outcome).await {
+                            Ok(_) => break,
+                            Err(e) => {
+                                tracing::error!("save crawl: {e}");
+                                tokio::time::sleep(RETRY).await;
+                            }
                         }
                     }
                 }
+                .instrument(crate::span(c.crawl))
+                .await;
                 changed();
             },
             () = crawler.0.notified() => {},

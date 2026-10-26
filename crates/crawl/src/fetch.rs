@@ -79,9 +79,25 @@ impl Fetcher {
     }
 
     pub async fn fetch(&self, target: &PageTarget) -> Result<FetchedPage, CrawlError> {
-        timeout(PAGE_TIMEOUT, self.read(target))
+        let started = Instant::now();
+        let result = timeout(PAGE_TIMEOUT, self.read(target))
             .await
-            .map_err(|_| CrawlError::TimedOut)?
+            .unwrap_or_else(|_| Err(CrawlError::TimedOut));
+        match &result {
+            Ok(page) => tracing::info!(
+                url = target.url().as_str(),
+                method = "http",
+                status = page.status,
+                elapsed_ms = started.elapsed().as_millis(),
+                result = "success",
+                "page fetched"
+            ),
+            Err(error) => tracing::info!(
+                url = target.url().as_str(), method = "http", %error,
+                elapsed_ms = started.elapsed().as_millis(), result = "failed", "page fetched"
+            ),
+        }
+        result
     }
 
     async fn read(&self, target: &PageTarget) -> Result<FetchedPage, CrawlError> {
@@ -91,8 +107,8 @@ impl Fetcher {
         for redirects in 0..=MAX_REDIRECTS {
             let (response, slot) = match self.send(&self.trusted, &url, &site).await {
                 Err(CrawlError::Http(error)) if net::untrusted(&error) => {
-                    tracing::debug!(
-                        website = %url.website(),
+                    tracing::info!(
+                        url = url.as_str(),
                         "retry public page with relaxed certificate checks"
                     );
                     relaxed_certificate = true;
@@ -101,6 +117,13 @@ impl Fetcher {
                 result => result?,
             };
             let status = response.status();
+            if !status.is_success() && !status.is_redirection() {
+                tracing::info!(
+                    url = url.as_str(),
+                    status = status.as_u16(),
+                    "HTTP response"
+                );
+            }
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
                 if redirects == MAX_REDIRECTS {
                     return Err(CrawlError::Redirect);
@@ -110,7 +133,19 @@ impl Fetcher {
                     .get(header::LOCATION)
                     .and_then(|h| h.to_str().ok())
                     .ok_or(CrawlError::Redirect)?;
-                url = target.redirect(&url, location)?;
+                let next = target.redirect(&url, location);
+                let destination = match &next {
+                    Ok(url) => Some(url.as_str()),
+                    Err(_) => None,
+                };
+                tracing::info!(
+                    url = url.as_str(),
+                    status = status.as_u16(),
+                    location = destination,
+                    allowed = next.is_ok(),
+                    "HTTP redirect"
+                );
+                url = next?;
                 continue;
             }
             if response
@@ -134,8 +169,11 @@ impl Fetcher {
             }
             drop(slot);
             let url = url.clone();
+            let span = tracing::Span::current();
             let material = tokio::task::spawn_blocking(move || {
-                response_material(&url, status.as_u16(), content_type.as_deref(), &bytes)
+                span.in_scope(|| {
+                    response_material(&url, status.as_u16(), content_type.as_deref(), &bytes)
+                })
             })
             .await
             .map_err(CrawlError::Worker)??;

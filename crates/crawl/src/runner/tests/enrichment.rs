@@ -439,8 +439,11 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
             chosen: &chosen,
             cooldown: &cooldown,
         };
-        let ask =
-            reader.ask::<extract::Enriched>(extract::ENRICH, json!({"target":{"name":"张三"}}));
+        let ask = reader.ask::<extract::Enriched>(
+            "enrich",
+            extract::ENRICH,
+            json!({"target":{"name":"张三"}}),
+        );
         tokio::pin!(ask);
         assert!(
             std::future::poll_fn(|cx| std::task::Poll::Ready(ask.as_mut().poll(cx).is_pending()))

@@ -45,6 +45,35 @@ async fn export_logs(app: AppHandle) -> Result<bool, String> {
     logs::export(&app, &dir).map_err(|e| format!("日志未能导出：{e}"))
 }
 
+#[tauri::command]
+async fn export_crawl_log(
+    app: AppHandle,
+    ctx: tauri::State<'_, api::Context>,
+    id: i64,
+) -> Result<bool, String> {
+    let detail = crawl::queue::detail(&ctx.db, id, 1)
+        .await
+        .map_err(|e| format!("抓取日志未能导出：{e}"))?
+        .ok_or("这次抓取已被删除")?;
+    let (date, started): (String, String) = sqlx::query_as(
+        r#"SELECT date(?1 / 1000, 'unixepoch', 'localtime'),
+            datetime(?1 / 1000, 'unixepoch', 'localtime')"#,
+    )
+    .bind(detail.summary.created_at)
+    .fetch_one(&ctx.db)
+    .await
+    .map_err(|e| format!("无法读取抓取日期：{e}"))?;
+    let dir = data_dir(&app)
+        .map_err(|e| format!("抓取日志未能导出：{e}"))?
+        .join("logs");
+    tauri::async_runtime::spawn_blocking(move || {
+        logs::export_crawl(&app, &dir, &detail, &date, &started)
+            .map_err(|e| format!("抓取日志未能导出：{e}"))
+    })
+    .await
+    .map_err(|e| format!("抓取日志未能导出：{e}"))?
+}
+
 /// Saves the exported table through the native file picker, away from the async executor.
 #[tauri::command]
 async fn export_mentors(
@@ -137,6 +166,7 @@ fn main() -> tauri::Result<()> {
             call,
             startup_failure,
             export_logs,
+            export_crawl_log,
             export_mentors,
             backup::export_backup,
             backup::prepare_restore,

@@ -116,6 +116,7 @@ pub async fn preview(db: &SqlitePool, ids: &[i64]) -> Result<EnrichPlan, sqlx::E
 pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let result = plan(&mut tx, ids).await?;
+    let mut crawls = std::collections::BTreeMap::<i64, usize>::new();
     for id in &result.ids {
         let r = sqlx::query!(
             r#"SELECT crawl_id AS "crawl!: i64", profile_url AS "url!: PageUrl"
@@ -125,6 +126,7 @@ pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, 
         )
         .fetch_one(&mut *tx)
         .await?;
+        *crawls.entry(r.crawl).or_default() += 1;
         sqlx::query!("DELETE FROM crawl_page WHERE candidate_id=?", id)
             .execute(&mut *tx)
             .await?;
@@ -157,6 +159,9 @@ pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, 
         }
     }
     tx.commit().await?;
+    for (id, candidates) in crawls {
+        crate::span(id).in_scope(|| tracing::info!(candidates, "enrichment queued"));
+    }
     Ok(result)
 }
 pub(crate) async fn enqueue(

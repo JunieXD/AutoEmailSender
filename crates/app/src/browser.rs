@@ -18,7 +18,7 @@ use crawl::{
 use serde_json::{Value, json};
 use tauri::{
     AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-    webview::{NewWindowResponse, PageLoadEvent},
+    webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -114,6 +114,7 @@ struct Window {
     app: AppHandle,
     label: String,
     state: Arc<State>,
+    span: tracing::Span,
 }
 impl Drop for Window {
     fn drop(&mut self) {
@@ -123,7 +124,8 @@ impl Drop for Window {
             && !self.state.close_requested.swap(true, Ordering::Relaxed)
             && let Err(error) = window.close()
         {
-            tracing::warn!("close crawl browser: {error}");
+            self.span
+                .in_scope(|| tracing::warn!("close crawl browser: {error}"));
         }
     }
 }
@@ -146,6 +148,7 @@ impl Render for Browser {
                 app: self.app.clone(),
                 label: format!("{PREFIX}{}", NEXT.fetch_add(1, Ordering::Relaxed)),
                 state,
+                span: tracing::Span::current(),
             };
             let (app, label, state, target, steps) = (
                 window.app.clone(),
@@ -154,14 +157,18 @@ impl Render for Browser {
                 target.clone(),
                 steps.to_vec(),
             );
+            let span = window.span.clone();
             let result = tauri::async_runtime::spawn_blocking(move || {
-                // This second guard also covers cancellation during native window creation.
-                let _window = Window {
-                    app: app.clone(),
-                    label: label.clone(),
-                    state: state.clone(),
-                };
-                render(&app, &label, target, &steps, &state, slot)
+                span.in_scope(|| {
+                    // This second guard also covers cancellation during native window creation.
+                    let _window = Window {
+                        app: app.clone(),
+                        label: label.clone(),
+                        state: state.clone(),
+                        span: tracing::Span::current(),
+                    };
+                    render(&app, &label, target, &steps, &state, slot)
+                })
             })
             .await
             .map_err(|error| {
@@ -207,6 +214,10 @@ fn render(
     let nav_navigation = navigation.clone();
     let redirects = Arc::new(AtomicU64::new(0));
     let nav_redirects = redirects.clone();
+    let nav_span = tracing::Span::current();
+    let popup_span = nav_span.clone();
+    let download_span = nav_span.clone();
+    let download_page = target.url().as_str().to_owned();
     let url = target
         .url()
         .as_str()
@@ -218,6 +229,7 @@ fn render(
         .incognito(true)
         .initialization_script(WATCH_NAVIGATION)
         .on_navigation(move |url| {
+            let _entered = nav_span.enter();
             let mut navigation = nav_navigation
                 .lock()
                 .unwrap_or_else(|_| unreachable!("navigation updates cannot panic"));
@@ -232,6 +244,9 @@ fn render(
                 {
                     return Err(crawl::CrawlError::Redirect);
                 }
+                if *current != next {
+                    tracing::info!(from = current.as_str(), to = next.as_str(), "browser navigation");
+                }
                 *started = true;
                 *current = next;
                 Ok(())
@@ -239,16 +254,24 @@ fn render(
             match result {
                 Ok(()) => true,
                 Err(error) => {
+                    tracing::info!(url = public_url(url), scheme = url.scheme(), %error, "browser navigation blocked");
                     nav_state.fail(error.message());
                     false
                 }
             }
         })
-        .on_new_window(move |_, _| {
+        .on_new_window(move |url, _| {
+            popup_span.in_scope(|| tracing::info!(url = public_url(&url), scheme = url.scheme(), "browser popup blocked"));
             popup_state.fail("网页尝试打开新窗口，已阻止，请改用具体的名单网址".into());
             NewWindowResponse::Deny
         })
-        .on_download(move |_, _| {
+        .on_download(move |_, event| {
+            download_span.in_scope(|| {
+                if let DownloadEvent::Requested { url, .. } = event {
+                    tracing::info!(page = download_page, url = public_url(&url),
+                        scheme = url.scheme(), "browser download blocked");
+                }
+            });
             download_state.fail("网页尝试下载文件，已阻止，请改用网页地址".into());
             false
         })
@@ -282,6 +305,7 @@ fn render(
     state.check()?;
     wait(&window, state, None)?;
     for step in steps {
+        tracing::info!(page = step.page, "browser pagination started");
         let deadline = Instant::now() + TIMEOUT;
         let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline)?;
         let control =
@@ -298,6 +322,11 @@ fn render(
             deadline,
         )?;
         if clicked != json!(true) {
+            tracing::info!(
+                page = step.page,
+                reason = "control_missing",
+                "browser pagination failed"
+            );
             return Err(failed(&format!("找不到可点击的翻页控件“{}”", step.control)));
         }
         wait(&window, state, Some(&before))?;
@@ -328,6 +357,11 @@ fn render(
         .to_owned();
     state.check()?;
     Ok(RenderedPage { url, html })
+}
+
+fn public_url(url: &tauri::Url) -> Option<&str> {
+    // Rejected URLs can embed documents or credentials, so only public page addresses are logged.
+    PageUrl::parse(url.as_str()).is_ok().then_some(url.as_str())
 }
 
 fn wait(window: &WebviewWindow, state: &State, before: Option<&Value>) -> Result<(), BrowserError> {
