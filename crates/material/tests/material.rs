@@ -2,6 +2,7 @@
 #![cfg(test)]
 
 use material::{Error, Purpose};
+use office_oxide::docx::write::DocxWriter;
 use sqlx::SqlitePool;
 
 async fn add(
@@ -73,6 +74,20 @@ async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
     let text = material::text(&db, id).await.unwrap().unwrap().unwrap();
     assert!(text.contains("林晓 个人简历"));
     assert!(text.contains("南京大学 计算机科学与技术"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_empty_word_table_has_no_text(db: SqlitePool) {
+    let mut writer = DocxWriter::new();
+    writer.add_table(&[vec!["", ""], vec!["", ""]]);
+    let mut data = std::io::Cursor::new(Vec::new());
+    writer.write_to(&mut data).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    add(&db, dir.path(), "空表格.docx", data.into_inner(), 1)
+        .await
+        .unwrap();
+    let m = &material::list(&db).await.unwrap()[0];
+    assert!(!m.has_text && !m.for_matching && !m.for_writing);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

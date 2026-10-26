@@ -1281,8 +1281,8 @@ async fn import_word_template(_: &Context, input: UploadedFile) -> Result<WordFi
     };
     // Parsing is slow work, and a library may panic on a damaged file.
     let html = tokio::task::spawn_blocking(move || {
-        material::open_word(&data)
-            .map(|document| (!document.plain_text().trim().is_empty()).then(|| document.to_html()))
+        material::word_body(&data)
+            .map(|document| document.map(|body| body.to_html()))
             .map_err(|error| error.to_string())
     })
     .await
