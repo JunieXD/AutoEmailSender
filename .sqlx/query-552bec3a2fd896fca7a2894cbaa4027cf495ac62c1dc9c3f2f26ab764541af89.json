@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO crawl_page (crawl_id,url,scope_url,depth,kind,steps,mode,status,error,fetched_at,work_state) VALUES (?,?,?,?,?,?,?,?,'尚未读取',NULL,?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "552bec3a2fd896fca7a2894cbaa4027cf495ac62c1dc9c3f2f26ab764541af89"
+}

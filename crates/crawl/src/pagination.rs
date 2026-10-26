@@ -6,6 +6,7 @@ use crate::{CrawlError, PageUrl, Pagination, page::visible_text};
 #[derive(Clone, Copy)]
 enum Kind {
     Forward,
+    Last,
     Backward,
     First,
     Number(u32),
@@ -17,10 +18,12 @@ pub(crate) struct Control<'a> {
     pub element: ElementRef<'a>,
     pub link: Option<PageUrl>,
     kind: Kind,
+    text: String,
 }
 
 impl<'a> Control<'a> {
     pub fn new(element: ElementRef<'a>, text: &str, link: Option<PageUrl>) -> Self {
+        let control_text = text.trim().to_owned();
         let text = text.trim().to_lowercase();
         let label = text.trim_matches(['<', '>', '«', '»', '‹', '›', '→', '←', ' ']);
         let kind = if element.value().attr("rel").is_some_and(|rel| {
@@ -29,17 +32,11 @@ impl<'a> Control<'a> {
         }) || matches!(text.as_str(), ">" | "»" | "›" | "→")
             || matches!(
                 label,
-                "下一页"
-                    | "下页"
-                    | "下翻"
-                    | "后页"
-                    | "末页"
-                    | "尾页"
-                    | "next"
-                    | "next page"
-                    | "last"
+                "下一页" | "下页" | "下翻" | "后页" | "next" | "next page"
             ) {
             Kind::Forward
+        } else if matches!(label, "末页" | "尾页" | "last" | "last page") {
+            Kind::Last
         } else if matches!(text.as_str(), "<" | "«" | "‹" | "←")
             || matches!(label, "上一页" | "上页" | "previous" | "previous page")
         {
@@ -57,6 +54,7 @@ impl<'a> Control<'a> {
             element,
             link,
             kind,
+            text: control_text,
         }
     }
 }
@@ -182,6 +180,7 @@ struct Context<'a> {
     recognized: bool,
     consecutive: bool,
     last: bool,
+    last_page: Option<u32>,
 }
 
 pub(crate) fn extract(
@@ -265,6 +264,7 @@ pub(crate) fn extract(
                         recognized,
                         consecutive,
                         last,
+                        last_page: counts.map(|(_, total)| total),
                     });
                     contexts.len() - 1
                 };
@@ -274,7 +274,7 @@ pub(crate) fn extract(
             }
         }
         let is_page = match control.kind {
-            Kind::Forward | Kind::Backward | Kind::Jump => true,
+            Kind::Forward | Kind::Last | Kind::Backward | Kind::Jump => true,
             Kind::First => {
                 context.is_some()
                     || control
@@ -291,7 +291,10 @@ pub(crate) fn extract(
             }
             Kind::Other => control.link.as_ref().is_some_and(query_page),
         };
-        if !is_page || (matches!(control.kind, Kind::Forward) && context.is_some_and(|c| c.last)) {
+        if !is_page
+            || (matches!(control.kind, Kind::Forward | Kind::Last)
+                && context.is_some_and(|c| c.last))
+        {
             continue;
         }
         if let Some(link) = &control.link {
@@ -310,6 +313,21 @@ pub(crate) fn extract(
                 || control.element.value().attr("role") == Some("button"))
         {
             pagination.needs_browser = true;
+            if !matches!(control.kind, Kind::Jump) {
+                let page = match control.kind {
+                    Kind::Number(n) => Some(n),
+                    Kind::Last => context.and_then(|c| c.last_page),
+                    _ => None,
+                };
+                if (!matches!(control.kind, Kind::Last) || page.is_some())
+                    && !pagination.buttons.iter().any(|b| b.control == control.text)
+                {
+                    pagination.buttons.push(crate::page::ButtonPage {
+                        page,
+                        control: control.text.clone(),
+                    });
+                }
+            }
         }
     }
     Ok(pagination)

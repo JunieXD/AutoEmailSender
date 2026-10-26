@@ -1,7 +1,7 @@
 //! Durable page queue. Claims are invalidated before pause/cancel returns.
 use crate::{
     PageUrl, Scope, now,
-    store::{PageKind, PageMethod, PageStatus},
+    store::{PageKind, PageMethod, PageStatus, PageStep},
 };
 use serde::Serialize;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
@@ -101,10 +101,24 @@ pub async fn enqueue(
     depth: i64,
     kind: PageKind,
 ) -> Result<(), sqlx::Error> {
+    enqueue_steps(conn, crawl, url, scope, depth, kind, &[]).await
+}
+
+pub(crate) async fn enqueue_steps(
+    conn: &mut SqliteConnection,
+    crawl: i64,
+    url: &PageUrl,
+    scope: &PageUrl,
+    depth: i64,
+    kind: PageKind,
+    steps: &[PageStep],
+) -> Result<(), sqlx::Error> {
+    let steps = Json(steps);
     if sqlx::query_scalar!(
-        "SELECT id FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = '[]' AND candidate_id IS NULL",
+        "SELECT id FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL",
         crawl,
-        url
+        url,
+        steps
     )
     .fetch_optional(&mut *conn)
     .await?
@@ -124,7 +138,7 @@ pub async fn enqueue(
         limit(conn, crawl, "找名单已达到 60 页上限").await?;
         return Ok(());
     }
-    sqlx::query!("INSERT INTO crawl_page (crawl_id,url,scope_url,depth,kind,mode,status,error,fetched_at,work_state) VALUES (?,?,?,?,?,?,?,'尚未读取',NULL,?)",crawl,url,scope,depth,kind,PageMethod::Http,PageStatus::Failed,PageState::Queued).execute(conn).await?;
+    sqlx::query!("INSERT INTO crawl_page (crawl_id,url,scope_url,depth,kind,steps,mode,status,error,fetched_at,work_state) VALUES (?,?,?,?,?,?,?,?,'尚未读取',NULL,?)",crawl,url,scope,depth,kind,steps,PageMethod::Http,PageStatus::Failed,PageState::Queued).execute(conn).await?;
     Ok(())
 }
 pub(crate) async fn limit(
@@ -146,10 +160,11 @@ pub struct Claim {
     pub kind: PageKind,
     pub model_id: Option<i64>,
     pub candidate_id: Option<i64>,
+    pub steps: Vec<PageStep>,
 }
 pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let row=sqlx::query!(r#"UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url AS "url: PageUrl",scope_url AS "scope!: PageUrl",depth,kind AS "kind: PageKind",candidate_id"#,).fetch_optional(&mut *tx).await?;
+    let row=sqlx::query!(r#"UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url AS "url: PageUrl",scope_url AS "scope!: PageUrl",depth,kind AS "kind: PageKind",candidate_id,steps AS "steps: Json<Vec<PageStep>>""#,).fetch_optional(&mut *tx).await?;
     let result = if let Some(p) = row {
         let model_id =
             sqlx::query_scalar!("SELECT model_config_id FROM crawl WHERE id = ?", p.crawl_id)
@@ -169,6 +184,7 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
                 model_id
             },
             candidate_id: p.candidate_id,
+            steps: p.steps.0,
         })
     } else {
         None

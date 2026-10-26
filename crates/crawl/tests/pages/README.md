@@ -17,3 +17,11 @@
 Cloudflare 属性及错误输入等组合场景在测试中构造，不冒充真实网站样本。
 
 `mcgill-emails.tsv` 是从同页逐项核对的 92 组姓名和邮箱，作为归属测试的期望数据，包含学校主任与全部教师类别。
+
+浏览器读取样本（2026-10-26）：`sdu-rendered.html` 保留山大邮箱解密后仍存在的标记，`fudan-rendered.html` 保留复旦已加载名单和筛选按钮的结构；只保留回归所需的片段。
+
+翻页回归样本：`input-image-pagination.html` 使用控件自身 `alt` 作为翻页标签；`image-link-pagination.html` 翻页只更新图片替代文字和个人页链接；`teacher-filter.html` 的空名单不能因 JavaScript 筛选链接而失去浏览器接管。这三份为最小构造样本，不请求外部资源。
+
+`number-input-pagination.html` 在数字按钮前放同值的文本、数字和默认输入框，验证只重放可点按钮。`staggered-image-pagination.html` 每 600 毫秒更新一行 href／alt，验证材料停止变化后才读取整页。
+
+`auto-navigation.html` 是没有翻页步骤、加载后自动转到慢速名单的入口；`navigation-intercept.html` 使用真实 Navigation API 接管导航，并通过查询参数构造成功、失败和取消三种结束状态，供本地 WebView 回归使用。

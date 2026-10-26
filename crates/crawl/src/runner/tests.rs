@@ -263,10 +263,10 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
     let runner = Crawler::default();
     let (tx, mut events) = mpsc::unbounded_channel();
     let (done, mut finished) = mpsc::unbounded_channel();
-    let task = tokio::spawn(run_with_fetcher(
+    let task = tokio::spawn(run_with_pages(
         db.clone(),
         net::Net::new(vec![]).unwrap(),
-        Arc::new(Fetcher::local(site.port)),
+        Arc::new(Pages::local(site.port)),
         runner.clone(),
         Limit::default(),
         move || {
@@ -408,7 +408,7 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
             super::process(
                 &db,
                 &net::Net::new(vec![]).unwrap(),
-                &Fetcher::local(port),
+                &Pages::local(port),
                 &Limit::default(),
                 &c,
                 &Cooldown::default(),
@@ -737,10 +737,10 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     .unwrap();
     let net = net::Net::new(vec![]).unwrap();
     let limit = Limit::default();
-    let crawl = tokio::spawn(run_with_fetcher(
+    let crawl = tokio::spawn(run_with_pages(
         db.clone(),
         net.clone(),
-        Arc::new(Fetcher::local(site.port)),
+        Arc::new(Pages::local(site.port)),
         Crawler::default(),
         limit.clone(),
         || {},
@@ -843,10 +843,10 @@ async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     let handle = Crawler::default();
     let (tx, mut events) = mpsc::unbounded_channel();
     let start = |tx: mpsc::UnboundedSender<()>| {
-        tokio::spawn(run_with_fetcher(
+        tokio::spawn(run_with_pages(
             db.clone(),
             net::Net::new(vec![]).unwrap(),
-            Arc::new(Fetcher::local(site.port)),
+            Arc::new(Pages::local(site.port)),
             handle.clone(),
             Limit::default(),
             move || {
@@ -1435,7 +1435,7 @@ async fn process_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
     let outcome = process(
         db,
         &net::Net::new(vec![]).unwrap(),
-        &Fetcher::local(site.port),
+        &Pages::local(site.port),
         &Limit::default(),
         claim,
         &Cooldown::default(),
@@ -2170,7 +2170,7 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
         let outcome = process(
             db,
             &net::Net::new(vec![]).unwrap(),
-            &Fetcher::local(site.port),
+            &Pages::local(site.port),
             &Limit::default(),
             &c,
             &Cooldown::default(),
@@ -2578,7 +2578,7 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
                 super::process(
                     &db,
                     &net::Net::new(vec![]).unwrap(),
-                    &Fetcher::local(port),
+                    &Pages::local(port),
                     &Limit::default(),
                     &c,
                     &Cooldown::default(),
@@ -2644,7 +2644,7 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
 ) {
     let site = Site::new().await;
     site.page("/", "<title>学院</title><p>教师名单</p>");
-    let fetcher = Fetcher::local(site.port);
+    let fetcher = Pages::local(site.port);
     for deleted in [true, false] {
         let mut old_provider = Provider::start().await;
         let mut new_provider = Provider::start().await;
@@ -2825,7 +2825,7 @@ async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePoo
             process(
                 &db,
                 &net::Net::new(vec![]).unwrap(),
-                &Fetcher::local(port),
+                &Pages::local(port),
                 &limit,
                 &claim,
                 &cooldown,
@@ -3053,7 +3053,7 @@ async fn restored_key_pauses_crawl_instead_of_failing_pages(db: SqlitePool) {
     let result = process(
         &db,
         &net::Net::new(vec![]).unwrap(),
-        &Fetcher::local(site.port),
+        &Pages::local(site.port),
         &Limit::default(),
         &claim,
         &Cooldown::default(),
@@ -3070,3 +3070,14 @@ async fn restored_key_pauses_crawl_instead_of_failing_pages(db: SqlitePool) {
     assert_eq!(row.0, "paused");
     assert!(row.1.unwrap().contains("重新填写"));
 }
+
+impl Pages {
+    fn local(port: u16) -> Self {
+        Self {
+            http: Fetcher::local(port),
+            browser: None,
+        }
+    }
+}
+
+mod browser;

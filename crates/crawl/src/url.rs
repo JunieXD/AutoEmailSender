@@ -134,6 +134,7 @@ pub struct Scope {
     website: String,
 }
 
+#[derive(Clone)]
 pub struct PageTarget {
     pub(crate) url: PageUrl,
 }
@@ -143,11 +144,7 @@ impl PageTarget {
         &self.url
     }
 
-    pub(crate) fn redirect(
-        &self,
-        current: &PageUrl,
-        location: &str,
-    ) -> Result<PageUrl, CrawlError> {
+    pub fn redirect(&self, current: &PageUrl, location: &str) -> Result<PageUrl, CrawlError> {
         let next = current.join(location)?;
         if next.website() != self.url.website() {
             return Err(CrawlError::OutsideSite);

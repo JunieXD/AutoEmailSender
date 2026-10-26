@@ -820,3 +820,109 @@ fn data_scripts_cannot_bind_pagination_events() {
         );
     }
 }
+
+#[test]
+fn rendered_encrypted_fields_keep_their_visible_email() {
+    let page = crawl::parse_rendered(&url(), include_str!("pages/sdu-rendered.html")).unwrap();
+    assert_eq!(page.needs_browser, None);
+    assert!(
+        page.units
+            .iter()
+            .flat_map(|u| &u.emails)
+            .any(|e| e.address == "lingyunwang@sdu.edu.cn")
+    );
+    let hidden = crawl::parse_rendered(
+        &url(),
+        "<p>王凌云</p><span _tsites_encrypt_field='x' style='display:none'>ciphertext</span>",
+    )
+    .unwrap();
+    assert_eq!(hidden.needs_browser, Some(BrowserReason::EncryptedContent));
+}
+
+#[test]
+fn loaded_directory_is_not_confused_with_its_filter_buttons() {
+    let page = parse(&url(), include_str!("pages/fudan-rendered.html")).unwrap();
+    assert_eq!(page.needs_browser, None);
+    assert!(
+        page.units
+            .iter()
+            .flat_map(|u| &u.links)
+            .any(|l| l.text == "柴洪峰")
+    );
+}
+
+#[test]
+fn browser_pagination_keeps_numbers_and_does_not_treat_last_as_next() {
+    let page = parse(
+        &url(),
+        "<p>名单</p><nav class='pagination'>1/4<button>尾页</button><button>下一页</button></nav>",
+    )
+    .unwrap();
+    assert_eq!(
+        page.pagination
+            .buttons
+            .iter()
+            .map(|b| (b.page, b.control.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(Some(4), "尾页"), (None, "下一页")]
+    );
+}
+
+#[test]
+fn empty_directory_filters_do_not_count_as_profile_links() {
+    let html = include_str!("pages/teacher-filter.html");
+    for href in ["javascript:void(0)", "", "#all", " JAVASCRIPT:void(0) "] {
+        let sample = html.replace("javascript:void(0)", href);
+        assert_eq!(
+            parse(&url(), &sample).unwrap().needs_browser,
+            Some(BrowserReason::JavaScript),
+            "{href}"
+        );
+    }
+}
+
+#[test]
+fn image_pagination_fixtures_preserve_control_labels_and_profile_material() {
+    let input = parse(&url(), include_str!("pages/input-image-pagination.html")).unwrap();
+    assert_eq!(input.pagination.buttons[0].control, "下一页");
+    let html = include_str!("pages/image-link-pagination.html");
+    for (sample, name, path) in [
+        (html.to_owned(), "张三", "/zhang"),
+        (
+            html.replace("alt=\"张三\"", "alt=\"李四\"")
+                .replace("href=\"/zhang\"", "href=\"/li\""),
+            "李四",
+            "/li",
+        ),
+    ] {
+        let material = parse(&url(), &sample).unwrap();
+        assert!(
+            material
+                .units
+                .iter()
+                .flat_map(|u| &u.links)
+                .any(|l| l.text == name && l.url == url().join(path).unwrap())
+        );
+    }
+}
+
+#[test]
+fn numbered_replay_ignores_non_button_inputs_with_the_same_label() {
+    let page = parse(&url(), include_str!("pages/number-input-pagination.html")).unwrap();
+    assert_eq!(
+        page.pagination
+            .buttons
+            .iter()
+            .map(|button| (button.page, button.control.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(Some(2), "2"), (Some(3), "3")]
+    );
+}
+
+#[test]
+fn automatic_navigation_entry_needs_browser_without_replay_steps() {
+    let page = parse(&url(), include_str!("pages/auto-navigation.html")).unwrap();
+    assert_eq!(page.needs_browser, Some(BrowserReason::JavaScript));
+    assert!(page.pagination.buttons.is_empty());
+    assert!(page.pagination.urls.is_empty());
+}

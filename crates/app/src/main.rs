@@ -4,6 +4,7 @@
 mod autostart;
 mod background;
 mod backup;
+mod browser;
 mod logs;
 mod save;
 
@@ -147,10 +148,16 @@ fn main() -> tauri::Result<()> {
             autostart::set_autostart
         ])
         .build(context)?;
-    app.run(|_app, _event| {
+    app.run(|app, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            browser::close_all(app);
+        }
         #[cfg(target_os = "macos")]
-        if let tauri::RunEvent::Reopen { .. } = _event {
-            show(_app);
+        if let tauri::RunEvent::Reopen { .. } = event {
+            show(app);
         }
     });
     Ok(())
@@ -310,6 +317,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
         net.clone(),
         crawler.clone(),
         model_limit.clone(),
+        Some(std::sync::Arc::new(browser::Browser::new(app.clone()))),
         move || {
             if let Err(e) = ui.emit("crawl-changed", ()) {
                 tracing::warn!("refresh crawl: {e}");
