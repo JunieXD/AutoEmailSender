@@ -3159,3 +3159,41 @@ impl Pages {
 }
 
 mod browser;
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn database_read_failure_preserves_its_source(db: SqlitePool) {
+    let model = config(&db, "http://127.0.0.1:1").await;
+    let url = PageUrl::parse("https://school.example.edu/").unwrap();
+    queue::start(&db, &[url], model, 1).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let chosen = model::selected(&db, Some(model)).await.unwrap().unwrap();
+    sqlx::query("ALTER TABLE model_config RENAME TO unavailable_model_config")
+        .execute(&db)
+        .await
+        .unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let limit = Limit::default();
+    let cooldown = Cooldown::default();
+    let reader = Reader {
+        db: &db,
+        net: &net,
+        limit: &limit,
+        claim: &claim,
+        chosen: &chosen,
+        cooldown: &cooldown,
+    };
+    let result = reader
+        .ask::<extract::Route>(extract::ROUTE, json!({}))
+        .await;
+    let Err(ReadError::Database {
+        source, operation, ..
+    }) = result
+    else {
+        panic!("database failure must reach the process conversion point");
+    };
+    assert_eq!(operation, "read model configuration");
+    let sqlx::Error::Database(source) = source else {
+        panic!("original SQLite failure must be preserved");
+    };
+    assert!(source.message().contains("no such table: model_config"));
+}

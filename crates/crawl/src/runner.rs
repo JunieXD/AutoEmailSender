@@ -74,9 +74,10 @@ async fn save_material(
     )
     .execute(db)
     .await
-    .map_err(|e| {
-        tracing::error!("save fetched page: {e}");
-        ReadError::Pause("网页资料暂时无法保存，请继续或重启应用。".into())
+    .map_err(|source| ReadError::Database {
+        source,
+        operation: "save fetched page",
+        reason: "网页资料暂时无法保存，请继续或重启应用。",
     })?;
     if saved.rows_affected() == 0 {
         return Err(ReadError::Gone);
@@ -112,12 +113,19 @@ impl Pages {
         let render = browser.render(target, &c.steps);
         let invalidated = async {
             loop {
-                let mut conn = db.acquire().await.map_err(|_| {
-                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
+                let mut conn = db.acquire().await.map_err(|source| ReadError::Database {
+                    source,
+                    operation: "acquire browser claim connection",
+                    reason: "抓取数据暂时无法读取，请继续或重启应用。",
                 })?;
-                if !queue::valid(&mut conn, c).await.map_err(|_| {
-                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
-                })? {
+                if !queue::valid(&mut conn, c)
+                    .await
+                    .map_err(|source| ReadError::Database {
+                        source,
+                        operation: "check browser claim",
+                        reason: "抓取数据暂时无法读取，请继续或重启应用。",
+                    })?
+                {
                     return Err(ReadError::Gone);
                 }
                 drop(conn);
@@ -178,9 +186,15 @@ enum Outcome {
     Gone,
 }
 
+#[derive(Debug)]
 enum ReadError {
     Failed(String),
     Pause(String),
+    Database {
+        source: sqlx::Error,
+        operation: &'static str,
+        reason: &'static str,
+    },
     RateLimit,
     Gone,
 }
@@ -234,18 +248,32 @@ impl Reader<'_> {
         for attempt in 0..2 {
             let _permit = loop {
                 let permit = self.cooldown.acquire(self.limit).await;
-                let mut conn = self.db.acquire().await.map_err(|e| {
-                    tracing::error!("crawl connection: {e}");
-                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
-                })?;
-                if !queue::valid(&mut conn, self.claim).await.map_err(|_| {
-                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
-                })? {
+                let mut conn = self
+                    .db
+                    .acquire()
+                    .await
+                    .map_err(|source| ReadError::Database {
+                        source,
+                        operation: "acquire model claim connection",
+                        reason: "抓取数据暂时无法读取，请继续或重启应用。",
+                    })?;
+                if !queue::valid(&mut conn, self.claim)
+                    .await
+                    .map_err(|source| ReadError::Database {
+                        source,
+                        operation: "check model claim",
+                        reason: "抓取数据暂时无法读取，请继续或重启应用。",
+                    })?
+                {
                     return Err(ReadError::Gone);
                 }
                 let current = model::selected(&mut *conn, self.claim.model_id)
                     .await
-                    .map_err(|_| ReadError::Pause("模型配置暂时无法读取，请重试。".into()))?;
+                    .map_err(|source| ReadError::Database {
+                        source,
+                        operation: "read model configuration",
+                        reason: "模型配置暂时无法读取，请重试。",
+                    })?;
                 if !current.as_ref().is_some_and(|m| {
                     m.agreed
                         && m.provider == self.chosen.provider
@@ -333,6 +361,14 @@ async fn process(
         match read(db, net, fetcher, limit, c, &chosen, cooldown).await {
             Ok(page) => Outcome::Done(page),
             Err(ReadError::Pause(reason)) => Outcome::Pause(reason, Some(chosen)),
+            Err(ReadError::Database {
+                source,
+                operation,
+                reason,
+            }) => {
+                tracing::error!(operation, error = %source, "crawl database");
+                Outcome::Pause(reason.into(), Some(chosen))
+            }
             Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
             Err(ReadError::RateLimit) => Outcome::RateLimit,
             Err(ReadError::Gone) => Outcome::Gone,
@@ -387,13 +423,18 @@ async fn read(
         });
     }
     if let Some(id) = c.candidate_id {
-        let mut conn = db
-            .acquire()
-            .await
-            .map_err(|_| ReadError::Pause("候选资料暂时无法读取，请继续或重启应用。".into()))?;
+        let mut conn = db.acquire().await.map_err(|source| ReadError::Database {
+            source,
+            operation: "read enrichment candidate",
+            reason: "候选资料暂时无法读取，请继续或重启应用。",
+        })?;
         let candidate = review::read(&mut conn, &[id])
             .await
-            .map_err(|_| ReadError::Pause("候选资料暂时无法读取，请继续或重启应用。".into()))?
+            .map_err(|source| ReadError::Database {
+                source,
+                operation: "read enrichment candidate",
+                reason: "候选资料暂时无法读取，请继续或重启应用。",
+            })?
             .pop()
             .ok_or(ReadError::Gone)?;
         if candidate.review != "pending" {
