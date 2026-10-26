@@ -243,17 +243,10 @@ pub(crate) async fn apply(
     url: &str,
     person: &Person,
 ) -> Result<(), sqlx::Error> {
-    let Some(mut old) = review::read(conn, &[id]).await?.pop() else {
-        return Ok(());
-    };
-    if old.review != "pending"
-        || !matches!(
-            old.enrichment.enrich,
-            EnrichState::Queued | EnrichState::Running
-        )
-    {
-        return Ok(());
-    }
+    let mut old = review::read(conn, &[id])
+        .await?
+        .pop()
+        .ok_or(sqlx::Error::RowNotFound)?;
     let f = &mut old.fields;
     let incoming = &person.fields;
     let changes = &mut old.enrichment.enrich_changes;
