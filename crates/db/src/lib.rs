@@ -2,13 +2,32 @@
 //! docs/data-model.md; each table is written only by the crate that owns it.
 
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use sqlx::SqlitePool;
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
-pub static MIGRATOR: Migrator = sqlx::migrate!();
+pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {
+    initialize_sqlite();
+    sqlx::migrate!()
+});
+
+/// Runs SQLite's one-time setup on one thread before any connection opens: its lazy setup races
+/// on ARM until https://sqlite.org/src/info/37b83ad2f5245217. Tests reach this through
+/// `MIGRATOR`, which SQLx reads before creating a test database. A failure resurfaces when a
+/// connection opens, since opening sets SQLite up again.
+fn initialize_sqlite() {
+    static DONE: Once = Once::new();
+    DONE.call_once(|| {
+        #[expect(unsafe_code, reason = "SQLite's setup has no safe binding")]
+        // SAFETY: it takes no arguments, and `Once` runs it on one thread and publishes the result.
+        unsafe {
+            libsqlite3_sys::sqlite3_initialize();
+        }
+    });
+}
 
 /// Copies taken before upgrades are named with this and a millisecond timestamp; the newest
 /// `BACKUPS_KEPT` are kept.
@@ -49,6 +68,7 @@ impl std::error::Error for OpenError {}
 /// Opens the database at `path`, creating it if needed, and brings its schema up to date. An
 /// existing database is first copied into `backups` beside it.
 pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
+    initialize_sqlite();
     let options = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
