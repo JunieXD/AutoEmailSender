@@ -244,10 +244,12 @@ operations! {
     "previewImport" => preview_import(PreviewImport) -> mentor::import::Preview;
     "importMentors" => import_mentors(ImportMentors) -> mentor::import::Imported;
     "listMentors" => list_mentors(mentor::MentorQuery) -> mentor::MentorPage;
+    "mentorFilterOptions" => mentor_filter_options(Nothing) -> mentor::filters::MentorFilterOptions;
     "getMentor" => get_mentor(MentorId) -> mentor::MentorDetail;
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
     "updateMentor" => update_mentor(MentorEdit) -> mentor::MentorDetail;
+    "setMentorMailbox" => set_mentor_mailbox(MentorMailbox) -> mentor::MentorDetail;
     "addMentorEmail" => add_mentor_email(MentorAddress) -> mentor::MentorDetail;
     "previewMerge" => preview_merge(MentorMerge) -> mentor::merge::Preview;
     "mergeMentors" => merge_mentors(MentorMerge) -> ();
@@ -264,6 +266,8 @@ operations! {
     "deleteTag" => delete_tag(TagId) -> ();
     "listProviders" => list_providers(Nothing) -> &'static [mailbox::providers::Provider];
     "listMailboxes" => list_mailboxes(Nothing) -> Vec<mailbox::Mailbox>;
+    "getRotation" => get_rotation(Nothing) -> profile::Rotation;
+    "setRotation" => set_rotation(profile::Rotation) -> ();
     "addMailbox" => add_mailbox(NewMailbox) -> MailboxId;
     "updateMailbox" => update_mailbox(MailboxEdit) -> ();
     "resumeMailbox" => resume_mailbox(MailboxId) -> ();
@@ -453,6 +457,13 @@ pub struct MentorAddress {
     pub address: String,
 }
 
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MentorMailbox {
+    pub id: i64,
+    pub mailbox_id: Option<i64>,
+}
+
 /// Two mentors listed twice: `other` goes into `keep`.
 #[derive(Debug, Deserialize, TS)]
 pub struct MentorMerge {
@@ -469,9 +480,17 @@ pub struct MentorNote {
 
 async fn list_mentors(
     ctx: &Context,
-    query: mentor::MentorQuery,
+    mut query: mentor::MentorQuery,
 ) -> Result<mentor::MentorPage, CallError> {
+    query.filter.check().map_err(CallError::invalid)?;
     Ok(mentor::list(&ctx.db, &query, now()).await?)
+}
+
+async fn mentor_filter_options(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<mentor::filters::MentorFilterOptions, CallError> {
+    Ok(mentor::filters::options(&ctx.db).await?)
 }
 
 async fn get_mentor(ctx: &Context, input: MentorId) -> Result<mentor::MentorDetail, CallError> {
@@ -529,6 +548,26 @@ async fn update_mentor(
     let applied = mentor::update(&ctx.db, input.id, &fields, now()).await?;
     require_applied(applied, NO_MENTOR)?;
     look_up(ctx, input.id).await?;
+    get_mentor(ctx, MentorId { id: input.id }).await
+}
+
+async fn set_mentor_mailbox(
+    ctx: &Context,
+    input: MentorMailbox,
+) -> Result<mentor::MentorDetail, CallError> {
+    let applied = mentor::set_mailbox(&ctx.db, input.id, input.mailbox_id)
+        .await
+        .map_err(|e| {
+            if e.as_database_error()
+                .is_some_and(|e| e.is_foreign_key_violation())
+            {
+                CallError::invalid("这个邮箱已经删除，请刷新后重新选择。".into())
+            } else {
+                e.into()
+            }
+        })?;
+    require_applied(applied, NO_MENTOR)?;
+    ctx.sender.wake();
     get_mentor(ctx, MentorId { id: input.id }).await
 }
 
@@ -758,6 +797,16 @@ async fn list_providers(
 
 async fn list_mailboxes(ctx: &Context, _: Nothing) -> Result<Vec<mailbox::Mailbox>, CallError> {
     Ok(mailbox::list(&ctx.db, now()).await?)
+}
+
+async fn get_rotation(ctx: &Context, _: Nothing) -> Result<profile::Rotation, CallError> {
+    Ok(profile::rotation(&ctx.db).await?)
+}
+
+async fn set_rotation(ctx: &Context, rotation: profile::Rotation) -> Result<(), CallError> {
+    profile::set_rotation(&ctx.db, rotation).await?;
+    ctx.sender.wake();
+    Ok(())
 }
 
 async fn add_mailbox(ctx: &Context, input: NewMailbox) -> Result<MailboxId, CallError> {
@@ -2226,7 +2275,10 @@ pub struct ExportMentors {
     pub note: bool,
 }
 
-pub async fn export_mentors(ctx: &Context, input: ExportMentors) -> Result<Vec<u8>, CallError> {
+pub async fn export_mentors(ctx: &Context, mut input: ExportMentors) -> Result<Vec<u8>, CallError> {
+    if let mentor::export::Scope::Filter(filter) = &mut input.scope {
+        filter.check().map_err(CallError::invalid)?;
+    }
     let rows = mentor::export::export(&ctx.db, &input.scope, input.note, now()).await?;
     tokio::task::spawn_blocking(move || write_table(rows, input.format))
         .await

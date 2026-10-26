@@ -445,11 +445,9 @@ async fn export_uses_all_filtered_pages_and_list_order(db: SqlitePool) {
     mentor::trash::trash(&db, &[ids[0]], 1).await.unwrap();
     let rows = export::export(
         &db,
-        &Scope::Filter(export::Filter {
-            reply_outcome: None,
-            unanswered_days: None,
-            status: None,
+        &Scope::Filter(mentor::filters::MentorFilter {
             keyword: Some("北京大学".into()),
+            ..Default::default()
         }),
         true,
         0,
@@ -647,19 +645,9 @@ async fn shared_new_email_and_trash_separate(db: SqlitePool) {
     let result = apply(&db, &sheets, &choices).await;
     assert_eq!((result.created, result.updated), (1, 0));
     assert!(mentor::get(&db, id).await.unwrap().unwrap().trashed);
-    let rows = export::export(
-        &db,
-        &Scope::Filter(export::Filter {
-            reply_outcome: None,
-            unanswered_days: None,
-            status: None,
-            keyword: None,
-        }),
-        true,
-        0,
-    )
-    .await
-    .unwrap();
+    let rows = export::export(&db, &Scope::Filter(Default::default()), true, 0)
+        .await
+        .unwrap();
     assert_eq!(rows.len(), 2);
     assert!(rows[1].contains(&"第一行备注".to_owned()));
 }
@@ -925,12 +913,7 @@ async fn full_width_email_exports_round_trip_without_duplicates(db: SqlitePool) 
         mentor::get(&db, id).await.unwrap().unwrap().emails,
         ["wang@pku.edu.cn"]
     );
-    let scope = Scope::Filter(export::Filter {
-        reply_outcome: None,
-        unanswered_days: None,
-        status: None,
-        keyword: None,
-    });
+    let scope = Scope::Filter(Default::default());
     let rows = export::export(&db, &scope, true, 0).await.unwrap();
     for name in ["导师.csv", "导师.xlsx"] {
         let bytes = if name.ends_with("csv") {
@@ -980,12 +963,7 @@ async fn full_width_name_exports_round_trip_without_duplicates(db: SqlitePool) {
     .check()
     .unwrap();
     let id = mentor::create(&db, &fields, 0).await.unwrap();
-    let scope = Scope::Filter(export::Filter {
-        reply_outcome: None,
-        unanswered_days: None,
-        status: None,
-        keyword: None,
-    });
+    let scope = Scope::Filter(Default::default());
     let rows = export::export(&db, &scope, true, 0).await.unwrap();
     for name in ["导师.csv", "导师.xlsx"] {
         let bytes = if name.ends_with("csv") {

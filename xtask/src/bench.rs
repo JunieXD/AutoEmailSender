@@ -78,14 +78,15 @@ pub async fn run(path: &Path) -> Result {
 
     let home = Duration::from_millis(30);
     let page = |status, keyword: Option<&str>, n: u32| MentorQuery {
-        reply_outcome: None,
-        unanswered_days: None,
-        status,
-        keyword: keyword.map(Into::into),
+        filter: mentor::filters::MentorFilter {
+            status,
+            keyword: keyword.map(Into::into),
+            ..Default::default()
+        },
         page: NonZeroU32::MIN.saturating_add(n - 1),
     };
     let mut unanswered = page(Some(ContactStatus::Contacted), None, 1);
-    unanswered.unanswered_days = std::num::NonZeroU32::new(7);
+    unanswered.filter.unanswered_days = std::num::NonZeroU32::new(7);
     for (label, query) in [
         ("首页，发出超过 7 天没回复", unanswered),
         ("首页，全部，第 1 页", page(None, None, 1)),
@@ -108,6 +109,52 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
+    let mut university = page(None, None, 1);
+    university.filter.universities = vec![Some("清华大学".into())];
+    let mut school = page(None, None, 1);
+    school.filter.schools = vec![Some("计算机科学与技术学院".into())];
+    let mut department = page(None, None, 1);
+    department.filter.departments = vec![Some("计算机系".into())];
+    let mut title = page(None, None, 1);
+    title.filter.titles = vec![Some("教授".into())];
+    let mut tag = page(None, None, 1);
+    tag.filter.tags = vec![Some(1)];
+    let mut missing = page(None, None, 1);
+    missing.filter.departments = vec![None];
+    let mut score = page(None, None, 1);
+    score.filter.matching = Some(mentor::filters::MatchFilter::AtLeast { score: 80 });
+    let mut combined = page(Some(ContactStatus::None), Some("学习"), 1);
+    combined.filter = mentor::filters::MentorFilter {
+        universities: vec![Some("清华大学".into()), Some("北京大学".into())],
+        schools: vec![Some("计算机科学与技术学院".into())],
+        departments: vec![Some("计算机系".into()), None],
+        titles: vec![Some("教授".into()), None],
+        tags: vec![Some(1), None],
+        matching: Some(mentor::filters::MatchFilter::AtLeast { score: 60 }),
+        ..combined.filter
+    };
+    for (label, query) in [
+        ("首页，按学校筛选", university),
+        ("首页，按学院筛选", school),
+        ("首页，按系所筛选", department),
+        ("首页，按职称筛选", title),
+        ("首页，按标签筛选", tag),
+        ("首页，系所未填写", missing),
+        ("首页，匹配度至少 80 分", score),
+        ("首页，组合筛选", combined),
+    ] {
+        report(
+            label,
+            median(async || mentor::list(&db, &query, NOW).await.map(drop)).await?,
+            home,
+        );
+    }
+    report(
+        "导师筛选可选值及人数",
+        median(async || mentor::filters::options(&db).await.map(drop)).await?,
+        Duration::from_millis(150),
+    );
+
     sqlx::query(
         r#"UPDATE message
         SET outcome = CASE id % 5 WHEN 0 THEN 'interested'
@@ -125,7 +172,7 @@ pub async fn run(path: &Path) -> Result {
         mentor::ReplyOutcomeFilter::Unmarked,
     ] {
         let mut query = page(Some(ContactStatus::Replied), None, 1);
-        query.reply_outcome = Some(filter);
+        query.filter.reply_outcome = Some(filter);
         report(
             &format!("首页，回信结果 {filter:?}"),
             median(async || mentor::list(&db, &query, NOW).await.map(drop)).await?,
