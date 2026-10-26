@@ -275,7 +275,7 @@ export type MaybeSame = { row: number, rows: Array<number>, incoming: ImportProf
 
 export type MentorAddress = { id: number, address: string, };
 
-export type MentorDetail = { id: number, name: string, aliases: Array<string>,
+export type MentorDetail = { id: number, name: string, mailboxId: number | null, aliases: Array<string>,
 /**
  * The first is the one mail goes to.
  */
@@ -298,6 +298,8 @@ export type MentorForm = { name: string, aliases: Array<string>, emails: Array<s
 export type MentorId = { id: number, };
 
 export type MentorIds = { ids: Array<number>, };
+
+export type MentorMailbox = { id: number, mailboxId: number | null, };
 
 export type MentorMerge = { keep: number, other: number, };
 
@@ -534,6 +536,8 @@ export type ReviewInput = { ids: Array<number>, decisions: Decisions, };
 
 export type Reviewed = { accepted: number, skipped: number, };
 
+export type Rotation = "failover" | "perEmail";
+
 export type RowError = { row: number, reason: string, };
 
 export type Schedule = { "kind": "now" } | { "kind": "window" } & Window;
@@ -760,6 +764,7 @@ export interface Operations {
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
+  setMentorMailbox: { input: MentorMailbox; output: MentorDetail };
   addMentorEmail: { input: MentorAddress; output: MentorDetail };
   previewMerge: { input: MentorMerge; output: MergePreview };
   mergeMentors: { input: MentorMerge; output: null };
@@ -776,6 +781,8 @@ export interface Operations {
   deleteTag: { input: TagId; output: null };
   listProviders: { input: Nothing; output: Array<Provider> };
   listMailboxes: { input: Nothing; output: Array<Mailbox> };
+  getRotation: { input: Nothing; output: Rotation };
+  setRotation: { input: Rotation; output: null };
   addMailbox: { input: NewMailbox; output: MailboxId };
   updateMailbox: { input: MailboxEdit; output: null };
   resumeMailbox: { input: MailboxId; output: null };
