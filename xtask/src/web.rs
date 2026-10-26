@@ -19,7 +19,7 @@ use tokio::process::Command;
 pub async fn run() -> crate::Result {
     let dir = crate::root().join(".dev-data");
     let _lock = api::startup::DataLock::acquire(&dir).map_err(|e| e.message())?;
-    let context = api::startup::open(&dir).await.map_err(|e| e.message())?;
+    let (context, _) = api::startup::open(&dir).await.map_err(|e| e.message())?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let api_url = format!("http://{}", listener.local_addr()?);
     let vite_listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;

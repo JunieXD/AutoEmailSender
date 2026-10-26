@@ -78,6 +78,7 @@ CREATE TABLE profile (
   reply_processing_pause_reason TEXT,
   reply_processing_claim INTEGER NOT NULL DEFAULT 0 CHECK (reply_processing_claim >= 0),
   background_notifications INTEGER NOT NULL DEFAULT 1 CHECK (background_notifications IN (0, 1)),
+  background_notice_shown INTEGER NOT NULL DEFAULT 0 CHECK (background_notice_shown IN (0, 1)),
   CHECK (match_paused_at IS NOT NULL OR match_pause_reason IS NULL),
   CHECK ((reply_processing_paused_at IS NULL) = (reply_processing_pause_reason IS NULL)),
   CHECK (reply_processing_pause_reason IS NULL OR reply_processing_pause_reason <> '')

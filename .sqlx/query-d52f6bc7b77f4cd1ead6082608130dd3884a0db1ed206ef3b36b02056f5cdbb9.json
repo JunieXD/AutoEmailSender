@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET background_notice_shown = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "d52f6bc7b77f4cd1ead6082608130dd3884a0db1ed206ef3b36b02056f5cdbb9"
+}

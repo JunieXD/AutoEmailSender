@@ -193,11 +193,24 @@ pub async fn set_background_notifications(db: &SqlitePool, on: bool) -> Result<(
     Ok(())
 }
 
+pub async fn background_notice_shown(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT background_notice_shown AS "shown: bool" FROM profile"#)
+        .fetch_one(db)
+        .await
+}
+
 /// Whether AI-generated drafts receive a separate check against the student's materials.
 pub async fn ai_fact_check(db: &SqlitePool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(r#"SELECT ai_fact_check AS "on: bool" FROM profile"#)
         .fetch_one(db)
         .await
+}
+
+pub async fn mark_background_notice_shown(db: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET background_notice_shown = 1")
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 pub async fn set_ai_fact_check(db: &SqlitePool, on: bool) -> Result<(), sqlx::Error> {

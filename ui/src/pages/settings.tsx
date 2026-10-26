@@ -3,7 +3,7 @@ import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-rout
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
-import { dataLocation, exportLogs, openDataLocation } from "@/api/app";
+import { autostartEnabled, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import { ModelAction } from "@/components/ai-writing";
 import { refreshReplyOutcomes } from "@/components/mentor";
@@ -33,6 +33,7 @@ const GROUPS = [
     label: "应用",
     sections: [
       { to: "/settings/notifications", label: "通知" },
+      { to: "/settings/background", label: "后台运行" },
       { to: "/settings/backup", label: "备份" },
       { to: "/settings/about", label: "关于和日志" },
     ],
@@ -292,6 +293,39 @@ export function ReplyProcessingSection() {
         {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
         {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
       </div>
+    </Section>
+  );
+}
+
+/** Whether the app starts with the computer; the system's login items keep it (docs/ui.md#交互). */
+export function BackgroundSection() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["autostartEnabled"], queryFn: autostartEnabled });
+  const save = useMutation({
+    mutationFn: setAutostart,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["autostartEnabled"] }),
+  });
+  return (
+    <Section title="后台运行">
+      <div>
+        <label className="flex items-center justify-between gap-4">
+          <span>开机时自动启动</span>
+          <SwitchButton
+            label="开机时自动启动"
+            checked={query.data ?? false}
+            disabled={query.data === undefined || save.isPending}
+            onClick={() => save.mutate(!query.data)}
+          />
+        </label>
+        <p className="mt-2 text-sm text-muted-foreground">开机后在后台运行，不打开窗口，定时发送和收信照常进行。</p>
+        {query.error && (
+          <p className="mt-2 text-sm text-destructive">开机启动的设置未能读取：{errorMessage(query.error)}</p>
+        )}
+        {save.error && <p className="mt-2 text-sm text-destructive">{errorMessage(save.error)}</p>}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        关闭窗口后，应用也留在后台继续工作，可以从托盘或菜单栏里的图标打开或退出。
+      </p>
     </Section>
   );
 }

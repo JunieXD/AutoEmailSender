@@ -1,6 +1,8 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
+mod background;
 mod backup;
 mod logs;
 mod save;
@@ -96,23 +98,40 @@ fn open_data_location(app: AppHandle) -> Result<(), String> {
 }
 
 fn main() -> tauri::Result<()> {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let app = tauri::Builder::default()
         // First, so that launching the app again only brings the running one forward.
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(context.config().identifier.clone())
+                .arg(autostart::ARG)
+                .build(),
+        )
         .manage(backup::Commands::default())
         .setup(|app| {
-            match tauri::async_runtime::block_on(start(app.handle())) {
-                Ok(ctx) => app.manage(ctx),
+            background::init(app.handle())?;
+            // A login launch stays in the tray unless there is something the user must see.
+            let must_show = match tauri::async_runtime::block_on(start(app.handle())) {
+                Ok((ctx, restored)) => {
+                    app.manage(ctx);
+                    restored
+                }
                 Err(e) => {
                     tracing::error!("startup failed: {e}");
-                    app.manage(StartupFailure(e.message()))
+                    app.manage(StartupFailure(e.message()));
+                    true
                 }
             };
+            if must_show || !std::env::args_os().any(|arg| arg == autostart::ARG) {
+                show(app.handle());
+            }
             Ok(())
         })
+        .on_window_event(background::on_window_event)
         .invoke_handler(tauri::generate_handler![
             call,
             startup_failure,
@@ -123,13 +142,22 @@ fn main() -> tauri::Result<()> {
             backup::cancel_restore,
             backup::restore_backup,
             data_location,
-            open_data_location
+            open_data_location,
+            autostart::autostart_enabled,
+            autostart::set_autostart
         ])
-        .run(tauri::generate_context!())
+        .build(context)?;
+    app.run(|_app, _event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            show(_app);
+        }
+    });
+    Ok(())
 }
 
 /// Opens the data directory, the logs and the database.
-async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
+async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let dir = data_dir(app).map_err(|e| StartupError::DataDir(e.into()))?;
     let lock = match api::startup::DataLock::acquire(&dir) {
         Ok(lock) => lock,
@@ -145,7 +173,10 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let ctx = api::startup::open(&dir).await.map_err(StartupError::Core)?;
+    if let Err(e) = autostart::refresh(app) {
+        tracing::error!("refresh autostart: {e}");
+    }
+    let (ctx, restored) = api::startup::open(&dir).await.map_err(StartupError::Core)?;
     let api::Context {
         db,
         net,
@@ -269,7 +300,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
-    Ok(ctx)
+    Ok((ctx, restored))
 }
 
 async fn finish_crawl(

@@ -27,9 +27,10 @@ impl DataLock {
 }
 
 /// The host must hold the data directory lock before opening the core.
-pub async fn open(dir: &Path) -> Result<Context, Error> {
+/// Also returns whether this startup installed a pending restore.
+pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
     let data = dir.to_owned();
-    tokio::task::spawn_blocking(move || crate::backup::apply_pending(&data))
+    let restored = tokio::task::spawn_blocking(move || crate::backup::apply_pending(&data))
         .await
         .map_err(|e| Error::Restore(crate::backup::Error::Worker(e)))?
         .map_err(Error::Restore)?;
@@ -37,18 +38,21 @@ pub async fn open(dir: &Path) -> Result<Context, Error> {
         .await
         .map_err(Error::Database)?;
     let net = net::Net::new(Vec::new()).map_err(Error::Net)?;
-    Ok(Context {
-        db,
-        net,
-        materials: dir.join("materials"),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        reply_processor: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-    })
+    Ok((
+        Context {
+            db,
+            net,
+            materials: dir.join("materials"),
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            reply_processor: Default::default(),
+            crawler: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+        },
+        restored,
+    ))
 }
 
 #[derive(Debug)]
