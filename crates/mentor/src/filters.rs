@@ -124,6 +124,7 @@ enum AffiliationField {
 pub async fn options(db: &SqlitePool) -> Result<MentorFilterOptions, sqlx::Error> {
     let mut tx = db.begin().await?;
     let mut options = MentorFilterOptions::default();
+    // Grouping expanded fields needs a temporary B-tree; separate aggregates retain index order.
     let values = sqlx::query!(
         r#"WITH trash AS MATERIALIZED (
             SELECT id FROM mentor WHERE trashed_at IS NOT NULL
