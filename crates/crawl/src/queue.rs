@@ -85,6 +85,7 @@ pub async fn start(
     }
     open_run(&mut tx, id, at).await?;
     tx.commit().await?;
+    crate::span(id).in_scope(|| tracing::info!(starts = urls.len(), "crawl started"));
     Ok(id)
 }
 pub(crate) async fn open_run(
@@ -356,6 +357,7 @@ pub async fn control(db: &SqlitePool, id: i64, action: &str, at: i64) -> Result<
         open_run(&mut tx, id, at).await?;
     }
     tx.commit().await?;
+    crate::span(id).in_scope(|| tracing::info!(action, "crawl control applied"));
     Ok(true)
 }
 pub async fn retry(
@@ -404,6 +406,9 @@ pub async fn retry(
         }
     }
     tx.commit().await?;
+    if n > 0 {
+        crate::span(id).in_scope(|| tracing::info!(pages = n, "crawl pages retried"));
+    }
     Ok(n)
 }
 pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
@@ -420,17 +425,21 @@ pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(&mut *tx)
     .await?;
-    sqlx::query!(
+    let ids = sqlx::query_scalar!(
         r#"INSERT INTO crawl_run (crawl_id, app_version, started_at)
         SELECT id, ?, ?
         FROM crawl
-        WHERE state = 'running'"#,
+        WHERE state = 'running'
+        RETURNING crawl_id"#,
         env!("CARGO_PKG_VERSION"),
         at
     )
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
+    for id in ids {
+        crate::span(id).in_scope(|| tracing::info!(reason = "restart", "crawl resumed"));
+    }
     Ok(())
 }
 #[derive(Debug, Serialize, TS, sqlx::FromRow)]
@@ -513,7 +522,7 @@ pub async fn work(db: &SqlitePool, start: i64, end: i64) -> Result<Vec<CrawlSumm
     .await?;
     summaries(&mut tx, &ids).await
 }
-async fn summaries(
+pub(crate) async fn summaries(
     conn: &mut SqliteConnection,
     ids: &[i64],
 ) -> Result<Vec<CrawlSummary>, sqlx::Error> {

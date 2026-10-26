@@ -20,6 +20,10 @@ pub use page::{
 };
 pub use url::{PageTarget, PageUrl, Scope};
 
+pub fn span(id: i64) -> tracing::Span {
+    tracing::info_span!(parent: None, "crawl", id)
+}
+
 #[derive(Debug)]
 pub enum CrawlError {
     Url,

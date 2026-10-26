@@ -424,6 +424,7 @@ name = "auto-email-sender"
 version = "3.0.0-alpha.0"
 dependencies = [
  "api",
+ "chrono",
  "crawl",
  "matching",
  "plist",
@@ -1074,10 +1075,12 @@ dependencies = [
  "serde_json",
  "sqlx",
  "task",
+ "tempfile",
  "test-fixtures",
  "tokio",
  "tokio-rustls",
  "tracing",
+ "tracing-subscriber",
  "ts-rs",
  "url",
 ]

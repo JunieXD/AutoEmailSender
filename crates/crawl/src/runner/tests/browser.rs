@@ -306,3 +306,75 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
         }
     }
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn page_failures_and_browser_takeover_log_the_crawl_without_private_content(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("crawl.log");
+    let file = std::fs::File::create(&log_path).unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .with_writer(Mutex::new(file))
+        .finish();
+    // Two scoped dispatchers avoid tracing-core caching callsites from unsubscribed test threads.
+    let _quiet = tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
+    let guard = tracing::subscriber::set_default(subscriber);
+
+    let site = Site::new().await;
+    let provider = Provider::start().await.unwrap();
+    let model = config(&db, &provider.address).await;
+    let id = queue::start(&db, &[site.url("/missing")], model, 1)
+        .await
+        .unwrap();
+    let browser = Arc::new(FakeBrowser::default());
+    browser
+        .results
+        .lock()
+        .unwrap()
+        .push_back(Err(BrowserError::TimedOut));
+    let pages = Pages {
+        writes: db::Writes::default(),
+        http: Fetcher::local(site.port),
+        browser: Some(browser),
+    };
+    let net = net::Net::new(vec![]).unwrap();
+    let limit = Limit::default();
+    for challenge in [false, true] {
+        if challenge {
+            site.pages.lock().unwrap().insert(
+                "/missing".into(),
+                (
+                    412,
+                    "<p>PRIVATE PAGE 张三 secret@school.example.edu</p><script>challenge()</script>"
+                        .into(),
+                ),
+            );
+            queue::retry(&db, id, None, 2).await.unwrap();
+        }
+        let claim = queue::next(&db).await.unwrap().unwrap();
+        let outcome = process(&db, &net, &pages, &limit, &claim, &Cooldown::default())
+            .await
+            .unwrap();
+        assert!(matches!(outcome, Outcome::Failed(_)));
+        save(&db, &claim, &outcome).await.unwrap();
+    }
+    drop(guard);
+    let log = std::fs::read_to_string(log_path).unwrap();
+    let marker = format!("crawl{{id={id}}}:");
+    for diagnostic in ["page returned HTTP 404", "Challenge", "crawl pages retried"] {
+        assert!(
+            log.lines()
+                .any(|line| line.contains(&marker) && line.contains(diagnostic)),
+            "missing crawl-scoped {diagnostic}: {log}"
+        );
+    }
+    for private in [
+        "PRIVATE PAGE",
+        "张三",
+        "secret@school.example.edu",
+        "fixture",
+    ] {
+        assert!(!log.contains(private));
+    }
+}

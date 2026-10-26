@@ -18,7 +18,7 @@ use crawl::{
 use serde_json::{Value, json};
 use tauri::{
     AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-    webview::{NewWindowResponse, PageLoadEvent},
+    webview::{DownloadEvent, NewWindowResponse, PageLoadEvent},
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -96,6 +96,7 @@ impl State {
     }
     fn check(&self) -> Result<(), BrowserError> {
         if self.stopped.load(Ordering::Relaxed) {
+            tracing::info!(category = "window_closed", "browser read failed");
             return Err(failed("浏览器页面已关闭，请重试"));
         }
         if let Some(error) = self
@@ -114,6 +115,7 @@ struct Window {
     app: AppHandle,
     label: String,
     state: Arc<State>,
+    span: tracing::Span,
 }
 impl Drop for Window {
     fn drop(&mut self) {
@@ -123,7 +125,8 @@ impl Drop for Window {
             && !self.state.close_requested.swap(true, Ordering::Relaxed)
             && let Err(error) = window.close()
         {
-            tracing::warn!("close crawl browser: {error}");
+            self.span
+                .in_scope(|| tracing::warn!("close crawl browser: {error}"));
         }
     }
 }
@@ -146,6 +149,7 @@ impl Render for Browser {
                 app: self.app.clone(),
                 label: format!("{PREFIX}{}", NEXT.fetch_add(1, Ordering::Relaxed)),
                 state,
+                span: tracing::Span::current(),
             };
             let (app, label, state, target, steps) = (
                 window.app.clone(),
@@ -154,14 +158,18 @@ impl Render for Browser {
                 target.clone(),
                 steps.to_vec(),
             );
+            let span = window.span.clone();
             let result = tauri::async_runtime::spawn_blocking(move || {
-                // This second guard also covers cancellation during native window creation.
-                let _window = Window {
-                    app: app.clone(),
-                    label: label.clone(),
-                    state: state.clone(),
-                };
-                render(&app, &label, target, &steps, &state, slot)
+                span.in_scope(|| {
+                    // This second guard also covers cancellation during native window creation.
+                    let _window = Window {
+                        app: app.clone(),
+                        label: label.clone(),
+                        state: state.clone(),
+                        span: tracing::Span::current(),
+                    };
+                    render(&app, &label, target, &steps, &state, slot)
+                })
             })
             .await
             .map_err(|error| {
@@ -198,6 +206,12 @@ fn render(
     state: &Arc<State>,
     slot: OwnedSemaphorePermit,
 ) -> Result<RenderedPage, BrowserError> {
+    tracing::info!(
+        url = target.url().as_str(),
+        page = steps.last().map_or(1, |step| step.page),
+        steps = steps.len(),
+        "browser render started"
+    );
     state.check()?;
     let nav_state = state.clone();
     let load_state = state.clone();
@@ -207,6 +221,10 @@ fn render(
     let nav_navigation = navigation.clone();
     let redirects = Arc::new(AtomicU64::new(0));
     let nav_redirects = redirects.clone();
+    let nav_span = tracing::Span::current();
+    let popup_span = nav_span.clone();
+    let download_span = nav_span.clone();
+    let download_page = target.url().as_str().to_owned();
     let url = target
         .url()
         .as_str()
@@ -218,6 +236,7 @@ fn render(
         .incognito(true)
         .initialization_script(WATCH_NAVIGATION)
         .on_navigation(move |url| {
+            let _entered = nav_span.enter();
             let mut navigation = nav_navigation
                 .lock()
                 .unwrap_or_else(|_| unreachable!("navigation updates cannot panic"));
@@ -232,6 +251,13 @@ fn render(
                 {
                     return Err(crawl::CrawlError::Redirect);
                 }
+                if *current != next {
+                    tracing::info!(
+                        from = current.as_str(),
+                        to = next.as_str(),
+                        "browser navigation"
+                    );
+                }
                 *started = true;
                 *current = next;
                 Ok(())
@@ -239,16 +265,39 @@ fn render(
             match result {
                 Ok(()) => true,
                 Err(error) => {
+                    tracing::info!(
+                        url = public_url(url),
+                        scheme = url.scheme(),
+                        %error,
+                        "browser navigation blocked"
+                    );
                     nav_state.fail(error.message());
                     false
                 }
             }
         })
-        .on_new_window(move |_, _| {
+        .on_new_window(move |url, _| {
+            popup_span.in_scope(|| {
+                tracing::info!(
+                    url = public_url(&url),
+                    scheme = url.scheme(),
+                    "browser popup blocked"
+                );
+            });
             popup_state.fail("网页尝试打开新窗口，已阻止，请改用具体的名单网址".into());
             NewWindowResponse::Deny
         })
-        .on_download(move |_, _| {
+        .on_download(move |_, event| {
+            download_span.in_scope(|| {
+                if let DownloadEvent::Requested { url, .. } = event {
+                    tracing::info!(
+                        page = download_page,
+                        url = public_url(&url),
+                        scheme = url.scheme(),
+                        "browser download blocked"
+                    );
+                }
+            });
             download_state.fail("网页尝试下载文件，已阻止，请改用网页地址".into());
             false
         })
@@ -282,10 +331,14 @@ fn render(
     state.check()?;
     wait(&window, state, None)?;
     for step in steps {
+        let failed_step = |error| {
+            tracing::info!(page = step.page, "browser pagination failed");
+            error
+        };
         let deadline = Instant::now() + TIMEOUT;
-        let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline)?;
-        let control =
-            serde_json::to_string(&step.control).map_err(|_| failed("无法读取翻页步骤"))?;
+        let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline).map_err(failed_step)?;
+        let control = serde_json::to_string(&step.control)
+            .map_err(|_| failed_step(failed("无法读取翻页步骤")))?;
         redirects.store(0, Ordering::Relaxed);
         navigation
             .lock()
@@ -296,11 +349,17 @@ fn render(
             state,
             &format!("{CLICK_CONTROL}({control})"),
             deadline,
-        )?;
+        )
+        .map_err(failed_step)?;
         if clicked != json!(true) {
+            tracing::info!(
+                page = step.page,
+                reason = "control_missing",
+                "browser pagination failed"
+            );
             return Err(failed(&format!("找不到可点击的翻页控件“{}”", step.control)));
         }
-        wait(&window, state, Some(&before))?;
+        wait(&window, state, Some(&before)).map_err(failed_step)?;
     }
     let value = evaluate(
         &window,
@@ -316,18 +375,33 @@ fn render(
         Instant::now() + TIMEOUT,
     )?;
     if value["tooLarge"] == true {
+        tracing::info!(category = "too_large", "browser read failed");
         return Err(BrowserError::Failed(crawl::CrawlError::TooLarge.message()));
     }
     let url = value["url"]
         .as_str()
-        .ok_or_else(|| failed("浏览器未能读取网页地址"))?
+        .ok_or_else(|| {
+            tracing::info!(category = "missing_page_url", "browser read failed");
+            failed("浏览器未能读取网页地址")
+        })?
         .to_owned();
     let html = value["html"]
         .as_str()
-        .ok_or_else(|| failed("浏览器未能读取网页内容"))?
+        .ok_or_else(|| {
+            tracing::info!(category = "missing_page_html", "browser read failed");
+            failed("浏览器未能读取网页内容")
+        })?
         .to_owned();
     state.check()?;
     Ok(RenderedPage { url, html })
+}
+
+fn public_url(url: &tauri::Url) -> Option<String> {
+    // Rejected URLs can embed documents or credentials, so only public page addresses are logged.
+    match PageUrl::parse(url.as_str()) {
+        Ok(url) => Some(url.as_str().to_owned()),
+        Err(_) => None,
+    }
 }
 
 fn wait(window: &WebviewWindow, state: &State, before: Option<&Value>) -> Result<(), BrowserError> {
@@ -388,8 +462,8 @@ fn evaluate(
         .eval_with_callback(script, move |value| {
             let _ = send.send(value);
         })
-        .map_err(|error| {
-            tracing::debug!("evaluate crawl page: {error}");
+        .map_err(|_| {
+            tracing::info!(category = "script_execution_failed", "browser read failed");
             failed("浏览器页面已关闭或无法读取，请重试")
         })?;
     loop {
@@ -400,11 +474,14 @@ fn evaluate(
         }
         match receive.recv_timeout(POLL.min(remaining)) {
             Ok(value) => {
-                return serde_json::from_str(&value)
-                    .map_err(|_| failed("浏览器返回的网页内容无法读取，请重试"));
+                return serde_json::from_str(&value).map_err(|_| {
+                    tracing::info!(category = "invalid_script_result", "browser read failed");
+                    failed("浏览器返回的网页内容无法读取，请重试")
+                });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                tracing::info!(category = "callback_disconnected", "browser read failed");
                 return Err(failed("浏览器页面已关闭，请重试"));
             }
         }
@@ -424,6 +501,18 @@ pub fn close_all(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_log_urls_strip_fragments_and_preserve_query_parameters() {
+        let url = tauri::Url::parse(
+            "https://school.example.edu/list?page=2&wbtreeid=123#PRIVATE_DOCUMENT",
+        )
+        .unwrap();
+        assert_eq!(
+            public_url(&url).as_deref(),
+            Some("https://school.example.edu/list?page=2&wbtreeid=123")
+        );
+    }
 
     #[test]
     fn leaving_document_cannot_settle_before_the_new_document_arrives() {

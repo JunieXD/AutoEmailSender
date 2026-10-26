@@ -2724,7 +2724,11 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
             chosen: &chosen,
             cooldown: &cooldown,
         };
-        let ask = reader.ask::<extract::Route>(extract::ROUTE, json!({"title":"学院","links":[]}));
+        let ask = reader.ask::<extract::Route>(
+            "route",
+            extract::ROUTE,
+            json!({"title":"学院","links":[]}),
+        );
         tokio::pin!(ask);
         assert!(
             std::future::poll_fn(|cx| std::task::Poll::Ready(ask.as_mut().poll(cx).is_pending()))

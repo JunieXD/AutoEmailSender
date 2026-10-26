@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO crawl_run (crawl_id, app_version, started_at)\n        SELECT id, ?, ?\n        FROM crawl\n        WHERE state = 'running'\n        RETURNING crawl_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "crawl_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_run",
+            "name": "crawl_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cdd7586880cbb4e5e8832a2d2f0632c17be0a786c9b0d24466cea5172c2b56c4"
+}
