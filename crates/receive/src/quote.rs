@@ -4,6 +4,14 @@
 /// The new part of a message's text and the quote that follows it, which may be empty. A message
 /// that is all quote is left whole.
 pub fn split(text: &str) -> (&str, &str) {
+    match quote_at(text) {
+        Some(at) if !text[..at].trim().is_empty() => (text[..at].trim_end(), text[at..].trim_end()),
+        _ => (text.trim_end(), ""),
+    }
+}
+
+/// Where the quote at the end of `text` starts.
+fn quote_at(text: &str) -> Option<usize> {
     let lines: Vec<(usize, &str)> = text
         .split_inclusive('\n')
         .scan(0, |at, line| {
@@ -12,21 +20,18 @@ pub fn split(text: &str) -> (&str, &str) {
             Some((start, line.trim_end()))
         })
         .collect();
-    let start = (0..lines.len())
+    (0..lines.len())
         .find_map(|i| quote_start(&lines, i))
-        .map(|i| lines[i].0);
-    match start {
-        Some(at) if !text[..at].trim().is_empty() => (text[..at].trim_end(), text[at..].trim_end()),
-        _ => (text.trim_end(), ""),
-    }
+        .map(|i| lines[i].0)
 }
 
-/// Model input must exclude inline quotes even when the UI keeps the whole message visible.
+/// Model input must exclude inline quotes, and a message that is all quote has nothing new, even
+/// where the UI shows the whole message.
 pub fn for_ai(text: &str) -> String {
     let mut fresh: Vec<&str> = Vec::new();
     let mut previous = None;
     let mut attribution = None;
-    for line in split(text).0.lines() {
+    for line in text[..quote_at(text).unwrap_or(text.len())].lines() {
         if line.trim_start().starts_with('>') {
             if let Some(start) = attribution.take() {
                 fresh.truncate(start);
@@ -163,6 +168,11 @@ mod tests {
                 "你在信中写道：\n希望读博。我们组今年有名额。",
             ),
             ("答复。\n-----原始邮件-----\n旧内容", "答复。"),
+            ("\n-----Original Message-----\nFrom: Zhang\nSent: Monday\n\nOld text", ""),
+            (
+                "________________________________\n发件人: 张三\n发送时间: 2026年10月20日 10:00\n收件人: 我\n主题: 旧\n\n旧正文",
+                "",
+            ),
             ("\r\n \r\n> Old text\r\n\r\nYes.\r\n\r\n", "Yes."),
             ("", ""),
         ];
