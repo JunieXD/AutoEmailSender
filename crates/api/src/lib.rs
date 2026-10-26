@@ -2139,15 +2139,20 @@ async fn preview_import(
     )
     .await?)
 }
+impl From<mentor::import::Error> for CallError {
+    fn from(error: mentor::import::Error) -> Self {
+        match error {
+            mentor::import::Error::Invalid(reason) => Self::invalid(reason),
+            mentor::import::Error::Database(error) => error.into(),
+        }
+    }
+}
+
 async fn import_mentors(
     ctx: &Context,
     input: ImportMentors,
 ) -> Result<mentor::import::Imported, CallError> {
     let sheets = read_import(&input.file).await?;
-    let preview = mentor::import::preview(&ctx.db, &sheets, &input.file.setup).await?;
-    if let Some(issue) = preview.issue {
-        return Err(CallError::invalid(issue));
-    }
     let result =
         mentor::import::import(&ctx.db, &sheets, &input.file.setup, &input.decisions, now())
             .await?;
