@@ -14,7 +14,6 @@ pub enum EnrichState {
     Queued,
     Running,
     Done,
-    Failed,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]

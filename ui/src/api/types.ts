@@ -130,7 +130,7 @@ export type EnrichSkip = { reason: EnrichSkipReason, ids: Array<number>, };
 
 export type EnrichSkipReason = "missing_profile" | "deleted_crawl" | "complete" | "active" | "reviewed";
 
-export type EnrichState = "none" | "queued" | "running" | "done" | "failed";
+export type EnrichState = "none" | "queued" | "running" | "done";
 
 export type Entry = { "email": Email } | { "message": Message } | { "todo": Todo };
 

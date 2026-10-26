@@ -477,7 +477,7 @@ CREATE TABLE candidate (
   evidence TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence)),
   review TEXT NOT NULL CHECK (review IN ('pending', 'accepted', 'rejected', 'merged')),
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
-  enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done', 'failed')),
+  enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done')),
   enrich_changes TEXT CHECK (enrich_changes IS NULL OR (json_valid(enrich_changes) AND json_type(enrich_changes) = 'array')),
   enrich_error TEXT,
   name TEXT NOT NULL,
@@ -494,7 +494,6 @@ CREATE TABLE candidate (
   CHECK (affiliations IS NULL OR (json_valid(affiliations) AND json_type(affiliations) = 'array')),
   CHECK (homepages IS NULL OR (json_valid(homepages) AND json_type(homepages) = 'array')),
   CHECK (papers IS NULL OR (json_valid(papers) AND json_type(papers) = 'array')),
-  CHECK (enrich != 'failed' OR enrich_error IS NOT NULL),
   UNIQUE (crawl_id, profile_url)
 ) STRICT;
 CREATE INDEX candidate_review ON candidate ((review != 'pending'), id, crawl_id);
