@@ -360,6 +360,21 @@ CREATE TABLE message_mentor (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX message_mentor_message ON message_mentor (message_id);
 
+-- Sender and sending plan resolve the same responsible mailbox.
+CREATE VIEW email_own_mailbox AS
+SELECT e.id AS email_id,
+  CASE WHEN e.kind IN ('reply', 'follow_up') THEN coalesce(m.mailbox_id,
+    (SELECT p.mailbox_id FROM email p
+     WHERE p.mentor_id = e.mentor_id
+       AND (p.message_id = e.reply_to OR p.copy_message_id = e.reply_to)),
+    (SELECT r.mailbox_id FROM message r
+     JOIN message_mentor mm ON mm.message_id = r.id
+     WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to
+       AND r.kind = CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
+  ELSE m.mailbox_id END AS mailbox_id
+FROM email e
+JOIN mentor m ON m.id = e.mentor_id;
+
 CREATE TABLE reply_processing (
   message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   action TEXT NOT NULL CHECK (action IN ('outcome', 'todos')),

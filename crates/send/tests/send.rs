@@ -1105,6 +1105,21 @@ async fn approve_reply(db: &SqlitePool) -> i64 {
 async fn a_reply_goes_out_in_its_parent_thread_and_assigns_the_receiving_mailbox(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let mentor = approve_reply(&db).await;
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::Ready)
+    ));
     assert_eq!(
         send::step(&db, &net, nowhere(), || T).await.unwrap(),
         Next::Now
@@ -1167,6 +1182,21 @@ async fn a_reply_never_rotates_to_an_unrelated_mailbox_after_its_sender_is_delet
         .unwrap();
     let failed = first_email(&db, mentor).await.id;
     assert!(email::retry(&db, failed, T).await.unwrap());
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::Ready)
+    ));
     assert_eq!(
         send::step(&db, &replacement_net, nowhere(), || T)
             .await
@@ -1310,6 +1340,26 @@ async fn a_reply_uses_the_responsible_mailbox_selected_after_approval(db: Sqlite
         .execute(&db)
         .await
         .unwrap();
+    sqlx::query("UPDATE mailbox SET paused_until = ?, pause_reason = '服务商限流' WHERE id = 1")
+        .bind(T + DAY)
+        .execute(&db)
+        .await
+        .unwrap();
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::Ready)
+    ));
     assert_eq!(
         send::step(&db, &net, nowhere(), || T).await.unwrap(),
         Next::Now
