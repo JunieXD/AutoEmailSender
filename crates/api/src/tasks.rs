@@ -70,24 +70,7 @@ pub async fn check_task_draft(
     ctx: &Context,
     edit: task::DraftEdit,
 ) -> Result<Vec<check::Problem>, CallError> {
-    let mut problems = task::check(&ctx.db, &edit, now()).await?;
-    let address = sqlx::query_scalar!(
-        r#"SELECT m.address
-        FROM email e
-        JOIN mentor_email m ON m.mentor_id = e.mentor_id AND m.position = 0
-        WHERE e.id = ? AND e.task_id = ?"#,
-        edit.id,
-        edit.task_id
-    )
-    .fetch_optional(&ctx.db)
-    .await?;
-    if let Some(address) = address {
-        // DNS failure says nothing about the address and must not hide the other checks.
-        if let Ok(Some(problem)) = ctx.mail_domains.check(&address).await {
-            problems.push(problem);
-        }
-    }
-    Ok(problems)
+    Ok(task::check(&ctx.db, &edit, now()).await?)
 }
 pub async fn write_task_draft(
     ctx: &Context,

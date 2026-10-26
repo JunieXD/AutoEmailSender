@@ -13,6 +13,8 @@ use tokio::{
 enum State {
     Known(bool),
     Pending(watch::Receiver<bool>),
+    /// The lookup failed; lists do not ask again before then, so that their refreshes do not keep
+    /// querying while offline.
     RetryAfter(Instant),
 }
 
@@ -38,12 +40,14 @@ impl MailDomains {
         })
     }
 
-    fn request(&self, address: &str) -> Option<(String, State)> {
+    /// The domain's state, starting a lookup unless one is under way or answered. A failed one is
+    /// asked again when `retry` says so.
+    fn request(&self, address: &str, retry: fn(Instant) -> bool) -> Option<(String, State)> {
         let (_, domain) = address.rsplit_once('@')?;
         let domain = domain.to_lowercase();
         let mut results = self.results();
         if let Some(state) = results.get(&domain)
-            && !matches!(state, State::RetryAfter(at) if *at <= Instant::now())
+            && !matches!(state, State::RetryAfter(at) if retry(*at))
         {
             return Some((domain, state.clone()));
         }
@@ -80,12 +84,13 @@ impl MailDomains {
 
     /// Lists use only completed answers, leaving DNS to the background.
     pub(crate) fn known_or_start(&self, address: &str) -> Option<check::Problem> {
-        let (domain, state) = self.request(address)?;
+        let (domain, state) = self.request(address, |at| at <= Instant::now())?;
         matches!(state, State::Known(false)).then_some(check::Problem::NoMailServer { domain })
     }
 
+    /// A letter being written asks only now and then, such as when it opens or the network returns.
     pub(crate) async fn check(&self, address: &str) -> Result<Option<check::Problem>, CallError> {
-        let Some((domain, state)) = self.request(address) else {
+        let Some((domain, state)) = self.request(address, |_| true) else {
             return Ok(None);
         };
         let servers = match state {
@@ -94,7 +99,7 @@ impl MailDomains {
                 answer.changed().await.map_err(|_| lookup_failed())?;
                 *answer.borrow()
             }
-            State::RetryAfter(_) => return Err(lookup_failed()),
+            State::RetryAfter(_) => unreachable!("a failed lookup is always started again here"),
         };
         Ok((!servers).then_some(check::Problem::NoMailServer { domain }))
     }
@@ -220,32 +225,16 @@ mod tests {
                 .unwrap();
             let mentor_id: i64 = serde_json::from_value(draft["mentorId"].clone()).unwrap();
             assert_eq!(row["problems"], usize::from(mentor_id == ids[0]));
-            if mentor_id == ids[0] {
-                let problems = call(
-                    &ctx,
-                    "checkTaskDraft",
-                    json!({
-                        "taskId":task,"id":row["id"],"subject":draft["subject"],
-                        "bodyMd":draft["bodyMd"],"attachments":[]
-                    }),
-                )
-                .await
-                .unwrap();
-                assert_eq!(
-                    problems,
-                    json!([{"kind":"no_mail_server","domain":"missing.example"}])
-                );
-                assert_eq!(
-                    call(
-                        &ctx,
-                        "checkMailDomain",
-                        json!({"address":"another@Missing.Example"})
-                    )
-                    .await
-                    .unwrap(),
-                    problems[0]
-                );
-            }
         }
+        assert_eq!(
+            call(
+                &ctx,
+                "checkMailDomain",
+                json!({"address":"another@Missing.Example"})
+            )
+            .await
+            .unwrap(),
+            json!({"kind":"no_mail_server","domain":"missing.example"})
+        );
     }
 }
