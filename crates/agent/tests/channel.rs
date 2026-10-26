@@ -42,6 +42,13 @@ async fn authentication_permissions_cli_and_switch_share_the_real_local_channel(
     let server = api::agent::start(ctx.clone(), dir.path().to_owned())
         .await
         .map_err(|error| error.message)?;
+    api::call(
+        &ctx,
+        "updateProfile",
+        json!({"name":"测试学生", "researchInterests":"人工智能", "rewritePreference":""}),
+    )
+    .await
+    .map_err(|error| error.message)?;
     assert_eq!(
         api::call(&ctx, "getAgentAccess", json!({}))
             .await
@@ -90,17 +97,30 @@ async fn authentication_permissions_cli_and_switch_share_the_real_local_channel(
             format!(
                 "{}\r\n{}\r\n",
                 first.token,
-                json!({"op":"updateProfile", "input": {
-                    "name":"测试学生", "researchInterests":"人工智能", "rewritePreference":""
-                }})
+                json!({"op":"setAiFactCheck", "input":{"on":false}})
             )
             .as_bytes(),
         )
         .await?;
     let mut line = String::new();
     stream.read_line(&mut line).await?;
-    let updated: Value = serde_json::from_str(&line)?;
-    assert_eq!(updated["ok"]["name"], "测试学生");
+    let configured: Value = serde_json::from_str(&line)?;
+    assert_eq!(configured, json!({"ok":null}));
+    assert!(!profile::ai_fact_check(&ctx.db).await?);
+
+    stream
+        .get_mut()
+        .write_all(b"{\"op\":\"sendEmailNow\",\"input\":{\"id\":1}}\n")
+        .await?;
+    line.clear();
+    stream.read_line(&mut line).await?;
+    let confirmation: Value = serde_json::from_str(&line)?;
+    assert_eq!(confirmation["error"]["code"], "invalid");
+    assert!(
+        confirmation["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("这个操作要你在应用里确认，下一版支持"))
+    );
 
     // The permission check happens before input deserialization or any handler side effect.
     stream
@@ -111,11 +131,7 @@ async fn authentication_permissions_cli_and_switch_share_the_real_local_channel(
     stream.read_line(&mut line).await?;
     let denied: Value = serde_json::from_str(&line)?;
     assert_eq!(denied["error"]["code"], "invalid");
-    assert!(
-        denied["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("这个操作不对 Agent 开放"))
-    );
+    assert!(profile::agent_access(&ctx.db).await?);
 
     let output = cli(dir.path(), "getProfile").await?;
     assert!(output.status.success());
@@ -124,7 +140,7 @@ async fn authentication_permissions_cli_and_switch_share_the_real_local_channel(
     let unknown = cli(dir.path(), "notAnOperation").await?;
     assert!(!unknown.status.success());
     let output: Value = serde_json::from_slice(&unknown.stdout)?;
-    assert_eq!(output["error"]["code"], "invalid");
+    assert_eq!(output["error"]["code"], "bad_input");
 
     setting(&ctx, false).await?;
     assert!(!agent::token_path(dir.path()).exists());
