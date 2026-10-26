@@ -87,7 +87,8 @@ pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
     let mut system = SYSTEM.to_owned();
     let mut retried = false;
     loop {
-        let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
+        // JSON mode only produces objects; fact checks return a top-level array.
+        let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message, false)
             .await
             .map_err(Error::Model)?;
         tracing::info!(

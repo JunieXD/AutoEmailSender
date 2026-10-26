@@ -227,10 +227,11 @@ async fn analyze(
     let message = message(&me, &references, &mentor);
     let mut system = SYSTEM.to_owned();
     for attempt in 0..2 {
-        let answer = match model::ask(net, &chosen.access, &chosen.model, &system, &message).await {
-            Ok(a) => a,
-            Err(e) => return Ok(classify(e, chosen)),
-        };
+        let answer =
+            match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
+                Ok(a) => a,
+                Err(e) => return Ok(classify(e, chosen)),
+            };
         tracing::info!(
             mentor_id = id,
             model = chosen.model,

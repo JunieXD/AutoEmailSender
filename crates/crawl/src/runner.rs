@@ -352,6 +352,7 @@ impl Reader<'_> {
                 &self.chosen.model,
                 &rules,
                 &data.to_string(),
+                true,
             )
             .await
             .map_err(|e| {

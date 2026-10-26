@@ -53,6 +53,7 @@ fn access(base_url: String, no_thinking: Option<NoThinking>) -> Access {
         base_url,
         api_key: Some("sk-test".into()),
         no_thinking,
+        json_mode: false,
     }
 }
 
@@ -101,6 +102,7 @@ async fn business_calls_disable_thinking_only_when_the_provider_supports_it() {
             "deepseek-chat",
             "规则",
             "资料",
+            false,
         )
         .await
         .unwrap();
@@ -113,6 +115,41 @@ async fn business_calls_disable_thinking_only_when_the_provider_supports_it() {
             assert!(body.get("thinking").is_none());
             assert!(body.get("enable_thinking").is_none());
         }
+    }
+}
+
+#[tokio::test]
+async fn json_mode_is_only_sent_for_objects_to_supporting_providers() {
+    let net = Net::new(Vec::new()).unwrap();
+    for id in ["deepseek", "kimi", "qwen", "custom"] {
+        let (address, received) = provider(
+            200,
+            concat!(
+                r#"data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}"#,
+                "\n\ndata: [DONE]\n\n",
+            ),
+        )
+        .await;
+        let mut access = model::Source::check(id, &address)
+            .unwrap()
+            .access(Some("sk-test".into()));
+        access.base_url = address;
+        for json in [true, false] {
+            model::ask(&net, &access, "m", "只输出 JSON", "资料", json)
+                .await
+                .unwrap();
+        }
+        model::test(&net, &access, "m").await.unwrap();
+        let received = received.lock().unwrap();
+        let formats: Vec<_> = received
+            .iter()
+            .map(|r| r.body.get("response_format").cloned())
+            .collect();
+        let expected = match id {
+            "deepseek" | "kimi" => vec![Some(json!({"type":"json_object"})), None, None],
+            _ => vec![None, None, None],
+        };
+        assert_eq!(formats, expected, "{id}");
     }
 }
 
@@ -201,7 +238,7 @@ async fn an_answer_says_what_it_cost_however_the_provider_counts() {
     let net = Net::new(Vec::new()).unwrap();
     let ask = async |reply: &'static str| {
         let (address, received) = provider(200, reply).await;
-        let answer = model::ask(&net, &access(address, None), "m", "规则", "资料")
+        let answer = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
             .await
             .unwrap();
         let body = received.lock().unwrap()[0].body.clone();
@@ -258,7 +295,7 @@ async fn what_the_model_wrote_stays_out_of_errors() {
     )
     .await;
     let net = Net::new(Vec::new()).unwrap();
-    let error = model::ask(&net, &access(address, None), "m", "规则", "资料")
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
         .await
         .unwrap_err();
     assert!(matches!(error, ModelError::Broken(_)), "{error:?}");
@@ -266,7 +303,7 @@ async fn what_the_model_wrote_stays_out_of_errors() {
     assert!(!error.message().contains("3.8"), "{error}");
     // As a gateway that answers in plain text.
     let (address, _) = provider(200, "我的绩点是 3.8").await;
-    let error = model::ask(&net, &access(address, None), "m", "规则", "资料")
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
         .await
         .unwrap_err();
     assert!(!error.to_string().contains("3.8"), "{error}");
@@ -283,7 +320,7 @@ async fn an_answer_ends_where_the_stream_says_it_is_done() {
     )
     .await;
     let net = Net::new(Vec::new()).unwrap();
-    let answer = model::ask(&net, &access(address, None), "m", "规则", "资料")
+    let answer = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
         .await
         .unwrap();
     assert_eq!(answer.text, "好的");
@@ -297,7 +334,7 @@ async fn an_answer_ends_where_the_stream_says_it_is_done() {
         ),
     )
     .await;
-    let result = model::ask(&net, &access(address, None), "m", "规则", "资料").await;
+    let result = model::ask(&net, &access(address, None), "m", "规则", "资料", false).await;
     assert!(matches!(result, Err(ModelError::Broken(_))), "{result:?}");
 }
 
