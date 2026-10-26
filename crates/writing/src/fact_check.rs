@@ -3,6 +3,7 @@
 use email::fact_check::Finding;
 use serde_json::json;
 use sqlx::SqlitePool;
+use std::future::Future;
 
 use crate::Letter;
 
@@ -68,56 +69,64 @@ pub fn estimate(
     )
 }
 
-pub async fn check(
+/// The caller controls usage persistence so background retries keep each answer in memory.
+pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
     db: &SqlitePool,
     net: &net::Net,
     email_id: i64,
     letter: &Letter,
     chosen: &model::Chosen,
     references: &[material::Reference],
-    now: i64,
+    record_usage: impl Fn(model::usage::Usage) -> F,
 ) -> Result<Vec<Finding>, Error> {
     if !chosen.agreed {
         return Err(Error::NotAgreed);
     }
     let me = profile::get(db).await?;
-    let answer = model::ask(
-        net,
-        &chosen.access,
-        &chosen.model,
-        SYSTEM,
-        &message(&me, references, letter),
-    )
-    .await
-    .map_err(Error::Model)?;
-    tracing::info!(email_id, model = chosen.model, usage = ?answer.usage,
-        finish_reason = answer.finish_reason, "the model checked the letter");
-    if let Some(usage) = answer.usage {
-        model::usage::record_for_email(
-            db,
-            chosen.id,
-            &chosen.model,
-            model::usage::Purpose::FactCheck,
-            Some(email_id),
-            usage,
-            now,
-        )
-        .await?;
+    let message = message(&me, references, letter);
+    let mut system = SYSTEM.to_owned();
+    for attempt in 0..2 {
+        let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
+            .await
+            .map_err(Error::Model)?;
+        tracing::info!(
+            email_id,
+            model = chosen.model,
+            usage = ?answer.usage,
+            finish_reason = answer.finish_reason,
+            "the model checked the letter"
+        );
+        if let Some(usage) = answer.usage {
+            record_usage(usage).await?;
+        }
+        if answer.finish_reason.as_deref() == Some("length") {
+            return Err(Error::InvalidAnswer);
+        }
+        match parse(&answer.text, letter) {
+            Ok(findings) => return Ok(findings),
+            Err(error) if attempt == 0 => {
+                system = format!(
+                    "{SYSTEM}\n上一次回答的校验错误：{error}。请按字段要求重新输出一个完整的 JSON 数组。"
+                );
+            }
+            Err(_) => return Err(Error::InvalidAnswer),
+        }
     }
-    if answer.finish_reason.as_deref() == Some("length") {
-        return Err(Error::InvalidAnswer);
-    }
-    parse(&answer.text, letter)
+    unreachable!("both attempts return")
 }
 
-fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, Error> {
-    let mut text = model::output::thinking_block(text.trim())
-        .map_err(|_| Error::InvalidAnswer)?
-        .trim();
-    if let Some(rest) = model::output::fence_content(text).map_err(|_| Error::InvalidAnswer)? {
-        text = rest.strip_suffix("```").ok_or(Error::InvalidAnswer)?.trim();
+fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, String> {
+    let mut text = model::output::thinking_block(text.trim())?.trim();
+    if let Some(rest) = model::output::fence_content(text)? {
+        text = rest.strip_suffix("```").ok_or("代码围栏没有结束")?.trim();
     }
-    let findings: Vec<Finding> = serde_json::from_str(text).map_err(|_| Error::InvalidAnswer)?;
+    let findings: Vec<Finding> = serde_json::from_str(text).map_err(|e| {
+        format!(
+            "字段类型不符合要求（第 {} 行第 {} 列）",
+            e.line(),
+            e.column()
+        )
+    })?;
     let mut checked: Vec<Finding> = Vec::new();
     for mut finding in findings {
         if finding.quote.trim().is_empty()

@@ -41,6 +41,7 @@ enum Outcome {
 async fn generate(
     db: &SqlitePool,
     net: &net::Net,
+    writes: &db::Writes,
     claim: emails::Claim,
 ) -> std::result::Result<Outcome, sqlx::Error> {
     if !emails::valid(db, claim).await? {
@@ -119,7 +120,27 @@ async fn generate(
                 body_md: String::new(),
             },
         };
-        writing::write(db, net, &input, &current, now()).await
+        let at = now();
+        writing::write(net, &input, &current, |purpose, usage| {
+            let chosen = &chosen;
+            async move {
+                writes
+                    .retry("record draft usage", || {
+                        model::usage::record_for_email(
+                            db,
+                            chosen.id,
+                            &chosen.model,
+                            purpose,
+                            Some(claim.id),
+                            usage,
+                            at,
+                        )
+                    })
+                    .await;
+                Ok(())
+            }
+        })
+        .await
     }
     .await;
     Ok(match answer {
@@ -136,8 +157,32 @@ async fn generate(
                 let check_config = model::selected(db, t.model_config_id).await?;
                 let result = match &check_config {
                     Some(chosen) => {
-                        writing::fact_check::check(db, net, claim.id, &l, chosen, &refs, now())
-                            .await
+                        let at = now();
+                        writing::fact_check::check(
+                            db,
+                            net,
+                            claim.id,
+                            &l,
+                            chosen,
+                            &refs,
+                            |usage| async move {
+                                writes
+                                    .retry("record fact check usage", || {
+                                        model::usage::record_for_email(
+                                            db,
+                                            chosen.id,
+                                            &chosen.model,
+                                            model::usage::Purpose::FactCheck,
+                                            Some(claim.id),
+                                            usage,
+                                            at,
+                                        )
+                                    })
+                                    .await;
+                                Ok(())
+                            },
+                        )
+                        .await
                     }
                     None => Err(writing::fact_check::Error::NoModel),
                 };
@@ -354,10 +399,10 @@ pub async fn run(
             && let Some(claim) = writes.retry("claim draft", || emails::next(&db)).await
         {
             active.insert(claim.task);
-            let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
+            let (db, net, writes, limit) = (db.clone(), net.clone(), writes.clone(), limit.clone());
             let task = workers.spawn(async move {
                 let _permit = limit.acquire().await;
-                (claim, generate(&db, &net, claim).await)
+                (claim, generate(&db, &net, &writes, claim).await)
             });
             claims.insert(task.id(), claim);
             changed();
