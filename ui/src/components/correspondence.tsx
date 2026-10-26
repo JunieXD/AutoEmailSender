@@ -137,7 +137,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-6 phone:px-3 [&>*]:shrink-0">
         {groupTodos(entries.data).map((e) =>
           "todos" in e ? (
-            <TodoGroup key={`todo ${e.todos[0]?.id}`} todos={e.todos} readOnly={mentor.trashed} />
+            <TodoGroup key={e.key} todos={e.todos} readOnly={mentor.trashed} />
           ) : "email" in e ? (
             <Sent
               key={`email ${e.email.id}`}
@@ -386,8 +386,7 @@ function status(e: Email, several: boolean): [string, string] {
   return [`退信（发到 ${e.toAddress}）：${e.error}`, "text-warning"];
 }
 
-/** Mail seen in the mailbox: the mentor's on the left like their messages in a chat, the user's own from elsewhere on the right. */
-type Shown = Exclude<Entry, { todo: Todo }> | { todos: Todo[] };
+type Shown = Exclude<Entry, { todo: Todo }> | { todos: Todo[]; key: string };
 
 /** Todos next to each other show as one list. */
 function groupTodos(entries: Entry[]): Shown[] {
@@ -396,7 +395,11 @@ function groupTodos(entries: Entry[]): Shown[] {
     const last = shown.at(-1);
     if (!("todo" in e)) shown.push(e);
     else if (last && "todos" in last) last.todos.push(e.todo);
-    else shown.push({ todos: [e.todo] });
+    else {
+      // Keyed by what it follows, so deleting its first todo keeps the others' editors open.
+      const after = !last ? "start" : "email" in last ? `email ${last.email.id}` : `message ${last.message.id}`;
+      shown.push({ todos: [e.todo], key: `todos after ${after}` });
+    }
   }
   return shown;
 }
@@ -417,6 +420,7 @@ function TodoGroup({ todos, readOnly }: { todos: Todo[]; readOnly: boolean }) {
   );
 }
 
+/** Mail seen in the mailbox: the mentor's on the left like their messages in a chat, the user's own from elsewhere on the right. */
 function Seen({
   message: m,
   mentor,

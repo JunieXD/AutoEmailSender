@@ -166,6 +166,7 @@ export function TodoEditor({
     >
       <Input
         autoFocus
+        disabled={pending}
         aria-label="待办内容"
         placeholder="要做的事，比如把成绩单发给王老师"
         maxLength={100}
@@ -175,7 +176,7 @@ export function TodoEditor({
       />
       <div className="flex flex-wrap items-center gap-2">
         <Popover open={picking} onOpenChange={setPicking}>
-          <PopoverTrigger render={<Button type="button" variant="quiet" size="sm" />}>
+          <PopoverTrigger render={<Button type="button" variant="quiet" size="sm" disabled={pending} />}>
             <CalendarDays strokeWidth={1.6} />
             {dueDate ? dayLabel(dueDate) : "截止日期"}
           </PopoverTrigger>
@@ -210,6 +211,7 @@ export function TodoEditor({
         {dueDate && (
           <Input
             type="time"
+            disabled={pending}
             aria-label="截止时间"
             className="h-8 w-28"
             value={dueTime}
