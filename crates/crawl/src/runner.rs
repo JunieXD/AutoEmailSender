@@ -24,6 +24,10 @@ use std::{
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use ts_rs::TS;
 const RETRY: Duration = Duration::from_secs(5);
+const READ_FAILED: &str = "抓取数据暂时无法读取，请继续或重启应用。";
+const SAVE_FAILED: &str = "网页资料暂时无法保存，请继续或重启应用。";
+const MODEL_READ_FAILED: &str = "模型配置暂时无法读取，请重试。";
+const CANDIDATE_READ_FAILED: &str = "候选资料暂时无法读取，请继续或重启应用。";
 #[derive(Clone, Default)]
 pub struct Crawler(Arc<Notify>);
 impl Crawler {
@@ -74,11 +78,7 @@ async fn save_material(
     )
     .execute(db)
     .await
-    .map_err(|source| ReadError::Database {
-        source,
-        operation: "save fetched page",
-        reason: "网页资料暂时无法保存，请继续或重启应用。",
-    })?;
+    .map_err(database("save fetched page", SAVE_FAILED))?;
     if saved.rows_affected() == 0 {
         return Err(ReadError::Gone);
     }
@@ -113,18 +113,13 @@ impl Pages {
         let render = browser.render(target, &c.steps);
         let invalidated = async {
             loop {
-                let mut conn = db.acquire().await.map_err(|source| ReadError::Database {
-                    source,
-                    operation: "acquire browser claim connection",
-                    reason: "抓取数据暂时无法读取，请继续或重启应用。",
-                })?;
+                let mut conn = db
+                    .acquire()
+                    .await
+                    .map_err(database("acquire browser claim connection", READ_FAILED))?;
                 if !queue::valid(&mut conn, c)
                     .await
-                    .map_err(|source| ReadError::Database {
-                        source,
-                        operation: "check browser claim",
-                        reason: "抓取数据暂时无法读取，请继续或重启应用。",
-                    })?
+                    .map_err(database("check browser claim", READ_FAILED))?
                 {
                     return Err(ReadError::Gone);
                 }
@@ -198,6 +193,17 @@ enum ReadError {
     Gone,
 }
 
+fn database(
+    operation: &'static str,
+    reason: &'static str,
+) -> impl FnOnce(sqlx::Error) -> ReadError {
+    move |source| ReadError::Database {
+        source,
+        operation,
+        reason,
+    }
+}
+
 #[derive(Clone, Default)]
 struct Cooldown(Arc<Mutex<Option<Instant>>>);
 impl Cooldown {
@@ -251,28 +257,16 @@ impl Reader<'_> {
                     .db
                     .acquire()
                     .await
-                    .map_err(|source| ReadError::Database {
-                        source,
-                        operation: "acquire model claim connection",
-                        reason: "抓取数据暂时无法读取，请继续或重启应用。",
-                    })?;
+                    .map_err(database("acquire model claim connection", READ_FAILED))?;
                 if !queue::valid(&mut conn, self.claim)
                     .await
-                    .map_err(|source| ReadError::Database {
-                        source,
-                        operation: "check model claim",
-                        reason: "抓取数据暂时无法读取，请继续或重启应用。",
-                    })?
+                    .map_err(database("check model claim", READ_FAILED))?
                 {
                     return Err(ReadError::Gone);
                 }
                 let current = model::selected(&mut *conn, self.claim.model_id)
                     .await
-                    .map_err(|source| ReadError::Database {
-                        source,
-                        operation: "read model configuration",
-                        reason: "模型配置暂时无法读取，请重试。",
-                    })?;
+                    .map_err(database("read model configuration", MODEL_READ_FAILED))?;
                 if !current.as_ref().is_some_and(|m| {
                     m.agreed
                         && m.provider == self.chosen.provider
@@ -422,18 +416,13 @@ async fn read(
         });
     }
     if let Some(id) = c.candidate_id {
-        let mut conn = db.acquire().await.map_err(|source| ReadError::Database {
-            source,
-            operation: "read enrichment candidate",
-            reason: "候选资料暂时无法读取，请继续或重启应用。",
-        })?;
+        let mut conn = db
+            .acquire()
+            .await
+            .map_err(database("read enrichment candidate", CANDIDATE_READ_FAILED))?;
         let candidate = review::read(&mut conn, &[id])
             .await
-            .map_err(|source| ReadError::Database {
-                source,
-                operation: "read enrichment candidate",
-                reason: "候选资料暂时无法读取，请继续或重启应用。",
-            })?
+            .map_err(database("read enrichment candidate", CANDIDATE_READ_FAILED))?
             .pop()
             .ok_or(ReadError::Gone)?;
         if candidate.review != "pending" {
