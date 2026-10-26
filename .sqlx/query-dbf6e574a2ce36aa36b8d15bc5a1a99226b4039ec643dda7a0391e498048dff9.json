@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM reply_processing WHERE message_id = ? AND action = 'outcome'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "dbf6e574a2ce36aa36b8d15bc5a1a99226b4039ec643dda7a0391e498048dff9"
+}

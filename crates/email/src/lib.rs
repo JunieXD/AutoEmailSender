@@ -2,6 +2,7 @@
 
 pub mod fact_check;
 pub mod follow_up;
+pub mod outcome;
 pub mod schedule;
 pub mod tasks;
 
@@ -386,13 +387,17 @@ enum DeliveryColumn {
 /// The mentor's emails that have been approved, oldest first.
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::Error> {
     let mut tx = db.begin().await?;
+    list_in(&mut tx, mentor_id).await
+}
+
+pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Email>, sqlx::Error> {
     let mut attachments: HashMap<i64, Vec<Attachment>> = HashMap::new();
     for a in sqlx::query!(
         r#"SELECT a.email_id, a.file_name AS "file_name!", a.size FROM email_attachment a
            JOIN email e ON e.id = a.email_id WHERE e.mentor_id = ? ORDER BY a.file_name"#,
         mentor_id
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *db)
     .await?
     {
         attachments.entry(a.email_id).or_default().push(Attachment {
@@ -412,7 +417,7 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Email>, sqlx::E
            ORDER BY id"#,
         mentor_id
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *db)
     .await?
     .into_iter()
     .map(|r| {
@@ -979,3 +984,5 @@ pub async fn bounced(
     .await?;
     Ok(done.rows_affected() == 1)
 }
+
+pub mod todos;

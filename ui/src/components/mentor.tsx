@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { Affiliation, Contact, ContactStatus, DraftKind } from "@/api/types";
+import type { Affiliation, Contact, ContactStatus, DraftKind, ReplyOutcome } from "@/api/types";
 import { day } from "@/format";
 
 const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
@@ -31,8 +31,19 @@ const STATUS_STYLE: Record<ContactStatus, [string, string]> = {
   bounced: ["退信", "bg-warning"],
 };
 
-/** The contact status after its coloured dot, with a red dot for a new reply. */
-export function ContactLabel({ contact, className = "" }: { contact: Contact; className?: string }) {
+/**
+ * The contact status after its coloured dot, with a red dot for a new reply and, when known, what
+ * the mentor's latest reply said.
+ */
+export function ContactLabel({
+  contact,
+  outcome = null,
+  className = "",
+}: {
+  contact: Contact;
+  outcome?: ReplyOutcome | null;
+  className?: string;
+}) {
   const [label, dot] = STATUS_STYLE[contact.status];
   return (
     <div className={`flex items-center gap-1.5 ${className}`}>
@@ -41,7 +52,30 @@ export function ContactLabel({ contact, className = "" }: { contact: Contact; cl
       {contact.status === "replied" && contact.unread && (
         <span className="size-2 shrink-0 rounded-full bg-unread" aria-label="有新回信" />
       )}
+      {outcome && <OutcomeChip outcome={outcome} />}
     </div>
+  );
+}
+
+export const OUTCOME_ORDER: ReplyOutcome[] = ["interested", "no_slot", "declined", "unclear"];
+
+export const OUTCOMES: Record<ReplyOutcome, string> = {
+  interested: "有意向",
+  no_slot: "无名额",
+  declined: "拒绝",
+  unclear: "无法判断",
+};
+
+/** What a reply said, in green when the mentor is open to the student. */
+export function OutcomeChip({ outcome }: { outcome: ReplyOutcome }) {
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 text-xs leading-5 ${
+        outcome === "interested" ? "bg-success-soft text-success" : "bg-muted text-muted-foreground"
+      }`}
+    >
+      {OUTCOMES[outcome]}
+    </span>
   );
 }
 
@@ -57,6 +91,13 @@ export function contactDetail(contact: Contact): string | null {
 }
 
 export const BASIS_CHANGED = "材料或意向研究方向改过，可以重新分析";
+
+/** After a reply's outcome was set or marked, or its marking failed or was retried. */
+export function refreshReplyOutcomes(queryClient: QueryClient) {
+  for (const queryKey of [["replyProcessing"], ["listCorrespondence"], ["listMentors"]]) {
+    void queryClient.invalidateQueries({ queryKey });
+  }
+}
 
 /**
  * After mentors are trashed, restored or deleted, or new mail came, every view of them is out of
@@ -80,6 +121,7 @@ export function refreshMentors(queryClient: QueryClient) {
     ["getFollowUpDraft"],
     ["getFollowUpEntry"],
     ["listConversations"],
+    ["listTodos"],
     ["unreadCount"],
     ["stats"],
   ]) {

@@ -21,6 +21,9 @@ pub struct Filter {
     pub unanswered_days: Option<std::num::NonZeroU32>,
     #[ts(optional)]
     pub status: Option<ContactStatus>,
+    /// Applied only with status = replied.
+    #[ts(optional)]
+    pub reply_outcome: Option<super::ReplyOutcomeFilter>,
     #[ts(optional)]
     pub keyword: Option<String>,
 }
@@ -96,7 +99,7 @@ pub async fn export(
 ) -> Result<Vec<Vec<String>>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let ids = match scope {
-        Scope::Filter(f) => filtered_ids(&mut tx, f.status, f.keyword.as_deref().and_then(keyword).as_deref(), -1, 0, f.unanswered_days.map(|d| now - i64::from(d.get()) * 86_400_000)).await?,
+        Scope::Filter(f) => filtered_ids(&mut tx, f.status, f.reply_outcome, f.keyword.as_deref().and_then(keyword).as_deref(), -1, 0, f.unanswered_days.map(|d| now - i64::from(d.get()) * 86_400_000)).await?,
         Scope::Ids(ids) => sqlx::query_scalar!("SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY match_score DESC, id", Json(ids)).fetch_all(&mut *tx).await?,
     };
     let mut data = profiles(&mut tx, &ids).await?;

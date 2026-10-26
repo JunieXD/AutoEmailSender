@@ -1,19 +1,30 @@
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { RotateCcw, Send, Undo2 } from "lucide-react";
+import { Check, RotateCcw, Send, Undo2 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Email, Entry, MentorDetail, Message, FollowUpEntry } from "@/api/types";
+import type { Email, Entry, MentorDetail, Message, FollowUpEntry, ReplyOutcome, Todo } from "@/api/types";
 import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
 import { FollowUpLetter, ReplyLetter } from "@/components/reply-letter";
 import { FirstLetter } from "@/components/first-letter";
-import { contactDetail, dropDrafts, refreshMentors } from "@/components/mentor";
+import {
+  contactDetail,
+  dropDrafts,
+  OUTCOME_ORDER,
+  OUTCOMES,
+  OutcomeChip,
+  refreshMentors,
+  refreshReplyOutcomes,
+} from "@/components/mentor";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScheduleActions, refreshSchedule, scheduledAt } from "@/components/schedule";
+import { AddTodo, TodoItem } from "@/components/todos";
 import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
 import { toHtml } from "@/markdown";
+import { useNow } from "@/now";
 
 /** Pending mail hides both entry buttons, while a blocked thread still explains why. */
 export function followUpActions(entry: FollowUpEntry, now: number) {
@@ -111,6 +122,11 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
         <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted-foreground">
           {mentor.contact.status === "none" ? `尚未联系${mentor.name}老师。` : contactDetail(mentor.contact)}
         </div>
+        {!mentor.trashed && (
+          <div className="flex flex-col px-5 pb-4 phone:px-3">
+            <AddTodo mentorId={mentor.id} />
+          </div>
+        )}
         {!mentor.trashed && replyDraft.isSuccess && (!replying || begun) && <FirstLetter mentor={mentor} />}
         {!mentor.trashed && replying && <ReplyLetter mentor={mentor} selected={selected} />}
       </>
@@ -119,8 +135,10 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 py-6 phone:px-3 [&>*]:shrink-0">
-        {entries.data.map((e) =>
-          "email" in e ? (
+        {groupTodos(entries.data).map((e) =>
+          "todos" in e ? (
+            <TodoGroup key={e.key} todos={e.todos} readOnly={mentor.trashed} />
+          ) : "email" in e ? (
             <Sent
               key={`email ${e.email.id}`}
               email={e.email}
@@ -142,6 +160,7 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
             />
           ),
         )}
+        {!mentor.trashed && <AddTodo mentorId={mentor.id} />}
       </div>
       {/* Shown here, as the composer would load the draft again each time it came up. */}
       {!mentor.trashed &&
@@ -367,6 +386,40 @@ function status(e: Email, several: boolean): [string, string] {
   return [`退信（发到 ${e.toAddress}）：${e.error}`, "text-warning"];
 }
 
+type Shown = Exclude<Entry, { todo: Todo }> | { todos: Todo[]; key: string };
+
+/** Todos next to each other show as one list. */
+function groupTodos(entries: Entry[]): Shown[] {
+  const shown: Shown[] = [];
+  for (const e of entries) {
+    const last = shown.at(-1);
+    if (!("todo" in e)) shown.push(e);
+    else if (last && "todos" in last) last.todos.push(e.todo);
+    else {
+      // Keyed by what it follows, so deleting its first todo keeps the others' editors open.
+      const after = !last ? "start" : "email" in last ? `email ${last.email.id}` : `message ${last.message.id}`;
+      shown.push({ todos: [e.todo], key: `todos after ${after}` });
+    }
+  }
+  return shown;
+}
+
+function TodoGroup({ todos, readOnly }: { todos: Todo[]; readOnly: boolean }) {
+  const now = useNow();
+  return (
+    <ul
+      aria-label="待办"
+      className="w-full max-w-[min(42rem,88%)] self-start divide-y divide-border rounded-lg border border-border"
+    >
+      {todos.map((t) => (
+        <li key={t.id}>
+          <TodoItem todo={t} readOnly={readOnly} now={now} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Mail seen in the mailbox: the mentor's on the left like their messages in a chat, the user's own from elsewhere on the right. */
 function Seen({
   message: m,
@@ -441,6 +494,14 @@ function Seen({
           {day(m.sentAt)} {time(m.sentAt)}
           {mine ? " 在别处发出" : from}
         </span>
+        {m.kind === "reply" && (
+          <ReplyOutcomeMenu
+            messageId={m.id}
+            outcome={m.outcome}
+            marking={m.marking?.state === "marking"}
+            readOnly={mentor.trashed}
+          />
+        )}
         {m.kind === "reply" && !mentor.trashed && (
           <Button variant="quiet" size="sm" disabled={!m.canReply} onClick={onReply}>
             回复
@@ -452,12 +513,105 @@ function Seen({
           </Button>
         )}
       </p>
+      {m.kind === "reply" && m.marking?.state === "failed" && !mentor.trashed && (
+        <AiFailed messageId={m.id} reason={m.marking.reason} retry="retryReplyOutcome" label="AI 未能标出" />
+      )}
+      {m.kind === "reply" && m.todoExtraction?.state === "extracting" && !mentor.trashed && (
+        <p className="text-sm text-faint">AI 正在找回信里要你做的事…</p>
+      )}
+      {m.kind === "reply" && m.todoExtraction?.state === "failed" && !mentor.trashed && (
+        <AiFailed messageId={m.id} reason={m.todoExtraction.reason} retry="retryReplyTodos" label="AI 未能提取待办" />
+      )}
       {m.kind === "reply" && !m.canReply && !mentor.trashed && (
         <p className="text-sm text-muted-foreground">这封信缺少邮件编号，无法在原线程里回复，请到邮箱里回复</p>
       )}
       {add.error && <p className="text-sm text-destructive">未能加为导师的邮箱：{errorMessage(add.error)}</p>}
       {m.kind === "sent" && m.bounce && <p className="text-sm text-warning">退信：{m.bounce}</p>}
     </article>
+  );
+}
+
+/** What a reply said, which the user can set or change (docs/ui.md#交互). */
+function ReplyOutcomeMenu({
+  messageId,
+  outcome,
+  marking,
+  readOnly,
+}: {
+  messageId: number;
+  outcome: ReplyOutcome | null;
+  marking: boolean;
+  readOnly: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const set = useMutation({
+    mutationFn: (o: ReplyOutcome) => call("setReplyOutcome", { messageId, outcome: o }),
+    onSettled: () => refreshReplyOutcomes(queryClient),
+  });
+  if (readOnly) return outcome && <OutcomeChip outcome={outcome} />;
+  return (
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            outcome ? (
+              <button type="button" aria-label={`回信结果：${OUTCOMES[outcome]}，点击修改`} className="flex" />
+            ) : (
+              <Button variant={marking ? "ghost" : "quiet"} size="sm" />
+            )
+          }
+          disabled={set.isPending}
+        >
+          {outcome ? <OutcomeChip outcome={outcome} /> : marking ? "AI 正在标记…" : "标记结果"}
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-36 p-1.5">
+          {OUTCOME_ORDER.map((o) => (
+            <Button
+              key={o}
+              variant="ghost"
+              className="w-full justify-between"
+              onClick={() => {
+                setOpen(false);
+                if (o !== outcome) set.mutate(o);
+              }}
+            >
+              {OUTCOMES[o]}
+              {o === outcome && <Check className="size-4" strokeWidth={1.8} />}
+            </Button>
+          ))}
+        </PopoverContent>
+      </Popover>
+      {set.error && <span className="text-destructive">未能保存：{errorMessage(set.error)}</span>}
+    </>
+  );
+}
+
+/** A reply the AI could not mark or take todos from, which can be tried again. */
+function AiFailed({
+  messageId,
+  reason,
+  retry,
+  label,
+}: {
+  messageId: number;
+  reason: string;
+  retry: "retryReplyOutcome" | "retryReplyTodos";
+  label: string;
+}) {
+  const queryClient = useQueryClient();
+  const again = useMutation({
+    mutationFn: () => call(retry, { messageId }),
+    onSettled: () => refreshReplyOutcomes(queryClient),
+  });
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+      {label}：{reason}
+      <Button variant="quiet" size="sm" disabled={again.isPending} onClick={() => again.mutate()}>
+        重试
+      </Button>
+      {again.error && <span className="text-destructive">{errorMessage(again.error)}</span>}
+    </p>
   );
 }
 

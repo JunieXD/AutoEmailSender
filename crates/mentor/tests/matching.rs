@@ -85,6 +85,7 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     .await
     .unwrap();
     let query = MentorQuery {
+        reply_outcome: None,
         unanswered_days: None,
         status: None,
         keyword: None,

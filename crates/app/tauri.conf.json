@@ -12,6 +12,7 @@
     "windows": [
       {
         "title": "Auto Email Sender",
+        "visible": false,
         "width": 1280,
         "height": 820,
         "minWidth": 380,

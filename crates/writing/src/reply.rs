@@ -44,7 +44,7 @@ pub async fn history(db: &SqlitePool, mentor: i64, reply_to: &str) -> Result<Vec
                1 AS source, 0 AS from_mentor, 0 AS target
              FROM email WHERE mentor_id = ?1 AND state IN ('sent', 'bounced')
              UNION ALL
-             SELECT m.subject, substr(m.body_text, 1, 10000), m.sent_at, m.id,
+             SELECT m.subject, m.body_text, m.sent_at, m.id,
                0, m.kind <> 'sent', m.id = ?2
              FROM message m JOIN message_mentor mm ON mm.message_id = m.id
              WHERE mm.mentor_id = ?1
@@ -61,7 +61,7 @@ pub async fn history(db: &SqlitePool, mentor: i64, reply_to: &str) -> Result<Vec
             letter: Letter {
                 subject: row.subject,
                 body_md: if row.from_mentor {
-                    receive::quote::split(&row.body).0.to_owned()
+                    receive::quote::for_ai(&row.body)
                 } else {
                     row.body
                 },

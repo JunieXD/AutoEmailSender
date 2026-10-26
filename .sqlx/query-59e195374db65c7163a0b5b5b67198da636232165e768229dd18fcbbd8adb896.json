@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM message_mentor mm\n            JOIN mentor m ON m.id = mm.mentor_id WHERE mm.message_id = ? AND m.trashed_at IS NULL) AS \"active!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "active!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "59e195374db65c7163a0b5b5b67198da636232165e768229dd18fcbbd8adb896"
+}

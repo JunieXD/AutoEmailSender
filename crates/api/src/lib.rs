@@ -8,10 +8,12 @@ use fact_check::*;
 pub mod startup;
 mod statistics;
 mod tasks;
+mod todos;
 use crawling::*;
 use statistics::*;
 use std::collections::BTreeMap;
 use tasks::*;
+use todos::*;
 
 use base64::prelude::{BASE64_STANDARD, Engine};
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,8 @@ pub struct Context {
     pub sender: send::Sender,
     pub receiver: receive::Receiver,
     pub matcher: matching::Matcher,
+    pub reply_processor: receive::outcome::Processor,
+    pub todo_reminders: receive::reminders::Scheduler,
     pub crawler: crawl::runner::Crawler,
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
@@ -281,6 +285,22 @@ operations! {
     "writeLetter" => write_letter(FirstDraftEdit) -> writing::Letter;
     "checkMailDomain" => check_mail_domain(MailAddress) -> Option<check::Problem>;
     "approveFirstEmail" => approve_first_email(FirstEmail) -> ();
+    "getAiReplyTodos" => get_ai_reply_todos(Nothing) -> bool;
+    "setAiReplyTodos" => set_ai_reply_todos(AiReplyTodos) -> ();
+    "getTodoReminders" => get_todo_reminders(Nothing) -> bool;
+    "setTodoReminders" => set_todo_reminders(NotificationSetting) -> ();
+    "addTodo" => add_todo(NewTodo) -> i64;
+    "updateTodo" => update_todo(TodoEdit) -> ();
+    "setTodoDone" => set_todo_done(TodoDone) -> ();
+    "deleteTodo" => delete_todo(TodoId) -> ();
+    "listTodos" => list_todos(email::todos::TodoQuery) -> email::todos::TodoPage;
+    "retryReplyTodos" => retry_reply_todos(ReplyMessage) -> ();
+    "getAiReplyOutcome" => get_ai_reply_outcome(Nothing) -> bool;
+    "setAiReplyOutcome" => set_ai_reply_outcome(AiReplyOutcome) -> ();
+    "setReplyOutcome" => set_reply_outcome(ReplyOutcomeEdit) -> ();
+    "retryReplyOutcome" => retry_reply_outcome(ReplyMessage) -> ();
+    "replyProcessing" => reply_processing(Nothing) -> email::outcome::ReplyProcessing;
+    "resumeReplyProcessing" => resume_reply_processing(Nothing) -> ();
     "listCorrespondence" => list_correspondence(MentorId) -> Vec<Entry>;
     "markRead" => mark_read(MentorId) -> ();
     "withdrawEmail" => withdraw_email(EmailId) -> ();
@@ -501,7 +521,10 @@ async fn preview_merge(
 }
 
 async fn merge_mentors(ctx: &Context, input: MentorMerge) -> Result<(), CallError> {
-    Ok(mentor::merge::merge(&ctx.db, input.keep, input.other, now()).await?)
+    mentor::merge::merge(&ctx.db, input.keep, input.other, now()).await?;
+    ctx.reply_processor.wake();
+    ctx.todo_reminders.wake();
+    Ok(())
 }
 
 /// Looks up the earlier mail at a mentor's new addresses without waiting for the next round.
@@ -520,15 +543,22 @@ async fn list_trash(
 }
 
 async fn trash_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
-    Ok(mentor::trash::trash(&ctx.db, &input.ids, now()).await?)
+    mentor::trash::trash(&ctx.db, &input.ids, now()).await?;
+    ctx.todo_reminders.wake();
+    Ok(())
 }
 
 async fn restore_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
-    Ok(mentor::trash::restore(&ctx.db, &input.ids, now()).await?)
+    mentor::trash::restore(&ctx.db, &input.ids, now()).await?;
+    ctx.reply_processor.wake();
+    ctx.todo_reminders.wake();
+    Ok(())
 }
 
 async fn delete_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
-    Ok(mentor::trash::delete(&ctx.db, &input.ids).await?)
+    mentor::trash::delete(&ctx.db, &input.ids).await?;
+    ctx.todo_reminders.wake();
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -1795,18 +1825,75 @@ async fn discard_follow_up_draft(ctx: &Context, key: EmailId) -> Result<(), Call
     )
 }
 
+#[derive(Debug, Deserialize, TS)]
+pub struct AiReplyOutcome {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyMessage {
+    pub message_id: i64,
+}
+
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplyOutcomeEdit {
+    pub message_id: i64,
+    pub outcome: email::outcome::ReplyOutcome,
+}
+
+async fn get_ai_reply_outcome(ctx: &Context, _: Nothing) -> Result<bool, CallError> {
+    Ok(email::outcome::enabled(&ctx.db).await?)
+}
+async fn set_ai_reply_outcome(ctx: &Context, input: AiReplyOutcome) -> Result<(), CallError> {
+    email::outcome::set_enabled(&ctx.db, input.enabled, now()).await?;
+    ctx.reply_processor.wake();
+    Ok(())
+}
+async fn set_reply_outcome(ctx: &Context, input: ReplyOutcomeEdit) -> Result<(), CallError> {
+    if !email::outcome::set(&ctx.db, input.message_id, input.outcome).await? {
+        return Err(CallError::invalid(
+            "只能标记导师的回信，请重新选择回信。".into(),
+        ));
+    }
+    ctx.reply_processor.wake();
+    Ok(())
+}
+async fn retry_reply_outcome(ctx: &Context, input: ReplyMessage) -> Result<(), CallError> {
+    require_applied(
+        email::outcome::retry(&ctx.db, input.message_id, now()).await?,
+        "这封回信没有标记失败的结果可重试。",
+    )?;
+    ctx.reply_processor.wake();
+    Ok(())
+}
+async fn reply_processing(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<email::outcome::ReplyProcessing, CallError> {
+    Ok(email::outcome::progress(&ctx.db).await?)
+}
+async fn resume_reply_processing(ctx: &Context, _: Nothing) -> Result<(), CallError> {
+    email::outcome::resume(&ctx.db).await?;
+    ctx.reply_processor.wake();
+    Ok(())
+}
+
 /// An email the app sent, or mail seen in the mailbox, in the correspondence with a mentor.
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum Entry {
     Email(email::Email),
     Message(receive::Message),
+    Todo(email::todos::Todo),
 }
 
 /// The correspondence with a mentor, oldest first; emails still to go out come last.
 async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry>, CallError> {
-    let emails = email::list(&ctx.db, input.id).await?;
-    let messages = receive::list(&ctx.db, input.id).await?;
+    let mut tx = ctx.db.begin().await?;
+    let emails = email::list_in(&mut tx, input.id).await?;
+    let messages = receive::list_in(&mut tx, input.id).await?;
     let mut entries: Vec<(i64, Entry)> = emails
         .into_iter()
         .map(|e| {
@@ -1823,8 +1910,28 @@ async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry
         })
         .chain(messages.into_iter().map(|m| (m.sent_at, Entry::Message(m))))
         .collect();
+    let todos = email::todos::for_mentor(&mut *tx, input.id).await?;
+    let mut from_replies: BTreeMap<i64, Vec<email::todos::Todo>> = BTreeMap::new();
+    for todo in todos {
+        if let Some(id) = todo.message_id {
+            from_replies.entry(id).or_default().push(todo);
+        } else {
+            entries.push((todo.created_at, Entry::Todo(todo)));
+        }
+    }
     entries.sort_by_key(|(at, _)| *at);
-    Ok(entries.into_iter().map(|(_, e)| e).collect())
+    let mut result = Vec::new();
+    for (_, entry) in entries {
+        let message = match &entry {
+            Entry::Message(m) => Some(m.id),
+            _ => None,
+        };
+        result.push(entry);
+        if let Some(todos) = message.and_then(|id| from_replies.remove(&id)) {
+            result.extend(todos.into_iter().map(Entry::Todo));
+        }
+    }
+    Ok(result)
 }
 
 async fn mark_read(ctx: &Context, input: MentorId) -> Result<(), CallError> {
@@ -2137,6 +2244,8 @@ mod writing_tests {
             sender: Default::default(),
             receiver: Default::default(),
             matcher: Default::default(),
+            reply_processor: Default::default(),
+            todo_reminders: Default::default(),
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
@@ -2245,6 +2354,8 @@ mod writing_tests {
             sender: Default::default(),
             receiver: Default::default(),
             matcher: Default::default(),
+            reply_processor: Default::default(),
+            todo_reminders: Default::default(),
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
@@ -2269,5 +2380,116 @@ mod writing_tests {
                 }])
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reply_outcome_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn operations_expose_reply_only_fields_and_reject_non_reply_edits(db: SqlitePool) {
+        sqlx::query("INSERT INTO mailbox(id,address,sender_name,provider,smtp_host,smtp_port,smtp_security,imap_host,imap_port,imap_security,auth,secret,daily_limit,min_interval_s,rotation_order,created_at) VALUES(1,'me@example.com','学生','custom','localhost',465,'tls','localhost',993,'tls','password','fixture',50,60,1,0)").execute(&db).await.unwrap();
+        let m = mentor::create(
+            &db,
+            &mentor::MentorFields {
+                name: "导师".into(),
+                ..Default::default()
+            },
+            1,
+        )
+        .await
+        .unwrap();
+        let mut ids = vec![];
+        for (uid, kind) in ["reply", "auto_reply", "sent"].into_iter().enumerate() {
+            let id=sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,sent_at,from_address,truncated) VALUES(1,'INBOX',1,?,?,1,'mentor@example.edu',0)").bind(uid as i64).bind(kind).execute(&db).await.unwrap().last_insert_rowid();
+            sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
+                .bind(m)
+                .bind(id)
+                .execute(&db)
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        let ctx = Context {
+            db,
+            net: net::Net::new(vec![]).unwrap(),
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            reply_processor: Default::default(),
+            todo_reminders: Default::default(),
+            crawler: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+            materials: Default::default(),
+        };
+        assert_eq!(
+            call(&ctx, "getAiReplyOutcome", json!({})).await.unwrap(),
+            false
+        );
+        call(&ctx, "setAiReplyOutcome", json!({"enabled":true}))
+            .await
+            .unwrap();
+        assert_eq!(
+            call(&ctx, "getAiReplyOutcome", json!({})).await.unwrap(),
+            true
+        );
+        let entries = call(&ctx, "listCorrespondence", json!({"id":m}))
+            .await
+            .unwrap();
+        assert_eq!(entries[0]["message"]["marking"], json!({"state":"marking"}));
+        assert_eq!(entries[0]["message"]["outcome"], Value::Null);
+        for i in [1, 2] {
+            assert!(entries[i]["message"].get("outcome").is_none());
+            assert!(entries[i]["message"].get("marking").is_none());
+            let error = call(
+                &ctx,
+                "setReplyOutcome",
+                json!({"messageId":ids[i],"outcome":"interested"}),
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(error.code, ErrorCode::Invalid));
+            assert!(error.message.contains("导师的回信"));
+        }
+        let claim = email::outcome::next(&ctx.db).await.unwrap().unwrap();
+        email::outcome::fail(&ctx.db, claim, "格式不对")
+            .await
+            .unwrap();
+        assert_eq!(
+            call(&ctx, "replyProcessing", json!({})).await.unwrap()["failed"],
+            1
+        );
+        call(&ctx, "retryReplyOutcome", json!({"messageId":ids[0]}))
+            .await
+            .unwrap();
+        assert_eq!(
+            call(&ctx, "replyProcessing", json!({})).await.unwrap()["remaining"],
+            1
+        );
+        call(
+            &ctx,
+            "setReplyOutcome",
+            json!({"messageId":ids[0],"outcome":"no_slot"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            call(&ctx, "replyProcessing", json!({})).await.unwrap()["remaining"],
+            0
+        );
+        let entries = call(&ctx, "listCorrespondence", json!({"id":m}))
+            .await
+            .unwrap();
+        assert_eq!(entries[0]["message"]["outcome"], "no_slot");
+        assert_eq!(entries[0]["message"]["marking"], Value::Null);
+        call(&ctx, "resumeReplyProcessing", json!({}))
+            .await
+            .unwrap();
+        call(&ctx, "setAiReplyOutcome", json!({"enabled":false}))
+            .await
+            .unwrap();
     }
 }

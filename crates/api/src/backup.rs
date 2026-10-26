@@ -396,11 +396,11 @@ fn prune(dir: &Path, latest: &Path) -> Result<()> {
 
 /// Run with the data lock held and no open database. Each rename is its own durable checkpoint:
 /// a missing staged component means it has already been installed, never that it should be reset.
-pub fn apply_pending(dir: &Path) -> Result<()> {
+pub fn apply_pending(dir: &Path) -> Result<bool> {
     if !dir.join(PENDING).try_exists()? {
         // Cleanup can itself have been interrupted after removing the intent marker.
         remove_dir(&dir.join("restore-old"))?;
-        return Ok(());
+        return Ok(false);
     }
     let stage = dir.join("restore");
     let old = dir.join("restore-old");
@@ -428,7 +428,7 @@ pub fn apply_pending(dir: &Path) -> Result<()> {
     sync_dir(dir)?;
     remove_dir(&stage)?;
     remove_dir(&old)?;
-    Ok(())
+    Ok(true)
 }
 
 fn rename(from: &Path, to: &Path) -> io::Result<()> {
@@ -510,8 +510,8 @@ mod tests {
             for (from, to) in moves.iter().take(interrupted_after) {
                 rename(&root.join(from), &root.join(to)).unwrap();
             }
-            apply_pending(root).unwrap();
-            apply_pending(root).unwrap();
+            assert!(apply_pending(root).unwrap());
+            assert!(!apply_pending(root).unwrap());
             assert_eq!(
                 fs::read_to_string(root.join("app.db")).unwrap(),
                 "restored database"

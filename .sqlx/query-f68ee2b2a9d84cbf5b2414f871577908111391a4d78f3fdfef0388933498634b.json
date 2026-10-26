@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET ai_reply_outcome = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f68ee2b2a9d84cbf5b2414f871577908111391a4d78f3fdfef0388933498634b"
+}

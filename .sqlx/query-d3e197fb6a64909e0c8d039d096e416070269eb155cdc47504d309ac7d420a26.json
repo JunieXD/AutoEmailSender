@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT due_date AS \"due_date!\", min(due_changed_at) AS \"changed!: i64\" FROM todo\n        WHERE done_at IS NULL AND reminded_at IS NULL AND due_date >= ?\n          AND mentor_id NOT IN (SELECT id FROM mentor WHERE trashed_at IS NOT NULL)\n        GROUP BY due_date ORDER BY due_date",
+  "describe": {
+    "columns": [
+      {
+        "name": "due_date!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "todo",
+            "name": "due_date"
+          }
+        }
+      },
+      {
+        "name": "changed!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "d3e197fb6a64909e0c8d039d096e416070269eb155cdc47504d309ac7d420a26"
+}

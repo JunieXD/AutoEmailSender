@@ -154,6 +154,7 @@ async fn contact_cohort_shares_contact_rules_and_counts_real_mail(db: SqlitePool
     ] {
         let query = mentor::MentorQuery {
             status: Some(status),
+            reply_outcome: None,
             keyword: None,
             unanswered_days: None,
             page: NonZeroU32::MIN,

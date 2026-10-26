@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE reply_processing SET state = 'running',\n        claim = (SELECT reply_processing_claim FROM profile)\n        WHERE (message_id, action) = (\n            SELECT q.message_id, q.action FROM reply_processing q JOIN message msg ON msg.id = q.message_id\n            WHERE q.state = 'queued' AND EXISTS (\n                SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id\n                WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL)\n            ORDER BY msg.sent_at DESC, msg.id DESC, q.action LIMIT 1)\n          AND (SELECT reply_processing_paused_at IS NULL FROM profile)\n        RETURNING message_id AS \"id!\", action AS \"action!: Action\", claim AS \"claim!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "action!: Action",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "action"
+          }
+        }
+      },
+      {
+        "name": "claim!",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "claim"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f9c700553fc4b76971c3f49a3a0bb5d6618bc6c73eac372be8d453ed42fa6abe"
+}

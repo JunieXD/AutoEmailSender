@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE message SET outcome = ? WHERE id = ? AND kind = 'reply'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2dbf90f9435c4d1560a71c6259645670827d4614d5ed20b9d31ea22a9d183a04"
+}

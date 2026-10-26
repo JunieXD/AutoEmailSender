@@ -17,6 +17,8 @@ fn context(db: SqlitePool) -> Context {
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),
+        reply_processor: Default::default(),
+        todo_reminders: Default::default(),
         materials: Default::default(),
     }
 }

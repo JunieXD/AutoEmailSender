@@ -700,6 +700,40 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
     Ok(())
 }
 
+/// Explicit reply scenarios keep every outcome and work state visible in development.
+pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM message WHERE kind = 'reply' ORDER BY sent_at DESC, id DESC LIMIT 6",
+    )
+    .fetch_all(db)
+    .await?;
+    sqlx::query("UPDATE message SET outcome = CASE id % 4 WHEN 0 THEN 'interested' WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' ELSE 'unclear' END WHERE kind = 'reply'").execute(db).await?;
+    for (id, outcome) in ids
+        .iter()
+        .zip(["interested", "no_slot", "declined", "unclear"])
+    {
+        sqlx::query("UPDATE message SET outcome = ? WHERE id = ?")
+            .bind(outcome)
+            .bind(id)
+            .execute(db)
+            .await?;
+    }
+    sqlx::query("UPDATE message SET body_text = CASE outcome WHEN 'interested' THEN '欢迎报考，请发成绩单，下周可以面谈。' WHEN 'no_slot' THEN '抱歉，今年的名额已经招满。' WHEN 'declined' THEN '你的研究方向和本组不符，无法接收。' ELSE '来信已收到，谢谢。' END WHERE kind = 'reply' AND outcome IS NOT NULL").execute(db).await?;
+    sqlx::query("UPDATE profile SET ai_reply_outcome = 1")
+        .execute(db)
+        .await?;
+    for (id, state) in ids.iter().skip(4).zip(["queued", "failed"]) {
+        sqlx::query("UPDATE message SET outcome = NULL WHERE id = ?")
+            .bind(id)
+            .execute(db)
+            .await?;
+        sqlx::query("INSERT INTO reply_processing(message_id, action, queued_at, state, error) VALUES (?, 'outcome', ?, ?, ?)")
+            .bind(id).bind(now).bind(state).bind((state == "failed").then_some("模型没有按要求标出回信结果，可以重试或换个模型。"))
+            .execute(db).await?;
+    }
+    Ok(())
+}
+
 /// Show both unresolved findings and checks that can be retried.
 pub async fn fact_checks(db: &SqlitePool) -> Result {
     let ids: Vec<i64> =
@@ -727,5 +761,45 @@ pub async fn fact_checks(db: &SqlitePool) -> Result {
             .execute(db)
             .await?;
     }
+    Ok(())
+}
+
+pub async fn todos(db: &SqlitePool, now: i64) -> Result {
+    use chrono::{Days, Local, TimeZone};
+    let today = Local
+        .timestamp_millis_opt(now)
+        .single()
+        .ok_or("invalid sample date")?
+        .date_naive();
+    let replies: Vec<(i64, i64)> = sqlx::query_as("SELECT mm.mentor_id,m.id FROM message m JOIN message_mentor mm ON mm.message_id=m.id JOIN mentor t ON t.id=mm.mentor_id WHERE m.kind='reply' AND t.trashed_at IS NULL ORDER BY m.id LIMIT 7").fetch_all(db).await?;
+    for (i, (text, offset, time, done, manual)) in [
+        ("补发成绩单", Some(-2), Some("17:00"), false, false),
+        ("确认今天的面谈安排", Some(0), Some("18:00"), false, false),
+        ("把简历发给导师", Some(1), None, false, false),
+        ("完成报名表", Some(5), Some("17:00"), false, false),
+        ("整理研究计划", None, None, false, false),
+        ("发送本科成绩单", Some(-1), None, true, false),
+        ("准备面谈要问的问题", None, None, false, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (mentor, message) = replies[i % replies.len()];
+        let due = offset
+            .map(|offset: i32| {
+                if offset < 0 {
+                    today - Days::new((-offset) as u64)
+                } else {
+                    today + Days::new(offset as u64)
+                }
+            })
+            .map(|d| d.to_string());
+        sqlx::query("INSERT INTO todo(mentor_id,message_id,text,due_date,due_time,done_at,created_at,due_changed_at) VALUES(?,?,?,?,?,?,?,?)")
+            .bind(mentor).bind((!manual).then_some(message)).bind(text).bind(due).bind(time)
+            .bind(done.then_some(now-DAY)).bind(now-3*DAY+i as i64).bind(now-3*DAY).execute(db).await?;
+    }
+    sqlx::query("UPDATE profile SET ai_reply_todos=1,todo_reminders=1")
+        .execute(db)
+        .await?;
     Ok(())
 }

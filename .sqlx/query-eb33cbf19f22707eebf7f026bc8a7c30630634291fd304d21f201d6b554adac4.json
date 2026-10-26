@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO todo(mentor_id, text, due_date, due_time, created_at, due_changed_at)\n        SELECT id, ?2, ?3, ?4, ?5, ?5 FROM mentor WHERE id = ?1 AND trashed_at IS NULL\n        RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "todo",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "eb33cbf19f22707eebf7f026bc8a7c30630634291fd304d21f201d6b554adac4"
+}

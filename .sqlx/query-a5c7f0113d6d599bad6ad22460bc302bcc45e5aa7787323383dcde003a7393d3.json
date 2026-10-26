@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS \"truncated: bool\"\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
+  "query": "SELECT m.id, m.kind AS \"kind: Kind\", m.from_address, m.subject, m.sent_at, m.read_at,\n             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS \"truncated: bool\",\n             m.outcome AS \"outcome: email::outcome::ReplyOutcome\", q.state, q.error, t.state AS todo_state, t.error AS todo_error\n           FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n           LEFT JOIN reply_processing q ON q.message_id = m.id AND q.action = 'outcome'\n           LEFT JOIN reply_processing t ON t.message_id = m.id AND t.action = 'todos'\n           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id",
   "describe": {
     "columns": [
       {
@@ -112,6 +112,61 @@
             "name": "truncated"
           }
         }
+      },
+      {
+        "name": "outcome: email::outcome::ReplyOutcome",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "outcome"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "name": "todo_state",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "todo_error",
+        "ordinal": 14,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "reply_processing",
+            "name": "error"
+          }
+        }
       }
     ],
     "parameters": {
@@ -127,8 +182,13 @@
       true,
       true,
       true,
-      false
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "c7f7c4c69084fadfac184ac096f44b4611216549220f0eefde04b2779b636361"
+  "hash": "a5c7f0113d6d599bad6ad22460bc302bcc45e5aa7787323383dcde003a7393d3"
 }

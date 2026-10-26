@@ -65,16 +65,16 @@ pub async fn record_crawl(
     Ok(())
 }
 
-/// Keep billed checks even if their email was deleted while the provider was answering.
-pub async fn record_fact_check(
+/// Keep billed calls even if their email was deleted while the provider was answering.
+pub async fn record_for_email(
     db: &SqlitePool,
     config_id: i64,
     model: &str,
-    email_id: i64,
+    purpose: Purpose,
+    email_id: Option<i64>,
     usage: Usage,
     now: i64,
 ) -> Result<(), sqlx::Error> {
-    let purpose = Purpose::FactCheck;
     sqlx::query!(
         "INSERT INTO usage (at, model_config_id, model, purpose, email_id,
            input_tokens, cached_tokens, output_tokens)

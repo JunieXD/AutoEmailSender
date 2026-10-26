@@ -17,9 +17,9 @@
 | `crates/profile` | 个人资料和信件样式 |
 | `crates/material` | 材料：存文件、提取文字 |
 | `crates/template` | 模板和占位符 |
-| `crates/email` | 邮件：草稿和状态 |
+| `crates/email` | 邮件：草稿和状态、回信结果、待办存取与本地提醒排期、持久的回信处理队列 |
 | `crates/send` | 发信：常驻的发信任务、邮箱轮转 |
-| `crates/receive` | 收信：常驻的收信任务，把邮件归到导师，自动回复、退信和引用的原文 |
+| `crates/receive` | 收信：常驻的收信任务，把邮件归到导师，自动回复、退信、引用的原文；AI 标记回信结果与提取待办、待办提醒的工作循环 |
 | `crates/check` | 发送前检查：规则和收件域名 |
 | `crates/matching` | 匹配分析：持久队列、结构化结果校验、用量估算 |
 | `crates/task` | 首封和追问任务：固定输入、审核、草稿生成队列 |
@@ -27,7 +27,7 @@
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
-| `crates/app` | Tauri 桌面应用：窗口、数据目录，把界面的调用交给 `api` |
+| `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
 | `ui` | 界面；`ui/src/api/types.ts` 是生成的 |
 
@@ -48,7 +48,7 @@
 | `pnpm sqlx` | 改了 SQL 或迁移后，重新生成 `.sqlx` 里的查询元数据 |
 | `cargo xtask types` | 改了操作或它们的类型后，重新生成 `ui/src/api/types.ts` |
 | `cargo xtask bench` | 按[性能预算](data-model.md#性能)的规模测高频查询 |
-| `pnpm --dir ui icons` | 从 `docs/icon.svg` 重新生成应用图标 |
+| `pnpm --dir ui icons` | 从 `docs/icon.svg` 和 `docs/tray.svg` 重新生成应用图标和托盘图标 |
 | `pnpm package` | 打包安装包 |
 
 - 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
@@ -57,13 +57,20 @@
 - 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
 - CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
 
+### 桌面后台运行
+
+- `crates/app/src/background.rs` 管理 Tauri 自带的托盘和首次关窗的一次性说明对话框，`autostart.rs` 管理系统登录项；后台工作仍由核心运行。
+- 开机自启使用官方 `tauri-plugin-autostart`，macOS 使用默认的 LaunchAgent。登录项以应用标识命名，开发版与安装版分开；启动参数 `--autostart` 让主窗口保持隐藏。普通启动、再次启动、恢复备份后的启动和 macOS Dock 图标打开窗口。启动时读取现有登记命令，只在路径或参数改变时重新登记；macOS 的 App Translocation 临时路径不允许登记。
+- 界面通过 `ui/src/api/app.ts` 的 `autostartEnabled()` 和 `setAutostart(enabled)` 读写系统状态。插件只在 Rust 层使用，不增加界面的插件权限。
+- `crates/app/Info.plist` 设置 `NSAppSleepDisabled`，避免 macOS 在窗口隐藏后通过 App Nap 推迟定时发送和收信。
+
 ### 浏览器预览
 
 `pnpm preview`（即 `cargo xtask web`）只用于开发，不进入安装包。先运行 `cargo xtask seed` 填入示例数据，再打开终端打印的网址；按 Ctrl+C 同时停止核心服务和 Vite，Unix 上收到 SIGTERM 时也会清理后退出。
 
 - 使用当前工作树的 `.dev-data`，与桌面开发版共用数据目录锁和核心初始化，不能同时运行。界面的编辑会保存到这份真实数据里。
 - 核心 HTTP 服务和 Vite 都只监听 `127.0.0.1`，启动时各自分配空闲端口，多个工作树可同时预览。Vite 通过 `--strictPort` 使用分配到的端口；请求必须同时带有本次启动的随机令牌和这个 Vite 页面的 Origin。令牌放在网址片段里，打开后从地址栏移除，保存在当前标签页的会话存储中以支持刷新。
-- 不运行发信、收信、匹配、抓取、草稿生成的后台循环；排队工作保留原状态，之后启动桌面开发版会继续处理。手动收信明确提示预览不支持；其他操作仍调用真实核心，主动测试连接或调用模型仍可能访问外部服务。
+- 不运行发信、收信、匹配、抓取、草稿生成、回信处理和待办提醒的后台循环；排队工作保留原状态，之后启动桌面开发版会继续处理。手动收信明确提示预览不支持；其他操作仍调用真实核心，主动测试连接或调用模型仍可能访问外部服务。
 - Tauri 事件的注册和注销为空操作，不推送事件；界面原有的轮询、操作后刷新照常工作。
 - 启动状态返回成功，数据位置和版本来自本次核心；导出日志、导出表格、打开数据目录等原生能力明确提示预览不支持。外部链接交给浏览器打开。
 - 仅在 Vite 的 `preview` 开发模式注入调用桥；正式 `pnpm --dir ui build` 和打包不会包含它。
@@ -81,6 +88,8 @@
 
 - 耗 CPU 的工作（解析 HTML、PDF）放到 `spawn_blocking` 或专门的线程池，不占异步执行线程。
 - 后台任务出错时，把错误记在任务上给用户看。只捕获能处理的错误，比如唯一约束冲突转成"已存在"。
+- `receive::outcome` 在收信事务入队后由宿主唤醒，开关、重试、继续、合并和恢复导师也会唤醒；空闲时等待通知，不轮询数据库。`email::outcome` 的队列按动作分别领取标结果和提取待办，共用领取计数、暂停、进度和模型额度，重启恢复处理中记录；两种动作各调用一次模型，与匹配、抓取和草稿生成使用同一个 `model::background::Limit`。个人资料中的递增领取计数跨队列行的删除和重建保存，取得共享额度后再读取当前默认模型和同意状态。`receive::reply_input` 共用取材与 6,000 字符预算，待办另带回信的本地日期和星期。结果分别由 `email::outcome`、`email::todos` 在核对领取后与出队一起提交。
+- `email::todos` 保存待办，按本地日期和时间排序、换算提醒时刻；截止时间最后修改时刻用于排除用户刚看到的待办，修改日期或时间后重新计算提醒。排期先按截止日期分组，只读取本次需要通知的待办内容，并取下一次有效提醒时刻。`receive::reminders` 启动时补查，此后睡到最近的提醒时刻或被待办变化唤醒，不轮询数据库；开关、增改删、完成、导师回收／恢复／合并和 AI 提取都会唤醒。提醒文案由核心生成，桌面宿主调用系统通知，并推送 `todos-changed` 供界面刷新。
 - 计时和超时用单调时钟。电脑睡眠唤醒后，重新检查到期的定时发送。
 
 ## 时间

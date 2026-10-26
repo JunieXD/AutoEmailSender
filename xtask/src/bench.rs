@@ -77,6 +77,7 @@ pub async fn run(path: &Path) -> Result {
 
     let home = Duration::from_millis(30);
     let page = |status, keyword: Option<&str>, n: u32| MentorQuery {
+        reply_outcome: None,
         unanswered_days: None,
         status,
         keyword: keyword.map(Into::into),
@@ -106,6 +107,23 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
+    sqlx::query("UPDATE message SET outcome = CASE id % 5 WHEN 0 THEN 'interested' WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' WHEN 3 THEN 'unclear' ELSE NULL END WHERE kind = 'reply'").execute(&db).await?;
+    for filter in [
+        mentor::ReplyOutcomeFilter::Interested,
+        mentor::ReplyOutcomeFilter::NoSlot,
+        mentor::ReplyOutcomeFilter::Declined,
+        mentor::ReplyOutcomeFilter::Unclear,
+        mentor::ReplyOutcomeFilter::Unmarked,
+    ] {
+        let mut query = page(Some(ContactStatus::Replied), None, 1);
+        query.reply_outcome = Some(filter);
+        report(
+            &format!("首页，回信结果 {filter:?}"),
+            median(async || mentor::list(&db, &query, NOW).await.map(drop)).await?,
+            home,
+        );
+    }
+
     for (label, unread) in [("往来列表，第 1 页", false), ("往来，新回信", true)] {
         let query = mentor::conversations::ConversationQuery {
             unread,
@@ -117,6 +135,23 @@ pub async fn run(path: &Path) -> Result {
             home,
         );
     }
+
+    sqlx::query("INSERT INTO todo(mentor_id,message_id,text,due_date,due_time,created_at,due_changed_at) SELECT mm.mentor_id,m.id,'发材料',CASE WHEN m.id % 5 <> 0 THEN '2026-10-28' END,CASE WHEN m.id % 5 = 1 THEN '17:00' END,0,0 FROM message m JOIN message_mentor mm ON mm.message_id=m.id WHERE m.kind='reply'").execute(&db).await?;
+    for n in [1, 100] {
+        let query = email::todos::TodoQuery {
+            page: NonZeroU32::new(n).ok_or("invalid todo page")?,
+        };
+        report(
+            &format!("待办，第 {n} 页"),
+            median(async || email::todos::list(&db, &query).await.map(drop)).await?,
+            home,
+        );
+    }
+    report(
+        "待办，提醒排期",
+        median(async || email::todos::local_reminders(&db, NOW).await.map(drop)).await?,
+        home,
+    );
 
     for (label, column) in [
         ("发送计划：待处理", send::plan::PlanColumn::Pending),

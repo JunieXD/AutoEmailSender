@@ -3,8 +3,10 @@ import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-rout
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
-import { dataLocation, exportLogs, openDataLocation } from "@/api/app";
+import { autostartEnabled, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
+import { ModelAction } from "@/components/ai-writing";
+import { refreshReplyOutcomes } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
@@ -23,6 +25,7 @@ const GROUPS = [
     sections: [
       { to: "/settings/mailboxes", label: "邮箱" },
       { to: "/settings/checks", label: "发送前检查" },
+      { to: "/settings/replies", label: "回信处理" },
     ],
   },
   { label: "AI", sections: [{ to: "/settings/models", label: "模型" }] },
@@ -30,6 +33,7 @@ const GROUPS = [
     label: "应用",
     sections: [
       { to: "/settings/notifications", label: "通知" },
+      { to: "/settings/background", label: "后台运行" },
       { to: "/settings/backup", label: "备份" },
       { to: "/settings/about", label: "关于和日志" },
     ],
@@ -161,6 +165,12 @@ export function NotificationsSection() {
         label="后台工作做完时通知"
         description="应用不在前台时，匹配分析等后台工作完成后弹出系统通知；在前台时在内容页提醒。"
       />
+      <Toggle
+        get="getTodoReminders"
+        set="setTodoReminders"
+        label="待办提醒"
+        description="有截止日期的待办，在截止前一天上午 9:00 弹出系统通知。"
+      />
     </Section>
   );
 }
@@ -196,8 +206,8 @@ function Toggle({
   label,
   description,
 }: {
-  get: "getReplyNotifications" | "getBackgroundNotifications" | "getAiFactCheck";
-  set: "setReplyNotifications" | "setBackgroundNotifications" | "setAiFactCheck";
+  get: "getReplyNotifications" | "getBackgroundNotifications" | "getTodoReminders" | "getAiFactCheck";
+  set: "setReplyNotifications" | "setBackgroundNotifications" | "setTodoReminders" | "setAiFactCheck";
   label: string;
   description: string;
 }) {
@@ -214,21 +224,138 @@ function Toggle({
     <div>
       <label className="flex items-center justify-between gap-4">
         <span>{label}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-label={label}
-          aria-checked={query.data ?? false}
+        <SwitchButton
+          label={label}
+          checked={query.data ?? false}
           disabled={query.data === undefined || save.isPending}
           onClick={() => save.mutate(!query.data)}
-          className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
-        >
-          <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
-        </button>
+        />
       </label>
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
       {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
       {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
     </div>
+  );
+}
+
+function SwitchButton({
+  label,
+  checked,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-label={label}
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onClick}
+      className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
+    >
+      <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
+    </button>
+  );
+}
+
+/** Replies the AI reads as they come (docs/ui.md#交互); turning either on asks the provider consent first. */
+export function ReplyProcessingSection() {
+  return (
+    <Section title="回信处理">
+      <AiSwitch
+        get="getAiReplyOutcome"
+        set="setAiReplyOutcome"
+        label="AI 标记回信结果"
+        description="开启后，导师的回信（包括已经收到的）会发给默认模型的服务商，标出有意向、无名额、拒绝或无法判断。不开也可以在往来里自己标。"
+      />
+      <AiSwitch
+        get="getAiReplyTodos"
+        set="setAiReplyTodos"
+        label="回信待办"
+        description="开启后，新收到的导师回信会发给默认模型的服务商，找出导师要你做的事和截止时间，列进待办；以前收到的不找。不开也可以在往来里自己添加待办。"
+      />
+    </Section>
+  );
+}
+
+function AiSwitch({
+  get,
+  set,
+  label,
+  description,
+}: {
+  get: "getAiReplyOutcome" | "getAiReplyTodos";
+  set: "setAiReplyOutcome" | "setAiReplyTodos";
+  label: string;
+  description: string;
+}) {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: [get], queryFn: () => call(get, {}) });
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => call(set, { enabled }),
+    onSuccess: async (_, enabled) => {
+      await queryClient.cancelQueries({ queryKey: [get] });
+      queryClient.setQueryData([get], enabled);
+      refreshReplyOutcomes(queryClient);
+    },
+  });
+  const busy = query.data === undefined || save.isPending;
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-4">
+        <span>{label}</span>
+        {query.data ? (
+          <SwitchButton label={label} checked disabled={busy} onClick={() => save.mutate(false)} />
+        ) : (
+          <ModelAction
+            disabled={busy}
+            onWrite={() => save.mutate(true)}
+            renderTrigger={(props) => <SwitchButton label={label} checked={false} {...props} />}
+          />
+        )}
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+      {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
+      {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
+    </div>
+  );
+}
+
+/** Whether the app starts with the computer; the system's login items keep it (docs/ui.md#交互). */
+export function BackgroundSection() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["autostartEnabled"], queryFn: autostartEnabled });
+  const save = useMutation({
+    mutationFn: setAutostart,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["autostartEnabled"] }),
+  });
+  return (
+    <Section title="后台运行">
+      <div>
+        <label className="flex items-center justify-between gap-4">
+          <span>开机时自动启动</span>
+          <SwitchButton
+            label="开机时自动启动"
+            checked={query.data ?? false}
+            disabled={query.data === undefined || save.isPending}
+            onClick={() => save.mutate(!query.data)}
+          />
+        </label>
+        <p className="mt-2 text-sm text-muted-foreground">开机后在后台运行，不打开窗口，定时发送和收信照常进行。</p>
+        {query.error && (
+          <p className="mt-2 text-sm text-destructive">开机启动的设置未能读取：{errorMessage(query.error)}</p>
+        )}
+        {save.error && <p className="mt-2 text-sm text-destructive">{errorMessage(save.error)}</p>}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        关闭窗口后，应用也留在后台继续工作，可以从托盘或菜单栏里的图标打开或退出。
+      </p>
+    </Section>
   );
 }

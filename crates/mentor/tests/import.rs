@@ -431,6 +431,7 @@ async fn export_uses_all_filtered_pages_and_list_order(db: SqlitePool) {
     let rows = export::export(
         &db,
         &Scope::Filter(export::Filter {
+            reply_outcome: None,
             unanswered_days: None,
             status: None,
             keyword: Some("北京大学".into()),
@@ -634,6 +635,7 @@ async fn shared_new_email_and_trash_separate(db: SqlitePool) {
     let rows = export::export(
         &db,
         &Scope::Filter(export::Filter {
+            reply_outcome: None,
             unanswered_days: None,
             status: None,
             keyword: None,
@@ -903,6 +905,7 @@ async fn full_width_email_exports_round_trip_without_duplicates(db: SqlitePool) 
         ["wang@pku.edu.cn"]
     );
     let scope = Scope::Filter(export::Filter {
+        reply_outcome: None,
         unanswered_days: None,
         status: None,
         keyword: None,
@@ -957,6 +960,7 @@ async fn full_width_name_exports_round_trip_without_duplicates(db: SqlitePool) {
     .unwrap();
     let id = mentor::create(&db, &fields, 0).await.unwrap();
     let scope = Scope::Filter(export::Filter {
+        reply_outcome: None,
         unanswered_days: None,
         status: None,
         keyword: None,

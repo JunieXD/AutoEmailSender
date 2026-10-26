@@ -8,6 +8,10 @@ export type Affiliation = { university: string | null, school: string | null, de
 
 export type AffiliationAddition = { before: Affiliation | null, added: Affiliation, };
 
+export type AiReplyOutcome = { enabled: boolean, };
+
+export type AiReplyTodos = { enabled: boolean, };
+
 export type ApprovalCandidate = { problems: number, factCheck: FactCheck | null, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
@@ -128,7 +132,7 @@ export type EnrichSkipReason = "missing_profile" | "deleted_crawl" | "complete" 
 
 export type EnrichState = "none" | "queued" | "running" | "done" | "failed";
 
-export type Entry = { "email": Email } | { "message": Message };
+export type Entry = { "email": Email } | { "message": Message } | { "todo": Todo };
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "needs_agreement" | "internal";
 
@@ -142,7 +146,11 @@ export type Field = "name" | "email" | "university" | "school" | "department" | 
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
 
-export type Filter = { unansweredDays?: number, status?: ContactStatus, keyword?: string, };
+export type Filter = { unansweredDays?: number, status?: ContactStatus,
+/**
+ * Applied only with status = replied.
+ */
+replyOutcome?: ReplyOutcomeFilter, keyword?: string, };
 
 export type Finding = { quote: string, reason: string, };
 
@@ -307,7 +315,11 @@ export type MentorQuery = {
 /**
  * All mentors when absent.
  */
-status?: ContactStatus, keyword?: string, unansweredDays?: number,
+status?: ContactStatus,
+/**
+ * Only applied with status = replied; ignored for other contact states.
+ */
+replyOutcome?: ReplyOutcomeFilter, keyword?: string, unansweredDays?: number,
 /**
  * Starts at 1.
  */
@@ -321,7 +333,7 @@ affiliation: Affiliation | null, affiliationCount: number,
 /**
  * The start of the research description, enough for the two lines the list shows.
  */
-research: string | null, matchState: MatchSummary, contact: Contact, tags: Array<Tag>, };
+research: string | null, matchState: MatchSummary, contact: Contact, outcome: ReplyOutcome | null, tags: Array<Tag>, };
 
 export type MergePreview = { emails: number, affiliations: number, discardedDrafts: Array<DraftKind>, };
 
@@ -337,7 +349,7 @@ quote: string | null,
 /**
  * Only its start was read, which may leave out some of the text.
  */
-truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
+truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, outcome: ReplyOutcome | null, marking: OutcomeMarking | null, todoExtraction: TodoExtraction | null, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
@@ -429,9 +441,15 @@ export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type NewTask = { sourceTaskId: number | null, kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, templateSourceId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
 
+export type NewTodo = { mentorId: number, text: string, dueDate: string | null, dueTime: string | null, };
+
 export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
+
+export type OpenTodo = { mentorId: number, mentorName: string, id: number, text: string, dueDate: string | null, dueTime: string | null, done: boolean, messageId: number | null, createdAt: number, };
+
+export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
 
 export type PageKind = "entry" | "list" | "profile" | "enrich_profile" | "enrich_child";
 
@@ -487,6 +505,18 @@ export type ReplyDraft = { factCheck: FactCheck | null, id: number, replyTo: str
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
 export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+
+export type ReplyMessage = { messageId: number, };
+
+export type ReplyOutcome = "interested" | "no_slot" | "declined" | "unclear";
+
+export type ReplyOutcomeEdit = { messageId: number, outcome: ReplyOutcome, };
+
+export type ReplyOutcomeFilter = "interested" | "no_slot" | "declined" | "unclear" | "unmarked";
+
+export type ReplyProcessing = { remaining: number, failed: number, pause: ReplyProcessingPause | null, };
+
+export type ReplyProcessingPause = { at: number, reason: string, };
 
 export type ReplyTarget = { id: number, messageId: string | null, fromAddress: string, fromName: string | null, subject: string | null, sentAt: number, };
 
@@ -605,6 +635,20 @@ export type TemplateSummary = { id: number, name: string, subject: string,
 isDefault: boolean, };
 
 export type TestLetter = { templateName: string, subject: string, bodyMd: string, attachments: Array<number>, };
+
+export type Todo = { id: number, text: string, dueDate: string | null, dueTime: string | null, done: boolean, messageId: number | null, createdAt: number, };
+
+export type TodoDone = { id: number, done: boolean, };
+
+export type TodoEdit = { id: number, text: string, dueDate: string | null, dueTime: string | null, };
+
+export type TodoExtraction = { "state": "extracting" } | { "state": "failed", reason: string, };
+
+export type TodoId = { id: number, };
+
+export type TodoPage = { todos: Array<OpenTodo>, total: number, };
+
+export type TodoQuery = { page: number, };
 
 export type TokenTotals = { input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
 
@@ -772,6 +816,22 @@ export interface Operations {
   writeLetter: { input: FirstDraftEdit; output: Letter };
   checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
+  getAiReplyTodos: { input: Nothing; output: boolean };
+  setAiReplyTodos: { input: AiReplyTodos; output: null };
+  getTodoReminders: { input: Nothing; output: boolean };
+  setTodoReminders: { input: NotificationSetting; output: null };
+  addTodo: { input: NewTodo; output: number };
+  updateTodo: { input: TodoEdit; output: null };
+  setTodoDone: { input: TodoDone; output: null };
+  deleteTodo: { input: TodoId; output: null };
+  listTodos: { input: TodoQuery; output: TodoPage };
+  retryReplyTodos: { input: ReplyMessage; output: null };
+  getAiReplyOutcome: { input: Nothing; output: boolean };
+  setAiReplyOutcome: { input: AiReplyOutcome; output: null };
+  setReplyOutcome: { input: ReplyOutcomeEdit; output: null };
+  retryReplyOutcome: { input: ReplyMessage; output: null };
+  replyProcessing: { input: Nothing; output: ReplyProcessing };
+  resumeReplyProcessing: { input: Nothing; output: null };
   listCorrespondence: { input: MentorId; output: Array<Entry> };
   markRead: { input: MentorId; output: null };
   withdrawEmail: { input: EmailId; output: null };

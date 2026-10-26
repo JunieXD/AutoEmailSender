@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT todo_reminders AS \"on!: bool\" FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "on!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "todo_reminders"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f1eef4acd5c994b250c805abdfa192852505ee7983ae6a1204b2921add9fe4e5"
+}
