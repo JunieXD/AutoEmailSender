@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET rotation = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "48762ae154ab68ab1c6977799e9918a7be8bdcfb6c2469dcaf2a22587d043d7d"
+}

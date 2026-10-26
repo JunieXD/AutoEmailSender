@@ -148,6 +148,7 @@ pub struct Affiliation {
 pub struct MentorDetail {
     pub id: i64,
     pub name: String,
+    pub mailbox_id: Option<i64>,
     pub aliases: Vec<String>,
     /// The first is the one mail goes to.
     pub emails: Vec<String>,
@@ -383,7 +384,7 @@ pub async fn detail(
     id: i64,
 ) -> Result<Option<MentorDetail>, sqlx::Error> {
     let Some(r) = sqlx::query!(
-        r#"SELECT m.id, m.name, m.source_url,
+        r#"SELECT m.id, m.name, m.mailbox_id, m.source_url,
             m.trashed_at IS NOT NULL AS "trashed!: bool",
             m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
             m.match_model, m.match_error, coalesce(m.matched_at < (SELECT
@@ -470,6 +471,7 @@ pub async fn detail(
     Ok(Some(MentorDetail {
         id: r.id,
         name: r.name,
+        mailbox_id: r.mailbox_id,
         aliases,
         emails,
         affiliations,
@@ -817,6 +819,23 @@ pub async fn assign_mailbox(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+/// Replaces the responsible mailbox; None returns to automatic selection. False when the mentor
+/// no longer exists. The foreign key rejects a mailbox deleted since the user selected it.
+pub async fn set_mailbox(
+    db: &SqlitePool,
+    id: i64,
+    mailbox_id: Option<i64>,
+) -> Result<bool, sqlx::Error> {
+    let done = sqlx::query!(
+        "UPDATE mentor SET mailbox_id = ? WHERE id = ?",
+        mailbox_id,
+        id,
+    )
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 /// Replaces the mentor's own fields and reindexes it. False when there is no such mentor.
