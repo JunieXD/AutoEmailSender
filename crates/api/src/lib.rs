@@ -197,6 +197,7 @@ pub async fn call_agent(
     op: &str,
     input: serde_json::Value,
     waiting: impl FnOnce(&agent::Description),
+    cancelled: impl std::future::Future<Output = ()>,
 ) -> Result<serde_json::Value, CallError> {
     let mut log = AgentCallLog { op, success: false };
     let result = match op {
@@ -205,8 +206,24 @@ pub async fn call_agent(
             Err(CallError::invalid("这个操作只供应用界面使用".into()))
         }
         _ => {
-            if let Some(description) = agent::confirmation(ctx, op, &input).await? {
-                ctx.agent_access.confirm(op, description, waiting).await?;
+            tokio::pin!(cancelled);
+            let description = tokio::select! {
+                biased;
+                () = &mut cancelled => return Err(CallError::invalid("这个请求已经失效".into())),
+                description = agent::confirmation(ctx, op, &input) => description?,
+            };
+            if let Some(description) = description {
+                ctx.agent_access
+                    .confirm(op, description.clone(), waiting, &mut cancelled)
+                    .await?;
+                if let Some(current) = agent::confirmation(ctx, op, &input).await?
+                    && current != description
+                {
+                    tracing::info!(op, "agent confirmation changed before execution");
+                    return Err(CallError::invalid(
+                        "等你确认期间情况变了，请重新发起".into(),
+                    ));
+                }
             }
             call(ctx, op, input).await
         }
@@ -218,7 +235,7 @@ pub async fn call_agent(
     result
 }
 
-// Dropping an in-flight call when access is disabled must also record its failure.
+// Cancellation before execution must also record the call's failure.
 struct AgentCallLog<'a> {
     op: &'a str,
     success: bool,

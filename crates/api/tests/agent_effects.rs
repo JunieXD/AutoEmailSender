@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use std::future::pending;
+
 use api::{Context, ErrorCode, call, call_agent};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use serde_json::{Value, json};
@@ -7,9 +9,15 @@ use sqlx::SqlitePool;
 
 async fn refused(ctx: &Context, op: &str, input: Value) {
     let (registered, waiting) = tokio::sync::oneshot::channel();
-    let calling = call_agent(ctx, op, input, |_| {
-        let _ = registered.send(());
-    });
+    let calling = call_agent(
+        ctx,
+        op,
+        input,
+        |_| {
+            let _ = registered.send(());
+        },
+        pending(),
+    );
     let answer = async {
         waiting.await.unwrap();
         let requests = call(ctx, "listAgentRequests", json!({})).await.unwrap();
@@ -54,7 +62,7 @@ async fn editing_a_mailbox_requires_confirmation_only_while_its_pause_is_active(
             );
         } else {
             assert_eq!(
-                call_agent(&ctx, "updateMailbox", edit.clone(), |_| {})
+                call_agent(&ctx, "updateMailbox", edit.clone(), |_| {}, pending())
                     .await
                     .unwrap(),
                 Value::Null
@@ -115,7 +123,9 @@ async fn empty_saves_require_confirmation_only_when_they_would_delete_a_draft(db
             .await
             .unwrap();
         assert_eq!(
-            call_agent(&ctx, op, input, |_| {}).await.unwrap(),
+            call_agent(&ctx, op, input, |_| {}, pending())
+                .await
+                .unwrap(),
             Value::Null
         );
     }
@@ -204,7 +214,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             }
             _ => unreachable!(),
         }
-        call_agent(&ctx, op, safe, |_| {}).await.unwrap();
+        call_agent(&ctx, op, safe, |_| {}, pending()).await.unwrap();
         assert_eq!(
             mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
             before
@@ -214,10 +224,105 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             .execute(&ctx.db)
             .await
             .unwrap();
-        call_agent(&ctx, op, input, |_| {}).await.unwrap();
+        call_agent(&ctx, op, input, |_| {}, pending())
+            .await
+            .unwrap();
         assert_eq!(
             mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
             after
         );
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn approval_rechecks_changed_candidate_addresses_and_allows_effects_no_longer_needing_confirmation(
+    db: SqlitePool,
+) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let before = "old@example.invalid";
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec![before.into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let email = test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 0)
+        .await
+        .unwrap();
+    let candidate = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO candidate (name, emails, review, enrich)
+        VALUES ('王伟', ?, 'pending', 'none')
+        RETURNING id"#,
+    )
+    .bind(json!([before, "shown@a.edu"]).to_string())
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    let input = json!({"ids":[candidate], "decisions":{"take":[], "matches":[], "restore":[]}});
+    for no_longer_approved in [false, true] {
+        let (registered, waiting) = tokio::sync::oneshot::channel();
+        let calling = call_agent(
+            &ctx,
+            "acceptCandidates",
+            input.clone(),
+            |_| {
+                let _ = registered.send(());
+            },
+            pending(),
+        );
+        let change_and_allow = async {
+            waiting.await.unwrap();
+            let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+            sqlx::query("UPDATE candidate SET emails = ? WHERE id = ?")
+                .bind(json!([before, "unshown@b.edu"]).to_string())
+                .bind(candidate)
+                .execute(&ctx.db)
+                .await
+                .unwrap();
+            if no_longer_approved {
+                sqlx::query("UPDATE email SET state = 'review' WHERE id = ?")
+                    .bind(email)
+                    .execute(&ctx.db)
+                    .await
+                    .unwrap();
+            }
+            call(
+                &ctx,
+                "answerAgentRequest",
+                json!({"id":requests[0]["id"], "allow":true}),
+            )
+            .await
+            .unwrap();
+        };
+        let (result, ()) = tokio::join!(calling, change_and_allow);
+        if no_longer_approved {
+            result.unwrap();
+            assert_eq!(
+                mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
+                "unshown@b.edu"
+            );
+        } else {
+            assert_eq!(
+                result.unwrap_err().message,
+                "等你确认期间情况变了，请重新发起"
+            );
+            assert_eq!(
+                mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
+                before
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, String>("SELECT review FROM candidate WHERE id = ?")
+                    .bind(candidate)
+                    .fetch_one(&ctx.db)
+                    .await
+                    .unwrap(),
+                "pending"
+            );
+        }
     }
 }

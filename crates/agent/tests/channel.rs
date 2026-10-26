@@ -357,3 +357,65 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
     ctx.db.close().await;
     Ok(())
 }
+
+#[tokio::test]
+async fn allowed_execution_survives_a_disconnect_while_waiting_for_the_write_lock() -> Result {
+    use api::agent::Event;
+    let dir = tempfile::tempdir()?;
+    let _lock = api::startup::DataLock::acquire(dir.path())?;
+    let (ctx, _) = api::startup::open(dir.path()).await?;
+    let task = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+        VALUES ('计算机方向', 'first', 'ai', 'now', 'active', 0)
+        RETURNING id"#,
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+    let ctx = Arc::new(ctx);
+    let (events, mut changed) = tokio::sync::mpsc::unbounded_channel();
+    let _server = api::agent::start(ctx.clone(), dir.path().to_owned(), move |event| {
+        let _ = events.send(event);
+    })
+    .await
+    .map_err(|e| e.message)?;
+    setting(&ctx, true).await?;
+    let token = credentials(dir.path())?;
+    let mut stream = BufReader::new(agent::connect(dir.path(), &token).await?);
+    stream
+        .get_mut()
+        .write_all(format!("{}\n", token.token).as_bytes())
+        .await?;
+    send(stream.get_mut(), "deleteTask", json!({"id":task})).await?;
+    frame(&mut stream).await?;
+    let requests = pending(&ctx).await?;
+    let tx = ctx.db.begin_with("BEGIN IMMEDIATE").await?;
+    answer(&ctx, &requests[0]["id"], true).await?;
+    #[cfg(unix)]
+    {
+        // Keep the read half to observe that EOF does not close an allowed, unfinished call.
+        stream.get_mut().shutdown().await?;
+        tokio::time::pause();
+        let closed =
+            tokio::time::timeout(std::time::Duration::from_secs(1), stream.read(&mut [0])).await;
+        tokio::time::resume();
+        assert!(
+            closed.is_err(),
+            "the allowed operation was cancelled on disconnect"
+        );
+    }
+    drop(stream);
+    tx.rollback().await?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !matches!(changed.recv().await, Some(Event::Called)) {}
+    })
+    .await?;
+    assert!(
+        !sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM task WHERE id = ?)")
+            .bind(task)
+            .fetch_one(&ctx.db)
+            .await?
+    );
+    setting(&ctx, false).await?;
+    ctx.db.close().await;
+    Ok(())
+}

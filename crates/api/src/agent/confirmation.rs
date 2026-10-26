@@ -6,7 +6,7 @@ use ts_rs::TS;
 
 use crate::{CallError, Context};
 
-#[derive(Clone, Serialize, TS)]
+#[derive(Clone, PartialEq, Eq, Serialize, TS)]
 pub struct Description {
     /// A complete sentence for the dialog, notification and CLI.
     pub action: String,
@@ -19,10 +19,28 @@ impl Description {
         let more = targets.len().saturating_sub(5);
         Self {
             action,
-            targets: targets.into_iter().take(5).collect(),
+            targets: targets
+                .iter()
+                .take(5)
+                .map(|target| preview_text(target))
+                .collect(),
             more,
         }
     }
+}
+
+fn preview_text(value: &str) -> String {
+    let normalized = value
+        .split(|ch: char| ch.is_control() || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut chars = normalized.chars();
+    let mut preview: String = chars.by_ref().take(40).collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
 }
 
 fn parse<T: DeserializeOwned>(input: &serde_json::Value) -> Result<T, CallError> {
@@ -33,7 +51,7 @@ fn names(targets: &[String]) -> String {
     let shown = targets
         .iter()
         .take(5)
-        .cloned()
+        .map(|name| preview_text(name))
         .collect::<Vec<_>>()
         .join("、");
     if targets.len() > 5 {
@@ -75,6 +93,7 @@ async fn task_name(ctx: &Context, id: i64) -> Result<String, CallError> {
         sqlx::query_scalar!("SELECT name FROM task WHERE id = ?", id)
             .fetch_optional(&ctx.db)
             .await?
+            .map(|name| preview_text(&name))
             .unwrap_or_else(|| "找不到的任务（可能已被删除）".into()),
     )
 }
@@ -84,11 +103,13 @@ async fn mailbox_address(ctx: &Context, id: i64) -> Result<String, CallError> {
         sqlx::query_scalar!("SELECT address FROM mailbox WHERE id = ?", id)
             .fetch_optional(&ctx.db)
             .await?
+            .map(|address| preview_text(&address))
             .unwrap_or_else(|| "找不到的邮箱（可能已被删除）".into()),
     )
 }
 
 fn object(action: &str, kind: &str, target: String) -> Description {
+    let target = preview_text(&target);
     Description::new(format!("{action}{kind}“{target}”"), vec![target])
 }
 
@@ -165,14 +186,16 @@ pub(crate) async fn confirmation(
                             |date| match chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
                                 Ok(date) => date.format("%-m月%-d日").to_string(),
                                 // The dispatcher rejects it when allowed; show what the Agent sent.
-                                Err(_) => date.clone(),
+                                Err(_) => preview_text(date),
                             },
                         )
                         .collect::<Vec<_>>()
                         .join("、");
                     format!(
                         "把任务“{target}”的发送时间改为 {dates}的 {}–{}，每个窗口最多 {} 封",
-                        window.start, window.end, window.per_window
+                        preview_text(&window.start),
+                        preview_text(&window.end),
+                        window.per_window
                     )
                 }
             };
@@ -204,7 +227,14 @@ pub(crate) async fn confirmation(
         "mergeMentors" => {
             let input: crate::MentorMerge = parse(input)?;
             let targets = mentor_names(ctx, &[input.other, input.keep]).await?;
-            Description::new(format!("把导师{}并入{}", targets[0], targets[1]), targets)
+            Description::new(
+                format!(
+                    "把导师{}并入{}",
+                    preview_text(&targets[0]),
+                    preview_text(&targets[1])
+                ),
+                targets,
+            )
         }
         "deleteTemplate" => {
             let input: crate::TemplateId = parse(input)?;
@@ -287,6 +317,8 @@ pub(crate) async fn confirmation(
                     .map_or("找不到的模型服务商", |p| p.name)
                     .into()
             };
+            let provider = preview_text(&provider);
+            let model = preview_text(&model);
             let target = format!("{provider}（{model}）");
             Description::new(format!("同意把数据发给 {target}"), vec![target])
         }
@@ -305,6 +337,7 @@ pub(crate) async fn confirmation(
             let Some(address) = address else {
                 return Ok(None);
             };
+            let address = preview_text(&address);
             Description::new(
                 format!("改邮箱 {address} 的设置：会马上恢复发信"),
                 vec![address],
@@ -339,6 +372,7 @@ pub(crate) async fn confirmation(
             .fetch_optional(&ctx.db)
             .await?;
             let Some(name) = name else { return Ok(None) };
+            let name = preview_text(&name);
             let kind = if kind == "first" { "首封" } else { "回复" };
             Description::new(format!("删除给{name}的{kind}草稿"), vec![name])
         }
@@ -408,17 +442,19 @@ async fn changed_recipient(
     .fetch_optional(&ctx.db)
     .await?;
     Ok(row.map(|row| {
+        let name = preview_text(&row.name);
         let action = match address {
             Some(address) => format!(
-                "把导师{}的发信地址改成 {address}：已批准还没发出的 {} 封会发到新地址",
-                row.name, row.count
+                "把导师{name}的发信地址改成 {}：已批准还没发出的 {} 封会发到新地址",
+                preview_text(address),
+                row.count
             ),
             None => format!(
-                "移除导师{}的发信地址：已批准还没发出的 {} 封将没有收件地址",
-                row.name, row.count
+                "移除导师{name}的发信地址：已批准还没发出的 {} 封将没有收件地址",
+                row.count
             ),
         };
-        Description::new(action, vec![row.name])
+        Description::new(action, vec![name])
     }))
 }
 
@@ -454,7 +490,12 @@ async fn imported_recipients(
         .take(5)
         .map(|row| {
             let address = row.address.as_deref().unwrap_or("无发信地址");
-            format!("{} → {address}（{} 封）", row.name, row.count)
+            format!(
+                "{} → {}（{} 封）",
+                preview_text(&row.name),
+                preview_text(address),
+                row.count
+            )
         })
         .collect::<Vec<_>>()
         .join("、");
@@ -470,4 +511,26 @@ async fn imported_recipients(
         ),
         targets,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preview_text;
+
+    #[test]
+    fn preview_collapses_controls_line_breaks_and_whitespace() {
+        assert_eq!(
+            preview_text(" \u{1b}王伟\n\r\t\u{2028}  教授\0\u{2029} "),
+            "王伟 教授"
+        );
+    }
+
+    #[test]
+    fn preview_truncates_by_unicode_characters() {
+        assert_eq!(preview_text(&"😀".repeat(40)), "😀".repeat(40));
+        assert_eq!(
+            preview_text(&"😀".repeat(41)),
+            format!("{}…", "😀".repeat(40))
+        );
+    }
 }

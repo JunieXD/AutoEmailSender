@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use ts_rs::TS;
@@ -102,6 +102,7 @@ impl Access {
         op: &str,
         description: Description,
         waiting: impl FnOnce(&Description),
+        cancelled: impl std::future::Future<Output = ()>,
     ) -> Result<(), CallError> {
         let (answer, result) = oneshot::channel();
         let expires = Instant::now() + CONFIRM_FOR;
@@ -128,7 +129,13 @@ impl Access {
         };
         self.emit(Event::Requested(description.clone()));
         waiting(&description);
-        match tokio::time::timeout_at(expires, result).await {
+        let answer = tokio::select! {
+            // A recorded answer owns the operation even if the connection has just closed.
+            biased;
+            answer = tokio::time::timeout_at(expires, result) => answer,
+            () = cancelled => return Err(CallError::invalid("这个请求已经失效".into())),
+        };
+        match answer {
             Ok(Ok(true)) => Ok(()),
             Ok(Ok(false)) => Err(CallError::invalid("你在应用里拒绝了这个操作".into())),
             Ok(Err(error)) => Err(CallError::internal(error)),
@@ -325,6 +332,7 @@ async fn serve(
     mut changes: mpsc::Receiver<Change>,
 ) {
     let mut clients = JoinSet::new();
+    let (shutdown, _) = watch::channel(false);
     let authenticating = Arc::new(Semaphore::new(MAX_AUTHENTICATING));
     let mut accept_after = Instant::now();
     loop {
@@ -347,8 +355,14 @@ async fn serve(
             biased;
             change = changes.recv() => {
                 let Some(change) = change else { return };
-                let result = change_access(&ctx, &dir, &mut running, &mut clients, change.enabled)
-                    .await;
+                let result = change_access(
+                    &ctx,
+                    &dir,
+                    &mut running,
+                    &mut clients,
+                    &shutdown,
+                    change.enabled,
+                ).await;
                 if result.is_ok() {
                     accept_after = Instant::now();
                 }
@@ -371,7 +385,10 @@ async fn serve(
                 match stream {
                     Ok((stream, token, permit)) => {
                         let ctx = ctx.clone();
-                        clients.spawn(async move { session(&ctx, stream, &token, permit).await });
+                        let shutdown = shutdown.subscribe();
+                        clients.spawn(async move {
+                            session(&ctx, stream, &token, permit, shutdown).await
+                        });
                     }
                     Err(error) if matches!(error.kind(),
                         io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionAborted
@@ -392,26 +409,28 @@ async fn change_access(
     dir: &Path,
     running: &mut Option<Running>,
     clients: &mut JoinSet<io::Result<()>>,
+    shutdown: &watch::Sender<bool>,
     enabled: bool,
 ) -> Result<(), CallError> {
     if enabled {
         if running.is_none() {
             let started = listen(dir)?;
             profile::set_agent_access(&ctx.db, true).await?;
+            shutdown.send_replace(false);
             *running = Some(started);
         }
     } else {
         profile::set_agent_access(&ctx.db, false).await?;
-        clients.abort_all();
+        shutdown.send_replace(true);
         while let Some(result) = clients.join_next().await {
             match result {
-                Err(error) if !error.is_cancelled() => {
+                Err(error) => {
                     tracing::error!("agent connection task failed: {error}");
                 }
                 Ok(Err(error)) => {
                     tracing::warn!(kind = ?error.kind(), "agent connection ended");
                 }
-                _ => {}
+                Ok(Ok(())) => {}
             }
         }
         if let Some(running) = running.take() {
@@ -436,10 +455,16 @@ async fn session(
     stream: ::agent::Incoming,
     token: &str,
     permit: OwnedSemaphorePermit,
+    mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
-    let authentication = tokio::time::timeout(Duration::from_secs(5), line(&mut reader, 128)).await;
+    let authentication = tokio::time::timeout(Duration::from_secs(5), line(&mut reader, 128));
+    let authentication = tokio::select! {
+        biased;
+        () = wait_closed(&mut shutdown) => return Ok(()),
+        authentication = authentication => authentication,
+    };
     match authentication {
         Ok(Ok(Some(line))) if line == token.as_bytes() => {}
         // Each Windows pipe instance has its own client. Never write before authentication,
@@ -449,50 +474,80 @@ async fn session(
     }
     drop(permit);
     let (frames, mut requests) = mpsc::channel(1);
-    // Keep reading while confirmation is pending: EOF drops the call and its request guard.
+    let (closed, mut cancelled) = watch::channel(false);
+    let mut reader_closed = closed.subscribe();
     let reading = async {
-        // Includes a base64-encoded 20 MiB material upload, like the preview host.
-        while let Some(frame) = line(&mut reader, 28 * 1024 * 1024).await? {
-            // Bound pipelining without blocking detection of a disconnected Agent.
-            frames.try_send(frame).map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => {
-                    io::Error::new(io::ErrorKind::InvalidData, "too many pending agent frames")
-                }
-                mpsc::error::TrySendError::Closed(_) => {
-                    io::Error::new(io::ErrorKind::BrokenPipe, "agent dispatcher closed")
-                }
-            })?;
+        let result = async {
+            loop {
+                // Includes a base64-encoded 20 MiB material upload, like the preview host.
+                let frame = tokio::select! {
+                    biased;
+                    () = wait_closed(&mut shutdown) => return Ok(()),
+                    () = wait_closed(&mut reader_closed) => return Ok(()),
+                    frame = line(&mut reader, 28 * 1024 * 1024) => frame?,
+                };
+                let Some(frame) = frame else { return Ok(()) };
+                // Bound pipelining without blocking detection of a disconnected Agent.
+                frames.try_send(frame).map_err(|error| match error {
+                    mpsc::error::TrySendError::Full(_) => {
+                        io::Error::new(io::ErrorKind::InvalidData, "too many pending agent frames")
+                    }
+                    mpsc::error::TrySendError::Closed(_) => {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "agent dispatcher closed")
+                    }
+                })?;
+            }
         }
-        Ok::<_, io::Error>(())
+        .await;
+        drop(frames);
+        closed.send_replace(true);
+        result
     };
     let calling = async {
         while let Some(frame) = requests.recv().await {
+            if *closed.borrow() {
+                break;
+            }
             let (waiting, mut progress) = oneshot::channel();
             let call = async {
                 match serde_json::from_slice::<Request>(&frame) {
                     Ok(request) => {
-                        crate::call_agent(ctx, &request.op, request.input, |description| {
-                            // The transport may already have been closed.
-                            let _ = waiting.send(description.clone());
-                        })
+                        crate::call_agent(
+                            ctx,
+                            &request.op,
+                            request.input,
+                            |description| {
+                                // The transport may already have been closed.
+                                let _ = waiting.send(description.clone());
+                            },
+                            wait_closed(&mut cancelled),
+                        )
                         .await
                     }
                     Err(error) => Err(CallError::bad_input(error)),
                 }
             };
             tokio::pin!(call);
-            // A call can finish in the same poll as registration and an answer. Always send its
-            // intermediate frame before the final result, including in that case.
+            // A recorded answer may finish in the same poll as registration. The intermediate
+            // frame must precede the final result, and a write failure must not drop execution.
             let result = tokio::select! {
                 result = &mut call => {
                     if let Ok(description) = progress.await {
-                        write_frame(&mut writer, serde_json::json!({ "waiting": description })).await?;
+                        write_frame(
+                            &mut writer,
+                            &closed,
+                            serde_json::json!({ "waiting": description }),
+                        ).await;
                     }
                     result
                 }
                 description = &mut progress => {
                     if let Ok(description) = description {
-                        write_frame(&mut writer, serde_json::json!({ "waiting": description })).await?;
+                        write_frame(
+                            &mut writer,
+                            &closed,
+                            serde_json::json!({ "waiting": description }),
+                        ).await;
                     }
                     call.await
                 }
@@ -501,23 +556,38 @@ async fn session(
                 Ok(output) => serde_json::json!({ "ok": output }),
                 Err(error) => serde_json::json!({ "error": error }),
             };
-            write_frame(&mut writer, response).await?;
+            write_frame(&mut writer, &closed, response).await;
         }
-        Ok(())
+        closed.send_replace(true);
     };
-    tokio::select! {
-        // A disconnect invalidates an unanswered request even if an answer is also ready.
-        biased;
-        result = reading => result,
-        result = calling => result,
-    }
+    // Reading can cancel preparation and unanswered requests, never an allowed execution.
+    let (result, ()) = tokio::join!(reading, calling);
+    result
+}
+
+async fn wait_closed(closed: &mut watch::Receiver<bool>) {
+    // Dropping the host also invalidates a connection's unfinished confirmation.
+    let _ = closed.wait_for(|closed| *closed).await;
 }
 
 async fn write_frame(
     writer: &mut (impl tokio::io::AsyncWrite + Unpin),
+    closed: &watch::Sender<bool>,
     frame: serde_json::Value,
-) -> io::Result<()> {
-    writer.write_all(format!("{frame}\n").as_bytes()).await
+) {
+    let mut cancelled = closed.subscribe();
+    let result = tokio::select! {
+        biased;
+        () = wait_closed(&mut cancelled) => Err(io::Error::from(io::ErrorKind::NotConnected)),
+        result = async { writer.write_all(format!("{frame}\n").as_bytes()).await } => result,
+    };
+    if let Err(error) = result {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "agent response discarded"
+        );
+        closed.send_replace(true);
+    }
 }
 
 async fn line(reader: &mut (impl AsyncBufRead + Unpin), limit: u64) -> io::Result<Option<Vec<u8>>> {
