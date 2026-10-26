@@ -27,7 +27,7 @@
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
-| `crates/app` | Tauri 桌面应用：窗口、数据目录，把界面的调用交给 `api` |
+| `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
 | `ui` | 界面；`ui/src/api/types.ts` 是生成的 |
 
@@ -48,7 +48,7 @@
 | `pnpm sqlx` | 改了 SQL 或迁移后，重新生成 `.sqlx` 里的查询元数据 |
 | `cargo xtask types` | 改了操作或它们的类型后，重新生成 `ui/src/api/types.ts` |
 | `cargo xtask bench` | 按[性能预算](data-model.md#性能)的规模测高频查询 |
-| `pnpm --dir ui icons` | 从 `docs/icon.svg` 重新生成应用图标 |
+| `pnpm --dir ui icons` | 从 `docs/icon.svg` 和 `docs/tray.svg` 重新生成应用图标和托盘图标 |
 | `pnpm package` | 打包安装包 |
 
 - 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
@@ -56,6 +56,13 @@
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 - 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
 - CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
+
+### 桌面后台运行
+
+- `crates/app/src/background.rs` 管理 Tauri 自带的托盘和首次关窗的一次性说明对话框，`autostart.rs` 管理系统登录项；后台工作仍由核心运行。
+- 开机自启使用官方 `tauri-plugin-autostart`，macOS 使用默认的 LaunchAgent。登录项以应用标识命名，开发版与安装版分开；启动参数 `--autostart` 让主窗口保持隐藏。普通启动、再次启动、恢复备份后的启动和 macOS Dock 图标打开窗口。启动时读取现有登记命令，只在路径或参数改变时重新登记；macOS 的 App Translocation 临时路径不允许登记。
+- 界面通过 `ui/src/api/app.ts` 的 `autostartEnabled()` 和 `setAutostart(enabled)` 读写系统状态。插件只在 Rust 层使用，不增加界面的插件权限。
+- `crates/app/Info.plist` 设置 `NSAppSleepDisabled`，避免 macOS 在窗口隐藏后通过 App Nap 推迟定时发送和收信。
 
 ### 浏览器预览
 
@@ -105,6 +112,7 @@
 
 ## 数据库
 
+- 打开第一个连接前，`db` 先在一个线程上调用一次 `sqlite3_initialize()`，避开 SQLite 在 ARM 上多个线程同时首次初始化的竞争：`db::open` 建池前调用；测试经由 `db::MIGRATOR`（sqlx 建测试库前会先读它）触发，自己开第一个池的测试先 `LazyLock::force(&db::MIGRATOR)`。
 - 迁移只往后加，发布后不改已有的迁移。
 - 每次发布前，用上一版的真实数据库（去掉个人信息后作为测试数据）测一遍升级。
 - 新的高频查询先用 `EXPLAIN QUERY PLAN` 确认走了索引；列表只取要显示的列，并且分页。

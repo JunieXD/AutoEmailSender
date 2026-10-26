@@ -49,3 +49,16 @@ async fn background_notifications_default_on_and_are_independent(db: SqlitePool)
     assert!(profile::background_notifications(&db).await.unwrap());
     assert!(!profile::reply_notifications(&db).await.unwrap());
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn closing_notice_is_remembered_independently_of_notification_preferences(db: SqlitePool) {
+    assert!(!profile::background_notice_shown(&db).await.unwrap());
+    profile::set_background_notifications(&db, false)
+        .await
+        .unwrap();
+    profile::set_reply_notifications(&db, false).await.unwrap();
+    profile::mark_background_notice_shown(&db).await.unwrap();
+    assert!(profile::background_notice_shown(&db).await.unwrap());
+    assert!(!profile::background_notifications(&db).await.unwrap());
+    assert!(!profile::reply_notifications(&db).await.unwrap());
+}

@@ -55,7 +55,7 @@ function RestoreDialog({ info, onClose }: { info: RestoreInfo; onClose: () => vo
                 <span className="break-all">“{info.backupDirectory}”</span>。
               </li>
               <li>恢复后要重新填写各个邮箱的授权码和模型的 API Key，填好之前不收发信。</li>
-              <li>旧电脑上的应用请先关掉，免得同一封信发两次。</li>
+              <li>旧电脑上的应用请先从托盘或菜单栏的图标退出（只关窗口它还会在后台发信），免得同一封信发两次。</li>
               <li>恢复完应用会自动重启。</li>
             </ul>
           </div>

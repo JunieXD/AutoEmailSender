@@ -16,6 +16,7 @@ import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
 import {
   AboutSection,
+  BackgroundSection,
   ChecksSection,
   NotificationsSection,
   ReplyProcessingSection,
@@ -171,6 +172,12 @@ const notificationsRoute = createRoute({
   component: NotificationsSection,
 });
 
+const backgroundRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "background",
+  component: BackgroundSection,
+});
+
 const backupRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "backup",
@@ -208,6 +215,7 @@ export const router = createRouter({
       modelsRoute,
       repliesRoute,
       notificationsRoute,
+      backgroundRoute,
       backupRoute,
       aboutRoute,
     ]),

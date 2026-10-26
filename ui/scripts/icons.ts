@@ -1,5 +1,6 @@
-// Regenerates crates/app/icons from docs/icon.svg. macOS icons keep the margin of Apple's icon grid
-// (the shape is 824 of 1024 pixels); the other platforms use the full square.
+// Regenerates crates/app/icons from docs/icon.svg and docs/tray.svg. macOS icons keep the margin of
+// Apple's icon grid (the shape is 824 of 1024 pixels); the other platforms use the full square. The
+// tray icon is drawn at the 18-point height of the macOS menu bar on a Retina screen.
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { run } from "@tauri-apps/cli";
@@ -23,3 +24,5 @@ for (const file of ["32x32.png", "128x128.png", "128x128@2x.png", "icon.ico"]) {
   copyFileSync(path.join(work, "full", file), path.join(out, file));
 }
 copyFileSync(path.join(work, "macos", "icon.icns"), path.join(out, "icon.icns"));
+await run(["icon", path.join(root, "docs/tray.svg"), "-o", path.join(work, "tray"), "-p", "36"]);
+copyFileSync(path.join(work, "tray", "36x36.png"), path.join(out, "tray.png"));

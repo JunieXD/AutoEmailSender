@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT background_notice_shown AS \"shown: bool\" FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "shown: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "background_notice_shown"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1212e232ddc57d56dc446e984721bfb75bfec4e3d6ee18012a80a12fa9f2d980"
+}
