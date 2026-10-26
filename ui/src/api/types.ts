@@ -146,11 +146,11 @@ export type Field = "name" | "email" | "university" | "school" | "department" | 
 
 export type FilledTemplate = { subject: string, bodyMd: string, };
 
-export type Filter = { unansweredDays?: number, status?: ContactStatus,
-/**
- * Applied only with status = replied.
- */
-replyOutcome?: ReplyOutcomeFilter, keyword?: string, };
+export type FilterTag = { id: number, name: string, count: number, };
+
+export type FilterValue = { value: string, count: number, };
+
+export type FilterValues = { values: Array<FilterValue>, missing: number, };
 
 export type Finding = { quote: string, reason: string, };
 
@@ -245,6 +245,8 @@ export type MatchBatch = { ids: Array<number>, redo: boolean, };
 
 export type MatchEstimate = { plan: MatchPlan, model: string | null, hasBasis: boolean, inputTokens: number, outputTokens: number, cost: number | null, };
 
+export type MatchFilter = { "kind": "atLeast", score: number, } | { "kind": "unanalyzed" };
+
 export type MatchFinished = { analyzed: number, failed: number, };
 
 export type MatchPause = { at: number, reason: string | null, };
@@ -275,7 +277,7 @@ export type MaybeSame = { row: number, rows: Array<number>, incoming: ImportProf
 
 export type MentorAddress = { id: number, address: string, };
 
-export type MentorDetail = { id: number, name: string, aliases: Array<string>,
+export type MentorDetail = { id: number, name: string, mailboxId: number | null, aliases: Array<string>,
 /**
  * The first is the one mail goes to.
  */
@@ -293,11 +295,33 @@ export type MentorEdit = { id: number, name: string, aliases: Array<string>, ema
 
 export type MentorFields = { name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string | null, };
 
+export type MentorFilter = { status?: ContactStatus,
+/**
+ * Applied only with status = replied.
+ */
+replyOutcome?: ReplyOutcomeFilter, keyword?: string, unansweredDays?: number,
+/**
+ * All scores when absent; an unfinished analysis can still have a previous result.
+ */
+matching?: MatchFilter,
+/**
+ * Empty lists mean no restriction; None selects mentors with no value in any affiliation.
+ */
+universities?: Array<string | null>, schools?: Array<string | null>, departments?: Array<string | null>, titles?: Array<string | null>,
+/**
+ * None selects mentors with no tags.
+ */
+tags?: Array<number | null>, };
+
+export type MentorFilterOptions = { universities: FilterValues, schools: FilterValues, departments: FilterValues, titles: FilterValues, tags: Array<FilterTag>, untagged: number, };
+
 export type MentorForm = { name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
 
 export type MentorId = { id: number, };
 
 export type MentorIds = { ids: Array<number>, };
+
+export type MentorMailbox = { id: number, mailboxId: number | null, };
 
 export type MentorMerge = { keep: number, other: number, };
 
@@ -313,17 +337,25 @@ export type MentorPage = { mentors: Array<MentorRow>, total: number, };
 
 export type MentorQuery = {
 /**
- * All mentors when absent.
+ * Starts at 1.
  */
-status?: ContactStatus,
+page: number, status?: ContactStatus,
 /**
- * Only applied with status = replied; ignored for other contact states.
+ * Applied only with status = replied.
  */
 replyOutcome?: ReplyOutcomeFilter, keyword?: string, unansweredDays?: number,
 /**
- * Starts at 1.
+ * All scores when absent; an unfinished analysis can still have a previous result.
  */
-page: number, };
+matching?: MatchFilter,
+/**
+ * Empty lists mean no restriction; None selects mentors with no value in any affiliation.
+ */
+universities?: Array<string | null>, schools?: Array<string | null>, departments?: Array<string | null>, titles?: Array<string | null>,
+/**
+ * None selects mentors with no tags.
+ */
+tags?: Array<number | null>, };
 
 export type MentorRow = { id: number, name: string,
 /**
@@ -532,6 +564,8 @@ export type ReviewInput = { ids: Array<number>, decisions: Decisions, };
 
 export type Reviewed = { accepted: number, skipped: number, };
 
+export type Rotation = "failover" | "perEmail";
+
 export type RowError = { row: number, reason: string, };
 
 export type Schedule = { "kind": "now" } | { "kind": "window" } & Window;
@@ -546,7 +580,7 @@ export type SchoolCount = { university: string, count: number, };
 
 export type SchoolProgress = { university: string, contacted: number, replied: number, };
 
-export type Scope = { "kind": "filter", "value": Filter } | { "kind": "ids", "value": Array<number> };
+export type Scope = { "kind": "filter", "value": MentorFilter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
 
@@ -758,10 +792,12 @@ export interface Operations {
   previewImport: { input: PreviewImport; output: Preview };
   importMentors: { input: ImportMentors; output: Imported };
   listMentors: { input: MentorQuery; output: MentorPage };
+  mentorFilterOptions: { input: Nothing; output: MentorFilterOptions };
   getMentor: { input: MentorId; output: MentorDetail };
   setMentorNote: { input: MentorNote; output: null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
+  setMentorMailbox: { input: MentorMailbox; output: MentorDetail };
   addMentorEmail: { input: MentorAddress; output: MentorDetail };
   previewMerge: { input: MentorMerge; output: MergePreview };
   mergeMentors: { input: MentorMerge; output: null };
@@ -778,6 +814,8 @@ export interface Operations {
   deleteTag: { input: TagId; output: null };
   listProviders: { input: Nothing; output: Array<Provider> };
   listMailboxes: { input: Nothing; output: Array<Mailbox> };
+  getRotation: { input: Nothing; output: Rotation };
+  setRotation: { input: Rotation; output: null };
   addMailbox: { input: NewMailbox; output: MailboxId };
   updateMailbox: { input: MailboxEdit; output: null };
   resumeMailbox: { input: MailboxId; output: null };

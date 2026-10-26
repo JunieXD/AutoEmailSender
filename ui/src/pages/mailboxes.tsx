@@ -1,12 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Mailbox, Provider } from "@/api/types";
+import type { Mailbox, Provider, Rotation } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { MailboxDialog, useProviders } from "@/components/mailbox-dialog";
 import { scheduledAt } from "@/components/schedule";
 import { Button } from "@/components/ui/button";
-import { Section } from "./settings";
+import { Segments } from "@/components/ui/segments";
+import { Row, Section } from "./settings";
 
 /** Sends from a paused mailbox again at once (docs/design.md#多邮箱轮转). */
 export function useResume() {
@@ -36,6 +37,7 @@ export function MailboxesSection() {
       {error && <p className="text-sm text-destructive">邮箱没能加载：{errorMessage(error)}</p>}
       {mailboxes.data && providers.data && (
         <>
+          {mailboxes.data.length > 1 && <RotationRow />}
           {mailboxes.data.length > 0 && (
             <ul className="flex flex-col divide-y divide-border">
               {mailboxes.data.map((m) => (
@@ -50,6 +52,49 @@ export function MailboxesSection() {
         </>
       )}
     </Section>
+  );
+}
+
+/** docs/design.md#多邮箱轮转: how letters are spread over the mailboxes. */
+function RotationRow() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["getRotation"], queryFn: () => call("getRotation", {}) });
+  const save = useMutation({
+    mutationKey: ["setRotation"],
+    mutationFn: (rotation: Rotation) => call("setRotation", rotation),
+    onSuccess: async (_, rotation) => {
+      await queryClient.cancelQueries({ queryKey: ["getRotation"] });
+      queryClient.setQueryData(["getRotation"], rotation);
+    },
+  });
+  // A slower earlier save must not land after a later one, even one made after leaving and coming back.
+  const saving = useMutationState({ filters: { mutationKey: ["setRotation"], status: "pending" } }).length > 0;
+  const error = query.error ?? save.error;
+  return (
+    <Row label="轮转">
+      {query.data && (
+        <>
+          <Segments
+            label="轮转"
+            className="self-start"
+            value={query.data}
+            disabled={saving}
+            options={[
+              ["failover", "先用一个"],
+              ["perEmail", "每封换一个"],
+            ]}
+            onChange={(rotation) => save.mutate(rotation)}
+          />
+          <p className="text-sm text-muted-foreground">
+            {query.data === "failover"
+              ? "按下面的顺序用第一个能发的邮箱，暂停或到了上限再换下一个。"
+              : "每封信轮流用最久没发过信的邮箱。"}
+            在导师资料里指定了发件邮箱的，总是从指定的邮箱发。
+          </p>
+        </>
+      )}
+      {error && <p className="text-sm text-destructive">{errorMessage(error)}</p>}
+    </Row>
   );
 }
 

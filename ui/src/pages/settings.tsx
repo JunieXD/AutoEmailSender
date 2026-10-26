@@ -109,7 +109,7 @@ export function Section({ title, children }: { title: string; children: ReactNod
   );
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+export function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
       <h2 className="font-medium">{label}</h2>

@@ -103,10 +103,11 @@ async fn analyze(
         if !chosen.agreed {
             return Ok(Outcome::Pause(NOT_AGREED.into(), Guard::Model(chosen)));
         }
-        let answer = match model::ask(net, &chosen.access, &chosen.model, &system, &message).await {
-            Ok(answer) => answer,
-            Err(error) => return Ok(classify(error, chosen)),
-        };
+        let answer =
+            match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
+                Ok(answer) => answer,
+                Err(error) => return Ok(classify(error, chosen)),
+            };
         tracing::info!(
             message_id = claim.id,
             action = ?claim.action,

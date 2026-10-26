@@ -159,6 +159,41 @@ async fn config(db: &SqlitePool, address: &str) -> i64 {
     model::agree(db, id, "custom", Some(address)).await.unwrap();
     id
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn extraction_requests_a_json_object(db: SqlitePool) {
+    let mut provider = Provider::start().await.unwrap();
+    let id = config(&db, &provider.address).await;
+    let url = PageUrl::parse("https://school.example.edu/").unwrap();
+    queue::start(&db, &[url], id, 1).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let mut chosen = model::selected(&db, Some(id)).await.unwrap().unwrap();
+    chosen.access.json_mode = true;
+    let reader = Reader {
+        writes: &db::Writes::default(),
+        db: &db,
+        net: &net::Net::new(vec![]).unwrap(),
+        limit: &Limit::default(),
+        claim: &claim,
+        chosen: &chosen,
+        cooldown: &Cooldown::default(),
+    };
+    let ask = reader.ask::<extract::Route>("route", extract::ROUTE, json!({}));
+    let respond = async {
+        let request = provider.requests.recv().await.unwrap();
+        assert_eq!(
+            request.body["response_format"],
+            json!({"type":"json_object"})
+        );
+        request
+            .respond
+            .send(Response::answer(r#"{"kind":"other","next":[]}"#))
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(ask, respond);
+    assert!(matches!(result.unwrap().kind, extract::Kind::Other));
+}
+
 fn listed(name: &str, profile: Option<usize>, emails: Vec<&str>) -> Value {
     json!({"name":name,"title":"教授","profile":profile,"emails":emails,"research":null})
 }
