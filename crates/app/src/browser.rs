@@ -96,6 +96,7 @@ impl State {
     }
     fn check(&self) -> Result<(), BrowserError> {
         if self.stopped.load(Ordering::Relaxed) {
+            tracing::info!(category = "window_closed", "browser read failed");
             return Err(failed("浏览器页面已关闭，请重试"));
         }
         if let Some(error) = self
@@ -205,6 +206,12 @@ fn render(
     state: &Arc<State>,
     slot: OwnedSemaphorePermit,
 ) -> Result<RenderedPage, BrowserError> {
+    tracing::info!(
+        url = target.url().as_str(),
+        page = steps.last().map_or(1, |step| step.page),
+        steps = steps.len(),
+        "browser render started"
+    );
     state.check()?;
     let nav_state = state.clone();
     let load_state = state.clone();
@@ -324,11 +331,14 @@ fn render(
     state.check()?;
     wait(&window, state, None)?;
     for step in steps {
-        tracing::info!(page = step.page, "browser pagination started");
+        let failed_step = |error| {
+            tracing::info!(page = step.page, "browser pagination failed");
+            error
+        };
         let deadline = Instant::now() + TIMEOUT;
-        let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline)?;
-        let control =
-            serde_json::to_string(&step.control).map_err(|_| failed("无法读取翻页步骤"))?;
+        let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline).map_err(failed_step)?;
+        let control = serde_json::to_string(&step.control)
+            .map_err(|_| failed_step(failed("无法读取翻页步骤")))?;
         redirects.store(0, Ordering::Relaxed);
         navigation
             .lock()
@@ -339,7 +349,8 @@ fn render(
             state,
             &format!("{CLICK_CONTROL}({control})"),
             deadline,
-        )?;
+        )
+        .map_err(failed_step)?;
         if clicked != json!(true) {
             tracing::info!(
                 page = step.page,
@@ -348,7 +359,7 @@ fn render(
             );
             return Err(failed(&format!("找不到可点击的翻页控件“{}”", step.control)));
         }
-        wait(&window, state, Some(&before))?;
+        wait(&window, state, Some(&before)).map_err(failed_step)?;
     }
     let value = evaluate(
         &window,
@@ -364,23 +375,33 @@ fn render(
         Instant::now() + TIMEOUT,
     )?;
     if value["tooLarge"] == true {
+        tracing::info!(category = "too_large", "browser read failed");
         return Err(BrowserError::Failed(crawl::CrawlError::TooLarge.message()));
     }
     let url = value["url"]
         .as_str()
-        .ok_or_else(|| failed("浏览器未能读取网页地址"))?
+        .ok_or_else(|| {
+            tracing::info!(category = "missing_page_url", "browser read failed");
+            failed("浏览器未能读取网页地址")
+        })?
         .to_owned();
     let html = value["html"]
         .as_str()
-        .ok_or_else(|| failed("浏览器未能读取网页内容"))?
+        .ok_or_else(|| {
+            tracing::info!(category = "missing_page_html", "browser read failed");
+            failed("浏览器未能读取网页内容")
+        })?
         .to_owned();
     state.check()?;
     Ok(RenderedPage { url, html })
 }
 
-fn public_url(url: &tauri::Url) -> Option<&str> {
+fn public_url(url: &tauri::Url) -> Option<String> {
     // Rejected URLs can embed documents or credentials, so only public page addresses are logged.
-    PageUrl::parse(url.as_str()).is_ok().then_some(url.as_str())
+    match PageUrl::parse(url.as_str()) {
+        Ok(url) => Some(url.as_str().to_owned()),
+        Err(_) => None,
+    }
 }
 
 fn wait(window: &WebviewWindow, state: &State, before: Option<&Value>) -> Result<(), BrowserError> {
@@ -441,8 +462,8 @@ fn evaluate(
         .eval_with_callback(script, move |value| {
             let _ = send.send(value);
         })
-        .map_err(|error| {
-            tracing::debug!("evaluate crawl page: {error}");
+        .map_err(|_| {
+            tracing::info!(category = "script_execution_failed", "browser read failed");
             failed("浏览器页面已关闭或无法读取，请重试")
         })?;
     loop {
@@ -453,11 +474,14 @@ fn evaluate(
         }
         match receive.recv_timeout(POLL.min(remaining)) {
             Ok(value) => {
-                return serde_json::from_str(&value)
-                    .map_err(|_| failed("浏览器返回的网页内容无法读取，请重试"));
+                return serde_json::from_str(&value).map_err(|_| {
+                    tracing::info!(category = "invalid_script_result", "browser read failed");
+                    failed("浏览器返回的网页内容无法读取，请重试")
+                });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                tracing::info!(category = "callback_disconnected", "browser read failed");
                 return Err(failed("浏览器页面已关闭，请重试"));
             }
         }
@@ -477,6 +501,47 @@ pub fn close_all(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_log_urls_strip_fragments_and_preserve_query_parameters() {
+        let url = tauri::Url::parse(
+            "https://school.example.edu/list?page=2&wbtreeid=123#PRIVATE_DOCUMENT",
+        )
+        .unwrap();
+        assert_eq!(
+            public_url(&url).as_deref(),
+            Some("https://school.example.edu/list?page=2&wbtreeid=123")
+        );
+    }
+
+    #[test]
+    fn closed_browser_logs_a_crawl_scoped_category_without_private_failure_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("browser.log");
+        let file = std::fs::File::create(&path).unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(Mutex::new(file))
+            .finish();
+        let _quiet = tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
+        let guard = tracing::subscriber::set_default(subscriber);
+        crawl::span(17).in_scope(|| {
+            let state = State::default();
+            state.stopped.store(true, Ordering::Relaxed);
+            assert!(matches!(state.check(), Err(BrowserError::Failed(_))));
+            state.stopped.store(false, Ordering::Relaxed);
+            state.fail("PRIVATE_BROWSER_MESSAGE".into());
+            assert!(matches!(state.check(), Err(BrowserError::Failed(_))));
+        });
+        drop(guard);
+        let log = std::fs::read_to_string(path).unwrap();
+        assert!(log.lines().any(|line| {
+            line.contains("crawl{id=17}:")
+                && line.contains("INFO")
+                && line.contains("category=\"window_closed\"")
+        }));
+        assert!(!log.contains("PRIVATE_BROWSER_MESSAGE"));
+    }
 
     #[test]
     fn leaving_document_cannot_settle_before_the_new_document_arrives() {
