@@ -1312,19 +1312,10 @@ async fn fill(
 ) -> Result<FilledTemplate, CallError> {
     let m = get_mentor(ctx, MentorId { id: mentor_id }).await?;
     let me = profile::get(&ctx.db).await?;
-    let main = m.affiliations.first().cloned().unwrap_or_default();
-    let fill = template::Fill {
-        mentor_name: &m.name,
-        mentor_title: main.title.as_deref(),
-        university: main.university.as_deref(),
-        school: main.school.as_deref(),
-        department: main.department.as_deref(),
-        research: m.research.as_deref(),
-        my_name: me.name.as_deref(),
-    };
+    let filled = task::fill(&t.subject, &t.body_md, &m, me.name.as_deref());
     Ok(FilledTemplate {
-        subject: fill.subject(&t.subject),
-        body_md: fill.body(&t.body_md),
+        subject: filled.subject,
+        body_md: filled.body_md,
     })
 }
 
