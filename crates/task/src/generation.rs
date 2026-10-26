@@ -265,9 +265,7 @@ async fn apply(
             tx.commit().await?;
             Ok(applied)
         }
-        Outcome::Failed(reason) => {
-            emails::fail(&mut *connection(db).await, claim, reason, at).await
-        }
+        Outcome::Failed(reason) => emails::fail(&mut *db.acquire().await?, claim, reason, at).await,
         Outcome::Pause(reason, config) => {
             requeue(db, claim, Some((reason, config.as_ref())), at).await
         }
@@ -445,17 +443,6 @@ pub async fn run(
                     tokio::time::sleep_until(at).await;
                 }
             }, if cooling => {},
-        }
-    }
-}
-async fn connection(db: &SqlitePool) -> sqlx::pool::PoolConnection<sqlx::Sqlite> {
-    loop {
-        match db.acquire().await {
-            Ok(c) => return c,
-            Err(e) => {
-                tracing::error!("draft connection: {e}");
-                tokio::time::sleep(RETRY).await;
-            }
         }
     }
 }
