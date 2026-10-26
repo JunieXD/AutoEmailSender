@@ -12,6 +12,7 @@ use sqlx::SqlitePool;
 
 fn context(db: SqlitePool, materials: &Path) -> Context {
     Context {
+        agent_access: Default::default(),
         writes: db::Writes::default(),
         db,
         net: net::Net::new(Vec::new()).unwrap(),

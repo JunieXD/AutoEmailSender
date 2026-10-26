@@ -41,6 +41,7 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
     let writes = db::Writes::default();
     Ok((
         Context {
+            agent_access: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
             writes,
             db,

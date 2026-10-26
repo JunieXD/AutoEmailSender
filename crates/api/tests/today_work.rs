@@ -15,6 +15,7 @@ const LETTER: &str = "<subject>申请</subject><body>王老师：您好，我希
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn today_work_counts_generated_drafts_retained_matches_and_confirmed_sends(db: SqlitePool) {
     let ctx = Context {
+        agent_access: Default::default(),
         writes: db::Writes::default(),
         db,
         net: net::Net::new(vec![]).unwrap(),

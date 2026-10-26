@@ -8,6 +8,8 @@ export type Affiliation = { university: string | null, school: string | null, de
 
 export type AffiliationAddition = { before: Affiliation | null, added: Affiliation, };
 
+export type AgentAccess = { enabled: boolean, };
+
 export type AiReplyOutcome = { enabled: boolean, };
 
 export type AiReplyTodos = { enabled: boolean, };
@@ -717,6 +719,8 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  getAgentAccess: { input: Nothing; output: boolean };
+  setAgentAccess: { input: AgentAccess; output: null };
   storageFailure: { input: Nothing; output: string | null };
   contactStats: { input: StatsQuery; output: ContactProgress };
   mentorStats: { input: Nothing; output: MentorOverview };

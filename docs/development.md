@@ -27,6 +27,7 @@
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具和本地模型 HTTP 服务器 |
 | `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
+| `crates/agent` | Agent 本机通道和 `autoemail` 命令行 |
 | `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
 | `ui` | 界面；`ui/src/api/types.ts` 是生成的 |
@@ -63,6 +64,15 @@
 - 开机自启使用官方 `tauri-plugin-autostart`，macOS 使用默认的 LaunchAgent。登录项以应用标识命名，开发版与安装版分开；启动参数 `--autostart` 让主窗口保持隐藏。普通启动、再次启动、恢复备份后的启动和 macOS Dock 图标打开窗口。启动时读取现有登记命令，只在路径或参数改变时重新登记；macOS 的 App Translocation 临时路径不允许登记。
 - 界面通过 `ui/src/api/app.ts` 的 `autostartEnabled()` 和 `setAutostart(enabled)` 读写系统状态。插件只在 Rust 层使用，不增加界面的插件权限。
 - `crates/app/Info.plist` 设置 `NSAppSleepDisabled`，避免 macOS 在窗口隐藏后通过 App Nap 推迟定时发送和收信。
+
+### Agent 本机通道
+
+- `crates/agent` 提供桌面端和命令行共用的通道；`api::agent` 管理认证、连接和开关生命周期。只有桌面端启动监听；浏览器预览能查询开关，在预览里修改时提示使用桌面应用。
+- 开关存在 `profile.agent_access`，默认关闭。`getAgentAccess`／`setAgentAccess` 供界面调用，后者输入为 `{ "enabled": boolean }`。开启成功后才保存为开启；关闭返回前停止监听、取消并等待现有连接退出、删除令牌。启动时按保存的开关恢复监听，每次开启或重启重新生成令牌。
+- macOS 的端点是数据目录里的 `agent.sock`，权限为 `0600`。应用已持有数据目录锁，监听前可删除上次留下的套接字。Windows 的管道名独立随机生成，首次创建要求独占该名称，接受连接前保留下一实例，不把令牌放进可枚举的管道名。
+- 数据目录里的 `agent.token` 是 JSON，保存 `token`，Windows 还保存 `pipe`。先写临时文件再替换；macOS 权限为 `0600`，Windows 继承当前用户数据目录的访问权限。不在日志或命令行输出中显示。认证第一行限 128 字节、5 秒，未认证连接不返回数据；后续每行请求最多 28 MiB，以容纳 20 MiB 材料的 Base64 输入。
+- `api::call_agent` 只允许紧挨 `operations!` 的 `AGENT_OPERATIONS` 表中的操作，再交给同一个 `api::call`；新增操作默认拒绝。只记录操作名和成功与否，包括拒绝，不记录输入和结果。
+- 最简调用为 `autoemail call <操作名> [JSON 输入]`，省略输入时为 `{}`。输出一行原始 JSON 回答，包含 `error` 时退出码非零。开发构建默认用本仓库 `.dev-data`，可用 `AUTOEMAIL_DATA_DIR` 指向独立开发数据目录；正式构建默认用应用标识对应的数据目录。Windows 控制台交给 Rust 标准输出处理 Unicode，重定向输出为 UTF-8。
 
 ### 浏览器预览
 

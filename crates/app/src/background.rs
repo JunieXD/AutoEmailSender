@@ -72,7 +72,7 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
 
 async fn close_to_background(window: &Window) {
     let app = window.app_handle();
-    let ctx = app.try_state::<api::Context>();
+    let ctx = app.try_state::<std::sync::Arc<api::Context>>();
     let shown = if let Some(ctx) = &ctx {
         match profile::background_notice_shown(&ctx.db).await {
             Ok(shown) => shown,

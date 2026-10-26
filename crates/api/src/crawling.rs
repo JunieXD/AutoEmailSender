@@ -253,6 +253,7 @@ mod tests {
             ids.push(id);
         }
         let ctx = Context {
+            agent_access: Default::default(),
             writes: db::Writes::default(),
             db: db.clone(),
             net: net::Net::new(vec![]).unwrap(),
@@ -334,6 +335,7 @@ mod tests {
         .await
         .unwrap();
         let ctx = Context {
+            agent_access: Default::default(),
             writes: db::Writes::default(),
             db: db.clone(),
             net: net::Net::new(vec![]).unwrap(),

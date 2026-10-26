@@ -314,7 +314,7 @@ V3 的产品范围和全局决定。
 |---|---|---|
 | 电脑界面 | Tauri IPC | 全部操作；拿不到密码和 API Key |
 | 手机 | 经中继的端到端加密 WebSocket | 和电脑界面相同 |
-| CLI、MCP | 本机命名管道（Windows）或 Unix socket（macOS），带令牌，只有本机当前用户能连 | 发信要用户在应用里确认 |
+| CLI、MCP | 本机命名管道（Windows）或 Unix socket（macOS），当前用户持令牌调用 | 发信要用户在应用里确认 |
 
 - 模块：核心按领域拆成多个 crate（导师、邮箱、任务、发信、收信、模型、抓取等），依赖单向，由编译器保证。每张表只由所属模块写入，其他模块调用它的函数。
 - 数据：SQLite，用 sqlx 访问，迁移用 SQL 写，查询在编译时检查。材料和附件存成文件。升级数据结构前自动备份数据库。实体、状态和删除规则见[数据模型](data-model.md)。
@@ -366,7 +366,7 @@ V3 的产品范围和全局决定。
 - 文档：PDF 提取文字用 pdf_oxide 或 pdfium，用真实的中文简历实测后选定；DOCX 解析成 Markdown。表格用 calamine 读、rust_xlsxwriter 写。
 - 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap，Markdown 用 marked 解析、写回由界面自己的序列化器完成（`ui/src/markdown.ts`），图表是几种简单的柱状图和横条，用 HTML 和 CSS 画，不引入图表库。
 - CLI 和 MCP：一个 Rust 小程序，MCP 用官方的 Rust SDK。用户在设置里开启后装到 PATH，也可以一键写进 Claude、Cursor 等工具的 MCP 配置。在 Windows 的 PowerShell 和 cmd 里读到的中文输出不能乱码。
-  - 连接走本机通道，不开网络端口：macOS 用数据目录里的 Unix 域套接字（只有当前用户能读写），Windows 用只允许当前用户连接的命名管道。开关关着时不监听。
+  - 连接走本机通道，不开网络端口：macOS 用数据目录里的 Unix 域套接字（只有当前用户能读写），Windows 用拒绝远程连接的命名管道，使用默认 DACL：其他本机用户只有读权限，不能写入第一行令牌，因此不能发起调用；认证前服务端不写任何数据，超时或令牌不对就断开，各连接使用独立管道实例。令牌文件放在当前用户的数据目录里；开关关着时不监听。
   - 一行一个 JSON 的请求和回答，操作名和参数与界面相同，由同一个分发函数执行；不开放的操作在分发前拒绝。
   - 可用的操作和参数的 JSON Schema 从类型生成，MCP 的工具列表和命令行的帮助都从这里来，不另写一份。
 

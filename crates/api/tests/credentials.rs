@@ -7,6 +7,7 @@ use sqlx::SqlitePool;
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restored_credentials_must_be_refilled_before_editing_or_testing(db: SqlitePool) {
     let ctx = Context {
+        agent_access: Default::default(),
         writes: db::Writes::default(),
         db,
         net: net::Net::new(vec![]).unwrap(),

@@ -23,6 +23,7 @@ async fn a_deleted_mailbox_is_rejected_without_changing_the_responsible_mailbox(
         .await
         .unwrap();
     let ctx = Context {
+        agent_access: Default::default(),
         writes: db::Writes::default(),
         db,
         net: net::Net::new(vec![]).unwrap(),

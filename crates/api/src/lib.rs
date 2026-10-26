@@ -1,6 +1,8 @@
 //! The operations the UI, the phone and agents call, and the one dispatcher that runs them all
 //! (docs/design.md#桌面端). Input is validated here, when it is deserialized.
 
+pub mod agent;
+use agent::{get_agent_access, set_agent_access};
 pub mod backup;
 mod crawling;
 mod fact_check;
@@ -21,6 +23,7 @@ use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
+    pub agent_access: agent::Access,
     pub writes: db::Writes,
     pub db: SqlitePool,
     pub net: net::Net,
@@ -164,7 +167,175 @@ macro_rules! operations {
     };
 }
 
+/// Only these operations are available to Agents; adding an operation never grants access.
+const AGENT_OPERATIONS: &[&str] = &[
+    "storageFailure",
+    "contactStats",
+    "mentorStats",
+    "tokenStats",
+    "checkCrawlUrls",
+    "crawlWork",
+    "todayWork",
+    "listCrawls",
+    "crawlOptions",
+    "getCrawl",
+    "previewEnrich",
+    "listCandidates",
+    "getCandidate",
+    "previewCandidates",
+    "scheduleCapacity",
+    "previewTaskSchedule",
+    "sendingPlan",
+    "scheduledWork",
+    "planTask",
+    "taskWork",
+    "listTasks",
+    "getTask",
+    "listTaskDrafts",
+    "getTaskDraft",
+    "checkTaskDraft",
+    "prepareTaskApproval",
+    "listConversations",
+    "unreadCount",
+    "receiveStatus",
+    "getBackgroundNotifications",
+    "getAiFactCheck",
+    "factCheckEmail",
+    "getReplyNotifications",
+    "planMatching",
+    "matchingProgress",
+    "previewImport",
+    "listMentors",
+    "mentorFilterOptions",
+    "getMentor",
+    "previewMerge",
+    "listTrash",
+    "listTags",
+    "listProviders",
+    "listMailboxes",
+    "getRotation",
+    "getProfile",
+    "testLetter",
+    "getLetterStyle",
+    "listMaterials",
+    "getMaterialText",
+    "listPlaceholders",
+    "listTemplates",
+    "getTemplate",
+    "applyTemplate",
+    "applyDefaultTemplate",
+    "getFollowUpEntry",
+    "getFollowUpDraft",
+    "restartTask",
+    "getReplyDraft",
+    "getReplyTarget",
+    "checkFollowUpDraft",
+    "checkReplyDraft",
+    "getFirstDraft",
+    "checkFirstDraft",
+    "checkMailDomain",
+    "getAiReplyTodos",
+    "getTodoReminders",
+    "listTodos",
+    "getAiReplyOutcome",
+    "replyProcessing",
+    "listCorrespondence",
+    "listModelProviders",
+    "listModelConfigs",
+    "startCrawl",
+    "pauseCrawl",
+    "resumeCrawl",
+    "cancelCrawl",
+    "retryCrawl",
+    "enrichCandidates",
+    "acceptCandidates",
+    "rejectCandidates",
+    "createTask",
+    "attachTaskMaterial",
+    "saveTaskDraft",
+    "writeTaskDraft",
+    "pauseTask",
+    "stopTask",
+    "removeTaskEmail",
+    "regenerateTaskEmail",
+    "reapplyTaskTemplate",
+    "retryTaskGeneration",
+    "createFollowUpDraft",
+    "saveFollowUpDraft",
+    "discardFollowUpDraft",
+    "writeFollowUp",
+    "saveReplyDraft",
+    "writeReply",
+    "attachDraftMaterial",
+    "saveFirstDraft",
+    "writeLetter",
+    "withdrawEmail",
+    "importMentors",
+    "setMentorNote",
+    "addMentor",
+    "updateMentor",
+    "addMentorEmail",
+    "trashMentors",
+    "restoreMentors",
+    "tagMentors",
+    "createTag",
+    "renameTag",
+    "recolorTag",
+    "moveTag",
+    "updateProfile",
+    "updateLetterStyle",
+    "addMaterial",
+    "setMaterialPurpose",
+    "addTemplate",
+    "updateTemplate",
+    "setDefaultTemplate",
+    "receiveNow",
+    "startMatching",
+    "matchMentor",
+    "pauseMatching",
+    "resumeMatching",
+    "cancelMatching",
+    "retryMatching",
+    "addTodo",
+    "updateTodo",
+    "setTodoDone",
+    "retryReplyTodos",
+    "setReplyOutcome",
+    "retryReplyOutcome",
+    "resumeReplyProcessing",
+    "markRead",
+];
+
+pub async fn call_agent(
+    ctx: &Context,
+    op: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, CallError> {
+    let mut log = AgentCallLog { op, success: false };
+    let result = if AGENT_OPERATIONS.contains(&op) {
+        call(ctx, op, input).await
+    } else {
+        Err(CallError::invalid("这个操作不对 Agent 开放".into()))
+    };
+    log.success = result.is_ok();
+    result
+}
+
+// Dropping an in-flight call when access is disabled must also record its failure.
+struct AgentCallLog<'a> {
+    op: &'a str,
+    success: bool,
+}
+
+impl Drop for AgentCallLog<'_> {
+    fn drop(&mut self) {
+        tracing::info!(op = self.op, success = self.success, "agent call");
+    }
+}
+
 operations! {
+    "getAgentAccess" => get_agent_access(Nothing) -> bool;
+    "setAgentAccess" => set_agent_access(agent::AgentAccess) -> ();
     "storageFailure" => storage_failure(Nothing) -> Option<String>;
     "contactStats" => contact_stats(StatsQuery) -> stats::ContactProgress;
     "mentorStats" => mentor_stats(Nothing) -> stats::MentorOverview;
@@ -2373,6 +2544,7 @@ mod writing_tests {
         .await
         .unwrap();
         let ctx = Context {
+            agent_access: Default::default(),
             writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
@@ -2486,6 +2658,7 @@ mod writing_tests {
         .await
         .unwrap();
         let ctx = Context {
+            agent_access: Default::default(),
             writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
@@ -2570,6 +2743,7 @@ mod reply_outcome_tests {
             ids.push(id);
         }
         let ctx = Context {
+            agent_access: Default::default(),
             writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),

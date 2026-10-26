@@ -23,6 +23,7 @@ async fn list_and_export_validate_filters_at_the_boundary(db: SqlitePool) {
     .await
     .unwrap();
     let ctx = Context {
+        agent_access: Default::default(),
         writes: Default::default(),
         db,
         net: net::Net::new(vec![]).unwrap(),

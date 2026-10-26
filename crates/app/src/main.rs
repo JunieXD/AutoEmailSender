@@ -11,6 +11,7 @@ mod save;
 use std::error::Error;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::DateTime;
 use tauri::{AppHandle, Emitter, Manager};
@@ -21,7 +22,7 @@ use tauri_plugin_opener::OpenerExt;
 /// The UI's one entry point into the core; see `api::call`.
 #[tauri::command]
 async fn call(
-    ctx: tauri::State<'_, api::Context>,
+    ctx: tauri::State<'_, Arc<api::Context>>,
     op: String,
     input: serde_json::Value,
 ) -> Result<serde_json::Value, api::CallError> {
@@ -49,7 +50,7 @@ async fn export_logs(app: AppHandle) -> Result<bool, String> {
 #[tauri::command]
 async fn export_crawl_log(
     app: AppHandle,
-    ctx: tauri::State<'_, api::Context>,
+    ctx: tauri::State<'_, Arc<api::Context>>,
     id: i64,
 ) -> Result<bool, String> {
     let detail = crawl::queue::detail(&ctx.db, id, 1)
@@ -72,7 +73,7 @@ async fn export_crawl_log(
 #[tauri::command]
 async fn export_mentors(
     app: AppHandle,
-    ctx: tauri::State<'_, api::Context>,
+    ctx: tauri::State<'_, Arc<api::Context>>,
     input: api::ExportMentors,
     file_name: String,
 ) -> Result<bool, String> {
@@ -188,7 +189,7 @@ fn main() -> tauri::Result<()> {
 }
 
 /// Opens the data directory, the logs and the database.
-async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
+async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupError> {
     let dir = data_dir(app).map_err(|e| StartupError::DataDir(e.into()))?;
     let lock = match api::startup::DataLock::acquire(&dir) {
         Ok(lock) => lock,
@@ -208,7 +209,13 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
         tracing::error!("refresh autostart: {e}");
     }
     let (ctx, restored) = api::startup::open(&dir).await.map_err(StartupError::Core)?;
+    let ctx = Arc::new(ctx);
+    let agent = api::agent::start(ctx.clone(), dir)
+        .await
+        .map_err(StartupError::Agent)?;
+    app.manage(agent);
     let api::Context {
+        agent_access: _,
         writes,
         db,
         net,
@@ -221,7 +228,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
         crawler,
         generator,
         model_limit,
-    } = &ctx;
+    } = &*ctx;
     let ui = app.clone();
     tauri::async_runtime::spawn(send::run(
         db.clone(),
@@ -472,6 +479,7 @@ enum StartupError {
     DataDir(Box<dyn Error>),
     Logs(Box<dyn Error>),
     Core(api::startup::Error),
+    Agent(api::CallError),
 }
 
 impl std::fmt::Display for StartupError {
@@ -480,6 +488,7 @@ impl std::fmt::Display for StartupError {
             StartupError::DataDir(e) => write!(f, "data directory: {e}"),
             StartupError::Logs(e) => write!(f, "logs: {e}"),
             StartupError::Core(e) => write!(f, "{e}"),
+            StartupError::Agent(e) => write!(f, "agent: {:?}", e.code),
         }
     }
 }
@@ -491,6 +500,7 @@ impl StartupError {
             StartupError::DataDir(e) => format!("数据目录无法使用：{e}"),
             StartupError::Logs(e) => format!("日志无法写入：{e}"),
             StartupError::Core(e) => e.message(),
+            StartupError::Agent(e) => format!("Agent 连接无法启动：{}", e.message),
         }
     }
 }
