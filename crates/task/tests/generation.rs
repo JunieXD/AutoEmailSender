@@ -32,6 +32,7 @@ impl Runner {
         let (done_tx, done) = mpsc::unbounded_channel();
         let worker = tokio::spawn(generation::run(
             db.clone(),
+            db::Writes::default(),
             net::Net::new(vec![]).unwrap(),
             handle.clone(),
             limit,
@@ -446,6 +447,7 @@ async fn matching_and_writing_share_three_actual_model_calls(db: SqlitePool) {
     let matcher = matching::Matcher::default();
     let match_worker = tokio::spawn(matching::run(
         db.clone(),
+        db::Writes::default(),
         net::Net::new(vec![]).unwrap(),
         matcher,
         limit,

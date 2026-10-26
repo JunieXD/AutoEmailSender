@@ -11,7 +11,9 @@ workspace = true
 [dependencies]
 libsqlite3-sys.workspace = true
 sqlx.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tracing.workspace = true
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

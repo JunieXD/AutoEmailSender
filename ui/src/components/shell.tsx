@@ -208,8 +208,14 @@ function useBackground() {
     queryFn: () => call("listMailboxes", {}),
     refetchInterval: 3000,
   });
+  const storage = useQuery({
+    queryKey: ["storageFailure"],
+    queryFn: () => call("storageFailure", {}),
+    refetchInterval: 3000,
+  });
   const today = new Date(crawls.dataUpdatedAt).toDateString();
   const work = {
+    storage: storage.data ?? null,
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
     emails: scheduled.data?.pending ?? 0,
     mailboxes: mailboxes.data?.flatMap(({ id, address, pause }) => (pause ? [{ id, address, pause }] : [])) ?? [],
@@ -224,12 +230,20 @@ function useBackground() {
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
     next: scheduled.data?.nextAt ?? null,
     nextToday: scheduled.data?.today ?? 0,
-    error: tasks.error ?? matching.error ?? scheduled.error ?? crawls.error ?? mailboxes.error ?? replies.error,
+    error:
+      storage.error ??
+      tasks.error ??
+      matching.error ??
+      scheduled.error ??
+      crawls.error ??
+      mailboxes.error ??
+      replies.error,
   };
   return {
     ...work,
     running: work.crawling.length + work.generating.length + (work.matching > 0 ? 1 : 0) + (work.marking > 0 ? 1 : 0),
     waiting:
+      (work.storage ? 1 : 0) +
       (work.emails > 0 ? 1 : 0) +
       work.mailboxes.length +
       work.paused.length +
@@ -287,6 +301,11 @@ function Background({ className }: { className?: string }) {
       <PopoverContent side="top" align="start" className="max-h-96 w-80 space-y-4 overflow-y-auto p-4 text-sm">
         {work.waiting > 0 && (
           <Group title="待处理" className="text-warning">
+            {work.storage && (
+              <Link to="/settings/about" className={ITEM}>
+                <Entry title="数据暂时无法保存" detail={work.storage} />
+              </Link>
+            )}
             {work.emails > 0 && (
               <Link to="/tasks" search={{ tab: "plan" }} className={ITEM}>
                 <Entry title={`${work.emails} 封邮件待处理`} detail="去发送计划里处理" />

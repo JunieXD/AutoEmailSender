@@ -108,6 +108,7 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
     });
     let id = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
     let pages = Pages {
+        writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser.clone()),
     };
@@ -170,6 +171,7 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
     let mut claim = queue::next(&db).await.unwrap().unwrap();
     let browser = Arc::new(FakeBrowser::default());
     let pages = Pages {
+        writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser.clone()),
     };
@@ -263,6 +265,7 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
         let claim = queue::next(&db).await.unwrap().unwrap();
         let browser = Arc::new(FakeBrowser::default());
         let pages = Pages {
+            writes: db::Writes::default(),
             http: Fetcher::local(site.port),
             browser: Some(browser.clone()),
         };

@@ -9,6 +9,9 @@ use sqlx::SqlitePool;
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 
+mod writes;
+pub use writes::Writes;
+
 pub static MIGRATOR: LazyLock<Migrator> = LazyLock::new(|| {
     initialize_sqlite();
     sqlx::migrate!()

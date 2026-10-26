@@ -8,6 +8,7 @@ const T: i64 = 1_800_000_000_000;
 
 fn context(db: SqlitePool) -> Context {
     Context {
+        writes: db::Writes::default(),
         db,
         net: net::Net::new(vec![]).unwrap(),
         sender: Default::default(),

@@ -431,7 +431,9 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
         ];
         let net = net::Net::new(vec![]).unwrap();
         let cooldown = Cooldown::default();
+        let writes = db::Writes::default();
         let reader = Reader {
+            writes: &writes,
             db: &db,
             net: &net,
             limit: &limit,

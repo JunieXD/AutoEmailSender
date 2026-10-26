@@ -15,8 +15,6 @@ use tokio::sync::Notify;
 
 const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
-/// How long to wait before trying the database again.
-const RETRY: Duration = Duration::from_secs(5);
 /// How often at most the window hears about emails going out back to back.
 const TELL_EVERY: Duration = Duration::from_secs(5);
 
@@ -34,19 +32,19 @@ impl Sender {
 /// attached from `materials`. `changed` runs once emails have been sent or failed.
 pub async fn run(
     db: SqlitePool,
+    writes: db::Writes,
     net: Net,
     materials: PathBuf,
     sender: Sender,
     changed: impl Fn() + Send + 'static,
 ) {
-    while let Err(e) = recover(&db, now()).await {
-        tracing::error!("recover interrupted emails: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    writes
+        .retry("recover interrupted emails", || recover(&db, now()))
+        .await;
     let dealt = Notify::new();
     let sending = async {
         loop {
-            let wait = match step(&db, &net, &materials, now).await {
+            let wait = match step(&db, &writes, &net, &materials, now).await {
                 Ok(Next::Now) => {
                     dealt.notify_one();
                     continue;
@@ -111,11 +109,12 @@ pub enum Next {
 /// milliseconds; sending takes a while.
 pub async fn step(
     db: &SqlitePool,
+    writes: &db::Writes,
     net: &Net,
     materials: &Path,
     now: impl Fn() -> i64,
 ) -> Result<Next, sqlx::Error> {
-    step_in_zone(db, net, materials, now, &chrono::Local, &mut |n| {
+    step_in_zone(db, writes, net, materials, now, &chrono::Local, &mut |n| {
         fastrand::i64(0..n)
     })
     .await
@@ -123,6 +122,7 @@ pub async fn step(
 
 pub async fn step_in_zone<T: chrono::TimeZone>(
     db: &SqlitePool,
+    writes: &db::Writes,
     net: &Net,
     materials: &Path,
     now: impl Fn() -> i64,
@@ -176,7 +176,7 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     for e in due {
         match choose(rotation, e.own, e.reply, &mailboxes, at) {
             Some((mailbox, ready)) if ready <= at => {
-                send(db, net, materials, e.id, mailbox, &now, zone).await?;
+                send(db, writes, net, materials, e.id, mailbox, &now, zone).await?;
                 return Ok(Next::Now);
             }
             Some((_, ready)) => next = Some(next.map_or(ready, |n| n.min(ready))),
@@ -295,8 +295,13 @@ fn choose(
 }
 
 /// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "keep the sending services and handover inputs explicit without a one-use context"
+)]
 async fn send<T: chrono::TimeZone>(
     db: &SqlitePool,
+    writes: &db::Writes,
     net: &Net,
     materials: &Path,
     id: i64,
@@ -359,10 +364,11 @@ async fn send<T: chrono::TimeZone>(
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
-    while let Err(e) = record(db, id, mailbox_id, &account, &m, &outcome, answered).await {
-        tracing::error!("record email {id}: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    writes
+        .retry("record email", || {
+            record(db, id, mailbox_id, &account, &m, &outcome, answered)
+        })
+        .await;
     Ok(())
 }
 

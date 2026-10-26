@@ -10,7 +10,6 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
-const RETRY: Duration = Duration::from_secs(5);
 #[derive(Clone, Default)]
 pub struct Generator(Arc<Notify>);
 impl Generator {
@@ -274,34 +273,31 @@ async fn apply(
 
 pub async fn run(
     db: SqlitePool,
+    writes: db::Writes,
     net: net::Net,
     generator: Generator,
     limit: Limit,
     changed: impl Fn() + Send + 'static,
     finished: impl Fn(DraftsFinished) + Send + 'static,
 ) {
-    while let Err(e) = emails::recover(&db).await {
-        tracing::error!("recover drafts: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    writes
+        .retry("recover drafts", || emails::recover(&db))
+        .await;
     let mut workers = JoinSet::new();
     let mut claims = HashMap::new();
     let mut active = HashSet::new();
     let mut retry_at: Option<Instant> = None;
     loop {
-        let tasks = match sqlx::query!(
-            "SELECT DISTINCT task_id FROM email WHERE state = 'generating' AND task_id IS NOT NULL"
-        )
-        .fetch_all(&db)
-        .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                tracing::error!("draft progress: {e}");
-                tokio::time::sleep(RETRY).await;
-                continue;
-            }
-        };
+        let tasks = writes
+            .retry("draft progress", || {
+                sqlx::query!(
+                    r#"SELECT DISTINCT task_id
+                    FROM email
+                    WHERE state = 'generating' AND task_id IS NOT NULL"#
+                )
+                .fetch_all(&db)
+            })
+            .await;
         for t in tasks {
             if let Some(id) = t.task_id {
                 active.insert(id);
@@ -353,26 +349,19 @@ pub async fn run(
             }
         }
         let cooling = retry_at.is_some_and(|at| at > Instant::now());
-        if !cooling && workers.len() < CONCURRENCY {
-            match emails::next(&db).await {
-                Ok(Some(claim)) => {
-                    active.insert(claim.task);
-                    let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
-                    let task = workers.spawn(async move {
-                        let _permit = limit.acquire().await;
-                        (claim, generate(&db, &net, claim).await)
-                    });
-                    claims.insert(task.id(), claim);
-                    changed();
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::error!("claim draft: {e}");
-                    tokio::time::sleep(RETRY).await;
-                    continue;
-                }
-            }
+        if !cooling
+            && workers.len() < CONCURRENCY
+            && let Some(claim) = writes.retry("claim draft", || emails::next(&db)).await
+        {
+            active.insert(claim.task);
+            let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
+            let task = workers.spawn(async move {
+                let _permit = limit.acquire().await;
+                (claim, generate(&db, &net, claim).await)
+            });
+            claims.insert(task.id(), claim);
+            changed();
+            continue;
         }
         tokio::select! {
             Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
@@ -392,16 +381,9 @@ pub async fn run(
                             }
                         };
                         let at = now();
-                        let applied = loop {
-                            let result = apply(&db, claim, &outcome, at).await;
-                            match result {
-                                Ok(a) => break a,
-                                Err(e) => {
-                                    tracing::error!("save draft: {e}");
-                                    tokio::time::sleep(RETRY).await;
-                                }
-                            }
-                        };
+                        let applied = writes
+                            .retry("save draft", || apply(&db, claim, &outcome, at))
+                            .await;
                         if applied
                             && let Some(wait) = match outcome {
                                 Outcome::RateLimit(wait)
@@ -420,17 +402,16 @@ pub async fn run(
                     Err(e) => {
                         tracing::error!("draft worker: {e}");
                         if let Some(claim) = claims.remove(&e.id()) {
-                            while let Err(e) = requeue(
-                                &db,
-                                claim,
-                                Some(("草稿生成意外中断，请继续或重启应用。", None)),
-                                now(),
-                            )
-                            .await
-                            {
-                                tracing::error!("recover draft worker: {e}");
-                                tokio::time::sleep(RETRY).await;
-                            }
+                            writes
+                                .retry("recover draft worker", || {
+                                    requeue(
+                                        &db,
+                                        claim,
+                                        Some(("草稿生成意外中断，请继续或重启应用。", None)),
+                                        now(),
+                                    )
+                                })
+                                .await;
                         }
                         changed();
                     }

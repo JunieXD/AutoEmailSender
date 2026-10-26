@@ -21,6 +21,7 @@ use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
+    pub writes: db::Writes,
     pub db: SqlitePool,
     pub net: net::Net,
     pub sender: send::Sender,
@@ -164,6 +165,7 @@ macro_rules! operations {
 }
 
 operations! {
+    "storageFailure" => storage_failure(Nothing) -> Option<String>;
     "contactStats" => contact_stats(StatsQuery) -> stats::ContactProgress;
     "mentorStats" => mentor_stats(Nothing) -> stats::MentorOverview;
     "tokenStats" => token_stats(StatsPeriod) -> stats::TokenUsage;
@@ -374,6 +376,9 @@ async fn match_mentor(ctx: &Context, input: MentorId) -> Result<u64, CallError> 
     let count = mentor::matching::enqueue(&ctx.db, &[input.id], true, true, now()).await?;
     ctx.matcher.wake();
     Ok(count)
+}
+async fn storage_failure(ctx: &Context, _: Nothing) -> Result<Option<String>, CallError> {
+    Ok(ctx.writes.failure().map(str::to_owned))
 }
 async fn matching_progress(
     ctx: &Context,
@@ -2272,6 +2277,7 @@ mod writing_tests {
         .await
         .unwrap();
         let ctx = Context {
+            writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
             sender: Default::default(),
@@ -2384,6 +2390,7 @@ mod writing_tests {
         .await
         .unwrap();
         let ctx = Context {
+            writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
             sender: Default::default(),
@@ -2467,6 +2474,7 @@ mod reply_outcome_tests {
             ids.push(id);
         }
         let ctx = Context {
+            writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
             sender: Default::default(),

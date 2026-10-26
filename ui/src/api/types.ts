@@ -677,6 +677,7 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  storageFailure: { input: Nothing; output: string | null };
   contactStats: { input: StatsQuery; output: ContactProgress };
   mentorStats: { input: Nothing; output: MentorOverview };
   tokenStats: { input: StatsPeriod; output: TokenUsage };
