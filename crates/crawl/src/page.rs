@@ -2,7 +2,7 @@ use ego_tree::iter::Edge;
 use regex::Regex;
 use scraper::{ElementRef, Html, Node, Selector};
 use serde::{Deserialize, Serialize};
-use std::{ops::Range, sync::LazyLock};
+use std::sync::LazyLock;
 
 use crate::{
     PageUrl,
@@ -54,8 +54,6 @@ pub struct Unit {
     pub path: Vec<usize>,
     /// UTF-8 positions after rendered line breaks; the block itself starts at zero.
     pub line_starts: Vec<usize>,
-    /// UTF-8 ranges of link labels inserted from alternative text attributes.
-    pub alternative_text: Vec<Range<usize>>,
     pub in_footer_or_nav: bool,
 }
 
@@ -267,12 +265,6 @@ fn alternative_text(element: ElementRef<'_>) -> Option<String> {
     None
 }
 
-fn add_alternative(unit: &mut Unit, text: &str) {
-    let start = unit.text.len();
-    unit.text.push_str(text);
-    unit.alternative_text.push(start..unit.text.len());
-}
-
 static NAVIGATION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"(?ix)
@@ -380,7 +372,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                         && alternative_text(parent).is_some())
                     && let Some(text) = alternative_text(element)
                 {
-                    add_alternative(&mut current, &text);
+                    current.text.push_str(&text);
                 }
                 let direct = href
                     .filter(|h| !h.trim().is_empty() && !h.trim().starts_with('#'))
@@ -410,7 +402,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                         && visible_text(element).is_empty()
                         && let Some(text) = alternative_text(element)
                     {
-                        add_alternative(&mut current, &text);
+                        current.text.push_str(&text);
                     }
                     let text = if element.value().name() == "input" {
                         element
@@ -539,10 +531,6 @@ fn finish(current: &mut Unit, units: &mut Vec<Unit>, emails: &Emails) {
         *start = positions[*start];
     }
     unit.line_starts.dedup();
-    for range in &mut unit.alternative_text {
-        range.start = positions[range.start];
-        range.end = text[..positions[range.end]].trim_end().len();
-    }
     unit.text = text;
     for evidence in &mut unit.emails {
         if let EmailLocation::Attribute { offset, .. } = &mut evidence.location {

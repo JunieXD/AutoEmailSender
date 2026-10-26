@@ -764,8 +764,6 @@ fn rendered_breaks_and_alternative_text_keep_byte_positions() {
     );
     let unit = &page.units[0];
     assert_eq!(unit.text, "前张 三\n张三 后");
-    assert_eq!(unit.alternative_text.len(), 1);
-    assert_eq!(&unit.text[unit.alternative_text[0].clone()], "张 三");
     assert_eq!(unit.line_starts.len(), 1);
     assert_eq!(&unit.text[unit.line_starts[0]..], "张三 后");
     let email = unit
