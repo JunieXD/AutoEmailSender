@@ -75,6 +75,8 @@ function RotationRow() {
             label="轮转"
             className="self-start"
             value={query.data}
+            // A slower earlier save must not land after a later one.
+            disabled={save.isPending}
             options={[
               ["failover", "先用一个"],
               ["perEmail", "每封换一个"],

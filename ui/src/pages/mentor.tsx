@@ -289,32 +289,37 @@ function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const save = useMutation({
     mutationFn: (mailboxId: number | null) => call("setMentorMailbox", { id: m.id, mailboxId }),
+    // By the saved mentor: the page may show another one by the time it lands.
     onSuccess: async (saved) => {
-      await queryClient.cancelQueries({ queryKey: ["getMentor", m.id] });
-      queryClient.setQueryData(["getMentor", m.id], saved);
+      await queryClient.cancelQueries({ queryKey: ["getMentor", saved.id] });
+      queryClient.setQueryData(["getMentor", saved.id], saved);
     },
     // The mailbox may have been deleted since the list was loaded.
     onError: () => queryClient.invalidateQueries({ queryKey: ["listMailboxes"] }),
   });
-  if (!mailboxes.data || mailboxes.data.length < 2) return null;
+  const choosing = mailboxes.data !== undefined && mailboxes.data.length > 1;
+  // The error stays even when that deletion leaves a single mailbox.
+  if (!choosing && !save.error) return null;
   return (
     <>
       <dt>发件邮箱</dt>
       <dd>
-        <NativeSelect
-          aria-label="发件邮箱"
-          value={m.mailboxId ?? ""}
-          disabled={save.isPending}
-          onChange={(e) => save.mutate(e.target.value ? Number(e.target.value) : null)}
-        >
-          <NativeSelectOption value="">自动</NativeSelectOption>
-          {mailboxes.data.map((b) => (
-            <NativeSelectOption key={b.id} value={b.id}>
-              {b.address}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        {m.contact.status !== "none" && (
+        {choosing && (
+          <NativeSelect
+            aria-label="发件邮箱"
+            value={m.mailboxId ?? ""}
+            disabled={save.isPending}
+            onChange={(e) => save.mutate(e.target.value ? Number(e.target.value) : null)}
+          >
+            <NativeSelectOption value="">自动</NativeSelectOption>
+            {mailboxes.data.map((b) => (
+              <NativeSelectOption key={b.id} value={b.id}>
+                {b.address}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
+        {choosing && m.contact.status !== "none" && (
           <p className="mt-1 text-xs text-muted-foreground">换了邮箱后，导师看到的发件地址会变。</p>
         )}
         {save.error && <p className="mt-1 text-xs text-destructive">{errorMessage(save.error)}</p>}
