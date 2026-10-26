@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Mailbox, Provider, Rotation } from "@/api/types";
@@ -60,12 +60,15 @@ function RotationRow() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["getRotation"], queryFn: () => call("getRotation", {}) });
   const save = useMutation({
+    mutationKey: ["setRotation"],
     mutationFn: (rotation: Rotation) => call("setRotation", rotation),
     onSuccess: async (_, rotation) => {
       await queryClient.cancelQueries({ queryKey: ["getRotation"] });
       queryClient.setQueryData(["getRotation"], rotation);
     },
   });
+  // A slower earlier save must not land after a later one, even one made after leaving and coming back.
+  const saving = useMutationState({ filters: { mutationKey: ["setRotation"], status: "pending" } }).length > 0;
   const error = query.error ?? save.error;
   return (
     <Row label="轮转">
@@ -75,8 +78,7 @@ function RotationRow() {
             label="轮转"
             className="self-start"
             value={query.data}
-            // A slower earlier save must not land after a later one.
-            disabled={save.isPending}
+            disabled={saving}
             options={[
               ["failover", "先用一个"],
               ["perEmail", "每封换一个"],

@@ -287,7 +287,9 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
 function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
   const queryClient = useQueryClient();
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
+  const saveKey = ["setMentorMailbox", m.id];
   const save = useMutation({
+    mutationKey: saveKey,
     mutationFn: (mailboxId: number | null) => call("setMentorMailbox", { id: m.id, mailboxId }),
     // By the saved mentor: the page may show another one by the time it lands.
     onSuccess: async (saved) => {
@@ -297,9 +299,12 @@ function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
     // The mailbox may have been deleted since the list was loaded.
     onError: () => queryClient.invalidateQueries({ queryKey: ["listMailboxes"] }),
   });
+  // A slower earlier save must not land after a later one, even one made after leaving and coming back.
+  const saving = useMutationState({ filters: { mutationKey: saveKey, status: "pending" } }).length > 0;
   const choosing = mailboxes.data !== undefined && mailboxes.data.length > 1;
-  // The error stays even when that deletion leaves a single mailbox.
-  if (!choosing && !save.error) return null;
+  // A save error stays even when that deletion leaves a single mailbox.
+  const error = mailboxes.error ?? save.error;
+  if (!choosing && !error) return null;
   return (
     <>
       <dt>发件邮箱</dt>
@@ -308,7 +313,7 @@ function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
           <NativeSelect
             aria-label="发件邮箱"
             value={m.mailboxId ?? ""}
-            disabled={save.isPending}
+            disabled={saving}
             onChange={(e) => save.mutate(e.target.value ? Number(e.target.value) : null)}
           >
             <NativeSelectOption value="">自动</NativeSelectOption>
@@ -322,7 +327,7 @@ function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
         {choosing && m.contact.status !== "none" && (
           <p className="mt-1 text-xs text-muted-foreground">换了邮箱后，导师看到的发件地址会变。</p>
         )}
-        {save.error && <p className="mt-1 text-xs text-destructive">{errorMessage(save.error)}</p>}
+        {error && <p className="mt-1 text-xs text-destructive">{errorMessage(error)}</p>}
       </dd>
     </>
   );
