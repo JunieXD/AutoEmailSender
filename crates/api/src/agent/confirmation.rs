@@ -125,9 +125,9 @@ pub(crate) async fn confirmation(
             let input: MentorKey = parse(input)?;
             let targets = mentor_targets(ctx, &[input.mentor_id]).await?;
             let action = match op {
-                "approveFirstEmail" => "发出 1 封首封邮件",
-                "approveFollowUp" => "发出 1 封追问邮件",
-                _ => "发出 1 封回复邮件",
+                "approveFirstEmail" => "发出 1 封首封",
+                "approveFollowUp" => "发出 1 封追问",
+                _ => "发出 1 封回复",
             };
             Description::new(action.into(), targets)
         }
@@ -165,11 +165,22 @@ pub(crate) async fn confirmation(
             let input: task::ScheduleEdit = parse(input)?;
             let target = task_name(ctx, input.id).await?;
             match input.schedule {
-                email::schedule::Schedule::Now => object("把任务改为立即发送", target),
+                email::schedule::Schedule::Now => object("把 1 个任务改为立即发送", target),
                 email::schedule::Schedule::Window(window) => {
-                    let dates = window.dates.join("、");
+                    let dates = window
+                        .dates
+                        .iter()
+                        .map(
+                            |date| match chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+                                Ok(date) => date.format("%-m月%-d日").to_string(),
+                                // The dispatcher rejects it when allowed; show what the Agent sent.
+                                Err(_) => date.clone(),
+                            },
+                        )
+                        .collect::<Vec<_>>()
+                        .join("、");
                     let target = format!(
-                        "{target}：{dates} 的 {}–{}，每个窗口最多 {} 封",
+                        "{target}：{dates}的 {}–{}，每个窗口最多 {} 封",
                         window.start, window.end, window.per_window
                     );
                     object("更改 1 个任务的发送时间", target)
@@ -182,7 +193,7 @@ pub(crate) async fn confirmation(
             let at = chrono::DateTime::from_timestamp_millis(input.planned_at)
                 .map(|at| {
                     at.with_timezone(&chrono::Local)
-                        .format("%Y年%-m月%-d日 %H:%M:%S%.3f")
+                        .format("%Y年%-m月%-d日 %H:%M")
                         .to_string()
                 })
                 .unwrap_or_else(|| format!("无法识别的时间：{}", input.planned_at));
@@ -208,7 +219,7 @@ pub(crate) async fn confirmation(
         "mergeMentors" => {
             let input: crate::MentorMerge = parse(input)?;
             let targets = mentor_targets(ctx, &[input.other, input.keep]).await?;
-            Description::new("合并 2 位导师，前一位并入后一位".into(), targets)
+            Description::new("合并 2 位导师：第 1 位并入第 2 位".into(), targets)
         }
         "deleteTemplate" => {
             let input: crate::TemplateId = parse(input)?;
