@@ -1,13 +1,27 @@
 #![cfg(test)]
 
-use api::{CallError, Context, ErrorCode, call, call_agent};
+use api::{Context, ErrorCode, call, call_agent};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
-fn confirmation(error: CallError) {
+async fn refused(ctx: &Context, op: &str, input: Value) {
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(ctx, op, input, |_| {
+        let _ = registered.send(());
+    });
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(ctx, "listAgentRequests", json!({})).await.unwrap();
+        let id = requests[0]["id"].clone();
+        call(ctx, "answerAgentRequest", json!({"id":id, "allow":false}))
+            .await
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(calling, answer);
+    let error = result.unwrap_err();
     assert!(matches!(error.code, ErrorCode::Invalid));
-    assert!(error.message.contains("在应用里确认"));
+    assert!(error.message.contains("在应用里拒绝"));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -29,9 +43,8 @@ async fn editing_a_mailbox_requires_confirmation_only_while_its_pause_is_active(
             .execute(&ctx.db)
             .await
             .unwrap();
-        let result = call_agent(&ctx, "updateMailbox", edit.clone()).await;
         if until == Some(i64::MAX) {
-            confirmation(result.unwrap_err());
+            refused(&ctx, "updateMailbox", edit.clone()).await;
             assert_eq!(
                 sqlx::query_scalar::<_, Option<i64>>("SELECT paused_until FROM mailbox")
                     .fetch_one(&ctx.db)
@@ -40,7 +53,12 @@ async fn editing_a_mailbox_requires_confirmation_only_while_its_pause_is_active(
                 until
             );
         } else {
-            assert_eq!(result.unwrap(), Value::Null);
+            assert_eq!(
+                call_agent(&ctx, "updateMailbox", edit.clone(), |_| {})
+                    .await
+                    .unwrap(),
+                Value::Null
+            );
             assert_eq!(
                 sqlx::query_scalar::<_, Option<i64>>("SELECT paused_until FROM mailbox")
                     .fetch_one(&ctx.db)
@@ -82,7 +100,7 @@ async fn empty_saves_require_confirmation_only_when_they_would_delete_a_draft(db
             "mentorId":mentor, "subject":"  ", "bodyMd":"\n", "attachments":[],
             "replyTo":"<target@example.invalid>"
         });
-        confirmation(call_agent(&ctx, op, input.clone()).await.unwrap_err());
+        refused(&ctx, op, input.clone()).await;
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT body_md FROM email WHERE id = ?")
                 .bind(id)
@@ -96,7 +114,10 @@ async fn empty_saves_require_confirmation_only_when_they_would_delete_a_draft(db
             .execute(&ctx.db)
             .await
             .unwrap();
-        assert_eq!(call_agent(&ctx, op, input).await.unwrap(), Value::Null);
+        assert_eq!(
+            call_agent(&ctx, op, input, |_| {}).await.unwrap(),
+            Value::Null
+        );
     }
 }
 
@@ -155,7 +176,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             }
             _ => unreachable!(),
         };
-        confirmation(call_agent(&ctx, op, input.clone()).await.unwrap_err());
+        refused(&ctx, op, input.clone()).await;
         assert_eq!(
             mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
             before
@@ -183,7 +204,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             }
             _ => unreachable!(),
         }
-        call_agent(&ctx, op, safe).await.unwrap();
+        call_agent(&ctx, op, safe, |_| {}).await.unwrap();
         assert_eq!(
             mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
             before
@@ -193,7 +214,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             .execute(&ctx.db)
             .await
             .unwrap();
-        call_agent(&ctx, op, input).await.unwrap();
+        call_agent(&ctx, op, input, |_| {}).await.unwrap();
         assert_eq!(
             mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
             after

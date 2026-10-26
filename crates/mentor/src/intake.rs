@@ -23,7 +23,7 @@ pub struct Change {
     rows: Vec<u32>,
 }
 impl Change {
-    pub fn changed_recipient(&self) -> Option<i64> {
+    pub fn changed_recipient(&self) -> Option<(i64, Option<&str>)> {
         let before = self.before.as_ref()?;
         let same = match (
             before.fields.emails.first(),
@@ -33,7 +33,10 @@ impl Change {
             (None, None) => true,
             _ => false,
         };
-        (!same).then_some(before.id)
+        (!same).then_some((
+            before.id,
+            self.after.fields.emails.first().map(String::as_str),
+        ))
     }
 
     fn changed(&self) -> bool {

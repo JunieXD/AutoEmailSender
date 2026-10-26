@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name, COUNT(*) AS count\n        FROM mentor m\n        JOIN email e ON e.mentor_id = m.id\n        WHERE m.id = ?1 AND e.state = 'approved'\n            AND (SELECT address FROM mentor_email\n                WHERE mentor_id = ?1 ORDER BY position LIMIT 1) IS NOT ?2 COLLATE NOCASE\n        GROUP BY m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "count",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "546b8523a0162b9f0bc0cc943a037f251b8679895979a7e2fb1cf20fc0b9acc1"
+}

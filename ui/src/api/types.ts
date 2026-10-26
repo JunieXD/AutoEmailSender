@@ -10,6 +10,10 @@ export type AffiliationAddition = { before: Affiliation | null, added: Affiliati
 
 export type AgentAccess = { enabled: boolean, };
 
+export type AgentAnswer = { id: number, allow: boolean, };
+
+export type AgentRequest = { id: number, op: string, description: Description, createdAt: number, };
+
 export type AiReplyOutcome = { enabled: boolean, };
 
 export type AiReplyTodos = { enabled: boolean, };
@@ -87,6 +91,12 @@ export type CrawlWorkQuery = { start: number, end: number, };
 export type Decisions = { take: Array<Difference>, matches: Array<GroupChoice>, restore: Array<number>, };
 
 export type DefaultTemplate = { id: number | null, };
+
+export type Description = {
+/**
+ * A complete sentence for the dialog, notification and CLI.
+ */
+action: string, targets: Array<string>, more: number, };
 
 export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 
@@ -723,6 +733,8 @@ export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490"
 export interface Operations {
   getAgentAccess: { input: Nothing; output: boolean };
   setAgentAccess: { input: AgentAccess; output: null };
+  listAgentRequests: { input: Nothing; output: Array<AgentRequest> };
+  answerAgentRequest: { input: AgentAnswer; output: null };
   storageFailure: { input: Nothing; output: string | null };
   contactStats: { input: StatsQuery; output: ContactProgress };
   mentorStats: { input: Nothing; output: MentorOverview };
