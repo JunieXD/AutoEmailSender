@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n        SET enrich = 'none'\n        WHERE id IN (SELECT value FROM json_each(?)) AND enrich IN ('queued',\n            'running')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "640b11a35deffac8e66e45af5d76c24777ce508315b1d0551006e19831031490"
+}

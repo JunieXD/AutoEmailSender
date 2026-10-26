@@ -67,8 +67,10 @@ pub async fn reply_draft(
 ) -> Result<Option<ReplyDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query!(
-        r#"SELECT id, reply_to AS "reply_to!", body_md, fact_check AS "fact_check: Json<FactCheck>" FROM email
-           WHERE mentor_id = ? AND kind = 'reply' AND state = 'review'"#,
+        r#"SELECT id, reply_to AS "reply_to!",
+            body_md, fact_check AS "fact_check: Json<FactCheck>"
+        FROM email
+        WHERE mentor_id = ? AND kind = 'reply' AND state = 'review'"#,
         mentor_id
     )
     .fetch_optional(&mut *tx)
@@ -157,10 +159,13 @@ pub async fn approve_reply(
     .await?;
     if updated.rows_affected() == 0 {
         let changed = sqlx::query_scalar!(
-            r#"SELECT EXISTS (SELECT 1 FROM email
-               WHERE id = ?1 AND mentor_id = ?2 AND kind = 'reply' AND state = 'review'
-                 AND reply_to <> ?3
-                 AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)) AS "changed!: bool""#,
+            r#"SELECT EXISTS (
+                SELECT 1
+                FROM email
+                WHERE id = ?1 AND mentor_id = ?2 AND kind = 'reply'
+                AND state = 'review' AND reply_to <> ?3 AND mentor_id IN (SELECT id
+                    FROM mentor WHERE trashed_at IS NULL)
+            ) AS "changed!: bool""#,
             draft_id,
             mentor_id,
             reply_to,
@@ -174,12 +179,18 @@ pub async fn approve_reply(
         });
     }
     let row = sqlx::query!(
-        r#"SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text, m.refs,
-             m.message_id,
-             (SELECT address FROM mentor_email WHERE mentor_id = t.id ORDER BY position LIMIT 1) AS address
-           FROM mentor t JOIN message_mentor mm ON mm.mentor_id = t.id
-           JOIN message m ON m.id = mm.message_id
-           WHERE t.id = ?1 AND m.message_id = ?2 AND m.kind = 'reply'"#,
+        r#"SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text,
+            m.refs, m.message_id, (
+            SELECT address
+            FROM mentor_email
+            WHERE mentor_id = t.id
+            ORDER BY position
+            LIMIT 1
+        ) AS address
+        FROM mentor t
+        JOIN message_mentor mm ON mm.mentor_id = t.id
+        JOIN message m ON m.id = mm.message_id
+        WHERE t.id = ?1 AND m.message_id = ?2 AND m.kind = 'reply'"#,
         mentor_id,
         reply_to,
     )
@@ -268,7 +279,8 @@ where
         .join("\n");
     (
         format!(
-            "{html}<p>{}</p><blockquote style=\"border-left:2px solid #ccc;margin:0;padding-left:1em;white-space:pre-wrap\">{}</blockquote>",
+            "{html}<p>{}</p><blockquote style=\"border-left:2px solid #ccc;margin:0;\
+            padding-left:1em;white-space:pre-wrap\">{}</blockquote>",
             escape(&attribution),
             escape(body)
         ),

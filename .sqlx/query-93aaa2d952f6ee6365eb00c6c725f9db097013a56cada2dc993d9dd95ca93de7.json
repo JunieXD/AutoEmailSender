@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n            SELECT 1\n            FROM mentor\n            WHERE id = ? AND match_claim = ? AND match_state = 'running'\n            AND trashed_at IS NULL\n        ) AS \"running!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "running!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "93aaa2d952f6ee6365eb00c6c725f9db097013a56cada2dc993d9dd95ca93de7"
+}

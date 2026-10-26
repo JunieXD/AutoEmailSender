@@ -2,8 +2,26 @@ use super::*;
 use crate::enrich::{self, EnrichField, EnrichSkipReason, EnrichState};
 
 pub(super) async fn candidate(db: &SqlitePool, site: &Site, path: &str) -> (i64, i64) {
-    let crawl = sqlx::query_scalar::<_,i64>("INSERT INTO crawl(kind,start_urls,state,created_at,finished_at) VALUES('site','[]','done',1,1) RETURNING id").fetch_one(db).await.unwrap();
-    let id = sqlx::query_scalar::<_,i64>("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,aliases,emails,affiliations,homepages,papers,match_names) VALUES(?,?,'pending','none','张三','[\"Zhang San\"]','[]','[]','[]','[]','[\"张三\",\"Zhang San\"]') RETURNING id").bind(crawl).bind(site.url(path).as_str()).fetch_one(db).await.unwrap();
+    let crawl = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO crawl (kind, start_urls, state, created_at, finished_at)
+        VALUES ('site', '[]', 'done', 1, 1)
+        RETURNING id"#,
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    let id = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, aliases,
+            emails, affiliations, homepages, papers, match_names)
+        VALUES (?, ?, 'pending', 'none', '张三', '["Zhang San"]', '[]', '[]', '[]',
+            '[]', '["张三","Zhang San"]')
+        RETURNING id"#,
+    )
+    .bind(crawl)
+    .bind(site.url(path).as_str())
+    .fetch_one(db)
+    .await
+    .unwrap();
     sqlx::query("UPDATE candidate SET homepages=? WHERE id=?")
         .bind(Json(vec![site.url(path).as_str()]))
         .bind(id)
@@ -58,7 +76,16 @@ async fn enrichment_personal_page_fills_only_empty_fields(db: SqlitePool) {
     let mut provider = Provider::start().await;
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/p").await;
-    sqlx::query("UPDATE candidate SET papers='[\"原论文\"]',affiliations='[{\"university\":\"原大学\",\"school\":null,\"department\":null,\"title\":\"教授\"}]' WHERE id=?").bind(id).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"UPDATE candidate
+        SET papers = '["原论文"]', affiliations =
+            '[{"university":"原大学","school":null,"department":null,"title":"教授"}]'
+        WHERE id = ?"#,
+    )
+    .bind(id)
+    .execute(&db)
+    .await
+    .unwrap();
     enrich::start(&db, &[id], 2).await.unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
     let mut a = answer("a@example.edu", json!([]));
@@ -116,7 +143,12 @@ async fn enrichment_personal_page_fills_only_empty_fields(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_children_validate_links_limit_and_email_ownership(db: SqlitePool) {
     let site = Site::new().await;
-    site.page("/p","<title>张三</title><p>张三</p><a href='https://outside.example.org/mail'>站外</a><a href='/contact'>联系方式</a><a href='/research'>研究</a><a href='/papers'>论文</a><a href='/fourth'>更多</a>");
+    site.page(
+        "/p",
+        "<title>张三</title><p>张三</p><a href='https://outside.example.org/mail'>站外</a><a \
+        href='/contact'>联系方式</a><a href='/research'>研究</a><a href='/papers'>论文</a><a \
+        href='/fourth'>更多</a>",
+    );
     site.page(
         "/contact",
         "<title>学院联系方式</title><div><p>张三 a@example.edu</p><p>李四 b@example.edu</p></div>",
@@ -459,7 +491,10 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
             .await
             .unwrap();
         drop(permits);
-        tokio::select! {r=&mut ask=>assert!(matches!(r,Err(ReadError::Gone))),_=old.requests.recv()=>panic!("stale model request started")}
+        tokio::select! {
+            r = &mut ask => assert!(matches!(r, Err(ReadError::Gone))),
+            _ = old.requests.recv() => panic!("stale model request started")
+        }
         save(&db, &c, &Outcome::Gone).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
         let outcome = process(&db, &net, &Pages::local(site.port), &limit, &c, &cooldown)
@@ -541,8 +576,10 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
         })
         .ok();
     tokio::pin!(a, b);
-    let (a_limited, (claim, result)) =
-        tokio::select! {r=&mut a=>(true,r.unwrap()),r=&mut b=>(false,r.unwrap())};
+    let (a_limited, (claim, result)) = tokio::select! {
+        r = &mut a => (true, r.unwrap()),
+        r = &mut b => (false, r.unwrap())
+    };
     assert!(matches!(result, Outcome::RateLimit));
     save(&db, &claim, &result).await.unwrap();
     second.respond.send(Response::answer("invalid JSON")).ok();
@@ -666,7 +703,18 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     )
     .await
     .unwrap();
-    let keep=sqlx::query_scalar::<_,i64>("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,emails,mentor_id) VALUES(?,?,'accepted','none','张三','[\"a@example.edu\"]',?) RETURNING id").bind(crawl).bind(site.url("/keep").as_str()).bind(mentor).fetch_one(&db).await.unwrap();
+    let keep = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails,
+            mentor_id)
+        VALUES (?, ?, 'accepted', 'none', '张三', '["a@example.edu"]', ?)
+        RETURNING id"#,
+    )
+    .bind(crawl)
+    .bind(site.url("/keep").as_str())
+    .bind(mentor)
+    .fetch_one(&db)
+    .await
+    .unwrap();
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
     sqlx::query("INSERT INTO candidate_profile(candidate_id,crawl_id,url) VALUES(?,?,?),(?,?,?)")
         .bind(id)
@@ -678,7 +726,16 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
         .execute(&mut *tx)
         .await
         .unwrap();
-    let page=sqlx::query_scalar::<_,i64>("INSERT INTO crawl_page(crawl_id,url,kind,mode,status,text,fetched_at) VALUES(?,?,'profile','http','success','张三',1) RETURNING id").bind(crawl).bind(site.url("/keep").as_str()).fetch_one(&mut *tx).await.unwrap();
+    let page = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO crawl_page (crawl_id, url, kind, mode, status, text, fetched_at)
+        VALUES (?, ?, 'profile', 'http', 'success', '张三', 1)
+        RETURNING id"#,
+    )
+    .bind(crawl)
+    .bind(site.url("/keep").as_str())
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
     review::save(
         &mut tx,
         crawl,
@@ -726,7 +783,16 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
         answer("a@example.edu", json!([])),
     )
     .await;
-    let duplicate=sqlx::query_scalar::<_,i64>("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,emails) VALUES(?,?,'pending','none','张三','[\"a@example.edu\"]') RETURNING id").bind(crawl).bind(site.url("/duplicate").as_str()).fetch_one(&db).await.unwrap();
+    let duplicate = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails)
+        VALUES (?, ?, 'pending', 'none', '张三', '["a@example.edu"]')
+        RETURNING id"#,
+    )
+    .bind(crawl)
+    .bind(site.url("/duplicate").as_str())
+    .fetch_one(&db)
+    .await
+    .unwrap();
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
     sqlx::query("INSERT INTO candidate_profile(candidate_id,crawl_id,url) VALUES(?,?,?),(?,?,?)")
         .bind(id)
@@ -738,7 +804,16 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
         .execute(&mut *tx)
         .await
         .unwrap();
-    let page=sqlx::query_scalar::<_,i64>("INSERT INTO crawl_page(crawl_id,url,kind,mode,status,text,fetched_at) VALUES(?,?,'profile','http','success','张三',1) RETURNING id").bind(crawl).bind(site.url("/active").as_str()).fetch_one(&mut *tx).await.unwrap();
+    let page = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO crawl_page (crawl_id, url, kind, mode, status, text, fetched_at)
+        VALUES (?, ?, 'profile', 'http', 'success', '张三', 1)
+        RETURNING id"#,
+    )
+    .bind(crawl)
+    .bind(site.url("/active").as_str())
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
     review::save(
         &mut tx,
         crawl,
@@ -846,7 +921,13 @@ async fn enrichment_child_accepts_identity_in_page_title(db: SqlitePool) {
     let mut provider = Provider::start().await;
     config(&db, &provider.address).await;
     for (title, success) in [("张三的代表论文", true), ("李四的代表论文", false)] {
-        site.page("/papers", &format!("<title>{title}</title><h1>代表论文</h1><p>Reliable Learning, 2025</p><p>办公室 office@example.edu</p>"));
+        site.page(
+            "/papers",
+            &format!(
+                "<title>{title}</title><h1>代表论文</h1><p>Reliable Learning, 2025</p><p>办公室 \
+                office@example.edu</p>"
+            ),
+        );
         let (crawl, id) = candidate(&db, &site, "/p").await;
         enrich::start(&db, &[id], 2).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
@@ -976,7 +1057,14 @@ async fn enrichment_affiliations_fill_only_unique_pairs(db: SqlitePool) {
     site.page("/p", "<p>张三 甲大学计算机学院教授；兼任甲大学医学院</p>");
     let mut provider = Provider::start().await;
     config(&db, &provider.address).await;
-    let affiliation = |school: Option<&str>, title: Option<&str>| json!({"university":"甲大学","school":school,"department":null,"title":title});
+    let affiliation = |school: Option<&str>, title: Option<&str>| {
+        json!({
+            "university": "甲大学",
+            "school": school,
+            "department": null,
+            "title": title
+        })
+    };
     for (old, new, titles) in [
         (
             vec![
@@ -1067,7 +1155,16 @@ async fn enrichment_deleting_crawl_clears_queued_and_running_candidates(db: Sqli
         } else {
             None
         };
-        sqlx::query("UPDATE candidate SET research='已补方向',enrich_changes='[{\"field\":\"research\",\"value\":\"已补方向\"}]' WHERE id=?").bind(id).execute(&db).await.unwrap();
+        sqlx::query(
+            r#"UPDATE candidate
+            SET research = '已补方向',
+                enrich_changes = '[{"field":"research","value":"已补方向"}]'
+            WHERE id = ?"#,
+        )
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
         queue::delete(&db, crawl).await.unwrap();
         queue::recover(&db).await.unwrap();
         let d = detail(&db, id).await;
@@ -1180,7 +1277,11 @@ async fn enrichment_review_removes_unfinished_pages_without_failures(db: SqliteP
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_profile_retry_keeps_first_children(db: SqlitePool) {
     let site = Site::new().await;
-    site.page("/p", "<p>张三</p><button>下一页</button><a href='/a'>甲</a><a href='/b'>乙</a><a href='/c'>丙</a><a href='/d'>丁</a><a href='/e'>戊</a><a href='/f'>己</a>");
+    site.page(
+        "/p",
+        "<p>张三</p><button>下一页</button><a href='/a'>甲</a><a href='/b'>乙</a><a href='/c'>\
+        丙</a><a href='/d'>丁</a><a href='/e'>戊</a><a href='/f'>己</a>",
+    );
     for path in ["/a", "/b", "/c", "/d", "/e", "/f"] {
         site.page(path, "<p>张三</p>");
     }
@@ -1273,8 +1374,27 @@ async fn enrichment_completion_counts_unreported_candidates_and_distinguishes_cr
         queue::open_run(&mut db.acquire().await.unwrap(), crawl, 100)
             .await
             .unwrap();
-        sqlx::query("UPDATE candidate SET enrich='done',enrich_changes='[{\"field\":\"email\",\"value\":[\"old@example.edu\"]}]' WHERE id=?").bind(old).execute(&db).await.unwrap();
-        sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,kind,mode,status,text,work_state,fetched_at) VALUES(?,?,'https://example.edu/old','enrich_profile','http','success','张三','done',50)").bind(crawl).bind(old).execute(&db).await.unwrap();
+        sqlx::query(
+            r#"UPDATE candidate
+            SET enrich = 'done',
+                enrich_changes = '[{"field":"email","value":["old@example.edu"]}]'
+            WHERE id = ?"#,
+        )
+        .bind(old)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"INSERT INTO crawl_page (crawl_id, candidate_id, url, kind, mode, status,
+                text, work_state, fetched_at)
+            VALUES (?, ?, 'https://example.edu/old', 'enrich_profile', 'http',
+                'success', '张三', 'done', 50)"#,
+        )
+        .bind(crawl)
+        .bind(old)
+        .execute(&db)
+        .await
+        .unwrap();
         for (path, changes, status) in [
             (
                 "/filled",
@@ -1283,12 +1403,51 @@ async fn enrichment_completion_counts_unreported_candidates_and_distinguishes_cr
             ),
             ("/empty", json!([]), "failed"),
         ] {
-            let id: i64 = sqlx::query_scalar("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,enrich_changes) VALUES(?,?,'pending','done','张三',?) RETURNING id").bind(crawl).bind(site.url(path).as_str()).bind(Json(changes)).fetch_one(&db).await.unwrap();
+            let id: i64 = sqlx::query_scalar(
+                r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name,
+                    enrich_changes)
+                VALUES (?, ?, 'pending', 'done', '张三', ?)
+                RETURNING id"#,
+            )
+            .bind(crawl)
+            .bind(site.url(path).as_str())
+            .bind(Json(changes))
+            .fetch_one(&db)
+            .await
+            .unwrap();
             for kind in ["enrich_profile", "enrich_child"] {
-                sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,kind,mode,status,text,error,work_state,fetched_at) VALUES(?,?,?,?, 'http',?,'张三',?,'done',110)").bind(crawl).bind(id).bind(format!("https://example.edu{path}/{kind}")).bind(kind).bind(status).bind(if status=="success" {None} else {Some("页面读取失败")}).execute(&db).await.unwrap();
+                sqlx::query(
+                    r#"INSERT INTO crawl_page (crawl_id, candidate_id, url, kind, mode,
+                        status, text, error, work_state, fetched_at)
+                    VALUES (?, ?, ?, ?, 'http', ?, '张三', ?, 'done', 110)"#,
+                )
+                .bind(crawl)
+                .bind(id)
+                .bind(format!("https://example.edu{path}/{kind}"))
+                .bind(kind)
+                .bind(status)
+                .bind(if status == "success" {
+                    None
+                } else {
+                    Some("页面读取失败")
+                })
+                .execute(&db)
+                .await
+                .unwrap();
             }
         }
-        let page: i64 = sqlx::query_scalar("INSERT INTO crawl_page(crawl_id,url,scope_url,kind,mode,status,error,work_state,fetched_at) VALUES(?,'https://example.edu/list','https://example.edu/list','list','http','failed','读取失败','done',?) RETURNING id").bind(crawl).bind(if crawling {110} else {50}).fetch_one(&db).await.unwrap();
+        let page: i64 = sqlx::query_scalar(
+            r#"INSERT INTO crawl_page (crawl_id, url, scope_url, kind, mode, status,
+                error, work_state, fetched_at)
+            VALUES (?, 'https://example.edu/list', 'https://example.edu/list', 'list',
+                'http', 'failed', '读取失败', 'done', ?)
+            RETURNING id"#,
+        )
+        .bind(crawl)
+        .bind(if crawling { 110 } else { 50 })
+        .fetch_one(&db)
+        .await
+        .unwrap();
         let results = finish(&db, 150).await.unwrap();
         assert_eq!(results[0].message.contains("抓取完成"), crawling);
         assert!(results[0].message.contains("信息补全完成：2 位"));

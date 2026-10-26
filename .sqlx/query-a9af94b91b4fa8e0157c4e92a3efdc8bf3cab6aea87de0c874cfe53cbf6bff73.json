@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT model, input_price, output_price\n        FROM model_config\n        WHERE id = coalesce((SELECT default_model_config_id FROM profile),\n            (SELECT min(id) FROM model_config))",
+  "describe": {
+    "columns": [
+      {
+        "name": "model",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "model"
+          }
+        }
+      },
+      {
+        "name": "input_price",
+        "ordinal": 1,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "input_price"
+          }
+        }
+      },
+      {
+        "name": "output_price",
+        "ordinal": 2,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "output_price"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "a9af94b91b4fa8e0157c4e92a3efdc8bf3cab6aea87de0c874cfe53cbf6bff73"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl\n            SET state = 'running', finished_at = NULL, error = NULL\n            WHERE id = ? AND state NOT IN ('running', 'paused')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f401243b1f0046eef92792225e630d5b9e49588615e14f95331cffe75a8a376c"
+}

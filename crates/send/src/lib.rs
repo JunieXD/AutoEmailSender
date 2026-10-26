@@ -62,7 +62,9 @@ pub async fn run(
             match wait {
                 // Looks again within a minute: the timer stands still while the computer sleeps.
                 Some(ms) => tokio::select! {
-                    () = tokio::time::sleep(Duration::from_millis(ms.clamp(0, MINUTE).unsigned_abs())) => {}
+                    () = tokio::time::sleep(Duration::from_millis(
+                        ms.clamp(0, MINUTE).unsigned_abs(),
+                    )) => {}
                     () = sender.0.notified() => {}
                 },
                 None => sender.0.notified().await,
@@ -245,17 +247,25 @@ impl Usage {
 async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
     sqlx::query_as!(
         Usage,
-        r#"SELECT b.id, b.secret IS NULL AS "needs_secret!: bool", b.daily_limit, b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until,
-             (SELECT count(*) FROM email e
-              WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
-                AND e.sent_at > ?1) AS "recent!: i64",
-             (SELECT min(e.sent_at) FROM email e
-              WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced')
-                AND e.sent_at > ?1) AS "earliest_recent: i64",
-             (SELECT max(e.sent_at) FROM email e
-              WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent', 'bounced'))
-               AS "last: i64"
-           FROM mailbox b ORDER BY b.rotation_order, b.id"#,
+        r#"SELECT b.id, b.secret IS NULL AS "needs_secret!: bool", b.daily_limit,
+            b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until, (
+            SELECT count(*)
+            FROM email e
+            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',
+                'bounced') AND e.sent_at > ?1
+        ) AS "recent!: i64", (
+            SELECT min(e.sent_at)
+            FROM email e
+            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',
+                'bounced') AND e.sent_at > ?1
+        ) AS "earliest_recent: i64", (
+            SELECT max(e.sent_at)
+            FROM email e
+            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',
+                'bounced')
+        ) AS "last: i64"
+        FROM mailbox b
+        ORDER BY b.rotation_order, b.id"#,
         now - DAY
     )
     .fetch_all(conn)

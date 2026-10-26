@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n                SELECT 1\n                FROM email\n                WHERE id = ?1 AND mentor_id = ?2 AND kind = 'reply'\n                AND state = 'review' AND reply_to <> ?3 AND mentor_id IN (SELECT id\n                    FROM mentor WHERE trashed_at IS NULL)\n            ) AS \"changed!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "changed!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "45d8de54fee1636364697d5e49a6a363ad89bfc435f09f82db77d8b34ef31462"
+}

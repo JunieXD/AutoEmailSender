@@ -33,7 +33,12 @@ async fn crawl_ready(ctx: &Context, id: Option<i64>) -> Result<model::Chosen, Ca
         CallError::invalid("尚未添加模型，请在“设置 › AI › 模型”中添加后再开始。".into())
     })?;
     if !m.agreed {
-        return Err(CallError{code:ErrorCode::NeedsAgreement,message:"网页的标题、文字、链接文字及公开的导师资料将发给这个模型的服务商，用于寻找名单和整理资料。".into()});
+        return Err(CallError {
+            code: ErrorCode::NeedsAgreement,
+            message: "网页的标题、文字、链接文字及公开的导师资料将发给这个模型的服务商，\
+                用于寻找名单和整理资料。"
+                .into(),
+        });
     }
     Ok(m)
 }
@@ -99,8 +104,27 @@ pub(super) async fn resume_crawl(ctx: &Context, input: CrawlId) -> Result<(), Ca
         .fetch_optional(&ctx.db)
         .await?
         .flatten();
-    let enrichment = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=? AND candidate_id IS NOT NULL AND work_state!='done') AS \"present!: bool\"",input.id).fetch_one(&ctx.db).await?;
-    let ordinary = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=? AND candidate_id IS NULL AND work_state!='done') AS \"present!: bool\"",input.id).fetch_one(&ctx.db).await?;
+    let enrichment = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = ? AND candidate_id IS NOT NULL
+            AND work_state != 'done'
+        ) AS "present!: bool""#,
+        input.id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+    let ordinary = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = ? AND candidate_id IS NULL AND work_state != 'done'
+        ) AS "present!: bool""#,
+        input.id
+    )
+    .fetch_one(&ctx.db)
+    .await?;
     if ordinary {
         crawl_ready(ctx, id).await?;
     }
@@ -121,8 +145,31 @@ pub(super) async fn retry_crawl(ctx: &Context, input: CrawlRetry) -> Result<u64,
         .fetch_optional(&ctx.db)
         .await?
         .flatten();
-    let enrichment = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=?1 AND (?2 IS NULL OR id=?2) AND candidate_id IN (SELECT id FROM candidate WHERE review='pending') AND status!='success') AS \"present!: bool\"",input.id,input.page).fetch_one(&ctx.db).await?;
-    let ordinary = sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=?1 AND (?2 IS NULL OR id=?2) AND candidate_id IS NULL AND status!='success') AS \"present!: bool\"",input.id,input.page).fetch_one(&ctx.db).await?;
+    let enrichment = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = ?1 AND (?2 IS NULL OR id = ?2)
+            AND candidate_id IN (SELECT id FROM candidate WHERE review = 'pending')
+            AND status != 'success'
+        ) AS "present!: bool""#,
+        input.id,
+        input.page
+    )
+    .fetch_one(&ctx.db)
+    .await?;
+    let ordinary = sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = ?1 AND (?2 IS NULL OR id = ?2)
+            AND candidate_id IS NULL AND status != 'success'
+        ) AS "present!: bool""#,
+        input.id,
+        input.page
+    )
+    .fetch_one(&ctx.db)
+    .await?;
     if ordinary {
         crawl_ready(ctx, id).await?;
     }
@@ -193,7 +240,16 @@ mod tests {
     async fn starting_uses_the_selected_model(db: SqlitePool) {
         let mut ids = Vec::new();
         for name in ["first", "second"] {
-            let id=sqlx::query_scalar!("INSERT INTO model_config (provider,base_url,model,api_key,agreed,created_at) VALUES ('custom','http://127.0.0.1:1',?,'fixture',1,1) RETURNING id",name).fetch_one(&db).await.unwrap();
+            let id = sqlx::query_scalar!(
+                r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+                    created_at)
+                VALUES ('custom', 'http://127.0.0.1:1', ?, 'fixture', 1, 1)
+                RETURNING id"#,
+                name
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap();
             ids.push(id);
         }
         let ctx = Context {
@@ -234,15 +290,48 @@ mod tests {
     async fn enrichment_requires_current_default_consent_instead_of_original_crawl_model(
         db: SqlitePool,
     ) {
-        let first = sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom','http://127.0.0.1:1','original','fixture',1,1) RETURNING id").fetch_one(&db).await.unwrap();
-        let default = sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom','http://127.0.0.1:2','default','fixture',0,1) RETURNING id").fetch_one(&db).await.unwrap();
+        let first = sqlx::query_scalar::<_, i64>(
+            r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+                created_at)
+            VALUES ('custom', 'http://127.0.0.1:1', 'original', 'fixture', 1, 1)
+            RETURNING id"#,
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        let default = sqlx::query_scalar::<_, i64>(
+            r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+                created_at)
+            VALUES ('custom', 'http://127.0.0.1:2', 'default', 'fixture', 0, 1)
+            RETURNING id"#,
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
         sqlx::query("UPDATE profile SET default_model_config_id=?")
             .bind(default)
             .execute(&db)
             .await
             .unwrap();
-        let crawl=sqlx::query_scalar::<_,i64>("INSERT INTO crawl(kind,start_urls,model_config_id,state,created_at,finished_at) VALUES('site','[]',?,'done',1,1) RETURNING id").bind(first).fetch_one(&db).await.unwrap();
-        let id=sqlx::query_scalar::<_,i64>("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name) VALUES(?,'https://school.example.edu/p','pending','none','张三') RETURNING id").bind(crawl).fetch_one(&db).await.unwrap();
+        let crawl = sqlx::query_scalar::<_, i64>(
+            r#"INSERT INTO crawl (kind, start_urls, model_config_id, state, created_at,
+                finished_at)
+            VALUES ('site', '[]', ?, 'done', 1, 1)
+            RETURNING id"#,
+        )
+        .bind(first)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        let id = sqlx::query_scalar::<_, i64>(
+            r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name)
+            VALUES (?, 'https://school.example.edu/p', 'pending', 'none', '张三')
+            RETURNING id"#,
+        )
+        .bind(crawl)
+        .fetch_one(&db)
+        .await
+        .unwrap();
         let ctx = Context {
             db: db.clone(),
             net: net::Net::new(vec![]).unwrap(),

@@ -111,7 +111,14 @@ async fn a_refusal_says_what_the_provider_said() {
     let net = Net::new(Vec::new()).unwrap();
     let result = model::test(&net, &access(address, None), "deepseek-chat").await;
     assert!(
-        matches!(result, Err(ModelError::Refused { status: 401, ref reply, .. }) if reply == "Authentication Fails"),
+        matches!(
+            result,
+            Err(ModelError::Refused {
+                status: 401,
+                ref reply,
+                ..
+            }) if reply == "Authentication Fails"
+        ),
         "{result:?}"
     );
     assert!(result.unwrap_err().message().contains("API Key"));
@@ -149,7 +156,11 @@ async fn a_reply_without_a_whole_answer_is_not_a_pass() {
     .await;
     let result = model::test(&net, &access(thinker, None), "r1").await;
     assert!(
-        matches!(result, Err(ModelError::NoAnswer { ref finish_reason }) if finish_reason.as_deref() == Some("length")),
+        matches!(
+            result,
+            Err(ModelError::NoAnswer { ref finish_reason })
+                if finish_reason.as_deref() == Some("length")
+        ),
         "{result:?}"
     );
     // As OpenRouter reports an upstream failure after it has started answering.

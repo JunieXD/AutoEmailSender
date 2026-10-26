@@ -35,8 +35,11 @@ pub async fn first_draft(
 ) -> Result<Option<FirstDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query!(
-        r#"SELECT id, subject, body_md, fact_check AS "fact_check: Json<fact_check::FactCheck>" FROM email
-         WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'"#,
+        r#"SELECT id, subject,
+            body_md, fact_check AS "fact_check: Json<fact_check::FactCheck>"
+        FROM email
+        WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL
+        AND state = 'review'"#,
         mentor_id
     )
     .fetch_optional(&mut *tx)
@@ -78,14 +81,24 @@ pub async fn save_first_draft(
     }
     let mut tx = db.begin().await?;
     let Some(row) = sqlx::query!(
-        "INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject, body_md)
-         SELECT id, 'first', 'review', ?2, ?2, ?3, ?4 FROM mentor m WHERE id = ?1 AND trashed_at IS NULL
-           AND NOT EXISTS (SELECT 1 FROM email e WHERE e.mentor_id=m.id AND e.kind IN ('first','follow_up')
-             AND e.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed')
-             AND NOT (e.kind='first' AND e.task_id IS NULL AND e.state='review'))
-         ON CONFLICT (mentor_id) WHERE kind IN ('first', 'follow_up') AND task_id IS NULL AND state = 'review'
-         DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
-         RETURNING id AS \"id!\", subject, body_md, fact_check AS \"fact_check: Json<fact_check::FactCheck>\"",
+        r#"INSERT INTO email (mentor_id, kind, state, created_at, updated_at, subject,
+            body_md)
+        SELECT id, 'first', 'review', ?2, ?2, ?3, ?4
+        FROM mentor m
+        WHERE id = ?1 AND trashed_at IS NULL AND NOT EXISTS (
+            SELECT 1
+            FROM email e
+            WHERE e.mentor_id = m.id AND e.kind IN ('first', 'follow_up')
+            AND e.state IN ('generating', 'generation_failed', 'review', 'approved',
+                'cloud', 'sending', 'maybe_sent', 'failed')
+            AND NOT (e.kind = 'first' AND e.task_id IS NULL
+            AND e.state = 'review')
+        )
+        ON CONFLICT (mentor_id)
+        WHERE kind IN ('first', 'follow_up') AND task_id IS NULL
+        AND state = 'review' DO UPDATE SET subject = ?3, body_md = ?4, updated_at = ?2
+        RETURNING id AS "id!", subject,
+            body_md, fact_check AS "fact_check: Json<fact_check::FactCheck>""#,
         mentor_id,
         now,
         subject,
@@ -235,14 +248,22 @@ pub async fn approve_first(
     let id = match drafted {
         Some(id) => id,
         None => match sqlx::query_scalar!(
-            "INSERT INTO email (mentor_id, kind, state, created_at, updated_at)
-             SELECT m.id, 'first', 'review', ?2, ?2 FROM mentor m
-             WHERE m.id = ?1 AND m.trashed_at IS NULL AND NOT EXISTS (
-               SELECT 1 FROM email e WHERE e.mentor_id = m.id AND e.kind = 'first'
-                 AND e.task_id IS NULL AND e.state <> 'canceled')
-               AND NOT EXISTS (SELECT 1 FROM email e WHERE e.mentor_id=m.id AND e.kind IN ('first','follow_up')
-                 AND e.state IN ('generating','generation_failed','review','approved','cloud','sending','maybe_sent','failed'))
-             RETURNING id AS \"id!\"",
+            r#"INSERT INTO email (mentor_id, kind, state, created_at, updated_at)
+            SELECT m.id, 'first', 'review', ?2, ?2
+            FROM mentor m
+            WHERE m.id = ?1 AND m.trashed_at IS NULL AND NOT EXISTS (
+                SELECT 1
+                FROM email e
+                WHERE e.mentor_id = m.id AND e.kind = 'first'
+                AND e.task_id IS NULL AND e.state <> 'canceled'
+            ) AND NOT EXISTS (
+                SELECT 1
+                FROM email e
+                WHERE e.mentor_id = m.id AND e.kind IN ('first', 'follow_up')
+                AND e.state IN ('generating', 'generation_failed', 'review',
+                    'approved', 'cloud', 'sending', 'maybe_sent', 'failed')
+            )
+            RETURNING id AS "id!""#,
             mentor_id,
             now,
         )
@@ -406,15 +427,16 @@ pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Em
         });
     }
     sqlx::query!(
-        r#"SELECT id, kind AS "kind: DraftKind", state AS "state: DeliveryColumn", coalesce(subject, '') AS "subject!: String",
-             coalesce(body_md, '') AS "body_md!: String", resend_of, EXISTS (SELECT 1 FROM email r WHERE r.resend_of = email.id)
-             AS "resent!: bool", planned_at, latest_at, from_address, to_address, sent_at,
-             error, cancel_reason
-           FROM email
-           WHERE mentor_id = ?
-             AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced', 'failed')
-               OR (state='canceled' AND kind='follow_up' AND task_id IS NULL))
-           ORDER BY id"#,
+        r#"SELECT id, kind AS "kind: DraftKind", state AS "state: DeliveryColumn",
+            coalesce(subject, '') AS "subject!: String",
+            coalesce(body_md, '') AS "body_md!: String", resend_of, EXISTS (SELECT 1
+            FROM email r WHERE r.resend_of = email.id) AS "resent!: bool", planned_at,
+            latest_at, from_address, to_address, sent_at, error, cancel_reason
+        FROM email
+        WHERE mentor_id = ? AND (state IN ('approved', 'sending', 'maybe_sent', 'sent',
+            'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'
+        AND task_id IS NULL))
+        ORDER BY id"#,
         mentor_id
     )
     .fetch_all(&mut *db)
@@ -424,7 +446,9 @@ pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Em
         use DeliveryColumn as C;
         let delivery = match (r.state, r.from_address, r.to_address, r.sent_at, r.error) {
             (C::Canceled, ..) => Delivery::Canceled {
-                cancel_reason: r.cancel_reason.ok_or_else(|| sqlx::Error::Decode("canceled email has no reason".into()))?,
+                cancel_reason: r
+                    .cancel_reason
+                    .ok_or_else(|| sqlx::Error::Decode("canceled email has no reason".into()))?,
             },
             (C::Approved, ..) => Delivery::Approved,
             (C::Sending, ..) => Delivery::Sending {
@@ -932,14 +956,19 @@ pub async fn copied(
     .execute(&mut *tx)
     .await?;
     let confirmed = sqlx::query!(
-        r#"UPDATE email SET state = 'sent', planned_at = coalesce(planned_at, sent_at),
-             latest_at = NULL, error = NULL, cancel_reason = NULL, updated_at = ?1
-           WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
-             AND (state IN ('sending', 'maybe_sent')
-               OR (state = 'canceled' AND sent_at IS NOT NULL)
-               OR (state = 'approved' AND sent_at IS NOT NULL
-                 AND to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
-                   ORDER BY position LIMIT 1)))"#,
+        r#"UPDATE email
+        SET state = 'sent', planned_at = coalesce(planned_at, sent_at),
+            latest_at = NULL, error = NULL, cancel_reason = NULL, updated_at = ?1
+        WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
+        AND (state IN ('sending', 'maybe_sent') OR (state = 'canceled'
+        AND sent_at IS NOT NULL) OR (state = 'approved' AND sent_at IS NOT NULL
+        AND to_address = (
+            SELECT address
+            FROM mentor_email
+            WHERE mentor_id = email.mentor_id
+            ORDER BY position
+            LIMIT 1
+        )))"#,
         now,
         id,
         Json(recipients),

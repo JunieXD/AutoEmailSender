@@ -181,12 +181,15 @@ impl From<sqlx::Error> for SaveError {
 pub async fn list(db: &SqlitePool, now: i64) -> Result<Vec<Mailbox>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT id, address, sender_name, provider,
-             smtp_host, smtp_port AS "smtp_port: u16", smtp_security AS "smtp_security: Security",
-             imap_host, imap_port AS "imap_port: u16", imap_security AS "imap_security: Security",
-             daily_limit AS "daily_limit: u32", min_interval_s AS "min_interval_s: u32", receive_error,
-             paused_until, pause_reason,
-             secret IS NULL AS "needs_secret!: bool"
-           FROM mailbox ORDER BY rotation_order, id"#
+            smtp_host, smtp_port AS "smtp_port: u16",
+            smtp_security AS "smtp_security: Security",
+            imap_host, imap_port AS "imap_port: u16",
+            imap_security AS "imap_security: Security",
+            daily_limit AS "daily_limit: u32", min_interval_s AS "min_interval_s: u32",
+            receive_error, paused_until, pause_reason,
+            secret IS NULL AS "needs_secret!: bool"
+        FROM mailbox
+        ORDER BY rotation_order, id"#
     )
     .fetch_all(db)
     .await?;
@@ -263,11 +266,12 @@ pub async fn update(
 ) -> Result<bool, SaveError> {
     let address: &str = fields.address.as_ref();
     let row = sqlx::query!(
-        "UPDATE mailbox SET address = ?, sender_name = ?, provider = ?, smtp_host = ?, smtp_port = ?,
-           smtp_security = ?, imap_host = ?, imap_port = ?, imap_security = ?,
-           secret = ?, daily_limit = ?, min_interval_s = ?, receive_error = NULL, receive_retry_at = NULL,
-           paused_until = NULL, pause_reason = NULL
-         WHERE id = ?",
+        r#"UPDATE mailbox
+        SET address = ?, sender_name = ?, provider = ?, smtp_host = ?, smtp_port = ?,
+            smtp_security = ?, imap_host = ?, imap_port = ?, imap_security = ?,
+            secret = ?, daily_limit = ?, min_interval_s = ?, receive_error = NULL,
+            receive_retry_at = NULL, paused_until = NULL, pause_reason = NULL
+        WHERE id = ?"#,
         address,
         fields.sender_name,
         fields.provider,

@@ -118,7 +118,14 @@ pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, 
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let result = plan(&mut tx, ids).await?;
     for id in &result.ids {
-        let r = sqlx::query!(r#"SELECT crawl_id AS "crawl!: i64",profile_url AS "url!: PageUrl" FROM candidate WHERE id=?"#,id).fetch_one(&mut *tx).await?;
+        let r = sqlx::query!(
+            r#"SELECT crawl_id AS "crawl!: i64", profile_url AS "url!: PageUrl"
+            FROM candidate
+            WHERE id = ?"#,
+            id
+        )
+        .fetch_one(&mut *tx)
+        .await?;
         sqlx::query!("DELETE FROM crawl_page WHERE candidate_id=?", id)
             .execute(&mut *tx)
             .await?;
@@ -137,7 +144,15 @@ pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, 
             PageKind::EnrichProfile,
         )
         .await?;
-        let resumed = sqlx::query!("UPDATE crawl SET state='running',finished_at=NULL,error=NULL WHERE id=? AND state NOT IN ('running','paused')",r.crawl).execute(&mut *tx).await?.rows_affected();
+        let resumed = sqlx::query!(
+            r#"UPDATE crawl
+            SET state = 'running', finished_at = NULL, error = NULL
+            WHERE id = ? AND state NOT IN ('running', 'paused')"#,
+            r.crawl
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         if resumed > 0 {
             queue::open_run(&mut tx, r.crawl, at).await?;
         }
@@ -153,7 +168,18 @@ pub(crate) async fn enqueue(
     scope: &PageUrl,
     kind: PageKind,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!("INSERT OR IGNORE INTO crawl_page(crawl_id,candidate_id,url,scope_url,kind,mode,status,error,work_state) VALUES(?,?,?,?,?,'http','failed','尚未读取','queued')",crawl,candidate,url,scope,kind).execute(conn).await?;
+    sqlx::query!(
+        r#"INSERT OR IGNORE INTO crawl_page (crawl_id, candidate_id, url, scope_url, kind,
+            mode, status, error, work_state)
+        VALUES (?, ?, ?, ?, ?, 'http', 'failed', '尚未读取', 'queued')"#,
+        crawl,
+        candidate,
+        url,
+        scope,
+        kind
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 pub(crate) fn matches(
@@ -315,11 +341,50 @@ pub(crate) async fn apply(
     if !evidence.contains(&source) {
         evidence.push(source);
     }
-    sqlx::query!("UPDATE candidate SET aliases=?,emails=?,homepages=?,research=?,affiliations=?,papers=?,enrich_changes=?,match_names=?,match_schools=?,evidence=? WHERE id=?",Json(&f.aliases),Json(&f.emails),Json(&f.homepages),f.research,Json(&f.affiliations),Json(&old.papers),Json(changes),names,schools,Json(evidence),id).execute(conn).await?;
+    sqlx::query!(
+        r#"UPDATE candidate
+        SET aliases = ?, emails = ?, homepages = ?, research = ?, affiliations = ?,
+            papers = ?, enrich_changes = ?, match_names = ?, match_schools = ?,
+            evidence = ?
+        WHERE id = ?"#,
+        Json(&f.aliases),
+        Json(&f.emails),
+        Json(&f.homepages),
+        f.research,
+        Json(&f.affiliations),
+        Json(&old.papers),
+        Json(changes),
+        names,
+        schools,
+        Json(evidence),
+        id
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 pub(crate) async fn complete(conn: &mut SqliteConnection, id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!("UPDATE candidate SET enrich='done',enrich_error=CASE WHEN json_array_length(enrich_changes)>0 THEN NULL ELSE coalesce((SELECT CASE WHEN status='needs_browser' THEN '需要浏览器：' || error ELSE '页面读取失败：' || error END FROM crawl_page WHERE candidate_id=?1 AND status!='success' ORDER BY status='needs_browser' DESC,kind='enrich_profile' DESC,id LIMIT 1),'页面上没有可补充的资料') END WHERE id=?1 AND review='pending' AND enrich IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE candidate_id=?1 AND work_state!='done')",id).execute(conn).await?;
+    sqlx::query!(
+        r#"UPDATE candidate
+        SET enrich = 'done', enrich_error = CASE WHEN json_array_length(enrich_changes)
+            > 0 THEN NULL ELSE coalesce((
+            SELECT CASE WHEN status = 'needs_browser' THEN '需要浏览器：' || error
+            ELSE '页面读取失败：' || error END
+            FROM crawl_page
+            WHERE candidate_id = ?1 AND status != 'success'
+            ORDER BY status = 'needs_browser' DESC, kind = 'enrich_profile' DESC, id
+            LIMIT 1
+        ), '页面上没有可补充的资料') END
+        WHERE id = ?1 AND review = 'pending' AND enrich IN ('queued', 'running')
+        AND NOT EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE candidate_id = ?1 AND work_state != 'done'
+        )"#,
+        id
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 /// Review invalidates work before another request can send or persist candidate data.
@@ -332,7 +397,22 @@ pub(crate) async fn retire(conn: &mut SqliteConnection) -> Result<(), sqlx::Erro
     stop(conn, &ids).await
 }
 pub(crate) async fn stop(conn: &mut SqliteConnection, ids: &[i64]) -> Result<(), sqlx::Error> {
-    sqlx::query!("DELETE FROM crawl_page WHERE work_state!='done' AND candidate_id IN (SELECT value FROM json_each(?))",Json(ids)).execute(&mut *conn).await?;
-    sqlx::query!("UPDATE candidate SET enrich='none' WHERE id IN (SELECT value FROM json_each(?)) AND enrich IN ('queued','running')",Json(ids)).execute(conn).await?;
+    sqlx::query!(
+        r#"DELETE
+        FROM crawl_page
+        WHERE work_state != 'done' AND candidate_id IN (SELECT value FROM json_each(?))"#,
+        Json(ids)
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!(
+        r#"UPDATE candidate
+        SET enrich = 'none'
+        WHERE id IN (SELECT value FROM json_each(?)) AND enrich IN ('queued',
+            'running')"#,
+        Json(ids)
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }

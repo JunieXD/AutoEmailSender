@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind,\n                message_id, in_reply_to, sent_at, from_address, from_name, subject,\n                refs, body_text, truncated)\n            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n            ON CONFLICT DO NOTHING\n            RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 14
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a3d5b79b8682e19f1afb2ca1cac4df623f54b5547223f630df121235e1e53c75"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE todo\n        SET done_at = ?\n        WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "54b0e11e0395ce1795f1b06f71ae884990dcc84405f53589f4c5d56be5bad152"
+}

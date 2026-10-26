@@ -136,7 +136,18 @@ async fn list_page(
         .fetch_one(&mut *tx)
         .await?;
     let offset = i64::from(page.get() - 1) * 20;
-    let rows = sqlx::query!(r#"SELECT id,name,kind AS "kind: Kind",writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task ORDER BY id DESC LIMIT ? OFFSET ?"#,limit,offset).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query!(
+        r#"SELECT id, name, kind AS "kind: Kind", writer AS "writer: Writer", state,
+            created_at, generation_paused_at, generation_pause_reason, model_config_id
+        FROM task
+        ORDER BY id DESC
+        LIMIT ?
+        OFFSET ?"#,
+        limit,
+        offset
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     let ids = rows.iter().map(|t| t.id).collect::<Vec<_>>();
     let mut counts = counts(&mut tx, &ids).await?;
     let mut tasks = Vec::new();
@@ -173,7 +184,16 @@ async fn counts(
     conn: &mut SqliteConnection,
     ids: &[i64],
 ) -> std::result::Result<HashMap<i64, Progress>, sqlx::Error> {
-    let rows = sqlx::query!(r#"SELECT task_id AS "task_id!",state AS "state: DraftState",count(*) AS count FROM email WHERE task_id IN (SELECT value FROM json_each(?)) GROUP BY task_id,state"#,Json(ids)).fetch_all(conn).await?;
+    let rows = sqlx::query!(
+        r#"SELECT task_id AS "task_id!", state AS "state: DraftState",
+            count(*) AS count
+        FROM email
+        WHERE task_id IN (SELECT value FROM json_each(?))
+        GROUP BY task_id, state"#,
+        Json(ids)
+    )
+    .fetch_all(conn)
+    .await?;
     let mut counts: HashMap<i64, Progress> = HashMap::new();
     for r in rows {
         let p = counts.entry(r.task_id).or_default();
@@ -194,7 +214,18 @@ pub async fn get(
     id: i64,
 ) -> std::result::Result<Option<TaskSummary>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(r) = sqlx::query!(r#"SELECT id,name,kind AS "kind: Kind",writer AS "writer: Writer",state,created_at,generation_paused_at,generation_pause_reason,model_config_id FROM task WHERE id = ?"#,id).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    let Some(r) = sqlx::query!(
+        r#"SELECT id, name, kind AS "kind: Kind", writer AS "writer: Writer", state,
+            created_at, generation_paused_at, generation_pause_reason, model_config_id
+        FROM task
+        WHERE id = ?"#,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
     let progress = counts(&mut tx, &[id])
         .await?
         .remove(&id)
@@ -248,7 +279,15 @@ async fn other_names(
     conn: &mut SqliteConnection,
     task: i64,
 ) -> std::result::Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar!("SELECT DISTINCT m.name FROM mentor m JOIN email e ON e.mentor_id = m.id WHERE e.task_id = ?",task).fetch_all(conn).await
+    sqlx::query_scalar!(
+        r#"SELECT DISTINCT m.name
+        FROM mentor m
+        JOIN email e ON e.mentor_id = m.id
+        WHERE e.task_id = ?"#,
+        task
+    )
+    .fetch_all(conn)
+    .await
 }
 
 // This reads text only inside the core to calculate rules; the list sends short summaries.
@@ -332,12 +371,33 @@ async fn review_rows(
     limit: i64,
     offset: i64,
 ) -> std::result::Result<Vec<ReviewRow>, sqlx::Error> {
-    sqlx::query_as!(ReviewRow, r#"SELECT e.id,e.mentor_id,m.name,e.kind AS "kind: Kind",e.state AS "state: DraftState",e.subject,e.body_md,e.fact_check AS "fact_check: Json<email::fact_check::FactCheck>",
-        (SELECT json_group_array(name) FROM mentor_alias WHERE mentor_id = m.id) AS "aliases!: Json<Vec<String>>",
-        (SELECT json_group_array(material_id) FROM email_attachment WHERE email_id = e.id AND material_id IS NOT NULL) AS "attachments!: Json<Vec<i64>>",
-        c.contact_count,c.last_out_at
-        FROM email e JOIN mentor m ON m.id = e.mentor_id LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-        WHERE e.task_id = ?1 AND (?2 IS NULL OR e.state = ?2) ORDER BY m.name,e.id LIMIT ?3 OFFSET ?4"#,task,filter,limit,offset).fetch_all(conn).await
+    sqlx::query_as!(
+        ReviewRow,
+        r#"SELECT e.id, e.mentor_id, m.name, e.kind AS "kind: Kind",
+            e.state AS "state: DraftState", e.subject, e.body_md,
+            e.fact_check AS "fact_check: Json<email::fact_check::FactCheck>", (
+            SELECT json_group_array(name)
+            FROM mentor_alias
+            WHERE mentor_id = m.id
+        ) AS "aliases!: Json<Vec<String>>", (
+            SELECT json_group_array(material_id)
+            FROM email_attachment
+            WHERE email_id = e.id AND material_id IS NOT NULL
+        ) AS "attachments!: Json<Vec<i64>>", c.contact_count, c.last_out_at
+        FROM email e
+        JOIN mentor m ON m.id = e.mentor_id
+        LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+        WHERE e.task_id = ?1 AND (?2 IS NULL OR e.state = ?2)
+        ORDER BY m.name, e.id
+        LIMIT ?3
+        OFFSET ?4"#,
+        task,
+        filter,
+        limit,
+        offset
+    )
+    .fetch_all(conn)
+    .await
 }
 fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
     if r.state != DraftState::Review {
@@ -412,12 +472,12 @@ pub async fn draft(
 ) -> std::result::Result<Option<TaskDraft>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(r) = sqlx::query!(
-        r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String", coalesce(body_md,
-             '') AS "body_md!: String", state AS "state: DraftState", error, cancel_reason, planned_at,
-             latest_at, kind AS "kind: Kind", reply_to, fact_check AS "fact_check: Json<email::fact_check::FactCheck>"
-           FROM email
-           WHERE id = ?
-             AND task_id = ?"#,
+        r#"SELECT id, mentor_id, coalesce(subject, '') AS "subject!: String",
+            coalesce(body_md, '') AS "body_md!: String", state AS "state: DraftState",
+            error, cancel_reason, planned_at, latest_at, kind AS "kind: Kind",
+            reply_to, fact_check AS "fact_check: Json<email::fact_check::FactCheck>"
+        FROM email
+        WHERE id = ? AND task_id = ?"#,
         key.id,
         key.task_id
     )
@@ -488,7 +548,10 @@ pub async fn save(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<()> {
 pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<check::Problem>> {
     let mut tx = db.begin().await?;
     let row = sqlx::query!(
-        r#"SELECT mentor_id,kind,subject,fact_check AS "fact_check: Json<email::fact_check::FactCheck>" FROM email WHERE id = ? AND task_id = ?"#,
+        r#"SELECT mentor_id, kind,
+            subject, fact_check AS "fact_check: Json<email::fact_check::FactCheck>"
+        FROM email
+        WHERE id = ? AND task_id = ?"#,
         edit.id,
         edit.task_id
     )
@@ -649,7 +712,9 @@ where
     let mut approved = 0;
     for r in &request.emails {
         let current = sqlx::query!(
-            "SELECT mentor_id,kind,reply_to,subject,body_md,state FROM email WHERE id = ? AND task_id = ?",
+            r#"SELECT mentor_id, kind, reply_to, subject, body_md, state
+            FROM email
+            WHERE id = ? AND task_id = ?"#,
             r.id,
             request.task_id
         )

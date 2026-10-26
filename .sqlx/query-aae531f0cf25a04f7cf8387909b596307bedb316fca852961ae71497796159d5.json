@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE\n        FROM mailbox_folder\n        WHERE mailbox_id = ? AND folder NOT IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "aae531f0cf25a04f7cf8387909b596307bedb316fca852961ae71497796159d5"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile\n        SET name = ?1, research_interests = ?2, rewrite_preference = ?3,\n            match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(\n            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "edb0dfbf975aa85c81b7afd2faf3ad2df7827bdf3f05b6d4d7ecab54018ae46c"
+}

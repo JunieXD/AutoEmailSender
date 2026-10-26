@@ -178,8 +178,10 @@ impl TemplateForm {
 pub async fn list(db: &SqlitePool) -> Result<Vec<TemplateSummary>, sqlx::Error> {
     sqlx::query_as!(
         TemplateSummary,
-        r#"SELECT id, name, subject, id IS (SELECT default_template_id FROM profile) AS "is_default!: bool"
-           FROM template ORDER BY id"#
+        r#"SELECT id, name, subject,
+            id IS(SELECT default_template_id FROM profile) AS "is_default!: bool"
+        FROM template
+        ORDER BY id"#
     )
     .fetch_all(db)
     .await
@@ -227,7 +229,8 @@ pub async fn create(
 ) -> Result<i64, sqlx::Error> {
     let mut tx = db.begin().await?;
     let id = sqlx::query!(
-        "INSERT INTO template (name, subject, body_md, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        r#"INSERT INTO template (name, subject, body_md, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)"#,
         fields.name,
         fields.subject,
         fields.body_md,

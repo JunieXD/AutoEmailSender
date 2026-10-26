@@ -109,7 +109,10 @@ pub async fn for_writing(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error>
     // The table lets only a material with text be used for writing.
     sqlx::query_as!(
         Reference,
-        r#"SELECT file_name, extracted_text AS "text!" FROM material WHERE for_writing = 1 ORDER BY id"#
+        r#"SELECT file_name, extracted_text AS "text!"
+        FROM material
+        WHERE for_writing = 1
+        ORDER BY id"#
     )
     .fetch_all(db)
     .await
@@ -117,9 +120,15 @@ pub async fn for_writing(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error>
 
 /// The materials used for matching, oldest first.
 pub async fn for_matching(db: &SqlitePool) -> Result<Vec<Reference>, sqlx::Error> {
-    sqlx::query_as!(Reference,
-        r#"SELECT file_name, extracted_text AS "text!" FROM material WHERE for_matching = 1 ORDER BY id"#)
-        .fetch_all(db).await
+    sqlx::query_as!(
+        Reference,
+        r#"SELECT file_name, extracted_text AS "text!"
+        FROM material
+        WHERE for_matching = 1
+        ORDER BY id"#
+    )
+    .fetch_all(db)
+    .await
 }
 
 /// The text of a material: None when there is no such material, Some(None) when it has none.
@@ -197,9 +206,13 @@ pub async fn add(
     out.sync_all().await?;
     tokio::fs::rename(&temp, file(dir, id)).await?;
     if has_text {
-        sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            r#"UPDATE profile
+            SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)"#,
+            now
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(id)
@@ -280,9 +293,13 @@ pub async fn set_purpose(
         }
     };
     if matches!(purpose, Purpose::Matching) && row.rows_affected() > 0 {
-        sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            r#"UPDATE profile
+            SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)"#,
+            now
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     let exists = sqlx::query_scalar!("SELECT id FROM material WHERE id = ?", id)
         .fetch_optional(&mut *tx)
@@ -298,7 +315,8 @@ pub async fn set_purpose(
 /// emails it is attached to.
 pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bool, Error> {
     let mut tx = db.begin().await?;
-    // Lock before checking references so generation cannot be queued between the check and deletion.
+    // Lock before checking references so generation cannot be queued between the check and
+    // deletion.
     let exists = sqlx::query!("UPDATE material SET id = id WHERE id = ?", id)
         .execute(&mut *tx)
         .await?;
@@ -321,9 +339,16 @@ pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bo
         .execute(&mut *tx)
         .await?;
     let row = sqlx::query!(
-        "DELETE FROM material WHERE id = ?1 AND NOT EXISTS (
-           SELECT 1 FROM email_attachment a JOIN email e ON e.id = a.email_id
-           WHERE a.material_id = ?1 AND e.state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'failed')) RETURNING for_matching",
+        r#"DELETE
+        FROM material
+        WHERE id = ?1 AND NOT EXISTS (
+            SELECT 1
+            FROM email_attachment a
+            JOIN email e ON e.id = a.email_id
+            WHERE a.material_id = ?1 AND e.state IN ('approved', 'cloud', 'sending',
+                'maybe_sent', 'failed')
+        )
+        RETURNING for_matching"#,
         id
     )
     .fetch_optional(&mut *tx)
@@ -332,9 +357,13 @@ pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bo
         return Err(Error::InUse);
     }
     if row.is_some_and(|r| r.for_matching != 0) {
-        sqlx::query!("UPDATE profile SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)", now)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            r#"UPDATE profile
+            SET match_basis_changed_at = max(coalesce(match_basis_changed_at, ?1), ?1)"#,
+            now
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     if let Err(e) = tokio::fs::remove_file(file(dir, id)).await {

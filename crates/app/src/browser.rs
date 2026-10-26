@@ -448,8 +448,18 @@ mod tests {
         let start = Instant::now();
         let mut since = start;
         let mut previous = Value::Null;
-        let before = json!({"state":"complete","url":"https://school.example.edu/first","leaving":false,"material":{"text":"第一页"}});
-        let leaving = json!({"state":"complete","url":"https://school.example.edu/first","leaving":true,"material":{"text":"正在加载"}});
+        let before = json!({
+            "state": "complete",
+            "url": "https://school.example.edu/first",
+            "leaving": false,
+            "material": {"text": "第一页"}
+        });
+        let leaving = json!({
+            "state": "complete",
+            "url": "https://school.example.edu/first",
+            "leaving": true,
+            "material": {"text": "正在加载"}
+        });
         assert!(!settled(
             leaving.clone(),
             Some(&before),
@@ -464,7 +474,12 @@ mod tests {
             &mut since,
             start + Duration::from_secs(2)
         ));
-        let arrived = json!({"state":"complete","url":"https://school.example.edu/second","leaving":false,"material":{"text":"第二页"}});
+        let arrived = json!({
+            "state": "complete",
+            "url": "https://school.example.edu/second",
+            "leaving": false,
+            "material": {"text": "第二页"}
+        });
         let committed = start + Duration::from_millis(4500);
         assert!(!settled(
             arrived.clone(),
@@ -494,9 +509,17 @@ mod tests {
         let start = Instant::now();
         let mut since = start;
         let mut previous = Value::Null;
-        let before = json!({"state":"complete","url":"https://school.example.edu/list","material":{"links":[],"images":[]}});
+        let before = json!({
+            "state": "complete",
+            "url": "https://school.example.edu/list",
+            "material": {"links": [], "images": []}
+        });
         for page in 1..=8 {
-            let snapshot = json!({"state":"complete","url":"https://school.example.edu/list","material":{"links":[format!("/teacher/{page}")],"images":[format!("导师{page}")]}});
+            let snapshot = json!({
+                "state": "complete",
+                "url": "https://school.example.edu/list",
+                "material": {"links": [format!("/teacher/{page}")], "images": [format!("导师{page}")]}
+            });
             assert!(!settled(
                 snapshot,
                 Some(&before),

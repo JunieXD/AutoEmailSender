@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email\n        SET state = 'sent', planned_at = coalesce(planned_at, sent_at),\n            latest_at = NULL, error = NULL, cancel_reason = NULL, updated_at = ?1\n        WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))\n        AND (state IN ('sending', 'maybe_sent') OR (state = 'canceled'\n        AND sent_at IS NOT NULL) OR (state = 'approved' AND sent_at IS NOT NULL\n        AND to_address = (\n            SELECT address\n            FROM mentor_email\n            WHERE mentor_id = email.mentor_id\n            ORDER BY position\n            LIMIT 1\n        )))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2984768dd3ecc7ca1e4cb8ae61defe246855124f1d7da0326fd161eac18961ed"
+}

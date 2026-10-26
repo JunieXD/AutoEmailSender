@@ -1,0 +1,71 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.id, t.name, t.state, (\n                    SELECT count(*)\n                    FROM email\n                    WHERE task_id = t.id AND state = 'generating'\n                ) AS remaining, (\n                    SELECT count(*)\n                    FROM email\n                    WHERE task_id = t.id AND model IS NOT NULL\n                    AND state NOT IN ('generating', 'generation_failed',\n                        'canceled')\n                ) AS generated, (\n                    SELECT count(*)\n                    FROM email\n                    WHERE task_id = t.id AND state = 'generation_failed'\n                ) AS failed\n                FROM task t\n                WHERE t.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "remaining",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "generated",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "failed",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7fd99063868531f8bb9aab76ec2fb175653f593c07e4602b7e9e48e92d4d39d2"
+}

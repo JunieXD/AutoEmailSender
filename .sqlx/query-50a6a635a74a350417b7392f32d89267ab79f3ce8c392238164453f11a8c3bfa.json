@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page\n        SET text = ?, mode = ?, status = ?, error = ?, fetched_at = ?\n        WHERE id = ? AND claim = ? AND work_state = 'running'\n        AND EXISTS (\n            SELECT 1\n            FROM crawl\n            WHERE id = crawl_page.crawl_id AND state = 'running'\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "50a6a635a74a350417b7392f32d89267ab79f3ce8c392238164453f11a8c3bfa"
+}

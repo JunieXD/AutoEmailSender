@@ -114,8 +114,10 @@ pub fn classify(error: ModelError) -> Failure {
 pub fn tokens(text: &str) -> i64 {
     let (mut cjk, mut other) = (0, 0);
     for c in text.chars() {
-        if matches!(u32::from(c), 0x2e80..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0x20000..=0x323af)
-        {
+        if matches!(
+            u32::from(c),
+            0x2e80..=0x9fff | 0xac00..=0xd7af | 0xf900..=0xfaff | 0x20000..=0x323af
+        ) {
             cjk += 1;
         } else {
             other += 1;

@@ -506,7 +506,12 @@ mod tests {
 
     #[test]
     fn chinese_encodings_are_read() {
-        let raw = "From: li@pku.edu.cn\r\nSubject: =?gb2312?B?u9i4tKO6yerH6w==?=\r\nContent-Type: text/plain; charset=gbk\r\nContent-Transfer-Encoding: base64\r\n\r\nwO7Az8qmo7q7ttOtsai/vKGj\r\n";
+        let raw = "From: li@pku.edu.cn\r\n\
+            Subject: =?gb2312?B?u9i4tKO6yerH6w==?=\r\n\
+            Content-Type: text/plain; charset=gbk\r\n\
+            Content-Transfer-Encoding: base64\r\n\
+            \r\n\
+            wO7Az8qmo7q7ttOtsai/vKGj\r\n";
         assert_eq!(
             headers(raw.as_bytes()).subject.as_deref(),
             Some("回复：申请")
@@ -516,7 +521,13 @@ mod tests {
 
     #[test]
     fn html_reads_as_lines_with_where_links_go() {
-        let raw = "Content-Type: text/html; charset=utf-8\r\n\r\n<html><head><style>p{color:red}</style></head><body><div>林晓同学：</div><div>请&nbsp;<a href=\"https://lab.example.com/join\">填写<b>报名表</b></a>，或写信到 <a href=\"mailto:li@pku.edu.cn\">li@pku.edu.cn</a>。</div><table><tr><td>时间</td><td>周五下午</td></tr></table><blockquote>李老师：您好！</blockquote></body></html>";
+        let raw = "Content-Type: text/html; charset=utf-8\r\n\
+            \r\n\
+            <html><head><style>p{color:red}</style></head><body><div>林晓同学：</div><div>\
+            请&nbsp;<a href=\"https://lab.example.com/join\">填写<b>报名表</b></a>，或写信到 \
+            <a href=\"mailto:li@pku.edu.cn\">li@pku.edu.cn</a>。</div><table><tr><td>时间</td>\
+            <td>周五下午</td></tr></table><blockquote>李老师：您好！</blockquote></body>\
+            </html>";
         assert_eq!(
             text(raw.as_bytes()).as_deref(),
             Some(
@@ -528,7 +539,23 @@ mod tests {
     /// As Apple Mail writes a picture put between two paragraphs.
     #[test]
     fn text_around_a_picture_is_all_read() {
-        let raw = "Content-Type: multipart/mixed; boundary=m\r\n\r\n--m\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n请看海报。\r\n--m\r\nContent-Type: image/png\r\nContent-Disposition: inline; filename=a.png\r\nContent-Transfer-Encoding: base64\r\n\r\niVBORw0KGgo=\r\n--m\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n请周五前报名。\r\n--m--\r\n";
+        let raw = "Content-Type: multipart/mixed; boundary=m\r\n\
+            \r\n\
+            --m\r\n\
+            Content-Type: text/plain; charset=utf-8\r\n\
+            \r\n\
+            请看海报。\r\n\
+            --m\r\n\
+            Content-Type: image/png\r\n\
+            Content-Disposition: inline; filename=a.png\r\n\
+            Content-Transfer-Encoding: base64\r\n\
+            \r\n\
+            iVBORw0KGgo=\r\n\
+            --m\r\n\
+            Content-Type: text/plain; charset=utf-8\r\n\
+            \r\n\
+            请周五前报名。\r\n\
+            --m--\r\n";
         assert_eq!(
             text(raw.as_bytes()).as_deref(),
             Some("请看海报。\n请周五前报名。")

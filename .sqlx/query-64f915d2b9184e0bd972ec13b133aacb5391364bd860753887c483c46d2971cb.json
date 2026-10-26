@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.mentor_id AS \"mentor_id!\", c.name AS \"name!\", c.at AS \"at!: i64\",\n            c.unread AS \"unread!\", (\n            SELECT subject\n            FROM (\n                SELECT subject, sent_at\n                FROM email\n                WHERE mentor_id = c.mentor_id AND state IN ('maybe_sent', 'sent',\n                    'bounced')\n                UNION ALL\n                SELECT m.subject, m.sent_at\n                FROM message m\n                JOIN message_mentor mm ON mm.message_id = m.id\n                WHERE mm.mentor_id = c.mentor_id AND m.kind <> 'auto_reply'\n            )\n            ORDER BY sent_at DESC\n            LIMIT 1\n        ) AS \"subject?: String\"\n        FROM (\n            SELECT mc.mentor_id, m.name, mc.unread, max(coalesce(mc.last_out_at, 0),\n                coalesce(mc.last_reply_at, 0)) AS at\n            FROM mentor_contact mc\n            JOIN mentor m ON m.id = mc.mentor_id\n            WHERE m.trashed_at IS NULL AND (NOT ?1 OR mc.unread > 0)\n            ORDER BY at DESC, mc.mentor_id DESC\n            LIMIT ?2\n            OFFSET ?3\n        ) c\n        ORDER BY c.at DESC, c.mentor_id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "at!: i64",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "unread!",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "unread"
+          }
+        }
+      },
+      {
+        "name": "subject?: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      false,
+      true
+    ]
+  },
+  "hash": "64f915d2b9184e0bd972ec13b133aacb5391364bd860753887c483c46d2971cb"
+}

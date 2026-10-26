@@ -24,8 +24,11 @@ pub fn now() -> i64 {
         .map_or(0, |d| d.as_millis() as i64)
 }
 
-const SURNAMES: &str = "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯龙史黎贺顾毛郝龚邵万钱";
-const GIVEN: &str = "伟芳娜敏静丽强磊军洋勇艳杰娟涛明超秀霞平刚桂英华玉萍红梅鹏飞斌宇浩凯健俊帆帅旭宁婷雪琳晶欣颖慧佳倩";
+const SURNAMES: &str = "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董\
+    袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯\
+    龙史黎贺顾毛郝龚邵万钱";
+const GIVEN: &str = "伟芳娜敏静丽强磊军洋勇艳杰娟涛明超秀霞平刚桂英华玉萍红梅鹏飞斌宇浩凯健俊\
+    帆帅旭宁婷雪琳晶欣颖慧佳倩";
 const UNIVERSITIES: &[&str] = &[
     "清华大学",
     "北京大学",
@@ -177,8 +180,10 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         .await?;
     sqlx::query(
         // A domain with no mail servers, so testing this mailbox reaches no one.
-        "INSERT INTO mailbox VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
-           'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1, NULL, NULL, NULL, NULL, ?)",
+        r#"INSERT INTO mailbox
+        VALUES (1, 'linxiao@example.com', '林晓', 'custom', 'smtp.example.com', 465,
+            'tls', 'imap.example.com', 993, 'tls', 'password', 'sample', 100, 60, 1,
+            NULL, NULL, NULL, NULL, ?)"#,
     )
     .bind(now)
     .execute(&mut *tx)
@@ -218,8 +223,10 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         if let Some(state) = state {
             let done = state == "done";
             sqlx::query(
-                "UPDATE mentor SET match_state = ?, match_score = ?, matched_at = ?, match_model = ?,
-                   match_error = ?, match_queued_at = ?, match_priority = ? WHERE id = ?",
+                r#"UPDATE mentor
+                SET match_state = ?, match_score = ?, matched_at = ?, match_model = ?,
+                    match_error = ?, match_queued_at = ?, match_priority = ?
+                WHERE id = ?"#,
             )
             .bind((!done).then_some(state))
             .bind(done.then(|| rng.i64(0..=100)))
@@ -331,17 +338,26 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         let rendered = !matches!(state, "review" | "canceled");
         let at = now - rng.i64(0..180) * DAY - rng.i64(0..DAY);
         sqlx::query(
-            "INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, mailbox_id, from_address,
-               to_address, model, message_id, sent_at, error, cancel_reason, created_at, updated_at,
-               subject, body_md, html, text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, ?, '申请 2027 年博士生', ?, ?, ?)",
+            r#"INSERT INTO email (mentor_id, kind, reply_to, state, planned_at,
+                mailbox_id, from_address, to_address, model, message_id, sent_at,
+                error, cancel_reason, created_at, updated_at, subject, body_md, html,
+                text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deepseek-chat', ?, ?, ?, ?, ?, ?,
+                '申请 2027 年博士生', ?, ?, ?)"#,
         )
         .bind(mentor)
         .bind(kind)
         .bind((kind != "first").then(|| format!("<earlier{i}@aes>")))
         .bind(state)
-        // Approved ones are due later, so the development app does not send them to made-up mentors.
-        .bind(rendered.then(|| if state == "approved" { now + rng.i64(1..30) * DAY } else { at }))
+        // Approved ones are due later, so the development app does not send them to made-up
+        // mentors.
+        .bind(rendered.then(|| {
+            if state == "approved" {
+                now + rng.i64(1..30) * DAY
+            } else {
+                at
+            }
+        }))
         .bind(out.then_some(1))
         .bind(out.then_some("linxiao@example.com"))
         .bind(out.then(|| format!("m{mentor}@example.edu.cn")))
@@ -375,9 +391,11 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .then_some(at + DAY)
             .filter(|t| *t < now);
         let id = sqlx::query(
-            "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, read_at, from_address, subject, body_text, truncated)
-             VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn', '回复：申请 2027 年博士生', ?, 0)",
+            r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind,
+                message_id, in_reply_to, sent_at, read_at, from_address, subject,
+                body_text, truncated)
+            VALUES (1, ?, 1, ?, ?, ?, ?, ?, ?, 'mentor@example.edu.cn',
+                '回复：申请 2027 年博士生', ?, 0)"#,
         )
         .bind(if kind == "sent" { "Sent" } else { "INBOX" })
         .bind(i as i64)
@@ -401,9 +419,33 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
         ("计算机方向", "ai", "paused"),
         ("夏令营联系", "template", "stopped"),
     ] {
-        let task = sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,state,created_at) VALUES (?,'first',?,'申请{导师姓名}','{导师姓名}老师：您好，我是林晓。','now',?,?)")
-            .bind(name).bind(writer).bind(state).bind(now).execute(&mut *tx).await?.last_insert_rowid();
-        sqlx::query("UPDATE email SET task_id = ?1 WHERE id IN (SELECT min(id) FROM email WHERE task_id IS NULL AND kind='first' GROUP BY mentor_id LIMIT 15)").bind(task).execute(&mut *tx).await?;
+        let task = sqlx::query(
+            r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md,
+                schedule, state, created_at)
+            VALUES (?, 'first', ?, '申请{导师姓名}',
+                '{导师姓名}老师：您好，我是林晓。', 'now', ?, ?)"#,
+        )
+        .bind(name)
+        .bind(writer)
+        .bind(state)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .last_insert_rowid();
+        sqlx::query(
+            r#"UPDATE email
+            SET task_id = ?1
+            WHERE id IN (
+                SELECT min(id)
+                FROM email
+                WHERE task_id IS NULL AND kind = 'first'
+                GROUP BY mentor_id
+                LIMIT 15
+            )"#,
+        )
+        .bind(task)
+        .execute(&mut *tx)
+        .await?;
         let states: &[&str] = match (writer, state) {
             (_, "stopped") => &["canceled", "canceled", "canceled"],
             ("ai", _) => &[
@@ -429,11 +471,14 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
                 _ => None,
             };
             sqlx::query(
-                r#"UPDATE email SET state = ?, error = ?, cancel_reason = ?, generation_queued_at = ?,
-                 planned_at = ?, html = coalesce(html, '<p>老师您好，我是林晓。</p>'),
-                 text = coalesce(text, '老师您好，我是林晓。'), message_id = NULL,
-                 copy_message_id = NULL, sent_at = NULL, from_address = NULL, to_address = NULL
-               WHERE id = ?"#,
+                r#"UPDATE email
+                SET state = ?, error = ?, cancel_reason = ?, generation_queued_at = ?,
+                    planned_at = ?,
+                    html = coalesce(html, '<p>老师您好，我是林晓。</p>'),
+                    text = coalesce(text, '老师您好，我是林晓。'), message_id = NULL,
+                    copy_message_id = NULL, sent_at = NULL, from_address = NULL,
+                    to_address = NULL
+                WHERE id = ?"#,
             )
             .bind(state)
             .bind(error)
@@ -460,15 +505,47 @@ pub async fn fill(db: &SqlitePool, scale: Scale, now: i64) -> Result {
             .await?;
         }
     }
-    sqlx::query("INSERT INTO model_config(provider,model,api_key,agreed,input_price,output_price,created_at) VALUES('deepseek','deepseek-chat','sample',0,2,8,?)").bind(now).execute(&mut *tx).await?;
-    sqlx::query("WITH RECURSIVE calls(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM calls WHERE n<?1) INSERT INTO usage(at,model_config_id,model,purpose,input_tokens,cached_tokens,output_tokens) SELECT ?2-(n%180)*86400000,CASE WHEN n%5=0 THEN NULL ELSE (SELECT min(id) FROM model_config) END,'deepseek-chat',CASE n%4 WHEN 0 THEN 'crawl' WHEN 1 THEN 'match' WHEN 2 THEN 'draft' ELSE 'rewrite' END,1200+n%800,300,200+n%400 FROM calls").bind(scale.emails as i64).bind(now).execute(&mut *tx).await?;
+    sqlx::query(
+        r#"INSERT INTO model_config (provider, model, api_key, agreed, input_price,
+            output_price, created_at)
+        VALUES ('deepseek', 'deepseek-chat', 'sample', 0, 2, 8, ?)"#,
+    )
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        r#"WITH RECURSIVE calls(n) AS (
+        VALUES (1)
+        UNION ALL
+        SELECT n + 1
+        FROM calls
+        WHERE n < ?1) INSERT INTO usage (at, model_config_id, model, purpose,
+            input_tokens, cached_tokens, output_tokens)
+        SELECT ?2 -(n % 180) * 86400000, CASE WHEN n % 5 = 0 THEN NULL
+        ELSE(SELECT min(id) FROM model_config) END, 'deepseek-chat', CASE n % 4
+        WHEN 0 THEN 'crawl' WHEN 1 THEN 'match' WHEN 2 THEN 'draft'
+        ELSE 'rewrite' END, 1200 + n % 800, 300, 200 + n % 400
+        FROM calls"#,
+    )
+    .bind(scale.emails as i64)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
 
 pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
     let mut tx = db.begin().await?;
-    let id:i64=sqlx::query_scalar("INSERT INTO crawl (kind,start_urls,state,created_at,finished_at) VALUES ('site','[\"https://example.edu.cn/faculty\"]','done',?,?) RETURNING id").bind(at-600000).bind(at-300000).fetch_one(&mut *tx).await?;
+    let id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO crawl (kind, start_urls, state, created_at, finished_at)
+        VALUES ('site', '["https://example.edu.cn/faculty"]', 'done', ?, ?)
+        RETURNING id"#,
+    )
+    .bind(at - 600000)
+    .bind(at - 300000)
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query(
         "INSERT INTO crawl_run (crawl_id,app_version,started_at,ended_at) VALUES (?,?,?,?)",
     )
@@ -478,22 +555,51 @@ pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
     .bind(at - 300000)
     .execute(&mut *tx)
     .await?;
-    let known:(String,String)=sqlx::query_as("SELECT m.name,e.address FROM mentor m JOIN mentor_email e ON e.mentor_id=m.id WHERE m.trashed_at IS NULL LIMIT 1").fetch_one(&mut *tx).await?;
+    let known: (String, String) = sqlx::query_as(
+        r#"SELECT m.name, e.address
+        FROM mentor m
+        JOIN mentor_email e ON e.mentor_id = m.id
+        WHERE m.trashed_at IS NULL
+        LIMIT 1"#,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     for (name, emails) in [
         ("新发现的导师".into(), vec!["new@example.edu.cn".to_owned()]),
         (known.0.clone(), vec![known.1]),
         (known.0, vec![]),
         ("尚无邮箱的导师".into(), vec![]),
     ] {
-        sqlx::query("INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,research,source_url,match_names) VALUES (?,'pending','none',?,?,'[]','机器学习与智能系统','https://example.edu.cn/faculty',?)").bind(id).bind(&name).bind(sqlx::types::Json(emails)).bind(sqlx::types::Json(vec![mentor::intake::comparable(&name)])).execute(&mut *tx).await?;
+        sqlx::query(
+            r#"INSERT INTO candidate (crawl_id, review, enrich, name, emails,
+                affiliations, research, source_url, match_names)
+            VALUES (?, 'pending', 'none', ?, ?, '[]', '机器学习与智能系统',
+                'https://example.edu.cn/faculty', ?)"#,
+        )
+        .bind(id)
+        .bind(&name)
+        .bind(sqlx::types::Json(emails))
+        .bind(sqlx::types::Json(vec![mentor::intake::comparable(&name)]))
+        .execute(&mut *tx)
+        .await?;
     }
-    sqlx::query("INSERT INTO crawl (kind,start_urls,state,created_at,error) VALUES ('site','[\"https://example.edu.cn/teachers\"]','paused',?,'模型额度不足，请补充额度后继续')").bind(at).execute(&mut *tx).await?;
+    sqlx::query(
+        r#"INSERT INTO crawl (kind, start_urls, state, created_at, error)
+        VALUES ('site', '["https://example.edu.cn/teachers"]', 'paused', ?,
+            '模型额度不足，请补充额度后继续')"#,
+    )
+    .bind(at)
+    .execute(&mut *tx)
+    .await?;
     for (name, state, changes, error) in [
         ("正在补全的导师", "queued", serde_json::json!([]), None),
         (
             "补全完成的导师",
             "done",
-            serde_json::json!([{"field":"email","value":["enriched@example.edu.cn"]},{"field":"research","value":"计算机视觉"}]),
+            serde_json::json!([
+                {"field": "email", "value": ["enriched@example.edu.cn"]},
+                {"field": "research", "value": "计算机视觉"}
+            ]),
             None,
         ),
         (
@@ -507,15 +613,45 @@ pub async fn crawls(db: &SqlitePool, at: i64) -> Result {
             "https://example.edu.cn/people/{state}/{}",
             if error.is_some() { "empty" } else { "profile" }
         );
-        let candidate:i64=sqlx::query_scalar("INSERT INTO candidate(crawl_id,profile_url,review,enrich,name,emails,homepages,research,enrich_changes,enrich_error,match_names) VALUES(?,?,'pending',?,?,?,?,?,?,?,?) RETURNING id")
-            .bind(id).bind(&url).bind(state).bind(name)
-            .bind(sqlx::types::Json(if state=="done" && error.is_none(){vec!["enriched@example.edu.cn"]}else{vec![]}))
-            .bind(sqlx::types::Json(vec![&url])).bind(if state=="done" && error.is_none(){Some("计算机视觉")}else{None})
-            .bind(sqlx::types::Json(changes)).bind(error).bind(sqlx::types::Json(vec![mentor::intake::comparable(name)]))
-            .fetch_one(&mut *tx).await?;
+        let candidate: i64 = sqlx::query_scalar(
+            r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails,
+                homepages, research, enrich_changes, enrich_error, match_names)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id"#,
+        )
+        .bind(id)
+        .bind(&url)
+        .bind(state)
+        .bind(name)
+        .bind(sqlx::types::Json(if state == "done" && error.is_none() {
+            vec!["enriched@example.edu.cn"]
+        } else {
+            vec![]
+        }))
+        .bind(sqlx::types::Json(vec![&url]))
+        .bind(if state == "done" && error.is_none() {
+            Some("计算机视觉")
+        } else {
+            None
+        })
+        .bind(sqlx::types::Json(changes))
+        .bind(error)
+        .bind(sqlx::types::Json(vec![mentor::intake::comparable(name)]))
+        .fetch_one(&mut *tx)
+        .await?;
         if state == "queued" {
-            sqlx::query("INSERT INTO crawl_page(crawl_id,candidate_id,url,scope_url,kind,mode,status,error,work_state) VALUES(?,?,?,?,'enrich_profile','http','failed','尚未读取','queued')")
-                .bind(id).bind(candidate).bind(&url).bind(&url).execute(&mut *tx).await?;
+            sqlx::query(
+                r#"INSERT INTO crawl_page (crawl_id, candidate_id, url, scope_url, kind,
+                    mode, status, error, work_state)
+                VALUES (?, ?, ?, ?, 'enrich_profile', 'http', 'failed', '尚未读取',
+                    'queued')"#,
+            )
+            .bind(id)
+            .bind(candidate)
+            .bind(&url)
+            .bind(&url)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query("UPDATE crawl SET state='paused',finished_at=NULL WHERE id=?")
                 .bind(id)
                 .execute(&mut *tx)
@@ -540,10 +676,18 @@ pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
     ];
     let dates_json = serde_json::to_string(&dates.map(|d| d.to_string()))
         .map_err(|e| sqlx::Error::Encode(e.into()))?;
-    let task=sqlx::query(r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md, schedule,
-                              window_dates, window_start, window_end, per_window, state, created_at)
-                            VALUES ('定时联系 · 人工智能', 'first', 'template', '申请交流', '老师您好，我是林晓。', 'window', ?,
-                              '09:00', '11:00', 1, 'active', ?)"#).bind(dates_json).bind(now).execute(db).await?.last_insert_rowid();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md,
+            schedule, window_dates, window_start, window_end, per_window, state,
+            created_at)
+        VALUES ('定时联系 · 人工智能', 'first', 'template', '申请交流',
+            '老师您好，我是林晓。', 'window', ?, '09:00', '11:00', 1, 'active', ?)"#,
+    )
+    .bind(dates_json)
+    .bind(now)
+    .execute(db)
+    .await?
+    .last_insert_rowid();
     for (i, state) in [
         "review",
         "approved",
@@ -623,7 +767,16 @@ pub async fn scheduled(db: &sqlx::SqlitePool, now: i64) -> Result {
 
 /// Seed-only follow-ups keep a real parent to preview in every state.
 pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
-    let task = sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,state,created_at) VALUES('追问 · 研究方向交流','follow_up','ai','Re: 申请研究方向交流','{导师姓名}老师：想请问您是否方便查看之前的信。','now','paused',?)").bind(now).execute(db).await?.last_insert_rowid();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md,
+            schedule, state, created_at)
+        VALUES ('追问 · 研究方向交流', 'follow_up', 'ai', 'Re: 申请研究方向交流',
+            '{导师姓名}老师：想请问您是否方便查看之前的信。', 'now', 'paused', ?)"#,
+    )
+    .bind(now)
+    .execute(db)
+    .await?
+    .last_insert_rowid();
     for (i, state) in [
         "generating",
         "generation_failed",
@@ -648,17 +801,68 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
         .await?;
         let parent = format!("<followup-parent-{i}@example.com>");
         let at = now - 10 * DAY;
-        sqlx::query("INSERT INTO email(mentor_id,kind,state,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,subject,body_md,html,text,created_at,updated_at) VALUES(?,'first','sent',?,1,'linxiao@example.com',?,?,?,'申请研究方向交流','老师您好，我是林晓。','<p>老师您好，我是林晓。</p>','老师您好，我是林晓。',?,?)")
-            .bind(mentor).bind(at).bind(format!("followup{i}@example.edu.cn")).bind(&parent).bind(at).bind(at).bind(at).execute(db).await?;
+        sqlx::query(
+            r#"INSERT INTO email (mentor_id, kind, state, planned_at, mailbox_id,
+                from_address, to_address, message_id, sent_at, subject, body_md, html,
+                text, created_at, updated_at)
+            VALUES (?, 'first', 'sent', ?, 1, 'linxiao@example.com', ?, ?, ?,
+                '申请研究方向交流', '老师您好，我是林晓。',
+                '<p>老师您好，我是林晓。</p>', '老师您好，我是林晓。', ?, ?)"#,
+        )
+        .bind(mentor)
+        .bind(at)
+        .bind(format!("followup{i}@example.edu.cn"))
+        .bind(&parent)
+        .bind(at)
+        .bind(at)
+        .bind(at)
+        .execute(db)
+        .await?;
         let sent = *state == "sent";
-        sqlx::query("INSERT INTO email(task_id,mentor_id,kind,reply_to,state,subject,body_md,html,text,planned_at,generation_queued_at,mailbox_id,from_address,to_address,message_id,sent_at,error,cancel_reason,created_at,updated_at) VALUES(?,?,'follow_up',?,?,'Re: 申请研究方向交流','老师您好，想请问您是否方便查看之前的申请。','<p>老师您好，想请问您是否方便查看之前的申请。</p>','老师您好，想请问您是否方便查看之前的申请。',?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(task).bind(mentor).bind(&parent).bind(state).bind(matches!(*state,"approved"|"failed"|"sent").then_some(now)).bind((*state=="generating").then_some(now))
-            .bind(sent.then_some(1_i64)).bind(sent.then_some("linxiao@example.com")).bind(sent.then_some(format!("followup{i}@example.edu.cn"))).bind(sent.then_some(format!("<followup-sent-{i}@example.com>"))).bind(sent.then_some(now))
-            .bind(matches!(*state,"generation_failed"|"failed").then_some("示例失败，请重试"))
-            .bind((*state=="canceled").then_some("导师已回信")).bind(now).bind(now).execute(db).await?;
+        sqlx::query(
+            r#"INSERT INTO email (task_id, mentor_id, kind, reply_to, state, subject,
+                body_md, html, text, planned_at, generation_queued_at, mailbox_id,
+                from_address, to_address, message_id, sent_at, error, cancel_reason,
+                created_at, updated_at)
+            VALUES (?, ?, 'follow_up', ?, ?, 'Re: 申请研究方向交流',
+                '老师您好，想请问您是否方便查看之前的申请。',
+                '<p>老师您好，想请问您是否方便查看之前的申请。</p>',
+                '老师您好，想请问您是否方便查看之前的申请。', ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?)"#,
+        )
+        .bind(task)
+        .bind(mentor)
+        .bind(&parent)
+        .bind(state)
+        .bind(matches!(*state, "approved" | "failed" | "sent").then_some(now))
+        .bind((*state == "generating").then_some(now))
+        .bind(sent.then_some(1_i64))
+        .bind(sent.then_some("linxiao@example.com"))
+        .bind(sent.then_some(format!("followup{i}@example.edu.cn")))
+        .bind(sent.then_some(format!("<followup-sent-{i}@example.com>")))
+        .bind(sent.then_some(now))
+        .bind(matches!(*state, "generation_failed" | "failed").then_some("示例失败，请重试"))
+        .bind((*state == "canceled").then_some("导师已回信"))
+        .bind(now)
+        .bind(now)
+        .execute(db)
+        .await?;
         if *state == "canceled" {
-            let reply=sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,in_reply_to,sent_at,from_address,from_name,subject,body_text,truncated) VALUES(1,'INBOX',2,?,'reply',?,?,?,?,'导师','回复：申请研究方向交流','林晓同学你好，欢迎进一步交流。',0)")
-                .bind(i as i64).bind(format!("<followup-reply-{i}@example.com>")).bind(parent).bind(now).bind(format!("followup{i}@example.edu.cn")).execute(db).await?.last_insert_rowid();
+            let reply = sqlx::query(
+                r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind,
+                    message_id, in_reply_to, sent_at, from_address, from_name, subject,
+                    body_text, truncated)
+                VALUES (1, 'INBOX', 2, ?, 'reply', ?, ?, ?, ?, '导师',
+                    '回复：申请研究方向交流', '林晓同学你好，欢迎进一步交流。', 0)"#,
+            )
+            .bind(i as i64)
+            .bind(format!("<followup-reply-{i}@example.com>"))
+            .bind(parent)
+            .bind(now)
+            .bind(format!("followup{i}@example.edu.cn"))
+            .execute(db)
+            .await?
+            .last_insert_rowid();
             sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
                 .bind(mentor)
                 .bind(reply)
@@ -678,11 +882,36 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
         )
         .await?;
         let at = now - 5 * DAY;
-        sqlx::query("INSERT INTO email(mentor_id,kind,state,planned_at,mailbox_id,from_address,to_address,message_id,sent_at,subject,body_md,html,text,created_at,updated_at) VALUES(?,'first','sent',?,1,'linxiao@example.com',?,?,?,'申请研究方向交流','老师您好，我是林晓。','<p>老师您好，我是林晓。</p>','老师您好，我是林晓。',?,?)")
-            .bind(m).bind(at).bind(format!("detail-followup-{i}@example.edu.cn")).bind(format!("<detail-parent-{i}@example.com>")).bind(at).bind(at).bind(at).execute(db).await?;
+        sqlx::query(
+            r#"INSERT INTO email (mentor_id, kind, state, planned_at, mailbox_id,
+                from_address, to_address, message_id, sent_at, subject, body_md, html,
+                text, created_at, updated_at)
+            VALUES (?, 'first', 'sent', ?, 1, 'linxiao@example.com', ?, ?, ?,
+                '申请研究方向交流', '老师您好，我是林晓。',
+                '<p>老师您好，我是林晓。</p>', '老师您好，我是林晓。', ?, ?)"#,
+        )
+        .bind(m)
+        .bind(at)
+        .bind(format!("detail-followup-{i}@example.edu.cn"))
+        .bind(format!("<detail-parent-{i}@example.com>"))
+        .bind(at)
+        .bind(at)
+        .bind(at)
+        .execute(db)
+        .await?;
         if i == 0 {
-            sqlx::query("INSERT INTO email(mentor_id,kind,reply_to,state,subject,body_md,created_at,updated_at) VALUES(?,'follow_up',?,'review','Re: 申请研究方向交流','老师您好，想请问您是否方便查看之前的申请。',?,?)")
-                .bind(m).bind(format!("<detail-parent-{i}@example.com>")).bind(now).bind(now).execute(db).await?;
+            sqlx::query(
+                r#"INSERT INTO email (mentor_id, kind, reply_to, state, subject, body_md,
+                    created_at, updated_at)
+                VALUES (?, 'follow_up', ?, 'review', 'Re: 申请研究方向交流',
+                    '老师您好，想请问您是否方便查看之前的申请。', ?, ?)"#,
+            )
+            .bind(m)
+            .bind(format!("<detail-parent-{i}@example.com>"))
+            .bind(now)
+            .bind(now)
+            .execute(db)
+            .await?;
         }
     }
     let m = mentor::create(
@@ -695,8 +924,29 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
         now,
     )
     .await?;
-    let t=sqlx::query("INSERT INTO task(name,kind,writer,template_subject,template_body_md,schedule,state,created_at) VALUES('首封 · 重新发起示例','first','template','研究方向交流','{导师姓名}老师：您好，我是林晓，希望和您交流研究方向。','now','stopped',?)").bind(now).execute(db).await?.last_insert_rowid();
-    sqlx::query("INSERT INTO email(mentor_id,task_id,kind,state,subject,body_md,cancel_reason,created_at,updated_at) VALUES(?,?,'first','canceled','研究方向交流','老师您好，我是林晓。','任务停止',?,?)").bind(m).bind(t).bind(now).bind(now).execute(db).await?;
+    let t = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, template_subject, template_body_md,
+            schedule, state, created_at)
+        VALUES ('首封 · 重新发起示例', 'first', 'template', '研究方向交流',
+            '{导师姓名}老师：您好，我是林晓，希望和您交流研究方向。', 'now', 'stopped',
+            ?)"#,
+    )
+    .bind(now)
+    .execute(db)
+    .await?
+    .last_insert_rowid();
+    sqlx::query(
+        r#"INSERT INTO email (mentor_id, task_id, kind, state, subject, body_md,
+            cancel_reason, created_at, updated_at)
+        VALUES (?, ?, 'first', 'canceled', '研究方向交流', '老师您好，我是林晓。',
+            '任务停止', ?, ?)"#,
+    )
+    .bind(m)
+    .bind(t)
+    .bind(now)
+    .bind(now)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -707,7 +957,14 @@ pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
     )
     .fetch_all(db)
     .await?;
-    sqlx::query("UPDATE message SET outcome = CASE id % 4 WHEN 0 THEN 'interested' WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' ELSE 'unclear' END WHERE kind = 'reply'").execute(db).await?;
+    sqlx::query(
+        r#"UPDATE message
+        SET outcome = CASE id % 4 WHEN 0 THEN 'interested'
+        WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' ELSE 'unclear' END
+        WHERE kind = 'reply'"#,
+    )
+    .execute(db)
+    .await?;
     for (id, outcome) in ids
         .iter()
         .zip(["interested", "no_slot", "declined", "unclear"])
@@ -718,7 +975,16 @@ pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
             .execute(db)
             .await?;
     }
-    sqlx::query("UPDATE message SET body_text = CASE outcome WHEN 'interested' THEN '欢迎报考，请发成绩单，下周可以面谈。' WHEN 'no_slot' THEN '抱歉，今年的名额已经招满。' WHEN 'declined' THEN '你的研究方向和本组不符，无法接收。' ELSE '来信已收到，谢谢。' END WHERE kind = 'reply' AND outcome IS NOT NULL").execute(db).await?;
+    sqlx::query(
+        r#"UPDATE message
+        SET body_text = CASE outcome WHEN 'interested' THEN
+            '欢迎报考，请发成绩单，下周可以面谈。' WHEN 'no_slot' THEN
+            '抱歉，今年的名额已经招满。' WHEN 'declined' THEN
+            '你的研究方向和本组不符，无法接收。' ELSE '来信已收到，谢谢。' END
+        WHERE kind = 'reply' AND outcome IS NOT NULL"#,
+    )
+    .execute(db)
+    .await?;
     sqlx::query("UPDATE profile SET ai_reply_outcome = 1")
         .execute(db)
         .await?;
@@ -727,9 +993,16 @@ pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
             .bind(id)
             .execute(db)
             .await?;
-        sqlx::query("INSERT INTO reply_processing(message_id, action, queued_at, state, error) VALUES (?, 'outcome', ?, ?, ?)")
-            .bind(id).bind(now).bind(state).bind((state == "failed").then_some("模型没有按要求标出回信结果，可以重试或换个模型。"))
-            .execute(db).await?;
+        sqlx::query(
+            r#"INSERT INTO reply_processing (message_id, action, queued_at, state, error)
+            VALUES (?, 'outcome', ?, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(now)
+        .bind(state)
+        .bind((state == "failed").then_some("模型没有按要求标出回信结果，可以重试或换个模型。"))
+        .execute(db)
+        .await?;
     }
     Ok(())
 }
@@ -771,7 +1044,17 @@ pub async fn todos(db: &SqlitePool, now: i64) -> Result {
         .single()
         .ok_or("invalid sample date")?
         .date_naive();
-    let replies: Vec<(i64, i64)> = sqlx::query_as("SELECT mm.mentor_id,m.id FROM message m JOIN message_mentor mm ON mm.message_id=m.id JOIN mentor t ON t.id=mm.mentor_id WHERE m.kind='reply' AND t.trashed_at IS NULL ORDER BY m.id LIMIT 7").fetch_all(db).await?;
+    let replies: Vec<(i64, i64)> = sqlx::query_as(
+        r#"SELECT mm.mentor_id, m.id
+        FROM message m
+        JOIN message_mentor mm ON mm.message_id = m.id
+        JOIN mentor t ON t.id = mm.mentor_id
+        WHERE m.kind = 'reply' AND t.trashed_at IS NULL
+        ORDER BY m.id
+        LIMIT 7"#,
+    )
+    .fetch_all(db)
+    .await?;
     for (i, (text, offset, time, done, manual)) in [
         ("补发成绩单", Some(-2), Some("17:00"), false, false),
         ("确认今天的面谈安排", Some(0), Some("18:00"), false, false),
@@ -794,9 +1077,21 @@ pub async fn todos(db: &SqlitePool, now: i64) -> Result {
                 }
             })
             .map(|d| d.to_string());
-        sqlx::query("INSERT INTO todo(mentor_id,message_id,text,due_date,due_time,done_at,created_at,due_changed_at) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(mentor).bind((!manual).then_some(message)).bind(text).bind(due).bind(time)
-            .bind(done.then_some(now-DAY)).bind(now-3*DAY+i as i64).bind(now-3*DAY).execute(db).await?;
+        sqlx::query(
+            r#"INSERT INTO todo (mentor_id, message_id, text, due_date, due_time, done_at,
+                created_at, due_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(mentor)
+        .bind((!manual).then_some(message))
+        .bind(text)
+        .bind(due)
+        .bind(time)
+        .bind(done.then_some(now - DAY))
+        .bind(now - 3 * DAY + i as i64)
+        .bind(now - 3 * DAY)
+        .execute(db)
+        .await?;
     }
     sqlx::query("UPDATE profile SET ai_reply_todos=1,todo_reminders=1")
         .execute(db)

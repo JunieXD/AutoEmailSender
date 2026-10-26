@@ -15,23 +15,40 @@ const NOW: i64 = 1_792_958_400_000;
 async fn fixture(db: &SqlitePool, dir: &Path) {
     fs::create_dir_all(dir.join("materials")).unwrap();
     fs::write(dir.join("materials/1"), b"resume").unwrap();
-    sqlx::raw_sql("INSERT INTO mailbox(address,sender_name,provider,smtp_host,smtp_port,smtp_security,
-        imap_host,imap_port,imap_security,auth,secret,daily_limit,min_interval_s,rotation_order,created_at)
-        VALUES('me@example.invalid','test','custom','localhost',465,'tls','localhost',993,'tls','password','private-mail-secret',50,60,0,0);
-        INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES
-        ('deepseek',NULL,'m','private-model-key',1,0),('custom','http://localhost/v1','m','',1,0),
-        ('custom','http://localhost/other','m','private-custom-key',1,0);
-        INSERT INTO mentor(name,created_at,updated_at) VALUES('测试导师',0,0);
-        INSERT INTO material(file_name,size,for_matching,for_writing,attach_by_default,created_at)
-        VALUES('简历.pdf',6,0,0,0,0);
-        INSERT INTO crawl(kind,start_urls,state,created_at) VALUES('site','[]','paused',0);
-        INSERT INTO crawl_page(crawl_id,url,kind,mode,status,text) VALUES(1,'https://example.invalid','list','http','success','private-crawled-page');
-        INSERT INTO email(mentor_id,kind,reply_to,state,planned_at,subject,body_md,html,text,created_at,updated_at)
-        VALUES(1,'reply','<parent@example.invalid>','approved',1000,'Re: 测试','已批准','<p>已批准</p>','已批准',0,0);
-        INSERT INTO email(mentor_id,kind,reply_to,state,body_md,created_at,updated_at)
-        VALUES(1,'reply','<parent@example.invalid>','review','新草稿',0,0);
-        INSERT INTO email_attachment(email_id,material_id,file_name,size) VALUES(1,1,'简历.pdf',6);")
-        .execute(db).await.unwrap();
+    sqlx::raw_sql(
+        r#"INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port,
+            smtp_security, imap_host, imap_port, imap_security, auth, secret,
+            daily_limit, min_interval_s, rotation_order, created_at)
+        VALUES ('me@example.invalid', 'test', 'custom', 'localhost', 465, 'tls',
+            'localhost', 993, 'tls', 'password', 'private-mail-secret', 50, 60, 0, 0);
+        INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+            created_at)
+        VALUES ('deepseek', NULL, 'm', 'private-model-key', 1, 0),
+            ('custom', 'http://localhost/v1', 'm', '', 1, 0), ('custom',
+            'http://localhost/other', 'm', 'private-custom-key', 1, 0);
+        INSERT INTO mentor (name, created_at, updated_at)
+        VALUES ('测试导师', 0, 0);
+        INSERT INTO material (file_name, size, for_matching, for_writing,
+            attach_by_default, created_at)
+        VALUES ('简历.pdf', 6, 0, 0, 0, 0);
+        INSERT INTO crawl (kind, start_urls, state, created_at)
+        VALUES ('site', '[]', 'paused', 0);
+        INSERT INTO crawl_page (crawl_id, url, kind, mode, status, text)
+        VALUES (1, 'https://example.invalid', 'list', 'http', 'success',
+            'private-crawled-page');
+        INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, subject,
+            body_md, html, text, created_at, updated_at)
+        VALUES (1, 'reply', '<parent@example.invalid>', 'approved', 1000, 'Re: 测试',
+            '已批准', '<p>已批准</p>', '已批准', 0, 0);
+        INSERT INTO email (mentor_id, kind, reply_to, state, body_md, created_at,
+            updated_at)
+        VALUES (1, 'reply', '<parent@example.invalid>', 'review', '新草稿', 0, 0);
+        INSERT INTO email_attachment (email_id, material_id, file_name, size)
+        VALUES (1, 1, '简历.pdf', 6);"#,
+    )
+    .execute(db)
+    .await
+    .unwrap();
 }
 
 async fn readonly(path: &Path) -> SqliteConnection {
@@ -150,7 +167,12 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
 }
 
 fn manifest() -> serde_json::Value {
-    json!({"application":"io.github.juniexd.autoemailsender", "appVersion":"3.0.0-alpha.0", "databaseVersion":latest(), "exportedAt":NOW})
+    json!({
+        "application": "io.github.juniexd.autoemailsender",
+        "appVersion": "3.0.0-alpha.0",
+        "databaseVersion": latest(),
+        "exportedAt": NOW
+    })
 }
 
 /// The version of the newest migration, which a backup made now records.

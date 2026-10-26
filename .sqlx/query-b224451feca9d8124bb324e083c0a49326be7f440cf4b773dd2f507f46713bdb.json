@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor_detail\n        SET match_reason = ?, match_directions = ?, match_highlights = ?,\n            match_risks = ?\n        WHERE mentor_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "b224451feca9d8124bb324e083c0a49326be7f440cf4b773dd2f507f46713bdb"
+}

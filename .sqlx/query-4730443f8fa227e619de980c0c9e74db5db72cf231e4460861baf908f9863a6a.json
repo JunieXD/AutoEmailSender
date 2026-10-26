@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl\n        SET limits = json_insert(limits, '$[#]', ?2)\n        WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM json_each(limits) WHERE value = ?2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4730443f8fa227e619de980c0c9e74db5db72cf231e4460861baf908f9863a6a"
+}

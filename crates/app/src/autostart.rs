@@ -119,7 +119,13 @@ mod tests {
 
     #[test]
     fn translocated_app_cannot_enable_autostart() {
-        assert!(check_location(Path::new("/private/var/folders/x/AppTranslocation/id/d/Auto Email Sender.app/Contents/MacOS/app")).is_err());
+        assert!(
+            check_location(Path::new(
+                "/private/var/folders/x/AppTranslocation/id/d/\
+                Auto Email Sender.app/Contents/MacOS/app"
+            ))
+            .is_err()
+        );
         assert!(
             check_location(Path::new(
                 "/Applications/Auto Email Sender.app/Contents/MacOS/app"

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n                FROM mentor\n                WHERE trashed_at IS NULL AND id IN (SELECT value FROM json_each(?))\n                ORDER BY match_score DESC, id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "757892aff6885f8966d8f4610d6c104474b9625d61b42fb6b93c91c557da00dc"
+}

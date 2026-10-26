@@ -361,7 +361,20 @@ async fn storage_rejects_invalid_combinations(db: SqlitePool) {
         ("事", Some("2026-02-30"), None),
         ("事", Some("2026-01-01"), Some("24:00")),
     ] {
-        assert!(sqlx::query("INSERT INTO todo(mentor_id,text,due_date,due_time,created_at,due_changed_at) VALUES(?,?,?,?,0,0)").bind(m).bind(text).bind(date).bind(time).execute(&db).await.is_err());
+        assert!(
+            sqlx::query(
+                r#"INSERT INTO todo (mentor_id, text, due_date, due_time, created_at,
+                    due_changed_at)
+                VALUES (?, ?, ?, ?, 0, 0)"#
+            )
+            .bind(m)
+            .bind(text)
+            .bind(date)
+            .bind(time)
+            .execute(&db)
+            .await
+            .is_err()
+        );
     }
 }
 

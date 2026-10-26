@@ -38,7 +38,14 @@ async fn candidates(conn: &mut SqliteConnection, rows: &[Row]) -> Result<Candida
             .flat_map(|r| &r.profile.fields.emails)
             .collect::<Vec<_>>(),
     );
-    let owners = sqlx::query!("SELECT address, mentor_id FROM mentor_email WHERE address IN (SELECT value FROM json_each(?))", emails).fetch_all(&mut *conn).await?;
+    let owners = sqlx::query!(
+        r#"SELECT address, mentor_id
+        FROM mentor_email
+        WHERE address IN (SELECT value FROM json_each(?))"#,
+        emails
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     let addresses: BTreeSet<_> = owners.iter().map(|e| e.address.to_lowercase()).collect();
     let mut ids: BTreeSet<_> = owners.into_iter().map(|e| e.mentor_id).collect();
     let names: BTreeSet<_> = rows
@@ -58,7 +65,10 @@ async fn candidates(conn: &mut SqliteConnection, rows: &[Row]) -> Result<Candida
     if !names.is_empty() {
         let names = Json(names);
         for record in sqlx::query!(
-            "SELECT mentor_id AS id, name FROM mentor_name WHERE name IN (SELECT value FROM json_each(?))", names
+            r#"SELECT mentor_id AS id, name
+            FROM mentor_name
+            WHERE name IN (SELECT value FROM json_each(?))"#,
+            names
         )
         .fetch_all(&mut *conn)
         .await?

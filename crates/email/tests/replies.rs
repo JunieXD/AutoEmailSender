@@ -14,11 +14,18 @@ fn approval(files: &[i64]) -> Approval<'_> {
 }
 
 async fn setup(db: &SqlitePool) -> i64 {
-    sqlx::query("INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port, smtp_security,
-      imap_host, imap_port, imap_security, auth, secret, daily_limit, min_interval_s, rotation_order, created_at)
-      VALUES ('me@example.com', '我', 'custom', 'localhost', 465, 'tls', 'localhost', 993, 'tls', 'password', '', 50, 0, 0, 0),
-      ('other@example.com', '我', 'custom', 'localhost', 465, 'tls', 'localhost', 993, 'tls', 'password', '', 50, 0, 1, 0)")
-        .execute(db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port,
+            smtp_security, imap_host, imap_port, imap_security, auth, secret,
+            daily_limit, min_interval_s, rotation_order, created_at)
+        VALUES ('me@example.com', '我', 'custom', 'localhost', 465, 'tls', 'localhost',
+            993, 'tls', 'password', '', 50, 0, 0, 0), ('other@example.com', '我',
+            'custom', 'localhost', 465, 'tls', 'localhost', 993, 'tls', 'password', '',
+            50, 0, 1, 0)"#,
+    )
+    .execute(db)
+    .await
+    .unwrap();
     let mentor = mentor::create(
         db,
         &mentor::MentorFields {
@@ -30,11 +37,16 @@ async fn setup(db: &SqlitePool) -> i64 {
     )
     .await
     .unwrap();
-    sqlx::query("INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, sent_at,
-      from_address, from_name, subject, refs, body_text, truncated)
-      VALUES (1, 'INBOX', 1, 1, 'reply', '<parent@pku>', 1792821600000, 'secretary@pku.edu.cn', '王伟',
-        '申请', '<root@example.com>', '欢迎报考。', 0)")
-        .execute(db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id,
+            sent_at, from_address, from_name, subject, refs, body_text, truncated)
+        VALUES (1, 'INBOX', 1, 1, 'reply', '<parent@pku>', 1792821600000,
+            'secretary@pku.edu.cn', '王伟', '申请', '<root@example.com>', '欢迎报考。',
+            0)"#,
+    )
+    .execute(db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 1)")
         .bind(mentor)
         .execute(db)
@@ -55,8 +67,15 @@ async fn reply_draft_saves_the_target_and_files_and_clears_only_when_both_are_em
     db: SqlitePool,
 ) {
     let mentor = setup(&db).await;
-    let file = sqlx::query("INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at)
-      VALUES ('成绩单.pdf', 100, 0, 0, 0, 0)").execute(&db).await.unwrap().last_insert_rowid();
+    let file = sqlx::query(
+        r#"INSERT INTO material (file_name, size, for_matching, for_writing,
+            attach_by_default, created_at)
+        VALUES ('成绩单.pdf', 100, 0, 0, 0, 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     let first = draft(&db, mentor).await;
     let saved = email::save_reply_draft(&db, mentor, "<parent@pku>", "", &[file], 2)
         .await
@@ -181,8 +200,15 @@ async fn replies_can_be_taken_back_without_overwriting_another_draft(db: SqliteP
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn only_this_mentors_nonautomatic_reply_can_be_selected(db: SqlitePool) {
     let mentor = setup(&db).await;
-    sqlx::query("INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, sent_at, from_address, truncated)
-      VALUES (1, 'INBOX', 1, 2, 'auto_reply', '<automatic@pku>', 9999999999999, 'wang@pku.edu.cn', 0)").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id,
+            sent_at, from_address, truncated)
+        VALUES (1, 'INBOX', 1, 2, 'auto_reply', '<automatic@pku>', 9999999999999,
+            'wang@pku.edu.cn', 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 2)")
         .bind(mentor)
         .execute(&db)
@@ -219,8 +245,14 @@ async fn only_this_mentors_nonautomatic_reply_can_be_selected(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn default_reply_target_skips_messages_without_a_message_id(db: SqlitePool) {
     let mentor = setup(&db).await;
-    sqlx::query("INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at, from_address, truncated)
-      VALUES (1, 'INBOX', 1, 2, 'reply', 1792821700000, 'wang@pku.edu.cn', 0)").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at,
+            from_address, truncated)
+        VALUES (1, 'INBOX', 1, 2, 'reply', 1792821700000, 'wang@pku.edu.cn', 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 2)")
         .bind(mentor)
         .execute(&db)

@@ -227,9 +227,20 @@ async fn uploading_a_material_only_changes_the_current_drafts_attachments(db: Sq
             email::DraftKind::Reply | email::DraftKind::FollowUp => "reply",
         };
         let id: i64 = sqlx::query_scalar(
-            "INSERT INTO email (mentor_id, kind, state, subject, body_md, reply_to, created_at, updated_at)
-             VALUES (?, ?, 'review', '新主题', '上传前的正文', ?, 1, 1) RETURNING id",
-        ).bind(mentor).bind(kind_name).bind(match kind { email::DraftKind::First => None, email::DraftKind::Reply | email::DraftKind::FollowUp => Some("<current@example.edu>") }).fetch_one(&db).await.unwrap();
+            r#"INSERT INTO email (mentor_id, kind, state, subject, body_md, reply_to,
+                created_at, updated_at)
+            VALUES (?, ?, 'review', '新主题', '上传前的正文', ?, 1, 1)
+            RETURNING id"#,
+        )
+        .bind(mentor)
+        .bind(kind_name)
+        .bind(match kind {
+            email::DraftKind::First => None,
+            email::DraftKind::Reply | email::DraftKind::FollowUp => Some("<current@example.edu>"),
+        })
+        .fetch_one(&db)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO email_attachment (email_id, material_id, file_name, size)
           SELECT ?, id, file_name, size FROM material WHERE id IN (?, ?)",
@@ -282,11 +293,16 @@ async fn uploading_a_material_only_changes_the_current_drafts_attachments(db: Sq
         .await
         .unwrap();
         assert_eq!(files, [transcript, new]);
-        sqlx::query("UPDATE email SET state = 'approved', html = '<p>已批准</p>', text = '已批准', planned_at = 2 WHERE id = ?")
-            .bind(id)
-            .execute(&db)
-            .await
-            .unwrap();
+        sqlx::query(
+            r#"UPDATE email
+            SET state = 'approved', html = '<p>已批准</p>', text = '已批准',
+                planned_at = 2
+            WHERE id = ?"#,
+        )
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
         assert!(
             !email::attach_draft_material(&db, mentor, kind, old)
                 .await

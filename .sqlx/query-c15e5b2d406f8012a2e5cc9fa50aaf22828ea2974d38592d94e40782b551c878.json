@@ -1,0 +1,85 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id, b.secret IS NULL AS \"needs_secret!: bool\", b.daily_limit,\n            b.min_interval_s * 1000 AS \"min_interval_ms!: i64\", b.paused_until, (\n            SELECT count(*)\n            FROM email e\n            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',\n                'bounced') AND e.sent_at > ?1\n        ) AS \"recent!: i64\", (\n            SELECT min(e.sent_at)\n            FROM email e\n            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',\n                'bounced') AND e.sent_at > ?1\n        ) AS \"earliest_recent: i64\", (\n            SELECT max(e.sent_at)\n            FROM email e\n            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',\n                'bounced')\n        ) AS \"last: i64\"\n        FROM mailbox b\n        ORDER BY b.rotation_order, b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "needs_secret!: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "daily_limit",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "daily_limit"
+          }
+        }
+      },
+      {
+        "name": "min_interval_ms!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "paused_until",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "paused_until"
+          }
+        }
+      },
+      {
+        "name": "recent!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "earliest_recent: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "last: i64",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "c15e5b2d406f8012a2e5cc9fa50aaf22828ea2974d38592d94e40782b551c878"
+}

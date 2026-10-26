@@ -70,7 +70,16 @@ pub async fn start(
 ) -> Result<i64, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let strings: Vec<_> = urls.iter().map(PageUrl::as_str).collect();
-    let id = sqlx::query_scalar!("INSERT INTO crawl (kind,start_urls,model_config_id,state,created_at) VALUES ('site',?,?, 'running',?) RETURNING id", Json(strings),model_id,at).fetch_one(&mut *tx).await?;
+    let id = sqlx::query_scalar!(
+        r#"INSERT INTO crawl (kind, start_urls, model_config_id, state, created_at)
+        VALUES ('site', ?, ?, 'running', ?)
+        RETURNING id"#,
+        Json(strings),
+        model_id,
+        at
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     for url in urls {
         enqueue(&mut tx, id, url, url, 0, PageKind::Entry).await?;
     }
@@ -115,7 +124,9 @@ pub(crate) async fn enqueue_steps(
 ) -> Result<(), sqlx::Error> {
     let steps = Json(steps);
     if sqlx::query_scalar!(
-        "SELECT id FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL",
+        r#"SELECT id
+        FROM crawl_page
+        WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL"#,
         crawl,
         url,
         steps
@@ -138,7 +149,22 @@ pub(crate) async fn enqueue_steps(
         limit(conn, crawl, "找名单已达到 60 页上限").await?;
         return Ok(());
     }
-    sqlx::query!("INSERT INTO crawl_page (crawl_id,url,scope_url,depth,kind,steps,mode,status,error,fetched_at,work_state) VALUES (?,?,?,?,?,?,?,?,'尚未读取',NULL,?)",crawl,url,scope,depth,kind,steps,PageMethod::Http,PageStatus::Failed,PageState::Queued).execute(conn).await?;
+    sqlx::query!(
+        r#"INSERT INTO crawl_page (crawl_id, url, scope_url, depth, kind, steps, mode,
+            status, error, fetched_at, work_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, '尚未读取', NULL, ?)"#,
+        crawl,
+        url,
+        scope,
+        depth,
+        kind,
+        steps,
+        PageMethod::Http,
+        PageStatus::Failed,
+        PageState::Queued
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 pub(crate) async fn limit(
@@ -146,7 +172,15 @@ pub(crate) async fn limit(
     id: i64,
     reason: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!("UPDATE crawl SET limits = json_insert(limits,'$[#]',?2) WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM json_each(limits) WHERE value = ?2)",id,reason).execute(conn).await?;
+    sqlx::query!(
+        r#"UPDATE crawl
+        SET limits = json_insert(limits, '$[#]', ?2)
+        WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM json_each(limits) WHERE value = ?2)"#,
+        id,
+        reason
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 #[derive(Debug, Clone)]
@@ -164,7 +198,23 @@ pub struct Claim {
 }
 pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let row=sqlx::query!(r#"UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url AS "url: PageUrl",scope_url AS "scope!: PageUrl",depth,kind AS "kind: PageKind",candidate_id,steps AS "steps: Json<Vec<PageStep>>""#,).fetch_optional(&mut *tx).await?;
+    let row = sqlx::query!(
+        r#"UPDATE crawl_page
+        SET work_state = 'running', claim = claim + 1
+        WHERE id = (
+            SELECT p.id
+            FROM crawl_page p
+            JOIN crawl c ON c.id = p.crawl_id
+            WHERE p.work_state = 'queued' AND c.state = 'running'
+            ORDER BY p.kind = 'profile', p.id
+            LIMIT 1
+        )
+        RETURNING id, crawl_id, claim, url AS "url: PageUrl",
+            scope_url AS "scope!: PageUrl", depth, kind AS "kind: PageKind",
+            candidate_id, steps AS "steps: Json<Vec<PageStep>>""#,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     let result = if let Some(p) = row {
         let model_id =
             sqlx::query_scalar!("SELECT model_config_id FROM crawl WHERE id = ?", p.crawl_id)
@@ -192,26 +242,83 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
     if let Some(c) = &result
         && let Some(id) = c.candidate_id
     {
-        sqlx::query!("UPDATE candidate SET enrich='running' WHERE id=? AND enrich='queued' AND review='pending'",id).execute(&mut *tx).await?;
+        sqlx::query!(
+            r#"UPDATE candidate
+            SET enrich = 'running'
+            WHERE id = ? AND enrich = 'queued' AND review = 'pending'"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(result)
 }
 pub async fn valid(conn: &mut SqliteConnection, c: &Claim) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.id = ? AND p.claim = ? AND p.work_state = 'running' AND c.state = 'running' AND (p.candidate_id IS NULL OR EXISTS(SELECT 1 FROM candidate WHERE id=p.candidate_id AND review='pending' AND enrich IN ('queued','running')))) AS \"valid!: bool\"",c.id,c.generation).fetch_one(conn).await
+    sqlx::query_scalar!(
+        r#"SELECT EXISTS (
+            SELECT 1
+            FROM crawl_page p
+            JOIN crawl c ON c.id = p.crawl_id
+            WHERE p.id = ? AND p.claim = ? AND p.work_state = 'running'
+            AND c.state = 'running' AND (p.candidate_id IS NULL
+            OR EXISTS (
+                SELECT 1
+                FROM candidate
+                WHERE id = p.candidate_id AND review = 'pending'
+                AND enrich IN ('queued', 'running')
+            ))
+        ) AS "valid!: bool""#,
+        c.id,
+        c.generation
+    )
+    .fetch_one(conn)
+    .await
 }
 pub async fn control(db: &SqlitePool, id: i64, action: &str, at: i64) -> Result<bool, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let done=match action {
-        "pause"=>sqlx::query!("UPDATE crawl SET state = 'paused',error = NULL WHERE id = ? AND state = 'running'",id).execute(&mut *tx).await?.rows_affected(),
-        "resume"=>sqlx::query!("UPDATE crawl SET state = 'running',error = NULL,finished_at = NULL WHERE id = ? AND state = 'paused'",id).execute(&mut *tx).await?.rows_affected(),
-        "cancel"=>sqlx::query!("UPDATE crawl SET state = 'canceled',error = NULL,finished_at = ? WHERE id = ? AND state IN ('running','paused')",at,id).execute(&mut *tx).await?.rows_affected(),
-        _=>return Ok(false),
+    let done = match action {
+        "pause" => sqlx::query!(
+            r#"UPDATE crawl
+            SET state = 'paused', error = NULL
+            WHERE id = ? AND state = 'running'"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected(),
+        "resume" => sqlx::query!(
+            r#"UPDATE crawl
+            SET state = 'running', error = NULL, finished_at = NULL
+            WHERE id = ? AND state = 'paused'"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected(),
+        "cancel" => sqlx::query!(
+            r#"UPDATE crawl
+            SET state = 'canceled', error = NULL, finished_at = ?
+            WHERE id = ? AND state IN ('running', 'paused')"#,
+            at,
+            id
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected(),
+        _ => return Ok(false),
     };
     if done == 0 {
         return Ok(false);
     }
-    sqlx::query!("UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE crawl_id = ? AND work_state = 'running'",id).execute(&mut *tx).await?;
+    sqlx::query!(
+        r#"UPDATE crawl_page
+        SET work_state = 'queued', claim = claim + 1
+        WHERE crawl_id = ? AND work_state = 'running'"#,
+        id
+    )
+    .execute(&mut *tx)
+    .await?;
     if action == "cancel" {
         let ids = sqlx::query_scalar!(
             "SELECT id FROM candidate WHERE crawl_id=? AND enrich IN ('queued','running')",
@@ -226,7 +333,17 @@ pub async fn control(db: &SqlitePool, id: i64, action: &str, at: i64) -> Result<
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query!("UPDATE crawl_page SET work_state = 'done',status = CASE WHEN status = 'success' THEN 'failed' ELSE status END,error = CASE WHEN status = 'success' THEN '已取消，页面资料尚未整理完成' ELSE error END WHERE crawl_id = ? AND work_state != 'done'",id).execute(&mut *tx).await?;
+        sqlx::query!(
+            r#"UPDATE crawl_page
+            SET work_state = 'done',
+                status = CASE WHEN status = 'success' THEN 'failed'
+            ELSE status END, error = CASE WHEN status = 'success' THEN
+                '已取消，页面资料尚未整理完成' ELSE error END
+            WHERE crawl_id = ? AND work_state != 'done'"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query!(
         "UPDATE crawl_run SET ended_at = ? WHERE crawl_id = ? AND ended_at IS NULL",
@@ -248,10 +365,40 @@ pub async fn retry(
     at: i64,
 ) -> Result<u64, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let n=sqlx::query!("UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE crawl_id = ?1 AND (?2 IS NULL OR id = ?2) AND work_state = 'done' AND status != 'success' AND (candidate_id IS NULL OR candidate_id IN (SELECT id FROM candidate WHERE review='pending'))",id,page).execute(&mut *tx).await?.rows_affected();
+    let n = sqlx::query!(
+        r#"UPDATE crawl_page
+        SET work_state = 'queued', claim = claim + 1
+        WHERE crawl_id = ?1 AND (?2 IS NULL OR id = ?2) AND work_state = 'done'
+        AND status != 'success' AND (candidate_id IS NULL
+        OR candidate_id IN (SELECT id FROM candidate WHERE review = 'pending'))"#,
+        id,
+        page
+    )
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if n > 0 {
-        sqlx::query!("UPDATE candidate SET enrich='queued',enrich_error=NULL WHERE review='pending' AND id IN (SELECT candidate_id FROM crawl_page WHERE crawl_id=? AND work_state='queued')",id).execute(&mut *tx).await?;
-        let resumed=sqlx::query!("UPDATE crawl SET state = 'running',finished_at = NULL,error = NULL WHERE id = ? AND state != 'running'",id).execute(&mut *tx).await?.rows_affected();
+        sqlx::query!(
+            r#"UPDATE candidate
+            SET enrich = 'queued', enrich_error = NULL
+            WHERE review = 'pending' AND id IN (
+                SELECT candidate_id
+                FROM crawl_page
+                WHERE crawl_id = ? AND work_state = 'queued'
+            )"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?;
+        let resumed = sqlx::query!(
+            r#"UPDATE crawl
+            SET state = 'running', finished_at = NULL, error = NULL
+            WHERE id = ? AND state != 'running'"#,
+            id
+        )
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
         if resumed > 0 {
             open_run(&mut tx, id, at).await?;
         }
@@ -273,7 +420,16 @@ pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(&mut *tx)
     .await?;
-    sqlx::query!("INSERT INTO crawl_run (crawl_id,app_version,started_at) SELECT id,?,? FROM crawl WHERE state = 'running'",env!("CARGO_PKG_VERSION"),at).execute(&mut *tx).await?;
+    sqlx::query!(
+        r#"INSERT INTO crawl_run (crawl_id, app_version, started_at)
+        SELECT id, ?, ?
+        FROM crawl
+        WHERE state = 'running'"#,
+        env!("CARGO_PKG_VERSION"),
+        at
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -306,7 +462,14 @@ pub struct CrawlOption {
     pub created_at: i64,
 }
 pub async fn options(db: &SqlitePool) -> Result<Vec<CrawlOption>, sqlx::Error> {
-    sqlx::query_as!(CrawlOption, r#"SELECT id,json_extract(start_urls,'$[0]') AS "url: String",created_at FROM crawl ORDER BY created_at DESC,id DESC"#).fetch_all(db).await
+    sqlx::query_as!(
+        CrawlOption,
+        r#"SELECT id, json_extract(start_urls, '$[0]') AS "url: String", created_at
+        FROM crawl
+        ORDER BY created_at DESC, id DESC"#
+    )
+    .fetch_all(db)
+    .await
 }
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -333,27 +496,93 @@ pub async fn list(db: &SqlitePool, page: u32) -> Result<CrawlList, sqlx::Error> 
 }
 pub async fn work(db: &SqlitePool, start: i64, end: i64) -> Result<Vec<CrawlSummary>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let ids = sqlx::query_scalar!("SELECT id FROM crawl WHERE state IN ('running','paused','failed') OR (state = 'done' AND finished_at >= ? AND finished_at < ?) OR id IN (SELECT crawl_id FROM crawl_page WHERE work_state = 'done' AND status != 'success') ORDER BY id DESC",start,end).fetch_all(&mut *tx).await?;
+    let ids = sqlx::query_scalar!(
+        r#"SELECT id
+        FROM crawl
+        WHERE state IN ('running', 'paused', 'failed') OR (state = 'done'
+        AND finished_at >= ? AND finished_at < ?) OR id IN (
+            SELECT crawl_id
+            FROM crawl_page
+            WHERE work_state = 'done' AND status != 'success'
+        )
+        ORDER BY id DESC"#,
+        start,
+        end
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     summaries(&mut tx, &ids).await
 }
 async fn summaries(
     conn: &mut SqliteConnection,
     ids: &[i64],
 ) -> Result<Vec<CrawlSummary>, sqlx::Error> {
-    sqlx::query_as!(CrawlSummary,r#"SELECT c.id,json_extract(c.start_urls,'$[0]') AS "url: String",c.model_config_id,c.state AS "state: CrawlState",c.error,c.created_at,c.finished_at,
-      (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND work_state = 'done') AS "pages!: i64",
-      (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND work_state IN ('queued','running')) AS "remaining!: i64",
-      (SELECT count(*) FROM candidate WHERE crawl_id=c.id AND review='pending' AND enrich IN ('queued','running')) AS "enrich_remaining!: i64",
-      (SELECT json_group_array(id) FROM model_config WHERE id IN (
-        SELECT CASE WHEN candidate_id IS NULL THEN coalesce(c.model_config_id,(SELECT default_model_config_id FROM profile),(SELECT min(id) FROM model_config)) ELSE coalesce((SELECT default_model_config_id FROM profile),(SELECT min(id) FROM model_config)) END
-        FROM crawl_page WHERE crawl_id=c.id AND (work_state!='done' OR status!='success') AND (candidate_id IS NULL OR candidate_id IN (SELECT id FROM candidate WHERE review='pending'))
-      )) AS "model_ids!: Json<Vec<i64>>",
-      (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND kind = 'profile' AND work_state = 'done' AND status = 'success') AS "profiles!: i64",
-      (SELECT count(*) FROM candidate WHERE crawl_id = c.id) AS "candidates!: i64",
-      (SELECT count(*) FROM crawl_page WHERE crawl_id = c.id AND work_state = 'done' AND status IN ('failed','needs_browser')) AS "failed!: i64",
-      (SELECT sum(input_tokens+output_tokens) FROM usage WHERE crawl_id = c.id) AS "tokens: i64",
-      CASE WHEN c.state != 'running' THEN c.state WHEN EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = c.id AND kind IN ('entry','list') AND work_state IN ('queued','running')) THEN 'lists' WHEN EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id=c.id AND kind='profile' AND work_state IN ('queued','running')) THEN 'profiles' ELSE 'enrich' END AS "stage!: CrawlStage"
-      FROM crawl c WHERE c.id IN (SELECT value FROM json_each(?)) ORDER BY c.id DESC"#,Json(ids)).fetch_all(conn).await
+    sqlx::query_as!(
+        CrawlSummary,
+        r#"SELECT c.id, json_extract(c.start_urls, '$[0]') AS "url: String",
+            c.model_config_id, c.state AS "state: CrawlState", c.error, c.created_at,
+            c.finished_at, (
+            SELECT count(*)
+            FROM crawl_page
+            WHERE crawl_id = c.id AND work_state = 'done'
+        ) AS "pages!: i64", (
+            SELECT count(*)
+            FROM crawl_page
+            WHERE crawl_id = c.id AND work_state IN ('queued',
+                'running')
+        ) AS "remaining!: i64", (
+            SELECT count(*)
+            FROM candidate
+            WHERE crawl_id = c.id AND review = 'pending'
+            AND enrich IN ('queued', 'running')
+        ) AS "enrich_remaining!: i64", (
+            SELECT json_group_array(id)
+            FROM model_config
+            WHERE id IN (
+                SELECT CASE WHEN candidate_id IS NULL THEN coalesce(c.model_config_id,
+                    (SELECT default_model_config_id FROM profile),
+                    (SELECT min(id) FROM model_config)) ELSE coalesce((SELECT
+                    default_model_config_id FROM profile),
+                    (SELECT min(id) FROM model_config)) END
+                FROM crawl_page
+                WHERE crawl_id = c.id AND (work_state != 'done'
+                OR status != 'success') AND (candidate_id IS NULL
+                OR candidate_id IN (SELECT id FROM candidate WHERE review = 'pending'))
+            )
+        ) AS "model_ids!: Json<Vec<i64>>", (
+            SELECT count(*)
+            FROM crawl_page
+            WHERE crawl_id = c.id AND kind = 'profile' AND work_state = 'done'
+            AND status = 'success'
+        ) AS "profiles!: i64", (SELECT count(*) FROM candidate WHERE crawl_id = c.id)
+            AS "candidates!: i64", (
+            SELECT count(*)
+            FROM crawl_page
+            WHERE crawl_id = c.id AND work_state = 'done'
+            AND status IN ('failed', 'needs_browser')
+        ) AS "failed!: i64", (
+            SELECT sum(input_tokens + output_tokens)
+            FROM usage
+            WHERE crawl_id = c.id
+        ) AS "tokens: i64", CASE WHEN c.state != 'running' THEN c.state
+        WHEN EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = c.id AND kind IN ('entry', 'list')
+            AND work_state IN ('queued', 'running')
+        ) THEN 'lists' WHEN EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = c.id AND kind = 'profile' AND work_state IN ('queued',
+                'running')
+        ) THEN 'profiles' ELSE 'enrich' END AS "stage!: CrawlStage"
+        FROM crawl c
+        WHERE c.id IN (SELECT value FROM json_each(?))
+        ORDER BY c.id DESC"#,
+        Json(ids)
+    )
+    .fetch_all(conn)
+    .await
 }
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -388,13 +617,47 @@ pub async fn detail(
     page: u32,
 ) -> Result<Option<CrawlDetail>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let Some(row)=sqlx::query!(r#"SELECT start_urls AS "urls: Json<Vec<String>>", limits AS "limits: Json<Vec<String>>" FROM crawl WHERE id = ?"#,id).fetch_optional(&mut *tx).await? else {return Ok(None)};
+    let Some(row) = sqlx::query!(
+        r#"SELECT start_urls AS "urls: Json<Vec<String>>",
+            limits AS "limits: Json<Vec<String>>"
+        FROM crawl
+        WHERE id = ?"#,
+        id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
     let offset = i64::from(page.saturating_sub(1)) * 50;
-    let pages=sqlx::query_as!(CrawlPage,r#"SELECT id,url,kind AS "kind: PageKind",work_state AS "state: PageState",status AS "status: PageStatus",error FROM crawl_page WHERE crawl_id = ? ORDER BY status = 'success', id LIMIT 50 OFFSET ?"#,id,offset).fetch_all(&mut *tx).await?;
+    let pages = sqlx::query_as!(
+        CrawlPage,
+        r#"SELECT id, url, kind AS "kind: PageKind", work_state AS "state: PageState",
+            status AS "status: PageStatus", error
+        FROM crawl_page
+        WHERE crawl_id = ?
+        ORDER BY status = 'success', id
+        LIMIT 50
+        OFFSET ?"#,
+        id,
+        offset
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     let page_total = sqlx::query_scalar!("SELECT count(*) FROM crawl_page WHERE crawl_id = ?", id)
         .fetch_one(&mut *tx)
         .await?;
-    let runs=sqlx::query_as!(CrawlRun,"SELECT app_version,started_at,ended_at FROM crawl_run WHERE crawl_id = ? ORDER BY id DESC LIMIT 50",id).fetch_all(&mut *tx).await?;
+    let runs = sqlx::query_as!(
+        CrawlRun,
+        r#"SELECT app_version, started_at, ended_at
+        FROM crawl_run
+        WHERE crawl_id = ?
+        ORDER BY id DESC
+        LIMIT 50"#,
+        id
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     let summary = summaries(&mut tx, &[id])
         .await?
         .pop()

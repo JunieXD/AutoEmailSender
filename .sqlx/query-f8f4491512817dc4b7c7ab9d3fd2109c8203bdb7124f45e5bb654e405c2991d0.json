@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"total!\"\n        FROM todo\n        WHERE done_at IS NULL AND mentor_id NOT IN (SELECT id FROM mentor WHERE\n            trashed_at IS NOT NULL)",
+  "describe": {
+    "columns": [
+      {
+        "name": "total!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f8f4491512817dc4b7c7ab9d3fd2109c8203bdb7124f45e5bb654e405c2991d0"
+}

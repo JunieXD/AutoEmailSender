@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE\n        FROM todo\n        WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "a6f79282adc20fc2ce3408d9d71cf3ca9a8b452031df00bb47740ca7d37f4d93"
+}

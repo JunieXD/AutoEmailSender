@@ -164,7 +164,15 @@ fn listed(name: &str, profile: Option<usize>, emails: Vec<&str>) -> Value {
     json!({"name":name,"title":"教授","profile":profile,"emails":emails,"research":null})
 }
 fn person(name: &str, email: &str) -> Value {
-    json!({"name":name,"aliases":[],"emails":[email,"invented@example.edu"],"affiliations":[],"homepages":[],"research":"机器学习","papers":["论文一"]})
+    json!({
+        "name": name,
+        "aliases": [],
+        "emails": [email, "invented@example.edu"],
+        "affiliations": [],
+        "homepages": [],
+        "research": "机器学习",
+        "papers": ["论文一"]
+    })
 }
 async fn changed_until(
     db: &SqlitePool,
@@ -195,7 +203,17 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
         "/",
         "<title>学院</title><a href='/list'>师资队伍</a><a href='/news'>学院新闻</a>",
     );
-    site.page("/list", &format!("<title>教师名单</title><article><p><a href='/alice'>张三</a> a@school.example.edu</p><p><a href='http://outside.example.org:{}/bob'>李四</a> b@school.example.edu</p></article><a href='/category'>副教授</a><nav><a href='/list?page=1'>1</a><a href='/list?page=2'>2</a></nav><a href='/missing'>讲师名单</a><a href='/browser'>动态名单</a>",site.port));
+    site.page(
+        "/list",
+        &format!(
+            "<title>教师名单</title><article><p><a href='/alice'>张三</a> a@school.example.edu</p>\
+            <p><a href='http://outside.example.org:{}/bob'>李四</a> b@school.example.edu</p>\
+            </article><a href='/category'>副教授</a><nav><a href='/list?page=1'>1</a><a \
+            href='/list?page=2'>2</a></nav><a href='/missing'>讲师名单</a><a href='/browser'>\
+            动态名单</a>",
+            site.port
+        ),
+    );
     site.page(
         "/category",
         "<title>副教授</title><p><a href='/alternate-alice'>张三</a> a@school.example.edu</p>",
@@ -212,7 +230,11 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
         "/alice",
         "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
     );
-    site.page("/bob","<title>李四</title><p>李四 b@school.example.edu 机器学习</p><a href='/must-not-visit'>下一页</a>");
+    site.page(
+        "/bob",
+        "<title>李四</title><p>李四 b@school.example.edu 机器学习</p><a href='/must-not-visit'>\
+        下一页</a>",
+    );
     site.page(
         "/browser",
         "<div id='app'></div><script type='module' src='app.js'></script>",
@@ -242,7 +264,20 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
                 if title == "教师名单二" {
                     json!({"people":[listed("王五",None,vec!["c@school.example.edu"])]})
                 } else if title == "教师名单" {
-                    json!({"people":[listed("张三",Some(1),vec!["a@school.example.edu","b@school.example.edu","invented@example.edu"]),listed("李四",Some(2),vec!["a@school.example.edu"])]})
+                    json!({
+                        "people": [
+                            listed(
+                                "张三",
+                                Some(1),
+                                vec![
+                                    "a@school.example.edu",
+                                    "b@school.example.edu",
+                                    "invented@example.edu"
+                                ]
+                            ),
+                            listed("李四", Some(2), vec!["a@school.example.edu"])
+                        ]
+                    })
                 } else {
                     json!({"people":[listed("张三",Some(1),vec!["a@school.example.edu"])]})
                 }
@@ -2151,7 +2186,20 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
     assert_eq!(candidate_ids(db).await.len(), 2);
     let server = tokio::spawn(async move {
         while let Some(r) = provider.requests.recv().await {
-            r.respond.send(Response::answer(&json!({"name":"张三","aliases":[],"emails":[],"affiliations":[],"homepages":[1],"research":null,"papers":[]}).to_string())).ok();
+            r.respond
+                .send(Response::answer(
+                    &json!({
+                        "name": "张三",
+                        "aliases": [],
+                        "emails": [],
+                        "affiliations": [],
+                        "homepages": [1],
+                        "research": null,
+                        "papers": []
+                    })
+                    .to_string(),
+                ))
+                .ok();
         }
     });
     let mut claims = Vec::new();
@@ -2594,7 +2642,12 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
                 let answer = if system.starts_with("你整理学院") {
                     json!({"kind":"list","next":[]}).to_string()
                 } else if invalid && correct {
-                    json!({"people":[listed("张三", Some(999), vec!["z@example.edu", "invented@example.edu"])]}).to_string()
+                    json!({
+                        "people": [
+                            listed("张三", Some(999), vec!["z@example.edu", "invented@example.edu"])
+                        ]
+                    })
+                    .to_string()
                 } else {
                     invalid = true;
                     include_str!("../../tests/model/invalid-name.json").into()
@@ -2705,7 +2758,12 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
                 .unwrap();
         }
         drop(permits);
-        tokio::select! { result = &mut ask => assert!(matches!(result, Err(ReadError::Gone))), _ = old_provider.requests.recv() => panic!("started a request using stale configuration") }
+        tokio::select! {
+            result = &mut ask => assert!(matches!(result, Err(ReadError::Gone))),
+            _ = old_provider.requests.recv() => {
+                panic!("started a request using stale configuration")
+            }
+        }
         save(&db, &c, &Outcome::Gone).await.unwrap();
         assert!(
             !queue::valid(&mut db.acquire().await.unwrap(), &c)
@@ -2854,7 +2912,13 @@ async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePoo
         .ok();
     // Whichever page received 429 finishes first. The other page remains in flight.
     tokio::pin!(a, b);
-    let a_limited = tokio::select! { result = &mut a => { assert!(matches!(result.unwrap(), Outcome::RateLimit)); true }, result = &mut b => { assert!(matches!(result.unwrap(), Outcome::RateLimit)); false } };
+    let a_limited = tokio::select! { result = &mut a => {
+        assert!(matches!(result.unwrap(), Outcome::RateLimit));
+        true
+    }, result = &mut b => {
+        assert!(matches!(result.unwrap(), Outcome::RateLimit));
+        false
+    } };
     second
         .respond
         .send(Response::answer(r#"{"kind":"list","next":[]}"#))
@@ -2913,7 +2977,14 @@ async fn regression_background_includes_old_running_paused_and_failed_crawls(db:
         .await
         .unwrap();
     queue::control(&db, paused, "pause", 3).await.unwrap();
-    let failed: i64 = sqlx::query_scalar("INSERT INTO crawl(kind,state,error,created_at,finished_at) VALUES('agent','failed','打不开',3,4) RETURNING id").fetch_one(&db).await.unwrap();
+    let failed: i64 = sqlx::query_scalar(
+        r#"INSERT INTO crawl (kind, state, error, created_at, finished_at)
+        VALUES ('agent', 'failed', '打不开', 3, 4)
+        RETURNING id"#,
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
     for n in 0..51 {
         sqlx::query(
             "INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',?,?)",
@@ -2924,7 +2995,14 @@ async fn regression_background_includes_old_running_paused_and_failed_crawls(db:
         .await
         .unwrap();
     }
-    let today: i64 = sqlx::query_scalar("INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',150,150) RETURNING id").fetch_one(&db).await.unwrap();
+    let today: i64 = sqlx::query_scalar(
+        r#"INSERT INTO crawl (kind, state, created_at, finished_at)
+        VALUES ('agent', 'done', 150, 150)
+        RETURNING id"#,
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO crawl(kind,state,created_at,finished_at) VALUES('agent','done',200,200)",
     )

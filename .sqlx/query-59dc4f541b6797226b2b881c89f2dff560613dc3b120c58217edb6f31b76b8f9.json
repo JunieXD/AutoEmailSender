@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n            SET review = 'accepted', mentor_id = ?\n            WHERE id = ? AND review = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "59dc4f541b6797226b2b881c89f2dff560613dc3b120c58217edb6f31b76b8f9"
+}

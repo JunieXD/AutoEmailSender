@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO model_config (provider, base_url, model, api_key, agreed,\n                    created_at)\n                VALUES ('custom', 'http://127.0.0.1:1', ?, 'fixture', 1, 1)\n                RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f9370bb75cd6ab5223a76c9287b3c83a8f0739f09353632c638a897c09e6ce61"
+}

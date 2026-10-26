@@ -204,8 +204,14 @@ async fn task_pair(db: &SqlitePool, states: [&str; 2]) -> (i64, [i64; 2], [i64; 
         mentor(db, "李明", &[], "北京大学").await,
         mentor(db, "Ming Li", &[], "北京大学").await,
     ];
-    let task = sqlx::query("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES ('首封任务','first','ai','now','stopped',0)")
-        .execute(db).await.unwrap().last_insert_rowid();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+        VALUES ('首封任务', 'first', 'ai', 'now', 'stopped', 0)"#,
+    )
+    .execute(db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     let mut emails = [0; 2];
     for i in 0..2 {
         emails[i] = first_email(

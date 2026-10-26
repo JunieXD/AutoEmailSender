@@ -1,4 +1,5 @@
-//! Batch first-letter and follow-up tasks: fixed inputs, explicit approvals and persisted generation.
+//! Batch first-letter and follow-up tasks: fixed inputs, explicit approvals and persisted
+//! generation.
 pub mod generation;
 mod review;
 use email::tasks as emails;
@@ -160,7 +161,16 @@ pub async fn references(
     conn: &mut SqliteConnection,
     ids: &[i64],
 ) -> std::result::Result<Vec<material::Reference>, sqlx::Error> {
-    sqlx::query_as!(material::Reference, r#"SELECT file_name, extracted_text AS "text!" FROM material WHERE id IN (SELECT value FROM json_each(?)) AND extracted_text IS NOT NULL ORDER BY id"#, Json(ids)).fetch_all(conn).await
+    sqlx::query_as!(
+        material::Reference,
+        r#"SELECT file_name, extracted_text AS "text!"
+        FROM material
+        WHERE id IN (SELECT value FROM json_each(?)) AND extracted_text IS NOT NULL
+        ORDER BY id"#,
+        Json(ids)
+    )
+    .fetch_all(conn)
+    .await
 }
 
 /// Newest sent letters first; the writing boundary caps their combined text.
@@ -350,7 +360,16 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     };
     let mut tx = db.begin().await?;
     // Take the write lock before reading template content or checking membership.
-    let id = sqlx::query_scalar!("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES (?,?,'ai','now','active',?) RETURNING id AS \"id!\"",form.name.trim(),form.kind,now).fetch_one(&mut *tx).await?;
+    let id = sqlx::query_scalar!(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+        VALUES (?, ?, 'ai', 'now', 'active', ?)
+        RETURNING id AS "id!""#,
+        form.name.trim(),
+        form.kind,
+        now
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     validate_source(&mut tx, form).await?;
     email::schedule::save(&mut tx, id, &form.schedule).await?;
     let template = template_content(&mut tx, form).await?;
@@ -390,8 +409,11 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     .await?;
     if let Some(source) = form.source_task_id {
         let failures = sqlx::query_scalar!(
-            "SELECT id FROM email WHERE task_id = ? AND mentor_id IN (SELECT value FROM json_each(?))
-               AND state IN ('failed', 'generation_failed') ORDER BY id",
+            r#"SELECT id
+            FROM email
+            WHERE task_id = ? AND mentor_id IN (SELECT value FROM json_each(?))
+            AND state IN ('failed', 'generation_failed')
+            ORDER BY id"#,
             source,
             Json(&form.ids),
         )
@@ -424,16 +446,35 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         ("attachment", &form.attachments),
     ] {
         for material in materials {
-            let valid = sqlx::query_scalar!("SELECT id FROM material WHERE id = ?1 AND (?2 = 'attachment' OR extracted_text IS NOT NULL)", material,role).fetch_optional(&mut *tx).await?.is_some();
+            let valid = sqlx::query_scalar!(
+                r#"SELECT id
+                FROM material
+                WHERE id = ?1 AND (?2 = 'attachment' OR extracted_text IS NOT NULL)"#,
+                material,
+                role
+            )
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
             if !valid {
                 return Err(Error::Invalid(
                     "所选材料已被删除或没有可供写信的文字，请重新选择。".into(),
                 ));
             }
-            sqlx::query!("INSERT INTO task_material (task_id,material_id,role) VALUES (?,?,?) ON CONFLICT DO NOTHING",id,material,role).execute(&mut *tx).await?;
+            sqlx::query!(
+                r#"INSERT INTO task_material (task_id, material_id, role)
+                VALUES (?, ?, ?)
+                ON CONFLICT DO NOTHING"#,
+                id,
+                material,
+                role
+            )
+            .execute(&mut *tx)
+            .await?;
         }
     }
-    // Material and mentor details are read after the write lock, without holding it across a network call.
+    // Material and mentor details are read after the write lock, without holding it across a
+    // network call.
     let my_name = sqlx::query_scalar!("SELECT name FROM profile")
         .fetch_one(&mut *tx)
         .await?;
@@ -481,11 +522,27 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
 }
 
 pub async fn pause(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
-    sqlx::query!("UPDATE task SET state = 'paused', generation_paused_at = ?, generation_pause_reason = NULL WHERE id = ? AND state <> 'stopped'", now,id).execute(db).await?;
+    sqlx::query!(
+        r#"UPDATE task
+        SET state = 'paused', generation_paused_at = ?, generation_pause_reason = NULL
+        WHERE id = ? AND state <> 'stopped'"#,
+        now,
+        id
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 pub async fn resume(db: &SqlitePool, id: i64) -> Result<()> {
-    sqlx::query!("UPDATE task SET state = 'active', generation_paused_at = NULL, generation_pause_reason = NULL WHERE id = ? AND state <> 'stopped'",id).execute(db).await?;
+    sqlx::query!(
+        r#"UPDATE task
+        SET state = 'active', generation_paused_at = NULL,
+            generation_pause_reason = NULL
+        WHERE id = ? AND state <> 'stopped'"#,
+        id
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 pub async fn stop(db: &SqlitePool, id: i64, now: i64) -> Result<()> {

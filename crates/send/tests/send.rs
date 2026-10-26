@@ -553,7 +553,15 @@ async fn paused_mailboxes_fail_over_but_owned_mail_and_follow_ups_wait(db: Sqlit
         }
         assert_eq!(inbox.lock().unwrap().len(), 2);
         // Cancel the remaining approvals before starting the next scenario.
-        sqlx::query("UPDATE email SET state = 'canceled', cancel_reason = '测试结束', planned_at = NULL, latest_at = NULL WHERE state = 'approved'").execute(&db).await.unwrap();
+        sqlx::query(
+            r#"UPDATE email
+            SET state = 'canceled', cancel_reason = '测试结束', planned_at = NULL,
+                latest_at = NULL
+            WHERE state = 'approved'"#,
+        )
+        .execute(&db)
+        .await
+        .unwrap();
     }
 }
 
@@ -629,9 +637,24 @@ async fn throttling_restores_prior_evidence_and_respects_cancellation(db: Sqlite
     send::step(&db, &net, nowhere(), || T).await.unwrap();
     assert!(email::retry(&db, id, T + MINUTE).await.unwrap());
     let evidence = || async {
-        sqlx::query_as::<_, (Option<i64>, Option<String>, Option<String>, Option<String>, Option<i64>)>(
-            "SELECT mailbox_id, from_address, to_address, message_id, sent_at FROM email WHERE id = ?")
-            .bind(id).fetch_one(&db).await.unwrap()
+        sqlx::query_as::<
+            _,
+            (
+                Option<i64>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<i64>,
+            ),
+        >(
+            r#"SELECT mailbox_id, from_address, to_address, message_id, sent_at
+            FROM email
+            WHERE id = ?"#,
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap()
     };
     let before = evidence().await;
     sqlx::query("UPDATE mentor_email SET address = 'throttled@example.edu.cn' WHERE mentor_id = ?")
@@ -1033,10 +1056,16 @@ async fn approve_reply(db: &SqlitePool) -> i64 {
     )
     .await
     .unwrap();
-    sqlx::query("INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, sent_at,
-      from_address, subject, refs, body_text, truncated)
-      VALUES (1, 'INBOX', 1, 1, 'reply', '<parent@example.edu>', 1, 'wang@example.edu.cn', 'RE: 申请',
-        '<root@example.edu> <previous@example.edu>', '欢迎', 0)").execute(db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id,
+            sent_at, from_address, subject, refs, body_text, truncated)
+        VALUES (1, 'INBOX', 1, 1, 'reply', '<parent@example.edu>', 1,
+            'wang@example.edu.cn', 'RE: 申请',
+            '<root@example.edu> <previous@example.edu>', '欢迎', 0)"#,
+    )
+    .execute(db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO message_mentor (mentor_id, message_id) VALUES (?, 1)")
         .bind(mentor)
         .execute(db)
@@ -2172,9 +2201,10 @@ async fn review_expiry_restore_after_mailbox_deleted_must_finish(db: SqlitePool)
     let (net, next_inbox) = mailbox(&db, SECRET).await;
     let next = approve(&db, "next@example.edu.cn", &[], T + DAY).await;
     send::step(&db, &net, nowhere(), || T + DAY).await.unwrap();
-    assert!(
-        matches!(first_email(&db, next).await.delivery, Delivery::Sent { sent_at, .. } if sent_at == T + DAY)
-    );
+    assert!(matches!(
+        first_email(&db, next).await.delivery,
+        Delivery::Sent { sent_at, .. } if sent_at == T + DAY
+    ));
     assert_eq!(next_inbox.lock().unwrap().len(), 1);
     assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
 }
@@ -3057,8 +3087,25 @@ async fn restored_mailbox_waits_without_sending_or_receiving_until_secret_is_fil
         .execute(&db)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO email(mentor_id,kind,reply_to,state,planned_at,subject,body_md,html,text,created_at,updated_at) VALUES (?, 'reply','<parent@example.invalid>','approved',?,'Re: test','reply','<p>reply</p>','reply',?,?), (?, 'follow_up','<parent@example.invalid>','approved',?,'Re: test','follow up','<p>follow up</p>','follow up',?,?)")
-        .bind(mentor).bind(T).bind(T).bind(T).bind(mentor).bind(T).bind(T).bind(T).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO email (mentor_id, kind, reply_to, state, planned_at, subject,
+            body_md, html, text, created_at, updated_at)
+        VALUES (?, 'reply', '<parent@example.invalid>', 'approved', ?, 'Re: test',
+            'reply', '<p>reply</p>', 'reply', ?, ?), (?, 'follow_up',
+            '<parent@example.invalid>', 'approved', ?, 'Re: test', 'follow up',
+            '<p>follow up</p>', 'follow up', ?, ?)"#,
+    )
+    .bind(mentor)
+    .bind(T)
+    .bind(T)
+    .bind(T)
+    .bind(mentor)
+    .bind(T)
+    .bind(T)
+    .bind(T)
+    .execute(&db)
+    .await
+    .unwrap();
     assert!(mailbox::list(&db, T).await.unwrap()[0].needs_secret);
     assert!(mailbox::account(&db, 1).await.unwrap().is_none());
     assert!(mailbox::receivable(&db, T).await.unwrap().is_empty());

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n            FROM email\n            WHERE task_id = ? AND mentor_id IN (SELECT value FROM json_each(?))\n            AND state IN ('failed', 'generation_failed')\n            ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a41770f00c3f1a2b661fb7a8ae78c86988ea6834eacc401c4f1a1f27aa01ef9c"
+}

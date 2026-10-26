@@ -169,7 +169,9 @@ async fn session(
                     Some(f) => {
                         open = Some(name.into());
                         format!(
-                            "* {} EXISTS\r\n* OK [UIDVALIDITY {}] ok\r\n{tag} OK [READ-ONLY] done\r\n",
+                            "* {} EXISTS\r\n\
+                            * OK [UIDVALIDITY {}] ok\r\n\
+                            {tag} OK [READ-ONLY] done\r\n",
                             f.mail.len(),
                             f.uidvalidity
                         )

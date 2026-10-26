@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT min(at)\n        FROM (\n            SELECT min(e.sent_at) AS at\n            FROM contact_email e\n            JOIN mentor m ON m.id = e.mentor_id\n            WHERE m.trashed_at IS NULL\n            UNION ALL\n            SELECT min(msg.sent_at)\n            FROM contact_message msg\n            JOIN message_mentor mm ON mm.message_id = msg.id\n            JOIN mentor m ON m.id = mm.mentor_id\n            WHERE m.trashed_at IS NULL\n        )",
+  "describe": {
+    "columns": [
+      {
+        "name": "min(at)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "58a99bff3f1b5822c7a489f7d7e25882ff96b11b01cb54dd0f80d7a884a0357f"
+}

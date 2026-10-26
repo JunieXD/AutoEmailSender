@@ -92,7 +92,8 @@ async fn close_to_background(window: &Window) {
             "托盘图标"
         };
         let text = format!(
-            "关闭窗口后，Auto Email Sender 还会在后台运行，照常定时发信和收信。可以从{icon}打开或退出。"
+            "关闭窗口后，Auto Email Sender 还会在后台运行，照常定时发信和收信。\
+            可以从{icon}打开或退出。"
         );
         let dialog = app
             .dialog()

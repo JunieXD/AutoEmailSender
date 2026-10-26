@@ -115,11 +115,14 @@ async fn deleting_a_crawl_removes_pages_and_pending_candidates_but_keeps_reviewe
 ) {
     let crawl = site(&db).await;
     let page = save_page(&db, crawl, &page()).await.unwrap();
-    let mentor =
-        sqlx::query_scalar!("INSERT INTO mentor (name, created_at, updated_at) VALUES ('已接受的导师', 1, 1) RETURNING id")
-            .fetch_one(&db)
-            .await
-            .unwrap();
+    let mentor = sqlx::query_scalar!(
+        r#"INSERT INTO mentor (name, created_at, updated_at)
+        VALUES ('已接受的导师', 1, 1)
+        RETURNING id"#
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
     sqlx::query!(
         "INSERT INTO crawl_run (crawl_id, app_version, started_at) VALUES (?, '3.0.0-alpha.0', 1)",
         crawl
@@ -136,11 +139,21 @@ async fn deleting_a_crawl_removes_pages_and_pending_candidates_but_keeps_reviewe
     .execute(&db)
     .await
     .unwrap();
-    let accepted = sqlx::query_scalar!(r#"INSERT INTO candidate
-        (crawl_id, list_page_id, review, mentor_id, enrich, name, emails, affiliations, homepages, aliases)
-        VALUES (?, ?, 'accepted', ?, 'done', '已接受', '["a@pku.edu.cn","b@pku.edu.cn"]',
-        '[{"university":"北京大学","title":"教授"}]', '["https://cs.pku.edu.cn/a"]', '["Alice"]') RETURNING id"#,
-        crawl, page, mentor).fetch_one(&db).await.unwrap();
+    let accepted = sqlx::query_scalar!(
+        r#"INSERT INTO candidate (crawl_id, list_page_id, review, mentor_id, enrich, name,
+            emails, affiliations, homepages, aliases)
+        VALUES (?, ?, 'accepted', ?, 'done', '已接受',
+            '["a@pku.edu.cn","b@pku.edu.cn"]',
+            '[{"university":"北京大学","title":"教授"}]',
+            '["https://cs.pku.edu.cn/a"]', '["Alice"]')
+        RETURNING id"#,
+        crawl,
+        page,
+        mentor
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
     sqlx::query!("DELETE FROM crawl WHERE id = ?", crawl)
         .execute(&db)
         .await

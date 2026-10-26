@@ -49,7 +49,10 @@ async fn generate(
     }
     let mut tx = db.begin().await?;
     let Some(t) = sqlx::query!(
-        r#"SELECT kind AS "kind: Kind",model_config_id,template_subject,template_body_md FROM task WHERE id = ?"#,
+        r#"SELECT kind AS "kind: Kind", model_config_id, template_subject,
+            template_body_md
+        FROM task
+        WHERE id = ?"#,
         claim.task
     )
     .fetch_optional(&mut *tx)
@@ -69,7 +72,17 @@ async fn generate(
             Some(chosen),
         ));
     }
-    let refs = sqlx::query_as!(material::Reference,r#"SELECT m.file_name,m.extracted_text AS "text!" FROM material m JOIN task_material t ON t.material_id = m.id WHERE t.task_id = ? AND t.role = 'reference' ORDER BY m.id"#,claim.task).fetch_all(&mut *tx).await?;
+    let refs = sqlx::query_as!(
+        material::Reference,
+        r#"SELECT m.file_name, m.extracted_text AS "text!"
+        FROM material m
+        JOIN task_material t ON t.material_id = m.id
+        WHERE t.task_id = ? AND t.role = 'reference'
+        ORDER BY m.id"#,
+        claim.task
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     let previous = if t.kind == Kind::FollowUp {
         Some(history(&mut tx, claim.mentor).await?)
     } else {
@@ -207,7 +220,17 @@ async fn pause_task(
             .as_ref()
             .is_some_and(|c| model::background::same_config(c, e))
     }) {
-        sqlx::query!("UPDATE task SET state = 'paused', generation_paused_at = ?, generation_pause_reason = ? WHERE id = ? AND state = 'active' AND generation_paused_at IS NULL",at,reason,task).execute(conn).await?;
+        sqlx::query!(
+            r#"UPDATE task
+            SET state = 'paused', generation_paused_at = ?,
+                generation_pause_reason = ?
+            WHERE id = ? AND state = 'active' AND generation_paused_at IS NULL"#,
+            at,
+            reason,
+            task
+        )
+        .execute(conn)
+        .await?;
     }
     Ok(())
 }
@@ -288,11 +311,28 @@ pub async fn run(
             }
         }
         for id in active.clone() {
-            let result = sqlx::query!(r#"SELECT t.id,t.name,t.state,
-                (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generating') AS remaining,
-                (SELECT count(*) FROM email WHERE task_id = t.id AND model IS NOT NULL AND state NOT IN ('generating','generation_failed','canceled')) AS generated,
-                (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generation_failed') AS failed
-                FROM task t WHERE t.id = ?"#,id).fetch_optional(&db).await;
+            let result = sqlx::query!(
+                r#"SELECT t.id, t.name, t.state, (
+                    SELECT count(*)
+                    FROM email
+                    WHERE task_id = t.id AND state = 'generating'
+                ) AS remaining, (
+                    SELECT count(*)
+                    FROM email
+                    WHERE task_id = t.id AND model IS NOT NULL
+                    AND state NOT IN ('generating', 'generation_failed',
+                        'canceled')
+                ) AS generated, (
+                    SELECT count(*)
+                    FROM email
+                    WHERE task_id = t.id AND state = 'generation_failed'
+                ) AS failed
+                FROM task t
+                WHERE t.id = ?"#,
+                id
+            )
+            .fetch_optional(&db)
+            .await;
             match result {
                 Ok(Some(t))
                     if t.remaining == 0
@@ -340,29 +380,71 @@ pub async fn run(
         tokio::select! {
             Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
                 match joined {
-                    Ok((worker,(claim,result))) => {
+                    Ok((worker, (claim, result))) => {
                         claims.remove(&worker);
-                        let outcome = match result { Ok(o)=>o,Err(e)=>{tracing::error!("draft database: {e}");Outcome::Pause("草稿数据暂时无法读取，请继续或重启应用；仍然出错时，请导出日志。".into(),None)} };
-                        let at=now();
-                        let applied=loop {
-                            let result=apply(&db,claim,&outcome,at).await;
-                            match result {Ok(a)=>break a,Err(e)=>{tracing::error!("save draft: {e}");tokio::time::sleep(RETRY).await;}}
+                        let outcome = match result {
+                            Ok(o) => o,
+                            Err(e) => {
+                                tracing::error!("draft database: {e}");
+                                Outcome::Pause(
+                                    "草稿数据暂时无法读取，请继续或重启应用；\
+                                    仍然出错时，请导出日志。"
+                                        .into(),
+                                    None,
+                                )
+                            }
                         };
-                        if applied && let Some(wait)=match outcome {
-                            Outcome::RateLimit(wait)|Outcome::Done {failure:Some((Failure::RateLimit(wait),_)),..}=>Some(wait),
-                            _=>None,
-                        } { let at=Instant::now()+wait;retry_at=Some(retry_at.map_or(at,|old|old.max(at))); }
+                        let at = now();
+                        let applied = loop {
+                            let result = apply(&db, claim, &outcome, at).await;
+                            match result {
+                                Ok(a) => break a,
+                                Err(e) => {
+                                    tracing::error!("save draft: {e}");
+                                    tokio::time::sleep(RETRY).await;
+                                }
+                            }
+                        };
+                        if applied
+                            && let Some(wait) = match outcome {
+                                Outcome::RateLimit(wait)
+                                | Outcome::Done {
+                                    failure: Some((Failure::RateLimit(wait), _)),
+                                    ..
+                                } => Some(wait),
+                                _ => None,
+                            }
+                        {
+                            let at = Instant::now() + wait;
+                            retry_at = Some(retry_at.map_or(at, |old| old.max(at)));
+                        }
                         changed();
                     }
-                    Err(e)=>{
+                    Err(e) => {
                         tracing::error!("draft worker: {e}");
-                        if let Some(claim)=claims.remove(&e.id()) { while let Err(e)=requeue(&db,claim,Some(("草稿生成意外中断，请继续或重启应用。",None)),now()).await {tracing::error!("recover draft worker: {e}");tokio::time::sleep(RETRY).await;} }
+                        if let Some(claim) = claims.remove(&e.id()) {
+                            while let Err(e) = requeue(
+                                &db,
+                                claim,
+                                Some(("草稿生成意外中断，请继续或重启应用。", None)),
+                                now(),
+                            )
+                            .await
+                            {
+                                tracing::error!("recover draft worker: {e}");
+                                tokio::time::sleep(RETRY).await;
+                            }
+                        }
                         changed();
                     }
                 }
             },
-            ()=generator.0.notified()=>{},
-            ()=async {if let Some(at)=retry_at {tokio::time::sleep_until(at).await;}},if cooling=>{},
+            () = generator.0.notified() => {},
+            () = async {
+                if let Some(at) = retry_at {
+                    tokio::time::sleep_until(at).await;
+                }
+            }, if cooling => {},
         }
     }
 }

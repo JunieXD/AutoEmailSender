@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT start_urls AS \"urls: Json<Vec<String>>\",\n            limits AS \"limits: Json<Vec<String>>\"\n        FROM crawl\n        WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "urls: Json<Vec<String>>",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "start_urls"
+          }
+        }
+      },
+      {
+        "name": "limits: Json<Vec<String>>",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "limits"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "0c07f2e5a66cf139e8ce9b8d1a0e7d527a3e4219c5f39784f5b089566745fe1b"
+}

@@ -1,5 +1,6 @@
 //! The provider table: what differs between mail providers lives here, as data
-//! (docs/design.md#邮箱). Server settings follow Thunderbird's public ISPDB where it has the provider.
+//! (docs/design.md#邮箱). Server settings follow Thunderbird's public ISPDB where it has the
+//! provider.
 
 use std::borrow::Cow;
 
@@ -78,7 +79,8 @@ pub static PROVIDERS: &[Provider] = &[
             secret: "授权码",
             steps: &[
                 "在电脑上登录 QQ 邮箱网页版，打开“设置”里的“账号与安全”。",
-                "在“安全设置”里开启“POP3/IMAP/SMTP/Exchange/CardDAV 服务”，并勾选“SMTP 发信后保存到服务器”，否则发出的信不会出现在“已发送”里。",
+                "在“安全设置”里开启“POP3/IMAP/SMTP/Exchange/CardDAV 服务”，并勾选“SMTP \
+                发信后保存到服务器”，否则发出的信不会出现在“已发送”里。",
                 "点“生成授权码”，按提示验证后复制授权码，填到这里。",
             ],
             url: "https://mail.qq.com",

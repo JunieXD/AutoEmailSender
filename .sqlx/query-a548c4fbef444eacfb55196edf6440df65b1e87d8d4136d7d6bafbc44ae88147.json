@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n        FROM crawl\n        WHERE state IN ('running', 'paused', 'failed') OR (state = 'done'\n        AND finished_at >= ? AND finished_at < ?) OR id IN (\n            SELECT crawl_id\n            FROM crawl_page\n            WHERE work_state = 'done' AND status != 'success'\n        )\n        ORDER BY id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a548c4fbef444eacfb55196edf6440df65b1e87d8d4136d7d6bafbc44ae88147"
+}

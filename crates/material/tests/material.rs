@@ -219,8 +219,15 @@ async fn only_changes_to_matching_material_advance_the_basis_time(db: SqlitePool
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn long_material_is_marked_and_truncated_by_unicode_character(db: SqlitePool) {
     let text = "中😀".repeat(5001);
-    sqlx::query("INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at, extracted_text) VALUES ('简历.pdf', 1, 1, 1, 0, 1, ?)")
-        .bind(&text).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO material (file_name, size, for_matching, for_writing,
+            attach_by_default, created_at, extracted_text)
+        VALUES ('简历.pdf', 1, 1, 1, 0, 1, ?)"#,
+    )
+    .bind(&text)
+    .execute(&db)
+    .await
+    .unwrap();
     assert!(material::list(&db).await.unwrap()[0].exceeds_ai_limit);
     assert_eq!(material::for_ai(&text).chars().count(), 10_000);
     assert_eq!(material::for_ai("短文"), "短文");
@@ -316,8 +323,14 @@ async fn extracted_material_invalidates_results_only_when_stored(db: SqlitePool)
 }
 
 async fn task_material(db: &SqlitePool, material: i64, role: &str, state: &str, claim: i64) -> i64 {
-    let task = sqlx::query("INSERT INTO task(name,kind,writer,schedule,state,created_at) VALUES ('申请任务','first','ai','now','paused',0)")
-        .execute(db).await.unwrap().last_insert_rowid();
+    let task = sqlx::query(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+        VALUES ('申请任务', 'first', 'ai', 'now', 'paused', 0)"#,
+    )
+    .execute(db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     sqlx::query("INSERT INTO task_material(task_id,material_id,role) VALUES (?,?,?)")
         .bind(task)
         .bind(material)
@@ -335,13 +348,20 @@ async fn task_material(db: &SqlitePool, material: i64, role: &str, state: &str, 
     )
     .await
     .unwrap();
-    sqlx::query(r#"INSERT INTO email (mentor_id, task_id, kind, state, generation_claim, error, cancel_reason,
-             created_at, updated_at)
-           VALUES (?, ?, 'first', ?, ?, ?, ?, 0, 0)"#)
-        .bind(mentor).bind(task).bind(state).bind(claim)
-        .bind((state == "generation_failed").then_some("生成失败"))
-        .bind((state == "canceled").then_some("任务停止"))
-        .execute(db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO email (mentor_id, task_id, kind, state, generation_claim, error,
+            cancel_reason, created_at, updated_at)
+        VALUES (?, ?, 'first', ?, ?, ?, ?, 0, 0)"#,
+    )
+    .bind(mentor)
+    .bind(task)
+    .bind(state)
+    .bind(claim)
+    .bind((state == "generation_failed").then_some("生成失败"))
+    .bind((state == "canceled").then_some("任务停止"))
+    .execute(db)
+    .await
+    .unwrap();
     task
 }
 

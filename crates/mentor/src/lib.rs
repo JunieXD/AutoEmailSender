@@ -236,15 +236,20 @@ pub async fn list(
     .await?;
     let total = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!: i64"
-           FROM mentor m
-           WHERE m.trashed_at IS NULL
-             AND (?1 IS NULL
-                  OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-                  OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-             AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-             AND (?3 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?3))
-             AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (
-               SELECT mentor_id FROM mentor_contact WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4))"#,
+        FROM mentor m
+        WHERE m.trashed_at IS NULL AND (?1 IS NULL OR (?1 = 'none'
+        AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+        AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE
+            mentor_search MATCH ?2)) AND (?3 IS NULL OR m.id IN (
+            SELECT mentor_id
+            FROM mentor_contact
+            WHERE status = 'contacted' AND last_out_at < ?3
+        )) AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (
+            SELECT mentor_id
+            FROM mentor_contact
+            WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4
+        ))"#,
         query.status,
         keyword,
         before,
@@ -268,17 +273,24 @@ async fn filtered_ids(
     before: Option<i64>,
 ) -> Result<Vec<i64>, sqlx::Error> {
     sqlx::query_scalar!(
-        "SELECT m.id FROM mentor m
-         WHERE m.trashed_at IS NULL
-           AND (?1 IS NULL
-                OR (?1 = 'none' AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-                OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-           AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2))
-           AND (?5 IS NULL OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = 'contacted' AND last_out_at < ?5))
-           AND (?1 IS NOT 'replied' OR ?6 IS NULL OR m.id IN (
-             SELECT mentor_id FROM mentor_contact WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?6))
-         ORDER BY m.match_score DESC, m.id
-         LIMIT ?3 OFFSET ?4",
+        r#"SELECT m.id
+        FROM mentor m
+        WHERE m.trashed_at IS NULL AND (?1 IS NULL OR (?1 = 'none'
+        AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+        AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE
+            mentor_search MATCH ?2)) AND (?5 IS NULL OR m.id IN (
+            SELECT mentor_id
+            FROM mentor_contact
+            WHERE status = 'contacted' AND last_out_at < ?5
+        )) AND (?1 IS NOT 'replied' OR ?6 IS NULL OR m.id IN (
+            SELECT mentor_id
+            FROM mentor_contact
+            WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?6
+        ))
+        ORDER BY m.match_score DESC, m.id
+        LIMIT ?3
+        OFFSET ?4"#,
         status,
         keyword,
         limit,
@@ -297,21 +309,29 @@ fn offset(page: NonZeroU32) -> i64 {
 /// The list rows for these mentors, in the given order.
 async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT m.id, m.name, a.university, a.school, a.department, a.title,
-                  (SELECT count(*) FROM mentor_affiliation WHERE mentor_id = m.id)
-                    AS "affiliation_count!: i64",
-                  substr(d.research, 1, 120) AS "research?: String",
-                  m.match_state AS "match_state: MatchColumn", m.match_score, m.match_error,
-                  coalesce(m.matched_at < (SELECT match_basis_changed_at FROM profile), 0) AS "basis_changed!: bool",
-                  c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
-                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool", c.outcome AS "outcome?: ReplyOutcome"
-           FROM json_each(?) page
-           JOIN mentor m ON m.id = page.value
-           LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id
-             AND a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = m.id)
-           LEFT JOIN mentor_detail d ON d.mentor_id = m.id
-           LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           ORDER BY page.key"#,
+        r#"SELECT m.id, m.name, a.university, a.school, a.department, a.title, (
+            SELECT count(*)
+            FROM mentor_affiliation
+            WHERE mentor_id = m.id
+        ) AS "affiliation_count!: i64",
+            substr(d.research, 1, 120) AS "research?: String",
+            m.match_state AS "match_state: MatchColumn", m.match_score,
+            m.match_error, coalesce(m.matched_at < (SELECT match_basis_changed_at FROM
+            profile), 0) AS "basis_changed!: bool",
+            c.status AS "status?: ContactStatus",
+            c.contact_count AS "contact_count?", c.last_out_at, c.last_reply_at,
+            c.unread AS "unread?: bool", c.outcome AS "outcome?: ReplyOutcome"
+        FROM json_each(?) page
+        JOIN mentor m ON m.id = page.value
+        LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id
+        AND a.position = (
+            SELECT min(position)
+            FROM mentor_affiliation
+            WHERE mentor_id = m.id
+        )
+        LEFT JOIN mentor_detail d ON d.mentor_id = m.id
+        LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+        ORDER BY page.key"#,
         Json(ids),
     )
     .fetch_all(&mut *conn)
@@ -363,20 +383,23 @@ pub async fn detail(
     id: i64,
 ) -> Result<Option<MentorDetail>, sqlx::Error> {
     let Some(r) = sqlx::query!(
-        r#"SELECT m.id, m.name, m.source_url, m.trashed_at IS NOT NULL AS "trashed!: bool",
-                  m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
-                  m.match_model, m.match_error,
-                  coalesce(m.matched_at < (SELECT match_basis_changed_at FROM profile), 0) AS "basis_changed!: bool",
-                  d.research, d.papers AS "papers: Json<Vec<String>>", d.note, d.match_reason,
-                  d.match_directions AS "match_directions: Json<Vec<String>>",
-                  d.match_highlights AS "match_highlights: Json<Vec<String>>",
-                  d.match_risks AS "match_risks: Json<Vec<String>>",
-                  c.status AS "status?: ContactStatus", c.contact_count AS "contact_count?",
-                  c.last_out_at, c.last_reply_at, c.unread AS "unread?: bool"
-           FROM mentor m
-           JOIN mentor_detail d ON d.mentor_id = m.id
-           LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           WHERE m.id = ?"#,
+        r#"SELECT m.id, m.name, m.source_url,
+            m.trashed_at IS NOT NULL AS "trashed!: bool",
+            m.match_state AS "match_state: MatchColumn", m.match_score, m.matched_at,
+            m.match_model, m.match_error, coalesce(m.matched_at < (SELECT
+            match_basis_changed_at FROM profile), 0) AS "basis_changed!: bool",
+            d.research, d.papers AS "papers: Json<Vec<String>>", d.note,
+            d.match_reason,
+            d.match_directions AS "match_directions: Json<Vec<String>>",
+            d.match_highlights AS "match_highlights: Json<Vec<String>>",
+            d.match_risks AS "match_risks: Json<Vec<String>>",
+            c.status AS "status?: ContactStatus",
+            c.contact_count AS "contact_count?", c.last_out_at, c.last_reply_at,
+            c.unread AS "unread?: bool"
+        FROM mentor m
+        JOIN mentor_detail d ON d.mentor_id = m.id
+        LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+        WHERE m.id = ?"#,
         id,
     )
     .fetch_optional(&mut *conn)
@@ -846,9 +869,11 @@ async fn save_lists(
     .await?;
     for (position, address) in (0_i64..).zip(&mentor.emails) {
         let saved = sqlx::query!(
-            "INSERT INTO mentor_email (address, mentor_id, position) VALUES (?, ?, ?)
-             ON CONFLICT (address) DO UPDATE SET address = excluded.address, position = excluded.position
-             WHERE mentor_id = excluded.mentor_id",
+            r#"INSERT INTO mentor_email (address, mentor_id, position)
+            VALUES (?, ?, ?)
+            ON CONFLICT (address) DO UPDATE SET address = excluded.address,
+                position = excluded.position
+            WHERE mentor_id = excluded.mentor_id"#,
             address,
             id,
             position,
@@ -871,10 +896,12 @@ async fn save_lists(
             .collect::<Vec<_>>(),
     );
     sqlx::query!(
-        "INSERT INTO mentor_affiliation (mentor_id, position, university, school, department, title, university_match)
-         SELECT ?1, j.key, j.value ->> 'university', j.value ->> 'school',
-           j.value ->> 'department', j.value ->> 'title', json_extract(?3, '$[' || j.key || ']')
-         FROM json_each(?2) j",
+        r#"INSERT INTO mentor_affiliation (mentor_id, position, university, school,
+            department, title, university_match)
+        SELECT ?1, j.key, j.value ->> 'university', j.value ->> 'school',
+            j.value ->> 'department', j.value ->> 'title',
+            json_extract(?3, '$[' || j.key || ']')
+        FROM json_each(?2) j"#,
         id,
         affiliations,
         universities,

@@ -102,7 +102,8 @@ pub(super) fn unpack(source: &Path, stage: &Path) -> Result<Manifest> {
             .name()
             .map_err(|_| invalid("文件名编码无效"))?
             .into_owned();
-        // Exact portable names also reject backslashes, drive prefixes, aliases and case collisions.
+        // Exact portable names also reject backslashes, drive prefixes, aliases and case
+        // collisions.
         let limit = match name.as_str() {
             "manifest.json" => MANIFEST_LIMIT,
             "app.db" => DATABASE_LIMIT,

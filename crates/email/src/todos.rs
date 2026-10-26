@@ -142,8 +142,14 @@ pub async fn set_enabled(db: &SqlitePool, enabled: bool) -> Result<(), sqlx::Err
         sqlx::query!("DELETE FROM reply_processing WHERE action = 'todos'")
             .execute(&mut *tx)
             .await?;
-        sqlx::query!("UPDATE profile SET reply_processing_paused_at = NULL, reply_processing_pause_reason = NULL WHERE NOT ai_reply_outcome")
-            .execute(&mut *tx).await?;
+        sqlx::query!(
+            r#"UPDATE profile
+            SET reply_processing_paused_at = NULL,
+                reply_processing_pause_reason = NULL
+            WHERE NOT ai_reply_outcome"#
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await
 }
@@ -189,33 +195,48 @@ pub async fn update(
     fields: &Fields,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    let changed = sqlx::query!("UPDATE todo SET text = ?2, due_date = ?3, due_time = ?4,
-        reminded_at = CASE WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN NULL ELSE reminded_at END,
-        due_changed_at = CASE WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN ?5 ELSE due_changed_at END
-        WHERE id = ?1 AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)", id, fields.text, fields.due_date, fields.due_time, now).execute(db).await?;
+    let changed = sqlx::query!(
+        r#"UPDATE todo
+        SET text = ?2, due_date = ?3, due_time = ?4, reminded_at = CASE
+        WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN NULL
+        ELSE reminded_at END, due_changed_at = CASE WHEN due_date IS NOT ?3
+        OR due_time IS NOT ?4 THEN ?5 ELSE due_changed_at END
+        WHERE id = ?1 AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)"#,
+        id,
+        fields.text,
+        fields.due_date,
+        fields.due_time,
+        now
+    )
+    .execute(db)
+    .await?;
     Ok(changed.rows_affected() > 0)
 }
 
 pub async fn set_done(db: &SqlitePool, id: i64, done: bool, now: i64) -> Result<bool, sqlx::Error> {
     let at = done.then_some(now);
     let changed = sqlx::query!(
-        "UPDATE todo SET done_at = ? WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
+        r#"UPDATE todo
+        SET done_at = ?
+        WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)"#,
         at,
         id
     )
-        .execute(db)
-        .await?;
+    .execute(db)
+    .await?;
     Ok(changed.rows_affected() > 0)
 }
 
 pub async fn delete(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query!(
-        "DELETE FROM todo WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
+        r#"DELETE
+        FROM todo
+        WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)"#,
         id
     )
-        .execute(db)
-        .await?
-        .rows_affected()
+    .execute(db)
+    .await?
+    .rows_affected()
         > 0)
 }
 
@@ -236,17 +257,28 @@ pub async fn for_mentor<'a>(
 pub async fn list(db: &SqlitePool, query: &TodoQuery) -> Result<TodoPage, sqlx::Error> {
     let mut tx = db.begin().await?;
     let total = sqlx::query_scalar!(
-        r#"SELECT count(*) AS "total!" FROM todo
-        WHERE done_at IS NULL AND mentor_id NOT IN (SELECT id FROM mentor WHERE trashed_at IS NOT NULL)"#
+        r#"SELECT count(*) AS "total!"
+        FROM todo
+        WHERE done_at IS NULL AND mentor_id NOT IN (SELECT id FROM mentor WHERE
+            trashed_at IS NOT NULL)"#
     )
     .fetch_one(&mut *tx)
     .await?;
     let offset = (i64::from(query.page.get()) - 1) * 50;
-    let rows = sqlx::query!(r#"SELECT t.id, t.text, t.due_date, t.due_time, t.message_id, t.created_at,
-        t.mentor_id, m.name FROM todo t JOIN mentor m ON m.id = t.mentor_id
-        WHERE t.done_at IS NULL AND t.mentor_id NOT IN (SELECT id FROM mentor WHERE trashed_at IS NOT NULL)
-        ORDER BY t.due_date IS NULL, t.due_date, coalesce(t.due_time, '24:00'), t.id LIMIT 50 OFFSET ?"#, offset)
-        .fetch_all(&mut *tx).await?;
+    let rows = sqlx::query!(
+        r#"SELECT t.id, t.text, t.due_date, t.due_time, t.message_id, t.created_at,
+            t.mentor_id, m.name
+        FROM todo t
+        JOIN mentor m ON m.id = t.mentor_id
+        WHERE t.done_at IS NULL AND t.mentor_id NOT IN (SELECT id FROM mentor WHERE
+            trashed_at IS NOT NULL)
+        ORDER BY t.due_date IS NULL, t.due_date, coalesce(t.due_time, '24:00'), t.id
+        LIMIT 50
+        OFFSET ?"#,
+        offset
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     Ok(TodoPage {
         total,
         todos: rows
@@ -300,15 +332,27 @@ pub async fn complete(
     .fetch_one(&mut *tx)
     .await?;
     for todo in todos {
-        sqlx::query!("INSERT INTO todo(mentor_id, message_id, text, due_date, due_time, created_at, due_changed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)", mentor, claim.id, todo.text, todo.due_date, todo.due_time, now, now)
-            .execute(&mut *tx).await?;
+        sqlx::query!(
+            r#"INSERT INTO todo (mentor_id, message_id, text, due_date, due_time,
+                created_at, due_changed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)"#,
+            mentor,
+            claim.id,
+            todo.text,
+            todo.due_date,
+            todo.due_time,
+            now,
+            now
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(true)
 }
 
-/// Repeated local times use the first occurrence; a skipped minute advances to the first existing one.
+/// Repeated local times use the first occurrence; a skipped minute advances to the first existing
+/// one.
 fn local<T: TimeZone>(zone: &T, at: chrono::NaiveDateTime) -> Option<i64> {
     (0..=24 * 60).find_map(|minute| {
         at.checked_add_signed(chrono::TimeDelta::minutes(minute))

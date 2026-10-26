@@ -47,12 +47,24 @@ async fn a_wrong_secret_is_a_refused_login() {
     let (me, _) = mailbox(&pki, Security::Tls, "wrong").await;
     let sending = mailbox::check_sending(&net, &me).await;
     assert!(
-        matches!(sending, Err(MailError::Login { ref reply, smtp_code: Some(535) }) if reply.contains("535")),
+        matches!(
+            sending,
+            Err(MailError::Login {
+                ref reply,
+                smtp_code: Some(535),
+            }) if reply.contains("535")
+        ),
         "{sending:?}"
     );
     let receiving = mailbox::check_receiving(&net, &me).await;
     assert!(
-        matches!(receiving, Err(MailError::Login { ref reply, smtp_code: None }) if reply == "[AUTHENTICATIONFAILED] invalid credentials"),
+        matches!(
+            receiving,
+            Err(MailError::Login {
+                ref reply,
+                smtp_code: None,
+            }) if reply == "[AUTHENTICATIONFAILED] invalid credentials"
+        ),
         "{receiving:?}"
     );
 }

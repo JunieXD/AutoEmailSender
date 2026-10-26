@@ -1308,7 +1308,17 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
         "From: me@example.com\nTo: zhao@nju.edu.cn\nSubject: 申请读博\nMessage-ID: <web3@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=cv.pdf\nContent-Transfer-Encoding: base64\n\nJVBERi0xLjQK\n--m--\n",
     );
     // From the website, read up to the start of a part after the CV, which may hold more text.
-    let head = "From: me@example.com\nTo: sun@zju.edu.cn\nSubject: 申请读博\nMessage-ID: <web4@qq.com>\nContent-Type: multipart/mixed; boundary=m\n\n--m\nContent-Type: text/plain; charset=utf-8\n\n老师您好\n--m\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=cv.pdf\n\n";
+    let head = "From: me@example.com\n\
+        To: sun@zju.edu.cn\n\
+        Subject: 申请读博\n\
+        Message-ID: <web4@qq.com>\n\
+        Content-Type: multipart/mixed; boundary=m\n\n\
+        --m\n\
+        Content-Type: text/plain; charset=utf-8\n\n\
+        老师您好\n\
+        --m\n\
+        Content-Type: application/pdf\n\
+        Content-Disposition: attachment; filename=cv.pdf\n\n";
     let next = "\n--m\n";
     // Lines end in CRLF in the mailbox.
     let crlf = |s: &str| s.replace('\n', "\r\n").len();
@@ -1318,7 +1328,11 @@ async fn a_copy_under_another_message_id_has_the_same_text_and_files_to_one_ment
     store.deliver(
         SENT,
         T - DAY + MINUTE,
-        &format!("{head}{cv}{next}Content-Type: text/plain; charset=utf-8\n\n补充：成绩单周五前寄出。\n--m--\n"),
+        &format!(
+            "{head}{cv}{next}Content-Type: text/plain; charset=utf-8\n\n\
+            补充：成绩单周五前寄出。\n\
+            --m--\n"
+        ),
     );
     round(&db, &net, T + 10 * MINUTE).await;
 
@@ -1352,7 +1366,10 @@ async fn a_new_reply_names_its_mentors_once_in_id_order(db: SqlitePool) {
     round(&db, &net, T).await;
     store.deliver(SENT, T + MINUTE,
         "From: me@example.com\nTo: li@pku.edu.cn, wang@thu.edu.cn\nMessage-ID: <shared@example.com>\nSubject: 申请\n\n两位老师好");
-    let reply = "From: secretary@example.com\nIn-Reply-To: <shared@example.com>\nMessage-ID: <answer@example.com>\n\n欢迎报考";
+    let reply = "From: secretary@example.com\n\
+        In-Reply-To: <shared@example.com>\n\
+        Message-ID: <answer@example.com>\n\n\
+        欢迎报考";
     store.deliver("INBOX", T + 2 * MINUTE, reply);
     assert_eq!(
         round(&db, &net, T + 3 * MINUTE).await.replies,
@@ -1451,7 +1468,15 @@ async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePoo
         T + 2 * MINUTE,
         &REPLY.replace("r1@pku.edu.cn", "r2@pku.edu.cn"),
     );
-    store.deliver("INBOX",T+2*MINUTE,"From: li@pku.edu.cn\nAuto-Submitted: auto-replied\nSubject: 自动回复\nMessage-ID: <auto@edu>\n\n休假中");
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: li@pku.edu.cn\n\
+        Auto-Submitted: auto-replied\n\
+        Subject: 自动回复\n\
+        Message-ID: <auto@edu>\n\n\
+        休假中",
+    );
     round(&db, &net, T + 3 * MINUTE).await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 2);
     // An address added later causes historical messages to be found by the lookup queue.

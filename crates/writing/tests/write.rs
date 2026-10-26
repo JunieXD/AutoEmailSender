@@ -444,14 +444,27 @@ async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purpose
         .await
         .unwrap();
     let (address, received) = provider(vec![
-        ("<body>王伟老师：谢谢您的邀请。面谈时间为【请补充：方便面谈的时间】。</body>", "stop"),
-        ("<think>润色</think><body>王伟老师：感谢邀请。2026年11月2日有 2 场课，时间为【请补充：方便面谈的时间】，资料见 https://example.com/cv 。</body>", "stop"),
-    ]).await;
+        (
+            "<body>王伟老师：谢谢您的邀请。面谈时间为【请补充：方便面谈的时间】。</body>",
+            "stop",
+        ),
+        (
+            "<think>润色</think><body>王伟老师：感谢邀请。2026年11月2日有 2 场课，\
+            时间为【请补充：方便面谈的时间】，资料见 https://example.com/cv 。</body>",
+            "stop",
+        ),
+    ])
+    .await;
     model(&db, &address, true).await;
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let references = material::for_writing(&db).await.unwrap();
     let net = Net::new(Vec::new()).unwrap();
-    let current = Letter { subject: String::new(), body_md: "王伟老师：2026年11月2日有 2 场课，时间为【请补充：方便面谈的时间】，https://example.com/cv".into() };
+    let current = Letter {
+        subject: String::new(),
+        body_md: "王伟老师：2026年11月2日有 2 场课，时间为【请补充：方便面谈的时间】，https:\
+            //example.com/cv"
+            .into(),
+    };
     for letter in [&blank(), &current] {
         let answer = writing::write(
             &db,

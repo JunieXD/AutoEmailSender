@@ -91,14 +91,26 @@ pub async fn save_page(
     let url = page.url.as_str();
     let steps = Json(&page.steps);
     sqlx::query_scalar!(
-        r#"INSERT INTO crawl_page (crawl_id, url, kind, steps, mode, status, error, fetched_at, text)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT (crawl_id, url, steps) WHERE candidate_id IS NULL DO UPDATE SET
-             kind = excluded.kind, mode = excluded.mode, status = excluded.status,
-             error = excluded.error, fetched_at = excluded.fetched_at, text = excluded.text
-           RETURNING id"#,
-        crawl_id, url, page.kind, steps, page.method, status, error, page.fetched_at, text
-    ).fetch_one(pool).await
+        r#"INSERT INTO crawl_page (crawl_id, url, kind, steps, mode, status, error,
+            fetched_at, text)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (crawl_id, url, steps)
+        WHERE candidate_id IS NULL DO UPDATE SET kind = excluded.kind,
+            mode = excluded.mode, status = excluded.status, error = excluded.error,
+            fetched_at = excluded.fetched_at, text = excluded.text
+        RETURNING id"#,
+        crawl_id,
+        url,
+        page.kind,
+        steps,
+        page.method,
+        status,
+        error,
+        page.fetched_at,
+        text
+    )
+    .fetch_one(pool)
+    .await
 }
 
 /// Uses the unique index and never reads the extracted text or loads a full visited-URL set.
@@ -113,8 +125,10 @@ pub async fn visited_page(
     sqlx::query_as!(
         PageVisit,
         r#"SELECT id, kind AS "kind: PageKind", mode AS "method: PageMethod",
-             status AS "status: PageStatus", error, fetched_at AS "fetched_at!"
-           FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL AND fetched_at IS NOT NULL"#,
+            status AS "status: PageStatus", error, fetched_at AS "fetched_at!"
+        FROM crawl_page
+        WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL
+        AND fetched_at IS NOT NULL"#,
         crawl_id,
         url,
         steps

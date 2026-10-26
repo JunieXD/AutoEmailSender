@@ -1,0 +1,52 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT match_paused_at, match_pause_reason, (\n            SELECT count(*)\n            FROM mentor\n            WHERE match_state IN ('queued', 'running') AND trashed_at IS NULL\n        ) AS \"remaining!: i64\", (\n            SELECT count(*)\n            FROM mentor\n            WHERE match_state = 'failed' AND trashed_at IS NULL\n        ) AS \"failed!: i64\"\n        FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "match_paused_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "match_paused_at"
+          }
+        }
+      },
+      {
+        "name": "match_pause_reason",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "match_pause_reason"
+          }
+        }
+      },
+      {
+        "name": "remaining!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "failed!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "62f088962699a0a58bbf51af6a73847d8abded1ad82882b37b312b8c84d61c40"
+}

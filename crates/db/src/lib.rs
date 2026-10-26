@@ -73,7 +73,8 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         .filename(path)
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
-        // With WAL this still survives the app crashing; only a power cut can lose the last commits.
+        // With WAL this still survives the app crashing; only a power cut can lose the last
+        // commits.
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(Duration::from_secs(5));

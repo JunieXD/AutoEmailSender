@@ -54,7 +54,8 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
         .map_err(|(SendError::NotSent(e) | SendError::Unknown(e))| e)
 }
 
-/// A new Message-ID for an email from this mailbox, named after its domain rather than the computer.
+/// A new Message-ID for an email from this mailbox, named after its domain rather than the
+/// computer.
 pub fn message_id(account: &Account) -> String {
     format!("<{}@{}>", uuid::Uuid::new_v4(), account.address.domain())
 }
@@ -179,7 +180,8 @@ impl SendError {
     pub fn message(&self) -> String {
         match self {
             SendError::NotSent(MailError::Refused { reply, .. }) => format!(
-                "服务器拒收了这封邮件（服务器回复：{reply}）。检查导师的邮箱地址有没有填错；回复里提到垃圾邮件时，请检查邮件内容。"
+                "服务器拒收了这封邮件（服务器回复：{reply}）。检查导师的邮箱地址有没有填错；\
+                回复里提到垃圾邮件时，请检查邮件内容。"
             ),
             SendError::NotSent(e) => e.message(),
             SendError::Unknown(_) => "交给服务器的途中连接中断，无法确定是否已发出。".into(),

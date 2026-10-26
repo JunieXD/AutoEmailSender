@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n        SET review = 'rejected'\n        WHERE review = 'pending' AND id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c57a49504a9618265009b7c5dfa92b28bbf187149d3e3f3760820e8dc538795a"
+}

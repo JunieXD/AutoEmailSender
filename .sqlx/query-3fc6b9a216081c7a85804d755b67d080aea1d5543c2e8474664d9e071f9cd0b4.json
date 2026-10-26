@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id\n                FROM email\n                WHERE state = 'bounced' AND (message_id = ?1\n                OR copy_message_id = ?1)\n                UNION SELECT mm.mentor_id\n                FROM message_mentor mm\n                JOIN message m ON m.id = mm.message_id\n                WHERE m.message_id = ?1 AND mm.bounce_reason IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3fc6b9a216081c7a85804d755b67d080aea1d5543c2e8474664d9e071f9cd0b4"
+}

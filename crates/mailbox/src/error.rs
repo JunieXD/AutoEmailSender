@@ -98,19 +98,24 @@ impl MailError {
                 port,
                 reason,
             } => format!(
-                "系统代理 {proxy} 没能连上 {host} 的 {port} 端口（{reason}）。检查服务器地址和端口，或者换个代理节点。"
+                "系统代理 {proxy} 没能连上 {host} 的 {port} 端口（{reason}）。\
+                检查服务器地址和端口，或者换个代理节点。"
             ),
             MailError::TimedOut { host, port } => format!(
-                "{host} 的 {port} 端口迟迟没有响应。检查服务器地址和端口；国内连 Gmail 这类国外邮箱要开代理。"
+                "{host} 的 {port} 端口迟迟没有响应。检查服务器地址和端口；国内连 Gmail \
+                这类国外邮箱要开代理。"
             ),
             MailError::Tls { host, source } if net::untrusted(source) => {
                 format!("{host} 的证书不受信任，连接可能被拦截了。换个网络再试。")
             }
             MailError::Tls { host, source } => format!(
-                "和 {host} 建立加密连接失败（{source}）。检查加密方式和端口是否对应：SSL/TLS 一般用 465、993 端口，STARTTLS 一般用 587、143 端口。"
+                "和 {host} 建立加密连接失败（{source}）。检查加密方式和端口是否对应：SSL/TLS \
+                一般用 465、993 端口，STARTTLS 一般用 587、143 端口。"
             ),
             MailError::Login { reply, .. } => format!(
-                "登录被拒绝（服务器回复：{reply}）。检查授权码或密码有没有填错，邮箱设置里有没有开启 IMAP/SMTP 服务；学校和公司的邮箱还可能被管理员关闭了客户端登录，需要问管理员。"
+                "登录被拒绝（服务器回复：{reply}）。检查授权码或密码有没有填错，\
+                邮箱设置里有没有开启 IMAP/SMTP 服务；\
+                学校和公司的邮箱还可能被管理员关闭了客户端登录，需要问管理员。"
             ),
             MailError::Refused { reply, .. } => format!("服务器拒绝了请求（{reply}）。"),
             MailError::Broken(e) => {

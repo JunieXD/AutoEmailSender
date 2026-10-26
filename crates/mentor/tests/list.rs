@@ -94,8 +94,19 @@ async fn unanswered_filter_uses_latest_sent_time_and_ignores_automatic_replies(d
         (5, "auto_reply", now),
         (6, "sent", now - 8 * day),
     ] {
-        let msg = sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,sent_at,from_address,truncated) VALUES(1,'INBOX',1,?,?,?,?, 'someone@example.com',0)")
-            .bind(i as i64).bind(kind).bind(format!("<filter-{i}@example.com>")).bind(at).execute(&db).await.unwrap().last_insert_rowid();
+        let msg = sqlx::query(
+            r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind,
+                message_id, sent_at, from_address, truncated)
+            VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'someone@example.com', 0)"#,
+        )
+        .bind(i as i64)
+        .bind(kind)
+        .bind(format!("<filter-{i}@example.com>"))
+        .bind(at)
+        .execute(&db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
         sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
             .bind(ids[i])
             .bind(msg)
