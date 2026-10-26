@@ -9,7 +9,7 @@ import appIcon from "../../../docs/icon.svg";
 import { call, errorMessage } from "@/api/call";
 import { startupFailure } from "@/api/app";
 import type { MatchFinished, DraftsFinished, CrawlFinished } from "@/api/types";
-import { refreshTasks } from "@/pages/tasks";
+import { refreshTasks } from "@/components/task-cache";
 import { scheduledAt } from "@/components/schedule";
 import { ModelAction } from "@/components/ai-writing";
 import { refreshMentors, refreshReplyOutcomes } from "@/components/mentor";

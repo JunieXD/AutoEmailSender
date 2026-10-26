@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { Affiliation, Contact, ContactStatus, DraftKind, ReplyOutcome } from "@/api/types";
+import { refreshTasks } from "@/components/task-cache";
 import { day } from "@/format";
 
 const AVATARS = ["bg-avatar-1", "bg-avatar-2", "bg-avatar-3", "bg-avatar-4", "bg-avatar-5"];
@@ -104,13 +105,9 @@ export function refreshReplyOutcomes(queryClient: QueryClient) {
  * date, their correspondence too.
  */
 export function refreshMentors(queryClient: QueryClient) {
+  refreshTasks(queryClient);
   for (const queryKey of [
     ["matchingProgress"],
-    ["getTask"],
-    ["listTasks"],
-    ["listTaskDrafts"],
-    ["getTaskDraft"],
-    ["planTask"],
     ["planMatching"],
     ["listMentors"],
     ["listTrash"],
@@ -123,7 +120,6 @@ export function refreshMentors(queryClient: QueryClient) {
     ["listConversations"],
     ["listTodos"],
     ["unreadCount"],
-    ["stats"],
   ]) {
     void queryClient.invalidateQueries({ queryKey });
   }
