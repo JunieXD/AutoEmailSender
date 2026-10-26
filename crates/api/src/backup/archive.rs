@@ -15,10 +15,58 @@ const DATABASE_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const TOTAL_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
 const ENTRY_LIMIT: usize = 100_002;
 
-fn invalid(detail: &str) -> Error {
+pub(super) fn invalid(detail: &str) -> Error {
     Error::Invalid(format!(
         "备份文件不完整或格式不正确（{detail}），请重新选择本应用导出的 zip 备份。"
     ))
+}
+
+fn zip_error(detail: &'static str, source: zip::result::ZipError) -> Error {
+    match source {
+        zip::result::ZipError::Io(source) => Error::Io {
+            operation: detail,
+            source,
+        },
+        source => Error::Archive {
+            detail,
+            source: Box::new(source),
+        },
+    }
+}
+
+fn json_error(detail: &'static str, source: serde_json::Error) -> Error {
+    if let Some(kind) = source.io_error_kind() {
+        Error::Io {
+            operation: detail,
+            source: std::io::Error::new(kind, source),
+        }
+    } else {
+        Error::Archive {
+            detail,
+            source: Box::new(source),
+        }
+    }
+}
+
+fn extract(input: &mut dyn Read, output: &mut dyn Write) -> Result<u64> {
+    let mut buffer = [0; 8192];
+    let mut copied = 0;
+    loop {
+        let count = input.read(&mut buffer).map_err(|source| Error::Archive {
+            detail: "zip 内容损坏",
+            source: Box::new(source),
+        })?;
+        if count == 0 {
+            return Ok(copied);
+        }
+        output
+            .write_all(&buffer[..count])
+            .map_err(|source| Error::Io {
+                operation: "extract file",
+                source,
+            })?;
+        copied += count as u64;
+    }
 }
 
 pub(super) fn write(
@@ -52,17 +100,17 @@ pub(super) fn write(
     let mut zip = ZipWriter::new(temporary.as_file_mut());
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     zip.start_file("manifest.json", options)
-        .map_err(|_| invalid("无法写入清单"))?;
-    serde_json::to_writer(&mut zip, manifest).map_err(|_| invalid("无法写入清单"))?;
+        .map_err(|e| zip_error("无法写入清单", e))?;
+    serde_json::to_writer(&mut zip, manifest).map_err(|e| json_error("无法写入清单", e))?;
     zip.start_file("app.db", options)
-        .map_err(|_| invalid("无法写入数据库"))?;
+        .map_err(|e| zip_error("无法写入数据库", e))?;
     std::io::copy(&mut File::open(snapshot)?, &mut zip)?;
     for id in ids {
         zip.start_file(format!("materials/{id}"), options)
-            .map_err(|_| invalid("无法写入材料"))?;
+            .map_err(|e| zip_error("无法写入材料", e))?;
         std::io::copy(&mut File::open(material::file(materials, *id))?, &mut zip)?;
     }
-    zip.finish().map_err(|_| invalid("zip 未能写完"))?;
+    zip.finish().map_err(|e| zip_error("zip 未能写完", e))?;
     temporary.as_file().sync_all()?;
     temporary.persist(target).map_err(|e| e.error)?;
     sync_dir(parent)?;
@@ -74,7 +122,8 @@ pub(super) fn manifest(path: &Path) -> Result<Manifest> {
     if file.metadata()?.len() > MANIFEST_LIMIT {
         return Err(invalid("清单过大"));
     }
-    let manifest: Manifest = serde_json::from_reader(file).map_err(|_| invalid("清单无法读取"))?;
+    let manifest: Manifest =
+        serde_json::from_reader(file).map_err(|e| json_error("清单无法读取", e))?;
     if manifest.app_version.is_empty()
         || manifest.app_version.len() > 100
         || manifest.exported_at < 0
@@ -89,7 +138,7 @@ pub(super) fn unpack(source: &Path, stage: &Path) -> Result<Manifest> {
     if file.metadata()?.len() > TOTAL_LIMIT {
         return Err(invalid("文件超过 4 GB"));
     }
-    let mut zip = ZipArchive::new(file).map_err(|_| invalid("不是可读取的 zip 文件"))?;
+    let mut zip = ZipArchive::new(file).map_err(|e| zip_error("不是可读取的 zip 文件", e))?;
     if zip.len() > ENTRY_LIMIT {
         return Err(invalid("文件数量过多"));
     }
@@ -97,10 +146,12 @@ pub(super) fn unpack(source: &Path, stage: &Path) -> Result<Manifest> {
     let mut names = BTreeSet::new();
     let mut total = 0;
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|_| invalid("zip 条目无法读取"))?;
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| zip_error("zip 条目无法读取", e))?;
         let name = entry
             .name()
-            .map_err(|_| invalid("文件名编码无效"))?
+            .map_err(|e| zip_error("文件名编码无效", e))?
             .into_owned();
         // Exact portable names also reject backslashes, drive prefixes, aliases and case
         // collisions.
@@ -138,8 +189,7 @@ pub(super) fn unpack(source: &Path, stage: &Path) -> Result<Manifest> {
             .create_new(true)
             .open(stage.join(&name))?;
         let size = entry.size();
-        let copied = std::io::copy(&mut entry.by_ref().take(limit + 1), &mut file)
-            .map_err(|_| invalid("zip 内容损坏"))?;
+        let copied = extract(&mut entry.by_ref().take(limit + 1), &mut file)?;
         if copied != size {
             return Err(invalid("文件大小与 zip 记录不符"));
         }
@@ -149,4 +199,22 @@ pub(super) fn unpack(source: &Path, stage: &Path) -> Result<Manifest> {
         return Err(invalid("缺少清单或数据库"));
     }
     manifest(&stage.join("manifest.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+
+    #[test]
+    fn extraction_preserves_output_errors_and_existing_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("output");
+        fs::write(&path, b"previous contents").unwrap();
+        let mut output = File::open(&path).unwrap();
+        let error = extract(&mut &b"database"[..], &mut output).unwrap_err();
+        assert!(matches!(&error, Error::Io { source, .. } if source.raw_os_error().is_some()));
+        assert!(error.source().is_some());
+        assert_eq!(fs::read(path).unwrap(), b"previous contents");
+    }
 }

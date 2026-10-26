@@ -21,7 +21,14 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 pub enum Error {
     Invalid(String),
-    Io(io::Error),
+    Io {
+        operation: &'static str,
+        source: io::Error,
+    },
+    Archive {
+        detail: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
     Database(sqlx::Error),
     Migration(MigrateError),
     Worker(tokio::task::JoinError),
@@ -31,17 +38,32 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Invalid(message) => f.write_str(message),
-            Self::Io(e) => write!(f, "backup file: {e}"),
+            Self::Io { operation, source } => write!(f, "backup file ({operation}): {source}"),
+            Self::Archive { detail, source } => write!(f, "backup archive ({detail}): {source}"),
             Self::Database(e) => write!(f, "backup database: {e}"),
             Self::Migration(e) => write!(f, "backup migration: {e}"),
             Self::Worker(e) => write!(f, "backup worker: {e}"),
         }
     }
 }
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invalid(_) => None,
+            Self::Io { source, .. } => Some(source),
+            Self::Archive { source, .. } => Some(source.as_ref()),
+            Self::Database(e) => Some(e),
+            Self::Migration(e) => Some(e),
+            Self::Worker(e) => Some(e),
+        }
+    }
+}
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
-        Self::Io(e)
+        Self::Io {
+            operation: "file access",
+            source: e,
+        }
     }
 }
 impl From<sqlx::Error> for Error {
@@ -58,7 +80,8 @@ impl Error {
     pub fn message(&self) -> String {
         match self {
             Self::Invalid(message) => message.clone(),
-            Self::Io(_) => {
+            Self::Archive { detail, .. } => archive::invalid(detail).message(),
+            Self::Io { .. } => {
                 "备份文件无法读写。请检查文件是否存在、磁盘空间和目录权限后重试。".into()
             }
             Self::Database(_) => "备份数据库无法读取或处理，文件可能已损坏。请换一份备份重试；\
@@ -351,7 +374,7 @@ pub async fn confirm(db: &SqlitePool, dir: &Path, now: i64) -> Result<()> {
     ensure_not_pending(dir)?;
     let stage = dir.join("restore");
     let manifest = archive::manifest(&stage.join("manifest.json")).map_err(|e| match e {
-        Error::Io(e) if e.kind() == io::ErrorKind::NotFound => {
+        Error::Io { source: e, .. } if e.kind() == io::ErrorKind::NotFound => {
             Error::Invalid("请先选择并检查备份文件，再确认恢复。".into())
         }
         e => e,

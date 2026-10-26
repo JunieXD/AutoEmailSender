@@ -26,7 +26,7 @@
 | `crates/writing` | AI 写信和核对：给模型的资料和规则，校验模型输出 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具 |
-| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
+| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`，保留归档错误的原因链，输出端 I/O 错误按读写失败报告）；界面用的 TypeScript 类型从这里生成 |
 | `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
 | `ui` | 界面；`ui/src/api/types.ts` 是生成的 |
