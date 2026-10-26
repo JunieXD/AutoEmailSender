@@ -323,8 +323,16 @@ impl Fetcher {
                 .build()
                 .unwrap()
         };
+        // Reject fixture certificates without depending on the OS trust service under load.
+        let tls = net::rustls::ClientConfig::builder_with_provider(Arc::new(
+            net::rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(net::rustls::RootCertStore::empty())
+        .with_no_client_auth();
         Self {
-            trusted: client(net.page_http_builder()),
+            trusted: client(net.page_http_builder().tls_backend_preconfigured(tls)),
             untrusted: client(net.untrusted_page_http_builder()),
             sites: Mutex::new(BTreeMap::new()),
         }

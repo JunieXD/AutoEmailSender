@@ -232,8 +232,9 @@ async fn changed_until(
     .await
     .unwrap();
 }
-#[sqlx::test(migrator = "db::MIGRATOR")]
-async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: SqlitePool) {
+#[tokio::test]
+async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end() {
+    let (dir, db) = test_fixtures::db::open().await.unwrap();
     let site = Site::new().await;
     site.page(
         "/",
@@ -429,6 +430,10 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
     );
     task.abort();
     model.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(model.await.unwrap_err().is_cancelled());
+    db.close().await;
+    dir.close().unwrap();
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
@@ -740,8 +745,9 @@ fn segments_preserve_blocks_and_external_output_is_checked() {
     assert!(people[0].profile.is_none());
 }
 
-#[sqlx::test(migrator = "db::MIGRATOR")]
-async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool) {
+#[tokio::test]
+async fn crawling_matching_and_drafting_share_three_actual_calls() {
+    let (dir, db) = test_fixtures::db::open().await.unwrap();
     let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     let site = Site::new().await;
@@ -890,6 +896,8 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     for worker in [crawl, matching, writing] {
         assert!(worker.await.unwrap_err().is_cancelled());
     }
+    db.close().await;
+    dir.close().unwrap();
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

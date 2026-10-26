@@ -128,20 +128,24 @@ pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
         starttls,
         || std::future::ready(()),
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await
 }
 
-/// Hooks pause the envelope before a recipient response and the uploaded body before its result.
-pub async fn smtp_with_hooks<R, B>(
+/// Hooks pause recipient responses, body results, and rejection replies before they reach
+/// the client.
+pub async fn smtp_with_hooks<R, B, E>(
     pki: &Pki,
     starttls: bool,
     on_rcpt: impl Fn() -> R + Send + Sync + 'static,
     on_body: impl Fn() -> B + Send + Sync + 'static,
+    on_reject: impl Fn() -> E + Send + Sync + 'static,
 ) -> (u16, Inbox)
 where
     R: Future<Output = ()> + Send + 'static,
     B: Future<Output = ()> + Send + 'static,
+    E: Future<Output = ()> + Send + 'static,
 {
     let tls = &pki.tls;
     let inbox = Inbox::default();
@@ -149,6 +153,7 @@ where
     let acceptor = tls.clone();
     let on_rcpt = Arc::new(on_rcpt);
     let on_body = Arc::new(on_body);
+    let on_reject = Arc::new(on_reject);
     let port = listen(tls, starttls, move |io| {
         smtp_session(
             io,
@@ -156,22 +161,25 @@ where
             received.clone(),
             on_rcpt.clone(),
             on_body.clone(),
+            on_reject.clone(),
         )
     })
     .await;
     (port, inbox)
 }
 
-async fn smtp_session<R, B>(
+async fn smtp_session<R, B, E>(
     mut io: BufReader<Box<dyn Stream>>,
     tls: TlsAcceptor,
     inbox: Inbox,
     on_rcpt: Arc<impl Fn() -> R + Send + Sync>,
     on_body: Arc<impl Fn() -> B + Send + Sync>,
+    on_reject: Arc<impl Fn() -> E + Send + Sync>,
 ) -> std::io::Result<()>
 where
     R: Future<Output = ()> + Send + 'static,
     B: Future<Output = ()> + Send + 'static,
+    E: Future<Output = ()> + Send + 'static,
 {
     let login = base64::engine::general_purpose::STANDARD.encode(format!("\0{ADDRESS}\0{SECRET}"));
     let backup_login =
@@ -244,6 +252,7 @@ where
                 }
                 on_body().await;
                 if reject_data {
+                    on_reject().await;
                     io.write_all(b"451 4.7.0 Message rate limit exceeded\r\n")
                         .await?;
                     io.flush().await?;
@@ -259,6 +268,9 @@ where
             Some("QUIT") => std::future::pending().await,
             _ => "502 unknown\r\n",
         };
+        if reply.starts_with('4') || reply.starts_with('5') {
+            on_reject().await;
+        }
         io.write_all(reply.as_bytes()).await?;
         io.flush().await?;
     }
