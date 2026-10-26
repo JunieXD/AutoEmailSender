@@ -218,7 +218,7 @@ function CrawlRecord({ crawl: c, expanded }: { crawl: CrawlSummary; expanded: bo
     <section className="rounded-lg bg-muted p-4">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <button
-          className="min-h-10 min-w-0 flex-1 text-left"
+          className="min-h-10 min-w-0 flex-1 text-left phone:basis-full"
           onClick={() => void navigate({ search: (s) => ({ ...s, detail: expanded ? undefined : c.id }) })}
           aria-expanded={expanded}
         >
