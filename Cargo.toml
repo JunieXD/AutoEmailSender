@@ -56,7 +56,8 @@ allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 
 # Line numbers are enough for panics and failing tests. Full debug info stays in the object files
-# on macOS and made every worktree's target tens of gigabytes.
+# on macOS and made every worktree's target tens of gigabytes. Dependency frames in backtraces keep
+# their function names; their line tables would add another 1.5 GB.
 [profile.dev]
 debug = "line-tables-only"
 
