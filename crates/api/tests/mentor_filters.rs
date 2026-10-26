@@ -34,6 +34,7 @@ async fn list_and_export_validate_filters_at_the_boundary(db: SqlitePool) {
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),
+        mail_domains: Default::default(),
         materials: Default::default(),
     };
     for score in [0, 101, 255] {

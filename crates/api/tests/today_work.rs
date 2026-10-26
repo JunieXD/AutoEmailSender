@@ -25,6 +25,7 @@ async fn today_work_counts_generated_drafts_retained_matches_and_confirmed_sends
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),
+        mail_domains: Default::default(),
         reply_processor: Default::default(),
         todo_reminders: Default::default(),
     };

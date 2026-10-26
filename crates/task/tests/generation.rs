@@ -203,7 +203,7 @@ async fn usage_write_failures_keep_the_letter_and_findings_without_calling_again
                 .unwrap();
         }
         assert_eq!(run.finished().await.generated, 1);
-        let drafts = task::pending(&db, id, 1).await.unwrap();
+        let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
         assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
         assert!(matches!(
             &drafts[0].draft.fact_check,
@@ -348,7 +348,12 @@ async fn failed_regeneration_is_not_counted_as_a_finished_draft(db: SqlitePool) 
         .ok()
         .unwrap();
     assert_eq!(run.finished().await.generated, 1);
-    let email = task::pending(&db, id, 1).await.unwrap().remove(0).draft.id;
+    let email = task::pending(&db, id, 1, |_| None)
+        .await
+        .unwrap()
+        .remove(0)
+        .draft
+        .id;
     task::regenerate(&db, id, Some(email), false, 2)
         .await
         .unwrap();
@@ -524,7 +529,7 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
         .ok();
     new.respond.send(Response::answer(LETTER)).ok().unwrap();
     assert_eq!(run.finished().await.generated, 1);
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.subject, "申请");
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -917,7 +922,7 @@ async fn disabling_fact_checks_while_writing_skips_the_second_call(db: SqlitePoo
     profile::set_ai_fact_check(&db, false).await.unwrap();
     writing.respond.send(Response::answer(LETTER)).ok().unwrap();
     assert_eq!(run.finished().await.generated, 1);
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
     assert_eq!(drafts[0].draft.fact_check, None);
     assert!(p.requests.try_recv().is_err());
@@ -1047,7 +1052,7 @@ async fn fact_check_rate_limit_cools_the_queue_without_regenerating_the_letter(d
             break;
         }
     }
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
     assert!(matches!(&drafts[0].draft.fact_check,
         Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));
@@ -1116,7 +1121,7 @@ async fn fact_check_account_errors_pause_remaining_work_and_keep_the_draft(db: S
         ),
         (1, 3, 0)
     );
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
     assert!(matches!(&drafts[0].draft.fact_check,
         Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));
