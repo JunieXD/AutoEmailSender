@@ -1708,6 +1708,100 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
     .unwrap();
     assert_eq!(page.total, 1);
     assert_eq!(page.drafts[0].problems, p.len());
+    sqlx::query(
+        r#"INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port,
+            smtp_security, imap_host, imap_port, imap_security, auth, secret,
+            daily_limit, min_interval_s, rotation_order, created_at)
+        VALUES ('me@example.com', '我', 'custom', 'localhost', 465, 'tls', 'localhost',
+            993, 'tls', 'password', 'test', 50, 0, 1, 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    for (kind, n) in [(Kind::First, 11), (Kind::FollowUp, 21)] {
+        let a = mentor(&db, n, true).await;
+        let b = mentor(&db, n + 1, true).await;
+        previous(&db, a, false, T - 1000).await;
+        previous(&db, b, false, T - 1000).await;
+        let mut form = form(&db, vec![a, b]).await;
+        form.kind = kind;
+        let task = create(&db, &form, T).await.unwrap();
+        let d = items(&db, task).await.remove(0);
+        let result = email::fact_check::FactCheck::Completed {
+            findings: ["申请", "3 篇论文"]
+                .into_iter()
+                .map(|quote| email::fact_check::Finding {
+                    quote: quote.into(),
+                    reason: "没有材料依据".into(),
+                })
+                .collect(),
+        };
+        assert!(
+            email::fact_check::save(&db, d.id, 0, &result, T)
+                .await
+                .unwrap()
+        );
+        let mut edit = DraftEdit {
+            task_id: task,
+            id: d.id,
+            subject: "申请【请补充：主题】".into(),
+            body_md: format!(
+                "导师{n}老师：导师{}老师提到附件。【请补充：时间】我发表了 3 篇论文。",
+                n + 1
+            ),
+            attachments: vec![],
+        };
+        for changed in [false, true] {
+            if changed {
+                edit.subject = "新的主题".into();
+                edit.body_md = format!("导师{n}老师：您好。疑问已修改。");
+            }
+            let editor = check(&db, &edit, T).await.unwrap();
+            assert_eq!(
+                editor
+                    .iter()
+                    .filter(|p| matches!(p, check::Problem::UnsupportedClaim { .. }))
+                    .count(),
+                if changed {
+                    usize::from(kind == Kind::FollowUp)
+                } else {
+                    2
+                }
+            );
+            assert_eq!(
+                editor
+                    .iter()
+                    .any(|p| matches!(p, check::Problem::RecentlyContacted { .. })),
+                kind == Kind::First
+            );
+            assert_eq!(editor.iter().any(|p| matches!(p, check::Problem::Placeholder { name } if name == "【请补充：主题】")), !changed && kind == Kind::First);
+            if changed {
+                let saved = pending(&db, task, T).await.unwrap();
+                assert!(saved.iter().find(|r| r.draft.id == d.id).unwrap().problems > editor.len());
+            }
+            save(&db, &edit, T).await.unwrap();
+            let list = drafts(
+                &db,
+                &DraftQuery {
+                    task_id: task,
+                    filter: DraftFilter::All,
+                    page: std::num::NonZeroU32::MIN,
+                },
+                T,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                list.drafts.iter().find(|r| r.id == d.id).unwrap().problems,
+                editor.len()
+            );
+            let bulk = pending(&db, task, T).await.unwrap();
+            assert_eq!(
+                bulk.iter().find(|r| r.draft.id == d.id).unwrap().problems,
+                editor.len()
+            );
+        }
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

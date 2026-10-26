@@ -403,38 +403,62 @@ fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
     if r.state != DraftState::Review {
         return vec![];
     }
-    let (subject, body) = (
-        if r.kind == Kind::FollowUp {
-            ""
-        } else {
-            r.subject.as_deref().unwrap_or_default()
+    letter_problems(
+        ReviewLetter {
+            follow_up: r.kind == Kind::FollowUp,
+            name: &r.name,
+            aliases: &r.aliases,
+            subject: r.subject.as_deref().unwrap_or_default(),
+            body: r.body_md.as_deref().unwrap_or_default(),
+            attached: !r.attachments.is_empty(),
+            contact_count: r.contact_count.unwrap_or(0),
+            last_out_at: r.last_out_at,
+            fact_check: r.fact_check.as_deref(),
         },
-        r.body_md.as_deref().unwrap_or_default(),
-    );
-    let mut p = check::letter(
-        &r.name,
-        &r.aliases,
-        subject,
-        body,
-        !r.attachments.is_empty(),
-    );
-    p.extend(check::other_mentors(
-        &r.name, &r.aliases, names, subject, body,
-    ));
-    if r.kind == Kind::First {
-        p.extend(check::recent(
-            r.contact_count.unwrap_or(0),
-            r.last_out_at,
-            now,
-        ));
-    }
-    p.extend(check::fact_check(
-        r.fact_check.as_deref(),
-        r.subject.as_deref().unwrap_or_default(),
-        body,
-    ));
-    p
+        names,
+        now,
+    )
 }
+
+struct ReviewLetter<'a> {
+    follow_up: bool,
+    name: &'a str,
+    aliases: &'a [String],
+    subject: &'a str,
+    body: &'a str,
+    attached: bool,
+    contact_count: i64,
+    last_out_at: Option<i64>,
+    fact_check: Option<&'a email::fact_check::FactCheck>,
+}
+
+fn letter_problems(letter: ReviewLetter<'_>, names: &[String], now: i64) -> Vec<check::Problem> {
+    let subject = if letter.follow_up { "" } else { letter.subject };
+    let mut problems = check::letter(
+        letter.name,
+        letter.aliases,
+        subject,
+        letter.body,
+        letter.attached,
+    );
+    problems.extend(check::other_mentors(
+        letter.name,
+        letter.aliases,
+        names,
+        subject,
+        letter.body,
+    ));
+    if !letter.follow_up {
+        problems.extend(check::recent(letter.contact_count, letter.last_out_at, now));
+    }
+    problems.extend(check::fact_check(
+        letter.fact_check,
+        letter.subject,
+        letter.body,
+    ));
+    problems
+}
+
 #[derive(Debug, Deserialize, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskEmail {
@@ -561,48 +585,32 @@ pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<ch
         .await?
         .ok_or_else(|| Error::Invalid("导师已被删除。".into()))?;
     let names = other_names(&mut tx, edit.task_id).await?;
-    let mut p = check::letter(
-        &m.name,
-        &m.aliases,
-        if row.kind == "follow_up" {
-            ""
-        } else {
-            &edit.subject
-        },
-        &edit.body_md,
-        !edit.attachments.is_empty(),
-    );
-    p.extend(check::other_mentors(
-        &m.name,
-        &m.aliases,
-        &names,
-        if row.kind == "follow_up" {
-            ""
-        } else {
-            &edit.subject
-        },
-        &edit.body_md,
-    ));
     let c = sqlx::query!(
         "SELECT contact_count,last_out_at FROM mentor_contact WHERE mentor_id = ?",
         row.mentor_id
     )
     .fetch_optional(&mut *tx)
     .await?;
-    if let Some(c) = c.filter(|_| row.kind == "first") {
-        p.extend(check::recent(c.contact_count, c.last_out_at, now));
-    }
     let subject = if row.kind == "follow_up" {
         row.subject.as_deref().unwrap_or_default()
     } else {
         &edit.subject
     };
-    p.extend(check::fact_check(
-        row.fact_check.as_deref(),
-        subject,
-        &edit.body_md,
-    ));
-    Ok(p)
+    Ok(letter_problems(
+        ReviewLetter {
+            follow_up: row.kind == "follow_up",
+            name: &m.name,
+            aliases: &m.aliases,
+            subject,
+            body: &edit.body_md,
+            attached: !edit.attachments.is_empty(),
+            contact_count: c.as_ref().map_or(0, |c| c.contact_count),
+            last_out_at: c.and_then(|c| c.last_out_at),
+            fact_check: row.fact_check.as_deref(),
+        },
+        &names,
+        now,
+    ))
 }
 #[derive(Debug, Deserialize, TS)]
 pub struct RenderedApproval {
