@@ -103,16 +103,10 @@ pub async fn write_task_draft(
     } else {
         None
     };
-    let mut letter = writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         d.mentor_id,
-        &writing::Letter {
-            subject: edit.subject,
-            body_md: edit.body_md,
-        },
         &edit.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &refs,
@@ -120,6 +114,17 @@ pub async fn write_task_draft(
                 .as_deref()
                 .map_or(writing::Kind::First, writing::Kind::FollowUp),
         },
+    )
+    .await?;
+    let mut letter = writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: edit.subject,
+            body_md: edit.body_md,
+        },
+        now(),
     )
     .await?;
     if t.kind == "follow_up" {
@@ -187,7 +192,7 @@ pub async fn retry_task_generation(ctx: &Context, key: TaskRetry) -> Result<u64,
     Ok(n)
 }
 
-pub async fn task_work(ctx: &Context, _: Nothing) -> Result<Vec<task::TaskSummary>, CallError> {
+pub async fn task_work(ctx: &Context, _: Nothing) -> Result<Vec<task::TaskWork>, CallError> {
     Ok(task::work(&ctx.db).await?)
 }
 

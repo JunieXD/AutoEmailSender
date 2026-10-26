@@ -453,6 +453,11 @@ pub async fn run(path: &Path) -> Result {
         median(async || task::list(&db, &query).await.map(drop)).await?,
         home,
     );
+    report(
+        "后台草稿任务摘要（20 个任务、6 万封邮件）",
+        median(async || task::work(&db).await.map(drop)).await?,
+        home,
+    );
     // Review text includes all rules, aliases, attachment counts and other task mentor names.
     sqlx::query(
         r#"UPDATE email SET state = 'review', error = NULL, cancel_reason = NULL

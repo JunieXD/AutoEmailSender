@@ -618,6 +618,8 @@ export type TaskState = "active" | "paused" | "stopped" | "completed";
 
 export type TaskSummary = { id: number, name: string, writer: Writer, kind: Kind, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, schedule: Schedule, };
 
+export type TaskWork = { id: number, name: string, state: TaskState, pauseReason: string | null, generating: number, };
+
 export type Template = { id: number, name: string, subject: string, bodyMd: string, };
 
 export type TemplateEdit = { id: number, name: string, subject: string, bodyMd: string, };
@@ -705,7 +707,7 @@ export interface Operations {
   scheduledWork: { input: Nothing; output: ScheduledWork };
   planTask: { input: NewTask; output: TaskPlan };
   createTask: { input: NewTask; output: TaskId };
-  taskWork: { input: Nothing; output: Array<TaskSummary> };
+  taskWork: { input: Nothing; output: Array<TaskWork> };
   listTasks: { input: TaskQuery; output: TaskPage };
   getTask: { input: TaskId; output: TaskSummary };
   listTaskDrafts: { input: DraftQuery; output: DraftPage };

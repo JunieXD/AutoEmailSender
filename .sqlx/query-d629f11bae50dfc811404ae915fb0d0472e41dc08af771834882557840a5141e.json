@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT template_id,template_subject,template_body_md FROM task WHERE id=?",
+  "query": "SELECT template_id, template_subject AS \"subject!: String\",\n            template_body_md AS \"body_md!: String\"\n        FROM task\n        WHERE id = ? AND writer = 'template'",
   "describe": {
     "columns": [
       {
@@ -15,7 +15,7 @@
         }
       },
       {
-        "name": "template_subject",
+        "name": "subject!: String",
         "ordinal": 1,
         "type_info": "Text",
         "origin": {
@@ -26,7 +26,7 @@
         }
       },
       {
-        "name": "template_body_md",
+        "name": "body_md!: String",
         "ordinal": 2,
         "type_info": "Text",
         "origin": {
@@ -46,5 +46,5 @@
       true
     ]
   },
-  "hash": "8089ea6652d6a49913c2e48b242f59c8b45d6df2dcd6dbf62da65cba2b73285c"
+  "hash": "d629f11bae50dfc811404ae915fb0d0472e41dc08af771834882557840a5141e"
 }

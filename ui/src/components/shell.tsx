@@ -216,7 +216,7 @@ function useBackground() {
     paused: tasks.data?.filter((t) => t.state === "paused") ?? [],
     crawlsPending: crawls.data?.filter((c) => c.state === "paused" || c.state === "failed" || c.failed > 0) ?? [],
     crawling: crawls.data?.filter((c) => c.state === "running") ?? [],
-    generating: tasks.data?.filter((t) => t.progress.generating > 0) ?? [],
+    generating: tasks.data?.filter((t) => t.generating > 0) ?? [],
     matching: matching.data?.remaining ?? 0,
     repliesPaused: replies.data?.pause ?? null,
     marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
@@ -353,7 +353,7 @@ function Background({ className }: { className?: string }) {
             ))}
             {work.generating.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
-                <Entry title={t.name} detail={`生成草稿，还剩 ${t.progress.generating} 封`} />
+                <Entry title={t.name} detail={`生成草稿，还剩 ${t.generating} 封`} />
               </Link>
             ))}
             {work.matching > 0 && (

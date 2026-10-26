@@ -196,7 +196,7 @@ operations! {
     "scheduledWork" => scheduled_work(Nothing) -> send::plan::ScheduledWork;
     "planTask" => plan_task(task::NewTask) -> task::TaskPlan;
     "createTask" => create_task(task::NewTask) -> TaskId;
-    "taskWork" => task_work(Nothing) -> Vec<task::TaskSummary>;
+    "taskWork" => task_work(Nothing) -> Vec<task::TaskWork>;
     "listTasks" => list_tasks(task::TaskQuery) -> task::TaskPage;
     "getTask" => get_task(TaskId) -> task::TaskSummary;
     "listTaskDrafts" => list_task_drafts(task::DraftQuery) -> task::DraftPage;
@@ -1426,20 +1426,18 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &current,
         &input.attachments,
-        at,
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::First,
         },
     )
-    .await?)
+    .await?;
+    Ok(writing::write(&ctx.db, &ctx.net, &prepared, &current, at).await?)
 }
 
 impl From<writing::Error> for CallError {
@@ -1788,21 +1786,26 @@ async fn write_follow_up(
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &writing::Letter {
-            subject: String::new(),
-            body_md: input.body_md,
-        },
         &input.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::FollowUp(&previous),
         },
+    )
+    .await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        now(),
     )
     .await?)
 }
@@ -1826,21 +1829,26 @@ async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Le
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &writing::Letter {
-            subject: String::new(),
-            body_md: input.body_md,
-        },
         &input.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::Reply(&previous),
         },
+    )
+    .await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        now(),
     )
     .await?)
 }
@@ -1874,7 +1882,7 @@ async fn get_ai_reply_outcome(ctx: &Context, _: Nothing) -> Result<bool, CallErr
     Ok(email::outcome::enabled(&ctx.db).await?)
 }
 async fn set_ai_reply_outcome(ctx: &Context, input: AiReplyOutcome) -> Result<(), CallError> {
-    email::outcome::set_enabled(&ctx.db, input.enabled, now()).await?;
+    email::outcome::set_enabled(&ctx.db, input.enabled).await?;
     ctx.reply_processor.wake();
     Ok(())
 }
@@ -1889,7 +1897,7 @@ async fn set_reply_outcome(ctx: &Context, input: ReplyOutcomeEdit) -> Result<(),
 }
 async fn retry_reply_outcome(ctx: &Context, input: ReplyMessage) -> Result<(), CallError> {
     require_applied(
-        email::outcome::retry(&ctx.db, input.message_id, now()).await?,
+        email::outcome::retry(&ctx.db, input.message_id).await?,
         "这封回信没有标记失败的结果可重试。",
     )?;
     ctx.reply_processor.wake();

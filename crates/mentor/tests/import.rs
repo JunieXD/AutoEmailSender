@@ -7,14 +7,13 @@ use sheet::Sheet;
 use sqlx::SqlitePool;
 
 fn table(rows: &[&[&str]]) -> Vec<Sheet> {
-    let sheet = Sheet {
+    vec![Sheet {
         name: "导师".into(),
         rows: rows
             .iter()
             .map(|r| r.iter().map(|s| (*s).into()).collect())
             .collect(),
-    };
-    sheet::read("导师.xlsx", &sheet::write_xlsx(&[sheet]).unwrap()).unwrap()
+    }]
 }
 async fn add(db: &SqlitePool, name: &str, emails: &[&str], university: &str) -> i64 {
     mentor::create(

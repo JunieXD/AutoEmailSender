@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE reply_processing SET state = 'queued', error = NULL\n        WHERE message_id = ? AND action = ? AND state = 'failed'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "e0ba9c47dad3b181d6dc3548d29306e5fc82de6e2780ecc03c5a7aabead022ce"
+}

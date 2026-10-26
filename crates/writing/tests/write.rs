@@ -104,13 +104,10 @@ async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePo
     }];
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let references = material::for_writing(&db).await.unwrap();
-    let letter = writing::write(
+    let prepared = writing::prepare(
         &db,
-        &Net::new(Vec::new()).unwrap(),
         id,
-        &blank(),
         &[],
-        T,
         writing::Basis {
             chosen: &chosen,
             references: &references,
@@ -119,6 +116,9 @@ async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePo
     )
     .await
     .unwrap();
+    let letter = writing::write(&db, &Net::new(Vec::new()).unwrap(), &prepared, &blank(), T)
+        .await
+        .unwrap();
     assert!(letter.subject.is_empty());
     assert!(letter.body_md.contains("之前的申请"));
     let (system, message) = received.lock().unwrap()[0].clone();
@@ -347,20 +347,18 @@ async fn current_write(
 ) -> Result<writing::Letter, writing::Error> {
     let chosen = model::chosen(db).await?.ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(db).await?;
-    writing::write(
+    let prepared = writing::prepare(
         db,
-        net,
         mentor,
-        current,
         attachments,
-        now,
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::First,
         },
     )
-    .await
+    .await?;
+    writing::write(db, net, &prepared, current, now).await
 }
 
 async fn received_message(
@@ -466,13 +464,10 @@ async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purpose
             .into(),
     };
     for letter in [&blank(), &current] {
-        let answer = writing::write(
+        let prepared = writing::prepare(
             &db,
-            &net,
             mentor,
-            letter,
             &[resume],
-            T,
             writing::Basis {
                 chosen: &chosen,
                 references: &references,
@@ -481,6 +476,9 @@ async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purpose
         )
         .await
         .unwrap();
+        let answer = writing::write(&db, &net, &prepared, letter, T)
+            .await
+            .unwrap();
         assert!(answer.subject.is_empty());
         assert!(answer.body_md.contains("【请补充：方便面谈的时间】"));
     }
@@ -548,13 +546,10 @@ async fn reply_context_stops_at_twenty_letters_and_ten_thousand_characters(db: S
         let previous = writing::reply::history(&db, mentor, "<1@example.edu>")
             .await
             .unwrap();
-        writing::write(
+        let prepared = writing::prepare(
             &db,
-            &net,
             mentor,
-            &blank(),
             &[],
-            T,
             writing::Basis {
                 chosen: &chosen,
                 references: &[],
@@ -563,6 +558,9 @@ async fn reply_context_stops_at_twenty_letters_and_ten_thousand_characters(db: S
         )
         .await
         .unwrap();
+        writing::write(&db, &net, &prepared, &blank(), T)
+            .await
+            .unwrap();
     }
     let calls = received.lock().unwrap();
     let short: Value = serde_json::from_str(&calls[0].1).unwrap();

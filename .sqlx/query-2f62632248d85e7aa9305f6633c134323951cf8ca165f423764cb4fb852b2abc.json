@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO task (name, kind, writer, schedule, window_dates, window_start,\n            window_end, per_window, template_id, template_subject, template_body_md,\n            model_config_id, state, created_at)\n        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)\n        RETURNING id AS \"id!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2f62632248d85e7aa9305f6633c134323951cf8ca165f423764cb4fb852b2abc"
+}
