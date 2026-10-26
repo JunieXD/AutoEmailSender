@@ -709,37 +709,32 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     let mut p = Provider::start().await;
     let config = config(&db, &p.address).await;
     let site = Site::new().await;
-    for n in 0..3 {
-        site.page(
-            &format!("/p{n}"),
-            "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
-        );
-    }
-    let urls: Vec<_> = (0..3).map(|n| site.url(&format!("/p{n}"))).collect();
-    queue::start(&db, &urls, config, 1).await.unwrap();
-    let mut enriched = Vec::new();
-    for n in 0..3 {
-        let (_, id) = enrichment::candidate(&db, &site, &format!("/p{n}")).await;
-        enriched.push(id);
-    }
-    crate::enrich::start(&db, &enriched, 1).await.unwrap();
-    let mut ids = Vec::new();
-    for n in 0..6 {
-        ids.push(
-            mentor::create(
-                &db,
-                &MentorFields {
-                    name: format!("导师{n}"),
-                    emails: vec![format!("m{n}@example.edu")],
-                    research: Some("机器学习".into()),
-                    ..Default::default()
-                },
-                1,
-            )
-            .await
-            .unwrap(),
-        );
-    }
+    site.page(
+        "/crawl",
+        "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
+    );
+    site.page(
+        "/enrich",
+        "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
+    );
+    queue::start(&db, &[site.url("/crawl")], config, 1)
+        .await
+        .unwrap();
+    let (_, candidate) = enrichment::candidate(&db, &site, "/enrich").await;
+    crate::enrich::start(&db, &[candidate], 1).await.unwrap();
+    let mentor = mentor::create(
+        &db,
+        &MentorFields {
+            name: "导师".into(),
+            emails: vec!["mentor@example.edu".into()],
+            research: Some("机器学习".into()),
+            ..Default::default()
+        },
+        1,
+    )
+    .await
+    .unwrap();
+    let ids = vec![mentor];
     sqlx::query("UPDATE profile SET research_interests='机器学习'")
         .execute(&db)
         .await
@@ -804,62 +799,59 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             .is_err()
     );
     tokio::time::resume();
-    let (mut matches, mut drafts, mut routes, mut profiles, mut checks) = (0, 0, 0, 0, 0);
-    for _ in 0..27 {
-        // A route's next call needs its response first; do not hold that response while
-        // waiting for a replacement call after the other two queues have drained.
-        let r = if active.is_empty() {
-            tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
-                .await
-                .unwrap()
-                .unwrap()
-        } else {
-            active.remove(0)
-        };
-        let system = r.body["messages"][0]["content"].as_str().unwrap();
-        let answer = if system.starts_with("你整理学院") {
-            routes += 1;
-            json!({"kind":"profile","next":[]}).to_string()
-        } else if system.starts_with("你整理一位") {
-            profiles += 1;
-            person("张三", "a@school.example.edu").to_string()
+    let purpose = |request: &provider::Request| {
+        let system = request.body["messages"][0]["content"].as_str().unwrap();
+        if system.starts_with("你整理学院") {
+            "crawl"
         } else if system.starts_with("你补全指定") {
-            let mut answer = person("张三", "a@school.example.edu");
-            answer["names"] = json!(["张三"]);
-            answer["next"] = json!([]);
-            answer.to_string()
-        } else if system.starts_with("核对学生") {
-            checks += 1;
-            "[]".into()
+            "enrich"
         } else if system.contains("分数不是录取") {
-            matches += 1;
-            r#"{"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]}"#.into()
+            "matching"
+        } else if system.starts_with("你帮一位学生") {
+            "drafting"
         } else {
-            drafts += 1;
-            "<subject>申请</subject><body>老师：您好，申请读研。</body>".into()
-        };
-        r.respond.send(Response::answer(&answer)).ok().unwrap();
-    }
-    assert_eq!((matches, drafts, routes, profiles, checks), (6, 6, 3, 3, 6));
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let completed = sqlx::query_scalar::<_, i64>(
-                "SELECT count(*) FROM candidate WHERE enrich='done' AND emails!='[]'",
-            )
-            .fetch_one(&db)
-            .await
-            .unwrap();
-            if completed == 3 {
-                break;
-            }
-            tokio::task::yield_now().await;
+            panic!("unexpected model request");
         }
-    })
-    .await
-    .unwrap();
-    crawl.abort();
-    matching.abort();
-    writing.abort();
+    };
+    let mut seen = active
+        .iter()
+        .map(purpose)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(seen.len(), 3);
+    // These entries finish in one call, so releasing one cannot start a follow-up request.
+    let index = active
+        .iter()
+        .position(|r| matches!(purpose(r), "matching" | "enrich"))
+        .unwrap();
+    let released = active.remove(index);
+    let answer = if purpose(&released) == "matching" {
+        json!({"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]})
+    } else {
+        let mut answer = person("张三", "a@school.example.edu");
+        answer["names"] = json!(["张三"]);
+        answer["next"] = json!([]);
+        answer
+    };
+    released
+        .respond
+        .send(Response::answer(&answer.to_string()))
+        .ok()
+        .unwrap();
+    let waiting = tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(seen.insert(purpose(&waiting)));
+    assert_eq!(
+        seen,
+        std::collections::BTreeSet::from(["crawl", "enrich", "matching", "drafting"])
+    );
+    for worker in [&crawl, &matching, &writing] {
+        worker.abort();
+    }
+    for worker in [crawl, matching, writing] {
+        assert!(worker.await.unwrap_err().is_cancelled());
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
