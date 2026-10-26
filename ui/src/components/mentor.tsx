@@ -110,6 +110,7 @@ export function refreshMentors(queryClient: QueryClient) {
     ["matchingProgress"],
     ["planMatching"],
     ["listMentors"],
+    ["mentorFilterOptions"],
     ["listTrash"],
     ["getMentor"],
     ["listCorrespondence"],
