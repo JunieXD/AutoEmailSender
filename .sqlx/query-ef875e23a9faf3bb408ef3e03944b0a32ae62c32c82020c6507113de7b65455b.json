@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.name, m.source_url,\n            m.trashed_at IS NOT NULL AS \"trashed!: bool\",\n            m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n            m.match_model, m.match_error, coalesce(m.matched_at < (SELECT\n            match_basis_changed_at FROM profile), 0) AS \"basis_changed!: bool\",\n            d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note,\n            d.match_reason,\n            d.match_directions AS \"match_directions: Json<Vec<String>>\",\n            d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n            d.match_risks AS \"match_risks: Json<Vec<String>>\",\n            c.status AS \"status?: ContactStatus\",\n            c.contact_count AS \"contact_count?\", c.last_out_at, c.last_reply_at,\n            c.unread AS \"unread?: bool\"\n        FROM mentor m\n        JOIN mentor_detail d ON d.mentor_id = m.id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        WHERE m.id = ?",
+  "query": "SELECT m.id, m.name, m.mailbox_id, m.source_url,\n            m.trashed_at IS NOT NULL AS \"trashed!: bool\",\n            m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n            m.match_model, m.match_error, coalesce(m.matched_at < (SELECT\n            match_basis_changed_at FROM profile), 0) AS \"basis_changed!: bool\",\n            d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note,\n            d.match_reason,\n            d.match_directions AS \"match_directions: Json<Vec<String>>\",\n            d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n            d.match_risks AS \"match_risks: Json<Vec<String>>\",\n            c.status AS \"status?: ContactStatus\",\n            c.contact_count AS \"contact_count?\", c.last_out_at, c.last_reply_at,\n            c.unread AS \"unread?: bool\"\n        FROM mentor m\n        JOIN mentor_detail d ON d.mentor_id = m.id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        WHERE m.id = ?",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "source_url",
+        "name": "mailbox_id",
         "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "mailbox_id"
+          }
+        }
+      },
+      {
+        "name": "source_url",
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,13 +49,13 @@
       },
       {
         "name": "trashed!: bool",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Integer",
         "origin": "Expression"
       },
       {
         "name": "match_state: MatchColumn",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -55,7 +66,7 @@
       },
       {
         "name": "match_score",
-        "ordinal": 5,
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -66,7 +77,7 @@
       },
       {
         "name": "matched_at",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -77,7 +88,7 @@
       },
       {
         "name": "match_model",
-        "ordinal": 7,
+        "ordinal": 8,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -88,7 +99,7 @@
       },
       {
         "name": "match_error",
-        "ordinal": 8,
+        "ordinal": 9,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -99,13 +110,13 @@
       },
       {
         "name": "basis_changed!: bool",
-        "ordinal": 9,
+        "ordinal": 10,
         "type_info": "Integer",
         "origin": "Expression"
       },
       {
         "name": "research",
-        "ordinal": 10,
+        "ordinal": 11,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -116,7 +127,7 @@
       },
       {
         "name": "papers: Json<Vec<String>>",
-        "ordinal": 11,
+        "ordinal": 12,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -127,7 +138,7 @@
       },
       {
         "name": "note",
-        "ordinal": 12,
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -138,7 +149,7 @@
       },
       {
         "name": "match_reason",
-        "ordinal": 13,
+        "ordinal": 14,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -149,7 +160,7 @@
       },
       {
         "name": "match_directions: Json<Vec<String>>",
-        "ordinal": 14,
+        "ordinal": 15,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -160,7 +171,7 @@
       },
       {
         "name": "match_highlights: Json<Vec<String>>",
-        "ordinal": 15,
+        "ordinal": 16,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -171,7 +182,7 @@
       },
       {
         "name": "match_risks: Json<Vec<String>>",
-        "ordinal": 16,
+        "ordinal": 17,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -182,7 +193,7 @@
       },
       {
         "name": "status?: ContactStatus",
-        "ordinal": 17,
+        "ordinal": 18,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -193,7 +204,7 @@
       },
       {
         "name": "contact_count?",
-        "ordinal": 18,
+        "ordinal": 19,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -204,7 +215,7 @@
       },
       {
         "name": "last_out_at",
-        "ordinal": 19,
+        "ordinal": 20,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -215,7 +226,7 @@
       },
       {
         "name": "last_reply_at",
-        "ordinal": 20,
+        "ordinal": 21,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -226,7 +237,7 @@
       },
       {
         "name": "unread?: bool",
-        "ordinal": 21,
+        "ordinal": 22,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -242,6 +253,7 @@
     "nullable": [
       false,
       false,
+      true,
       true,
       false,
       true,
@@ -264,5 +276,5 @@
       true
     ]
   },
-  "hash": "9e26a31af2d725c3b730ecdff4d5c52102e603212e879ad0adfec75fb372a2f6"
+  "hash": "ef875e23a9faf3bb408ef3e03944b0a32ae62c32c82020c6507113de7b65455b"
 }

@@ -127,6 +127,7 @@ vi.mock("@/api/call", () => ({
 const mentor: MentorDetail = {
   id: 7,
   name: "王伟",
+  mailboxId: null,
   aliases: [],
   emails: ["mentor@example.edu"],
   affiliations: [],

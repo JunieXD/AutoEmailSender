@@ -130,7 +130,8 @@ pub async fn update_letter_style(db: &SqlitePool, style: &LetterStyle) -> Result
 }
 
 /// How emails are spread over the mailboxes (docs/design.md#多邮箱轮转).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, sqlx::Type)]
+#[serde(rename_all = "camelCase")]
 #[sqlx(rename_all = "snake_case")]
 pub enum Rotation {
     /// One mailbox until it is paused or at its limit, then the next.
@@ -143,6 +144,13 @@ pub async fn rotation(db: &SqlitePool) -> Result<Rotation, sqlx::Error> {
     sqlx::query_scalar!(r#"SELECT rotation AS "rotation: Rotation" FROM profile"#)
         .fetch_one(db)
         .await
+}
+
+pub async fn set_rotation(db: &SqlitePool, rotation: Rotation) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET rotation = ?", rotation)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Makes the model configuration the default; false when there is no such configuration.
