@@ -2561,8 +2561,9 @@ async fn cancellation_crash_child() {
     panic!("child must exit after the durable claim");
 }
 
-#[sqlx::test(migrator = "db::MIGRATOR")]
-async fn cancellation_survives_crash_recovery(db: SqlitePool) {
+#[tokio::test]
+async fn cancellation_survives_crash_recovery() {
+    let (dir, db) = test_fixtures::db::open().await.unwrap();
     let mentor = approve(&db, "crash@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
     let path = db.connect_options().get_filename().to_path_buf();
@@ -2599,6 +2600,8 @@ async fn cancellation_survives_crash_recovery(db: SqlitePool) {
     );
     assert!(page.emails[0].error.is_some());
     assert!(!email::retry(&db, id, T + MINUTE).await.unwrap());
+    db.close().await;
+    dir.close().unwrap();
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

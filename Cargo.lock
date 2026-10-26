@@ -5089,6 +5089,7 @@ dependencies = [
  "sqlx",
  "task",
  "tempfile",
+ "test-fixtures",
  "tokio",
  "tracing",
  "ts-rs",
