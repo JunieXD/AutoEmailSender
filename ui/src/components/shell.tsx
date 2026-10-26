@@ -192,6 +192,15 @@ function UnreadBadge({ className }: { className?: string }) {
 }
 
 /** What runs in the background and what of it waits for the user (docs/ui.md#后台). */
+/** Today in the user's time zone, which the core cannot know. */
+function localToday() {
+  const now = new Date();
+  return {
+    start: new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime(),
+    end: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime(),
+  };
+}
+
 function useBackground() {
   const tasks = useQuery({
     queryKey: ["taskWork"],
@@ -205,12 +214,12 @@ function useBackground() {
   });
   const crawls = useQuery({
     queryKey: ["crawlWork"],
-    queryFn: () => {
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
-      return call("crawlWork", { start, end });
-    },
+    queryFn: () => call("crawlWork", localToday()),
+    refetchInterval: 3000,
+  });
+  const done = useQuery({
+    queryKey: ["todayWork"],
+    queryFn: () => call("todayWork", localToday()),
     refetchInterval: 3000,
   });
   const scheduled = useQuery({
@@ -250,6 +259,9 @@ function useBackground() {
     marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
     crawled:
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
+    drafted: done.data?.drafts ?? [],
+    matched: done.data?.matched ?? 0,
+    sent: done.data?.sent ?? 0,
     next: scheduled.data?.nextAt ?? null,
     nextToday: scheduled.data?.today ?? 0,
     error:
@@ -259,10 +271,12 @@ function useBackground() {
       scheduled.error ??
       crawls.error ??
       mailboxes.error ??
-      replies.error,
+      replies.error ??
+      done.error,
   };
   return {
     ...work,
+    finished: work.crawled.length + work.drafted.length + (work.matched > 0 ? 1 : 0) + (work.sent > 0 ? 1 : 0),
     running:
       work.crawling.length +
       work.generating.length +
@@ -485,20 +499,33 @@ function Background({ className }: { className?: string }) {
             )}
           </Group>
         )}
-        {work.crawled.length > 0 && (
+        {work.finished > 0 && (
           <Group title="今天完成">
             {work.crawled.map((c) => (
               <Link key={c.id} to="/find" search={findSearch({ crawl: c.id })} className={ITEM}>
                 <Entry title={crawlName(c)} detail={`找到 ${c.candidates} 位候选，去审核`} />
               </Link>
             ))}
+            {work.drafted.map((t) => (
+              <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
+                <Entry title={t.name} detail={`写好 ${t.generated} 封草稿，去审核`} />
+              </Link>
+            ))}
+            {work.matched > 0 && (
+              <Link to="/mentors" className={ITEM}>
+                <Entry title="匹配度分析" detail={`分析了 ${work.matched} 位，去导师列表`} />
+              </Link>
+            )}
+            {work.sent > 0 && (
+              <Link to="/tasks" search={{ tab: "plan", column: "history" }} className={ITEM}>
+                <Entry title="发信" detail={`发出 ${work.sent} 封，去发送历史`} />
+              </Link>
+            )}
           </Group>
         )}
-        {work.waiting === 0 &&
-          work.running === 0 &&
-          work.next === null &&
-          !work.receiving &&
-          work.crawled.length === 0 && <p className="text-muted-foreground">现在没有后台工作</p>}
+        {work.waiting === 0 && work.running === 0 && work.next === null && !work.receiving && work.finished === 0 && (
+          <p className="text-muted-foreground">现在没有后台工作</p>
+        )}
         {error && <p className="text-destructive">{errorMessage(error)}</p>}
       </PopoverContent>
     </Popover>
