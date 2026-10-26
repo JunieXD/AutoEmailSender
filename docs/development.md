@@ -52,7 +52,7 @@
 | `pnpm --dir ui icons` | 从 `docs/icon.svg` 和 `docs/tray.svg` 重新生成应用图标和托盘图标 |
 | `pnpm package` | 打包安装包 |
 
-- 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。发布前可以直接改迁移，改了以后开发版会拒绝打开旧的数据库：把 `.dev-data` 移到废纸篓，再运行 `cargo xtask seed`。
+- 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 - 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
@@ -127,7 +127,7 @@
 ## 数据库
 
 - 打开第一个连接前，`db` 先在一个线程上调用一次 `sqlite3_initialize()`，避开 SQLite 在 ARM 上多个线程同时首次初始化的竞争：`db::open` 建池前调用；测试经由 `db::MIGRATOR`（sqlx 建测试库前会先读它）触发，自己开第一个池的测试先 `LazyLock::force(&db::MIGRATOR)`。
-- 迁移只往后加，发布后不改已有的迁移。
+- 迁移只往后加，已经执行过的迁移不能修改，开发版和预览版也一样；sqlx 会校验迁移内容，修改旧迁移会让已有数据库无法打开。
 - 每次发布前，用上一版的真实数据库（去掉个人信息后作为测试数据）测一遍升级。
 - 新的高频查询先用 `EXPLAIN QUERY PLAN` 确认走了索引；列表只取要显示的列，并且分页。
 - 编号用 `INTEGER PRIMARY KEY AUTOINCREMENT`：删掉的编号不再分配给新的一行，界面里按编号缓存的数据和进行中的保存就不会把两样东西混在一起。

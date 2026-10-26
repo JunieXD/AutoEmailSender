@@ -56,7 +56,6 @@ CREATE TABLE profile (
   research_interests TEXT,
   rewrite_preference TEXT,
   onboarded INTEGER NOT NULL DEFAULT 0 CHECK (onboarded IN (0, 1)),
-  agent_access INTEGER NOT NULL DEFAULT 0 CHECK (agent_access IN (0, 1)),
   font TEXT CHECK (font IN ('song', 'hei')), -- NULL = the recipient's default font
   font_size_pt REAL NOT NULL,
   line_height REAL NOT NULL,
