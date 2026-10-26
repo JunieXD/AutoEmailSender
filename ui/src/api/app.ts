@@ -13,6 +13,11 @@ export function exportLogs(): Promise<boolean> {
   return invoke<boolean>("export_logs");
 }
 
+/** Saves the log lines of one crawl where the user chooses; false when canceled. */
+export function exportCrawlLog(id: number): Promise<boolean> {
+  return invoke<boolean>("export_crawl_log", { id });
+}
+
 /** Where the app keeps its data. */
 export function dataLocation(): Promise<string> {
   return invoke<string>("data_location");

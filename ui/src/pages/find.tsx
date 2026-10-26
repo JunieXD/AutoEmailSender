@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronDown } from "lucide-react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useState } from "react";
+import { exportCrawlLog } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import type {
   CandidateFilter,
@@ -307,6 +308,7 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
     onSuccess: () => refreshCrawls(client),
     onError: () => client.invalidateQueries({ queryKey: ["listModelConfigs"] }),
   });
+  const exported = useMutation({ mutationFn: () => exportCrawlLog(id) });
   return (
     <div className="mt-4 space-y-3 border-t border-border pt-4 text-sm">
       <ErrorText error={detail.error ?? retry.error} />
@@ -364,6 +366,13 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
               </p>
             ))}
           </details>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="quiet" disabled={exported.isPending} onClick={() => exported.mutate()}>
+              导出这次抓取的日志
+            </Button>
+            {exported.data && <span className="text-muted-foreground">已导出</span>}
+            <ErrorText error={exported.error} />
+          </div>
         </>
       )}
     </div>
