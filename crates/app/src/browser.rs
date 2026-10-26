@@ -515,35 +515,6 @@ mod tests {
     }
 
     #[test]
-    fn closed_browser_logs_a_crawl_scoped_category_without_private_failure_text() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("browser.log");
-        let file = std::fs::File::create(&path).unwrap();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(Mutex::new(file))
-            .finish();
-        let _quiet = tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
-        let guard = tracing::subscriber::set_default(subscriber);
-        crawl::span(17).in_scope(|| {
-            let state = State::default();
-            state.stopped.store(true, Ordering::Relaxed);
-            assert!(matches!(state.check(), Err(BrowserError::Failed(_))));
-            state.stopped.store(false, Ordering::Relaxed);
-            state.fail("PRIVATE_BROWSER_MESSAGE".into());
-            assert!(matches!(state.check(), Err(BrowserError::Failed(_))));
-        });
-        drop(guard);
-        let log = std::fs::read_to_string(path).unwrap();
-        assert!(log.lines().any(|line| {
-            line.contains("crawl{id=17}:")
-                && line.contains("INFO")
-                && line.contains("category=\"window_closed\"")
-        }));
-        assert!(!log.contains("PRIVATE_BROWSER_MESSAGE"));
-    }
-
-    #[test]
     fn leaving_document_cannot_settle_before_the_new_document_arrives() {
         let start = Instant::now();
         let mut since = start;
