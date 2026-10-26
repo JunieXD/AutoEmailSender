@@ -39,6 +39,27 @@ pub struct Context {
     pub materials: std::path::PathBuf,
 }
 
+impl Context {
+    pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
+        let writes = db::Writes::default();
+        Self {
+            crawler: crawl::runner::Crawler::new(writes.clone()),
+            writes,
+            db,
+            net,
+            materials,
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            reply_processor: Default::default(),
+            todo_reminders: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+            mail_domains: Default::default(),
+        }
+    }
+}
+
 /// What the UI shows when an operation fails.
 #[derive(Debug, Serialize, TS)]
 pub struct CallError {
@@ -2407,21 +2428,7 @@ mod writing_tests {
         )
         .await
         .unwrap();
-        let ctx = Context {
-            writes: db::Writes::default(),
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            mail_domains: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         let (old_address, old_received) = provider::scripted(vec![(
             "<subject>申请</subject><body>旧地址的信</body>",
             "stop",
@@ -2521,21 +2528,7 @@ mod writing_tests {
         )
         .await
         .unwrap();
-        let ctx = Context {
-            writes: db::Writes::default(),
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            mail_domains: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         // Follow-ups share checkReplyDraft with replies; all entry points reach check::letter.
         for op in ["checkFirstDraft", "checkReplyDraft"] {
             let problems = call(
@@ -2606,21 +2599,7 @@ mod reply_outcome_tests {
                 .unwrap();
             ids.push(id);
         }
-        let ctx = Context {
-            writes: db::Writes::default(),
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            mail_domains: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         assert_eq!(
             call(&ctx, "getAiReplyOutcome", json!({})).await.unwrap(),
             false
