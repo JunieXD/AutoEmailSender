@@ -3057,3 +3057,78 @@ async fn restart_requires_an_existing_source_and_all_selected_mentors(db: Sqlite
         .unwrap();
     assert!(inbox.lock().unwrap().is_empty());
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn background_work_only_includes_paused_generating_and_failed_tasks(db: SqlitePool) {
+    sqlx::query(
+        r#"WITH RECURSIVE n(id) AS (VALUES(1) UNION ALL SELECT id + 1 FROM n WHERE id < 1000)
+        INSERT INTO task (id, name, kind, writer, schedule, state, created_at)
+        SELECT id, '已结束', 'first', 'ai', 'now',
+            CASE WHEN id % 2 = 0 THEN 'stopped' ELSE 'active' END, 0 FROM n"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let mentor = mentor(&db, 1, true).await;
+    for (id, task_state, paused, email_state, count) in [
+        (1001, "paused", false, "review", 1),
+        (1002, "active", true, "generating", 2),
+        (1003, "active", false, "generating", 3),
+        (1004, "active", false, "generation_failed", 1),
+        (1005, "stopped", false, "failed", 1),
+        (1006, "stopped", true, "canceled", 1),
+        (1007, "active", false, "review", 1),
+        (1008, "active", false, "approved", 1),
+        (1009, "paused", false, "canceled", 1),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO task (id, name, kind, writer, schedule, state, created_at,
+                generation_paused_at, generation_pause_reason)
+            VALUES (?, '后台任务', 'first', 'ai', 'now', ?, 0, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(task_state)
+        .bind(paused.then_some(T))
+        .bind(paused.then_some("模型配置需要确认"))
+        .execute(&db)
+        .await
+        .unwrap();
+        for offset in 0..count {
+            let member = if offset == 0 {
+                mentor
+            } else {
+                self::mentor(&db, id + offset, true).await
+            };
+            sqlx::query(
+                r#"INSERT INTO email (task_id, mentor_id, kind, state, subject, body_md,
+                    html, text, error, cancel_reason, planned_at, created_at, updated_at)
+                VALUES (?1, ?2, 'first', ?3, '主题', '正文', '<p>正文</p>', '正文', ?4,
+                    CASE WHEN ?3 = 'canceled' THEN '任务停止' END, 0, 0, 0)"#,
+            )
+            .bind(id)
+            .bind(member)
+            .bind(email_state)
+            .bind(matches!(email_state, "generation_failed" | "failed").then_some("失败原因"))
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+    }
+    let tasks = work(&db).await.unwrap();
+    assert_eq!(
+        tasks.iter().map(|t| t.id).collect::<Vec<_>>(),
+        [1009, 1005, 1004, 1003, 1002, 1001]
+    );
+    for (t, (state, generating)) in tasks.iter().zip([
+        (TaskState::Paused, 0),
+        (TaskState::Stopped, 0),
+        (TaskState::Completed, 0),
+        (TaskState::Active, 3),
+        (TaskState::Paused, 2),
+        (TaskState::Paused, 0),
+    ]) {
+        assert_eq!(t.state, state);
+        assert_eq!(t.generating, generating);
+    }
+    assert_eq!(tasks[4].pause_reason.as_deref(), Some("模型配置需要确认"));
+}

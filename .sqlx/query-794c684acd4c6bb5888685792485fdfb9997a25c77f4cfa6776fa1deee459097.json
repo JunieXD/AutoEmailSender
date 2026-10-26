@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, name, kind AS \"kind: Kind\", writer AS \"writer: Writer\", state,\n            created_at, generation_paused_at, generation_pause_reason, model_config_id\n        FROM task\n        ORDER BY id DESC\n        LIMIT ?\n        OFFSET ?",
+  "query": "SELECT id, name, kind AS \"kind: Kind\", writer AS \"writer: Writer\", state,\n            created_at, generation_paused_at, generation_pause_reason, model_config_id\n        FROM task\n        ORDER BY id DESC\n        LIMIT 20\n        OFFSET ?",
   "describe": {
     "columns": [
       {
@@ -104,7 +104,7 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false,
@@ -118,5 +118,5 @@
       true
     ]
   },
-  "hash": "a2ce031e5e443215de2c9841309b0b90531aba93b2bf00bb9ae3dab87b73854b"
+  "hash": "794c684acd4c6bb5888685792485fdfb9997a25c77f4cfa6776fa1deee459097"
 }

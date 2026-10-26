@@ -108,42 +108,64 @@ pub async fn restart(
     }))
 }
 
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWork {
+    pub id: i64,
+    pub name: String,
+    pub state: TaskState,
+    pub pause_reason: Option<String>,
+    pub generating: i64,
+}
+
+pub async fn work(db: &SqlitePool) -> std::result::Result<Vec<TaskWork>, sqlx::Error> {
+    let rows = sqlx::query!(
+        r#"SELECT t.id, t.name, t.state, t.generation_paused_at, t.generation_pause_reason,
+            (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generating')
+                AS "generating!: i64",
+            EXISTS (SELECT 1 FROM email WHERE task_id = t.id AND state IN ('review', 'approved'))
+                AS "pending!: bool"
+        FROM task t
+        WHERE t.state = 'paused'
+            OR (t.state <> 'stopped' AND t.generation_paused_at IS NOT NULL)
+            OR t.id IN (SELECT task_id FROM email
+                WHERE state IN ('generating', 'generation_failed', 'failed'))
+        ORDER BY t.id DESC"#,
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| TaskWork {
+            id: r.id,
+            name: r.name,
+            state: state(
+                &r.state,
+                r.generation_paused_at.is_some(),
+                r.generating > 0 || r.pending,
+            ),
+            pause_reason: r.generation_pause_reason,
+            generating: r.generating,
+        })
+        .collect())
+}
+
 pub async fn list(
     db: &SqlitePool,
     query: &TaskQuery,
-) -> std::result::Result<TaskPage, sqlx::Error> {
-    list_page(db, query.page, 20).await
-}
-
-pub async fn work(db: &SqlitePool) -> std::result::Result<Vec<TaskSummary>, sqlx::Error> {
-    let mut tasks = list_page(db, NonZeroU32::MIN, -1).await?.tasks;
-    tasks.retain(|t| {
-        t.state == TaskState::Paused
-            || t.progress.generating > 0
-            || t.progress.generation_failed > 0
-            || t.progress.failed > 0
-    });
-    Ok(tasks)
-}
-
-async fn list_page(
-    db: &SqlitePool,
-    page: NonZeroU32,
-    limit: i64,
 ) -> std::result::Result<TaskPage, sqlx::Error> {
     let mut tx = db.begin().await?;
     let total = sqlx::query_scalar!("SELECT count(*) FROM task")
         .fetch_one(&mut *tx)
         .await?;
-    let offset = i64::from(page.get() - 1) * 20;
+    let offset = i64::from(query.page.get() - 1) * 20;
     let rows = sqlx::query!(
         r#"SELECT id, name, kind AS "kind: Kind", writer AS "writer: Writer", state,
             created_at, generation_paused_at, generation_pause_reason, model_config_id
         FROM task
         ORDER BY id DESC
-        LIMIT ?
+        LIMIT 20
         OFFSET ?"#,
-        limit,
         offset
     )
     .fetch_all(&mut *tx)
@@ -153,7 +175,11 @@ async fn list_page(
     let mut tasks = Vec::new();
     for r in rows {
         let progress = counts.remove(&r.id).unwrap_or_default();
-        let state = state(&r.state, r.generation_paused_at.is_some(), &progress);
+        let state = state(
+            &r.state,
+            r.generation_paused_at.is_some(),
+            progress.generating + progress.review + progress.approved > 0,
+        );
         tasks.push(TaskSummary {
             id: r.id,
             name: r.name,
@@ -169,12 +195,12 @@ async fn list_page(
     }
     Ok(TaskPage { tasks, total })
 }
-fn state(state: &str, paused: bool, p: &Progress) -> TaskState {
+fn state(state: &str, paused: bool, unfinished: bool) -> TaskState {
     if state == "stopped" {
         TaskState::Stopped
     } else if state == "paused" || paused {
         TaskState::Paused
-    } else if p.generating + p.review + p.approved == 0 {
+    } else if !unfinished {
         TaskState::Completed
     } else {
         TaskState::Active
@@ -235,7 +261,11 @@ pub async fn get(
         name: r.name,
         writer: r.writer,
         kind: r.kind,
-        state: state(&r.state, r.generation_paused_at.is_some(), &progress),
+        state: state(
+            &r.state,
+            r.generation_paused_at.is_some(),
+            progress.generating + progress.review + progress.approved > 0,
+        ),
         created_at: r.created_at,
         pause_reason: r.generation_pause_reason,
         model_config_id: r.model_config_id,

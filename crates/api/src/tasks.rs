@@ -192,7 +192,7 @@ pub async fn retry_task_generation(ctx: &Context, key: TaskRetry) -> Result<u64,
     Ok(n)
 }
 
-pub async fn task_work(ctx: &Context, _: Nothing) -> Result<Vec<task::TaskSummary>, CallError> {
+pub async fn task_work(ctx: &Context, _: Nothing) -> Result<Vec<task::TaskWork>, CallError> {
     Ok(task::work(&ctx.db).await?)
 }
 

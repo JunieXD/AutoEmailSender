@@ -196,7 +196,7 @@ operations! {
     "scheduledWork" => scheduled_work(Nothing) -> send::plan::ScheduledWork;
     "planTask" => plan_task(task::NewTask) -> task::TaskPlan;
     "createTask" => create_task(task::NewTask) -> TaskId;
-    "taskWork" => task_work(Nothing) -> Vec<task::TaskSummary>;
+    "taskWork" => task_work(Nothing) -> Vec<task::TaskWork>;
     "listTasks" => list_tasks(task::TaskQuery) -> task::TaskPage;
     "getTask" => get_task(TaskId) -> task::TaskSummary;
     "listTaskDrafts" => list_task_drafts(task::DraftQuery) -> task::DraftPage;

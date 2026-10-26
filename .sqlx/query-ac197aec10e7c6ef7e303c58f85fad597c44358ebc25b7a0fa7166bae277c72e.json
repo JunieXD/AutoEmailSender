@@ -1,0 +1,88 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.id, t.name, t.state, t.generation_paused_at, t.generation_pause_reason,\n            (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generating')\n                AS \"generating!: i64\",\n            EXISTS (SELECT 1 FROM email WHERE task_id = t.id AND state IN ('review', 'approved'))\n                AS \"pending!: bool\"\n        FROM task t\n        WHERE t.state = 'paused'\n            OR (t.state <> 'stopped' AND t.generation_paused_at IS NOT NULL)\n            OR t.id IN (SELECT task_id FROM email\n                WHERE state IN ('generating', 'generation_failed', 'failed'))\n        ORDER BY t.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "generation_paused_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "generation_paused_at"
+          }
+        }
+      },
+      {
+        "name": "generation_pause_reason",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "generation_pause_reason"
+          }
+        }
+      },
+      {
+        "name": "generating!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "pending!: bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "ac197aec10e7c6ef7e303c58f85fad597c44358ebc25b7a0fa7166bae277c72e"
+}
