@@ -53,6 +53,7 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
             todo_reminders: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
+            mail_domains: Default::default(),
         },
         restored,
     ))

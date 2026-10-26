@@ -4,7 +4,9 @@
 pub mod backup;
 mod crawling;
 mod fact_check;
+mod mail_domains;
 use fact_check::*;
+pub use mail_domains::MailDomains;
 pub mod startup;
 mod statistics;
 mod tasks;
@@ -32,6 +34,7 @@ pub struct Context {
     pub crawler: crawl::runner::Crawler,
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
+    pub mail_domains: MailDomains,
     /// Where material files are kept.
     pub materials: std::path::PathBuf,
 }
@@ -1492,16 +1495,10 @@ pub struct MailAddress {
 /// A lookup that fails, such as when offline, tells nothing: the interface shows no error and
 /// asks again later (docs/design.md#联系).
 async fn check_mail_domain(
-    _: &Context,
+    ctx: &Context,
     input: MailAddress,
 ) -> Result<Option<check::Problem>, CallError> {
-    check::mail_domain(&input.address).await.map_err(|e| {
-        tracing::warn!("looking up a mail domain: {e}");
-        CallError {
-            code: ErrorCode::External,
-            message: "未能查询导师邮箱的域名。".into(),
-        }
-    })
+    ctx.mail_domains.check(&input.address).await
 }
 
 /// The mentor's first draft as the user approved it, with the HTML and plain text the interface
@@ -2332,6 +2329,7 @@ mod writing_tests {
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
+            mail_domains: Default::default(),
             materials: Default::default(),
         };
         let (old_address, old_received) = provider::scripted(vec![(
@@ -2445,6 +2443,7 @@ mod writing_tests {
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
+            mail_domains: Default::default(),
             materials: Default::default(),
         };
         // Follow-ups share checkReplyDraft with replies; all entry points reach check::letter.
@@ -2529,6 +2528,7 @@ mod reply_outcome_tests {
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
+            mail_domains: Default::default(),
             materials: Default::default(),
         };
         assert_eq!(

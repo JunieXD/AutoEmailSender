@@ -1,11 +1,4 @@
-import {
-  keepPreviousData,
-  skipToken,
-  useMutation,
-  useMutationState,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useImperativeHandle, useRef, useState, type Ref, type ReactNode } from "react";
 import { call, errorMessage } from "@/api/call";
@@ -91,19 +84,13 @@ export function TaskLetter({
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
   const checks = useQuery({
-    queryKey: ["checkTaskDraft", letter, mentor.name, mentor.aliases],
+    queryKey: ["checkTaskDraft", letter, mentor.name, mentor.aliases, mentor.emails.at(0)],
     queryFn: () => call("checkTaskDraft", letter),
     placeholderData: keepPreviousData,
     gcTime: 0,
   });
   const address = mentor.emails.at(0);
-  const domain = useQuery({
-    queryKey: ["checkMailDomain", address],
-    queryFn: address ? () => call("checkMailDomain", { address }) : skipToken,
-    staleTime: Infinity,
-    refetchOnReconnect: true,
-  });
-  const problems = [...(checks.data ?? []), ...(domain.data ? [domain.data] : [])];
+  const problems = checks.data ?? [];
   async function saved() {
     await waitForSaves(client, ["uploadLetterMaterial", mentor.id], false);
     await flush();

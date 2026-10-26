@@ -58,6 +58,7 @@ async fn items(db: &SqlitePool, task: i64) -> Vec<TaskDraft> {
             page: std::num::NonZeroU32::MIN,
         },
         T,
+        |_| None,
     )
     .await
     .unwrap();
@@ -1713,6 +1714,7 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
             page: std::num::NonZeroU32::MIN,
         },
         T,
+        |_| None,
     )
     .await
     .unwrap();
@@ -1786,7 +1788,7 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
             );
             assert_eq!(editor.iter().any(|p| matches!(p, check::Problem::Placeholder { name } if name == "【请补充：主题】")), !changed && kind == Kind::First);
             if changed {
-                let saved = pending(&db, task, T).await.unwrap();
+                let saved = pending(&db, task, T, |_| None).await.unwrap();
                 assert!(saved.iter().find(|r| r.draft.id == d.id).unwrap().problems > editor.len());
             }
             save(&db, &edit, T).await.unwrap();
@@ -1798,6 +1800,7 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
                     page: std::num::NonZeroU32::MIN,
                 },
                 T,
+                |_| None,
             )
             .await
             .unwrap();
@@ -1805,7 +1808,7 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
                 list.drafts.iter().find(|r| r.id == d.id).unwrap().problems,
                 editor.len()
             );
-            let bulk = pending(&db, task, T).await.unwrap();
+            let bulk = pending(&db, task, T, |_| None).await.unwrap();
             assert_eq!(
                 bulk.iter().find(|r| r.draft.id == d.id).unwrap().problems,
                 editor.len()

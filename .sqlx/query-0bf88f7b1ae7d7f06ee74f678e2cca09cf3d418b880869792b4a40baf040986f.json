@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.address\n        FROM email e\n        JOIN mentor_email m ON m.mentor_id = e.mentor_id AND m.position = 0\n        WHERE e.id = ? AND e.task_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "address",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0bf88f7b1ae7d7f06ee74f678e2cca09cf3d418b880869792b4a40baf040986f"
+}

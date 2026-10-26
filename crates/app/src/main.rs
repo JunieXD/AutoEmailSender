@@ -221,6 +221,7 @@ async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
         crawler,
         generator,
         model_limit,
+        ..
     } = &ctx;
     let ui = app.clone();
     tauri::async_runtime::spawn(send::run(

@@ -50,7 +50,10 @@ pub async fn list_task_drafts(
     ctx: &Context,
     q: task::DraftQuery,
 ) -> Result<task::DraftPage, CallError> {
-    Ok(task::drafts(&ctx.db, &q, now()).await?)
+    Ok(task::drafts(&ctx.db, &q, now(), |address| {
+        ctx.mail_domains.known_or_start(address)
+    })
+    .await?)
 }
 pub async fn get_task_draft(
     ctx: &Context,
@@ -67,7 +70,24 @@ pub async fn check_task_draft(
     ctx: &Context,
     edit: task::DraftEdit,
 ) -> Result<Vec<check::Problem>, CallError> {
-    Ok(task::check(&ctx.db, &edit, now()).await?)
+    let mut problems = task::check(&ctx.db, &edit, now()).await?;
+    let address = sqlx::query_scalar!(
+        r#"SELECT m.address
+        FROM email e
+        JOIN mentor_email m ON m.mentor_id = e.mentor_id AND m.position = 0
+        WHERE e.id = ? AND e.task_id = ?"#,
+        edit.id,
+        edit.task_id
+    )
+    .fetch_optional(&ctx.db)
+    .await?;
+    if let Some(address) = address {
+        // DNS failure says nothing about the address and must not hide the other checks.
+        if let Ok(Some(problem)) = ctx.mail_domains.check(&address).await {
+            problems.push(problem);
+        }
+    }
+    Ok(problems)
 }
 pub async fn write_task_draft(
     ctx: &Context,
@@ -146,7 +166,10 @@ pub async fn prepare_task_approval(
     ctx: &Context,
     key: TaskId,
 ) -> Result<Vec<task::ApprovalCandidate>, CallError> {
-    Ok(task::pending(&ctx.db, key.id, now()).await?)
+    Ok(task::pending(&ctx.db, key.id, now(), |address| {
+        ctx.mail_domains.known_or_start(address)
+    })
+    .await?)
 }
 pub async fn approve_task_emails(
     ctx: &Context,

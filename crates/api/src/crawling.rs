@@ -264,6 +264,7 @@ mod tests {
             generator: task::generation::Generator::default(),
             crawler: crawl::runner::Crawler::default(),
             model_limit: Default::default(),
+            mail_domains: Default::default(),
             materials: Default::default(),
         };
         sqlx::query!("UPDATE profile SET default_model_config_id = ?", ids[1])
@@ -345,6 +346,7 @@ mod tests {
             generator: task::generation::Generator::default(),
             crawler: crawl::runner::Crawler::default(),
             model_limit: Default::default(),
+            mail_domains: Default::default(),
             materials: Default::default(),
         };
         let error = enrich_candidates(&ctx, CandidateIds { ids: vec![id] })
