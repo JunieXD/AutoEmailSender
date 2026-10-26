@@ -3,6 +3,7 @@
 
 //! Writing letters with a small HTTP server that runs in the test and answers like a provider.
 
+use email::fact_check::Finding;
 use mentor::{Affiliation, MentorForm};
 use model::{ModelError, ModelForm};
 use net::Net;
@@ -372,6 +373,28 @@ async fn current_write(
     .await
 }
 
+async fn check(
+    db: &SqlitePool,
+    net: &Net,
+    email: i64,
+    letter: &Letter,
+    chosen: &model::Chosen,
+    references: &[material::Reference],
+) -> Result<Vec<Finding>, writing::fact_check::Error> {
+    writing::fact_check::check(db, net, email, letter, chosen, references, |usage| {
+        model::usage::record_for_email(
+            db,
+            chosen.id,
+            &chosen.model,
+            model::usage::Purpose::FactCheck,
+            Some(email),
+            usage,
+            T,
+        )
+    })
+    .await
+}
+
 async fn received_message(
     db: &SqlitePool,
     mentor: i64,
@@ -665,18 +688,7 @@ async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: Sqlit
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let references = material::for_writing(&db).await.unwrap();
     let net = Net::new(vec![]).unwrap();
-    let work =
-        writing::fact_check::check(&db, &net, email, &letter, &chosen, &references, |usage| {
-            model::usage::record_for_email(
-                &db,
-                chosen.id,
-                &chosen.model,
-                model::usage::Purpose::FactCheck,
-                Some(email),
-                usage,
-                T,
-            )
-        });
+    let work = check(&db, &net, email, &letter, &chosen, &references);
     let respond = async {
         let request = provider.requests.recv().await.unwrap();
         let data: Value =
@@ -750,19 +762,9 @@ async fn invalid_fact_check_is_corrected_once_and_records_both_calls(db: SqliteP
         .id;
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let net = Net::new(vec![]).unwrap();
-    let findings = writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], |usage| {
-        model::usage::record_for_email(
-            &db,
-            chosen.id,
-            &chosen.model,
-            model::usage::Purpose::FactCheck,
-            Some(email),
-            usage,
-            T,
-        )
-    })
-    .await
-    .unwrap();
+    let findings = check(&db, &net, email, &letter, &chosen, &[])
+        .await
+        .unwrap();
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].quote, "正文");
     assert_eq!(usage(&db).await.len(), 2);
@@ -796,35 +798,13 @@ async fn incomplete_fact_check_is_an_error_and_still_records_usage(db: SqlitePoo
     let net = Net::new(vec![]).unwrap();
     for _ in 0..2 {
         assert!(matches!(
-            writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], |usage| {
-                model::usage::record_for_email(
-                    &db,
-                    chosen.id,
-                    &chosen.model,
-                    model::usage::Purpose::FactCheck,
-                    Some(email),
-                    usage,
-                    T,
-                )
-            })
-            .await,
+            check(&db, &net, email, &letter, &chosen, &[]).await,
             Err(writing::fact_check::Error::InvalidAnswer)
         ));
     }
     chosen.agreed = false;
     assert!(matches!(
-        writing::fact_check::check(&db, &net, email, &letter, &chosen, &[], |usage| {
-            model::usage::record_for_email(
-                &db,
-                chosen.id,
-                &chosen.model,
-                model::usage::Purpose::FactCheck,
-                Some(email),
-                usage,
-                T,
-            )
-        })
-        .await,
+        check(&db, &net, email, &letter, &chosen, &[]).await,
         Err(writing::fact_check::Error::NotAgreed)
     ));
     assert_eq!(usage(&db).await.len(), 3);

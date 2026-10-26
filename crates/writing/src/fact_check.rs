@@ -85,7 +85,8 @@ pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
     let me = profile::get(db).await?;
     let message = message(&me, references, letter);
     let mut system = SYSTEM.to_owned();
-    for attempt in 0..2 {
+    let mut retried = false;
+    loop {
         let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
             .await
             .map_err(Error::Model)?;
@@ -104,7 +105,8 @@ pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
         }
         match parse(&answer.text, letter) {
             Ok(findings) => return Ok(findings),
-            Err(error) if attempt == 0 => {
+            Err(error) if !retried => {
+                retried = true;
                 system = format!(
                     "{SYSTEM}\n上一次回答的校验错误：{error}。请按字段要求重新输出一个完整的 JSON 数组。"
                 );
@@ -112,7 +114,6 @@ pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
             Err(_) => return Err(Error::InvalidAnswer),
         }
     }
-    unreachable!("both attempts return")
 }
 
 fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, String> {
@@ -121,11 +122,11 @@ fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, String> {
         text = rest.strip_suffix("```").ok_or("代码围栏没有结束")?.trim();
     }
     let findings: Vec<Finding> = serde_json::from_str(text).map_err(|e| {
-        format!(
-            "字段类型不符合要求（第 {} 行第 {} 列）",
-            e.line(),
-            e.column()
-        )
+        let reason = match e.classify() {
+            serde_json::error::Category::Data => "字段类型不符合要求",
+            _ => "不是合法的 JSON",
+        };
+        format!("{reason}（第 {} 行第 {} 列）", e.line(), e.column())
     })?;
     let mut checked: Vec<Finding> = Vec::new();
     for mut finding in findings {
@@ -148,6 +149,32 @@ fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_errors_distinguish_invalid_json_from_invalid_fields_without_quoting_answers() {
+        let letter = Letter {
+            subject: "申请".into(),
+            body_md: "正文".into(),
+        };
+        for (text, reason) in [
+            (
+                r#"[{"quote":"private-model-answer","reason":123}]"#,
+                "字段类型不符合要求",
+            ),
+            (
+                r#"[{"quote":"private-model-answer","reason":"x"},]"#,
+                "不是合法的 JSON",
+            ),
+            (
+                r#"[{"quote":"private-model-answer","reason":"x"}"#,
+                "不是合法的 JSON",
+            ),
+        ] {
+            let error = parse(text, &letter).unwrap_err();
+            assert!(error.starts_with(reason), "{error}");
+            assert!(!error.contains("private-model-answer"));
+        }
+    }
 
     #[test]
     fn findings_require_a_closed_fence_and_only_one_thinking_block() {
