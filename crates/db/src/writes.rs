@@ -102,7 +102,8 @@ mod tests {
     use tokio::sync::mpsc;
 
     async fn connection() -> SqliteConnection {
-        std::sync::LazyLock::force(&crate::MIGRATOR);
+        // Direct connections bypass the migrator's serialized SQLite initialization.
+        crate::initialize_sqlite();
         SqliteConnection::connect(":memory:").await.unwrap()
     }
 
