@@ -97,6 +97,21 @@ impl Access {
         }
     }
 
+    fn cancel_requests(&self) {
+        let pending = std::mem::take(&mut self.requests().pending);
+        if pending.is_empty() {
+            return;
+        }
+        for pending in pending {
+            tracing::info!(
+                op = pending.request.op,
+                decision = "cancelled",
+                "agent confirmation"
+            );
+        }
+        self.emit(Event::RequestsChanged);
+    }
+
     pub(crate) async fn confirm(
         &self,
         op: &str,
@@ -138,7 +153,8 @@ impl Access {
         match answer {
             Ok(Ok(true)) => Ok(()),
             Ok(Ok(false)) => Err(CallError::invalid("你在应用里拒绝了这个操作".into())),
-            Ok(Err(error)) => Err(CallError::internal(error)),
+            // Closing access removes unanswered requests and drops their answer senders.
+            Ok(Err(_)) => Err(CallError::invalid("这个请求已经失效".into())),
             Err(_) => {
                 confirmation.decision = "timeout";
                 Err(CallError::invalid("你没有在应用里确认".into()))
@@ -331,8 +347,8 @@ async fn serve(
     mut running: Option<Running>,
     mut changes: mpsc::Receiver<Change>,
 ) {
-    let mut clients = JoinSet::new();
-    let (shutdown, _) = watch::channel(false);
+    let mut clients = JoinSet::<io::Result<()>>::new();
+    let (mut shutdown, _) = watch::channel(false);
     let authenticating = Arc::new(Semaphore::new(MAX_AUTHENTICATING));
     let mut accept_after = Instant::now();
     loop {
@@ -359,8 +375,7 @@ async fn serve(
                     &ctx,
                     &dir,
                     &mut running,
-                    &mut clients,
-                    &shutdown,
+                    &mut shutdown,
                     change.enabled,
                 ).await;
                 if result.is_ok() {
@@ -408,31 +423,21 @@ async fn change_access(
     ctx: &Context,
     dir: &Path,
     running: &mut Option<Running>,
-    clients: &mut JoinSet<io::Result<()>>,
-    shutdown: &watch::Sender<bool>,
+    shutdown: &mut watch::Sender<bool>,
     enabled: bool,
 ) -> Result<(), CallError> {
     if enabled {
         if running.is_none() {
             let started = listen(dir)?;
             profile::set_agent_access(&ctx.db, true).await?;
-            shutdown.send_replace(false);
+            // Old sessions must stay closed even if they have not polled their signal yet.
+            *shutdown = watch::channel(false).0;
             *running = Some(started);
         }
     } else {
         profile::set_agent_access(&ctx.db, false).await?;
         shutdown.send_replace(true);
-        while let Some(result) = clients.join_next().await {
-            match result {
-                Err(error) => {
-                    tracing::error!("agent connection task failed: {error}");
-                }
-                Ok(Err(error)) => {
-                    tracing::warn!(kind = ?error.kind(), "agent connection ended");
-                }
-                Ok(Ok(())) => {}
-            }
-        }
+        ctx.agent_access.cancel_requests();
         if let Some(running) = running.take() {
             running.close().map_err(CallError::internal)?;
         } else {
@@ -476,6 +481,7 @@ async fn session(
     let (frames, mut requests) = mpsc::channel(1);
     let (closed, mut cancelled) = watch::channel(false);
     let mut reader_closed = closed.subscribe();
+    let mut call_shutdown = shutdown.clone();
     let reading = async {
         let result = async {
             loop {
@@ -520,7 +526,12 @@ async fn session(
                                 // The transport may already have been closed.
                                 let _ = waiting.send(description.clone());
                             },
-                            wait_closed(&mut cancelled),
+                            async {
+                                tokio::select! {
+                                    () = wait_closed(&mut cancelled) => {},
+                                    () = wait_closed(&mut call_shutdown) => {},
+                                }
+                            },
                         )
                         .await
                     }

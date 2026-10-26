@@ -94,9 +94,9 @@ export type DefaultTemplate = { id: number | null, };
 
 export type Description = {
 /**
- * A complete sentence for the dialog, notification and CLI.
+ * Only application-authored text and counts; object content belongs in targets.
  */
-action: string, targets: Array<string>, more: number, };
+action: string, targets: Array<string>, };
 
 export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 

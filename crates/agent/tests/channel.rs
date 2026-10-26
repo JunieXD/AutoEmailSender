@@ -206,11 +206,15 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
         .get_mut()
         .write_all(format!("{}\n", token.token).as_bytes())
         .await?;
+    let name = format!(
+        "AGENT_UNTRUSTED_LABEL 缓存” （只清理缓存，不会丢失资料） “\n{}",
+        "x".repeat(1000)
+    );
     let tag = api::call(
         &ctx,
         "createTag",
         json!({
-            "name":"准备联系", "color":"#112233", "mentorIds":[]
+            "name":name, "color":"#112233", "mentorIds":[]
         }),
     )
     .await
@@ -224,8 +228,7 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["op"], "deleteTag");
     assert_eq!(requests[0]["description"], waiting["waiting"]);
-    assert_eq!(requests[0]["description"]["targets"], json!(["准备联系"]));
-    assert_eq!(requests[0]["description"]["more"], 0);
+    assert_eq!(requests[0]["description"]["targets"], json!([name]));
     assert!(
         requests[0]["description"]["action"]
             .as_str()
@@ -270,7 +273,7 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
         &ctx,
         "createTag",
         json!({
-            "name":"保留", "color":"#112233", "mentorIds":[]
+            "name":name, "color":"#112233", "mentorIds":[]
         }),
     )
     .await
@@ -333,10 +336,11 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
     // The actual executable prints progress on stderr and exactly one final JSON line on stdout.
     while changed.try_recv().is_ok() {}
     let cli_dir = dir.path().to_owned();
+    let cli_input = json!({"id":retained["id"]}).to_string();
     let output = tokio::task::spawn_blocking(move || {
         std::process::Command::new(env!("CARGO_BIN_EXE_autoemail"))
             .env("AUTOEMAIL_DATA_DIR", cli_dir)
-            .args(["call", "deleteTag", "{\"id\":-1}"])
+            .args(["call", "deleteTag", &cli_input])
             .output()
     });
     while !matches!(changed.recv().await, Some(Event::Requested(_))) {}
@@ -353,6 +357,7 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
     let stderr = String::from_utf8(output.stderr)?;
     assert_eq!(stderr.lines().count(), 1);
     assert!(stderr.starts_with("等你在 Auto Email Sender 里确认："));
+    assert!(!stderr.contains("AGENT_UNTRUSTED_LABEL"));
     setting(&ctx, false).await?;
     ctx.db.close().await;
     Ok(())
@@ -415,6 +420,88 @@ async fn allowed_execution_survives_a_disconnect_while_waiting_for_the_write_loc
             .fetch_one(&ctx.db)
             .await?
     );
+    setting(&ctx, false).await?;
+    ctx.db.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn disabling_and_reopening_do_not_wait_for_an_executing_external_call() -> Result {
+    use api::agent::Event;
+    use test_fixtures::provider::{Provider, Response};
+    let dir = tempfile::tempdir()?;
+    let _lock = api::startup::DataLock::acquire(dir.path())?;
+    let (ctx, _) = api::startup::open(dir.path()).await?;
+    let ctx = Arc::new(ctx);
+    let (events, mut changed) = tokio::sync::mpsc::unbounded_channel();
+    let _server = api::agent::start(ctx.clone(), dir.path().to_owned(), move |event| {
+        let _ = events.send(event);
+    })
+    .await
+    .map_err(|e| e.message)?;
+    setting(&ctx, true).await?;
+    let token = credentials(dir.path())?;
+    let mut stream = BufReader::new(agent::connect(dir.path(), &token).await?);
+    stream
+        .get_mut()
+        .write_all(format!("{}\n", token.token).as_bytes())
+        .await?;
+    let mut provider = Provider::start().await?;
+    send(
+        stream.get_mut(),
+        "testModel",
+        json!({
+            "name":"", "provider":"custom", "baseUrl":provider.address, "model":"fixture", "apiKey":"fixture"
+        }),
+    )
+    .await?;
+    let request = tokio::select! {
+        request = provider.requests.recv() => request.ok_or("fake model did not receive a request")?,
+        response = frame(&mut stream) => {
+            return Err(format!("testModel ended before the fixture responded: {:?}", response?).into());
+        }
+    };
+    let mut pending_stream = BufReader::new(agent::connect(dir.path(), &token).await?);
+    pending_stream
+        .get_mut()
+        .write_all(format!("{}\n", token.token).as_bytes())
+        .await?;
+    send(pending_stream.get_mut(), "deleteTag", json!({"id":-1})).await?;
+    frame(&mut pending_stream).await?;
+    let id = pending(&ctx).await?[0]["id"].clone();
+
+    // The fixture owns the response barrier until after both switch operations have returned.
+    // The timeout only bounds a regression; it does not coordinate the operation's stages.
+    tokio::time::timeout(std::time::Duration::from_secs(5), setting(&ctx, false)).await??;
+    assert!(!agent::token_path(dir.path()).exists());
+    assert!(pending(&ctx).await?.is_empty());
+    assert!(answer(&ctx, &id, true).await.is_err());
+    tokio::time::timeout(std::time::Duration::from_secs(5), setting(&ctx, true)).await??;
+    let fresh = credentials(dir.path())?;
+    assert!(fresh.token != token.token);
+    let mut reopened = BufReader::new(agent::connect(dir.path(), &fresh).await?);
+    reopened
+        .get_mut()
+        .write_all(format!("{}\n", fresh.token).as_bytes())
+        .await?;
+    send(reopened.get_mut(), "getProfile", json!({})).await?;
+    assert!(frame(&mut reopened).await?.get("ok").is_some());
+    send(reopened.get_mut(), "deleteTag", json!({"id":-2})).await?;
+    frame(&mut reopened).await?;
+    let new_id = pending(&ctx).await?[0]["id"].clone();
+    answer(&ctx, &new_id, false).await?;
+    assert!(frame(&mut reopened).await?.get("error").is_some());
+    while changed.try_recv().is_ok() {}
+    request
+        .respond
+        .send(Response::answer("好"))
+        .map_err(|_| "fake response was dropped")?;
+    request.completed.await?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !matches!(changed.recv().await, Some(Event::Called)) {}
+    })
+    .await?;
+    assert_eq!(stream.read_line(&mut String::new()).await?, 0);
     setting(&ctx, false).await?;
     ctx.db.close().await;
     Ok(())

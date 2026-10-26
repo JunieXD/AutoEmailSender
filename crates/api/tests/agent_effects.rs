@@ -326,3 +326,107 @@ async fn approval_rechecks_changed_candidate_addresses_and_allows_effects_no_lon
         }
     }
 }
+
+async fn refuses_changed_candidate_recipient(
+    db: SqlitePool,
+    count: usize,
+    shown: &str,
+    changed: &str,
+) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mut mentors = Vec::new();
+    let mut candidates = Vec::new();
+    for i in 0..count {
+        let name = format!("导师{i}");
+        let before = format!("old{i}@example.invalid");
+        let mentor = mentor::create(
+            &ctx.db,
+            &mentor::MentorFields {
+                name: name.clone(),
+                emails: vec![before.clone()],
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 0)
+            .await
+            .unwrap();
+        let candidate = sqlx::query_scalar::<_, i64>(
+            r#"INSERT INTO candidate (name, emails, review, enrich)
+            VALUES (?, ?, 'pending', 'none')
+            RETURNING id"#,
+        )
+        .bind(name)
+        .bind(json!([before, format!("{i}-{shown}")]).to_string())
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+        mentors.push((mentor, before));
+        candidates.push(candidate);
+    }
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        &ctx,
+        "acceptCandidates",
+        json!({"ids":candidates, "decisions":{"take":[], "matches":[], "restore":[]}}),
+        |_| {
+            let _ = registered.send(());
+        },
+        pending(),
+    );
+    let change_and_allow = async {
+        waiting.await.unwrap();
+        let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+        let last = count - 1;
+        sqlx::query("UPDATE candidate SET emails = ? WHERE id = ?")
+            .bind(json!([mentors[last].1, format!("{last}-{changed}")]).to_string())
+            .bind(candidates[last])
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        call(
+            &ctx,
+            "answerAgentRequest",
+            json!({"id":requests[0]["id"], "allow":true}),
+        )
+        .await
+        .unwrap();
+    };
+    let (result, ()) = tokio::join!(calling, change_and_allow);
+    assert_eq!(
+        result.unwrap_err().message,
+        "等你确认期间情况变了，请重新发起"
+    );
+    for (id, before) in mentors {
+        assert_eq!(
+            mentor::get(&ctx.db, id).await.unwrap().unwrap().emails[0],
+            before
+        );
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM candidate WHERE review = 'pending'")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        count as i64
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn confirmation_detects_recipient_changes_after_the_first_forty_characters(db: SqlitePool) {
+    let prefix = "a".repeat(45);
+    refuses_changed_candidate_recipient(
+        db,
+        1,
+        &format!("{prefix}1@a.edu"),
+        &format!("{prefix}2@b.edu"),
+    )
+    .await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn confirmation_detects_a_change_to_only_the_sixth_mentor(db: SqlitePool) {
+    refuses_changed_candidate_recipient(db, 6, "shown@a.edu", "unshown@b.edu").await;
+}

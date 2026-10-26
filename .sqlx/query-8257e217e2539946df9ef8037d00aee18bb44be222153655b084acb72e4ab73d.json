@@ -1,0 +1,52 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name, json_extract(selected.value, '$[1]') AS \"address?: String\",\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"old_address?: String\",\n            COUNT(*) AS \"count!: i64\"\n        FROM json_each(?) selected\n        JOIN mentor m ON m.id = json_extract(selected.value, '$[0]')\n        JOIN email e ON e.mentor_id = m.id\n        WHERE e.state = 'approved'\n        GROUP BY m.id\n        ORDER BY m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "address?: String",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "old_address?: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null,
+      false,
+      null
+    ]
+  },
+  "hash": "8257e217e2539946df9ef8037d00aee18bb44be222153655b084acb72e4ab73d"
+}

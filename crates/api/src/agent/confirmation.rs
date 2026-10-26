@@ -1,4 +1,6 @@
-//! The confirmation decision and its explanation use the same snapshot of each affected object.
+//! Confirmation effects remain complete for rechecking; presentation belongs to the caller.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sqlx::types::Json;
@@ -8,84 +10,66 @@ use crate::{CallError, Context};
 
 #[derive(Clone, PartialEq, Eq, Serialize, TS)]
 pub struct Description {
-    /// A complete sentence for the dialog, notification and CLI.
+    /// Only application-authored text and counts; object content belongs in targets.
     pub action: String,
     pub targets: Vec<String>,
-    pub more: usize,
 }
 
 impl Description {
     fn new(action: String, targets: Vec<String>) -> Self {
-        let more = targets.len().saturating_sub(5);
-        Self {
-            action,
-            targets: targets
-                .iter()
-                .take(5)
-                .map(|target| preview_text(target))
-                .collect(),
-            more,
-        }
+        Self { action, targets }
     }
-}
-
-fn preview_text(value: &str) -> String {
-    let normalized = value
-        .split(|ch: char| ch.is_control() || ch.is_whitespace())
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut chars = normalized.chars();
-    let mut preview: String = chars.by_ref().take(40).collect();
-    if chars.next().is_some() {
-        preview.push('…');
-    }
-    preview
 }
 
 fn parse<T: DeserializeOwned>(input: &serde_json::Value) -> Result<T, CallError> {
     serde_json::from_value(input.clone()).map_err(CallError::bad_input)
 }
 
-fn names(targets: &[String]) -> String {
-    let shown = targets
-        .iter()
-        .take(5)
-        .map(|name| preview_text(name))
-        .collect::<Vec<_>>()
-        .join("、");
-    if targets.len() > 5 {
-        format!("{shown}等 {} 位导师", targets.len())
-    } else {
-        shown
-    }
-}
-
-async fn mentor_names(ctx: &Context, ids: &[i64]) -> Result<Vec<String>, CallError> {
+async fn mentor_targets(ctx: &Context, ids: &[i64]) -> Result<Vec<String>, CallError> {
     let ids = Json(ids);
-    Ok(sqlx::query_scalar!(
-        r#"SELECT COALESCE(m.name, '找不到的导师（可能已被删除）') AS "name!: String"
+    let rows = sqlx::query!(
+        r#"SELECT COALESCE(m.name, '找不到的导师（可能已被删除）') AS "name!: String",
+            (SELECT address FROM mentor_email
+                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String"
         FROM json_each(?) selected
         LEFT JOIN mentor m ON m.id = selected.value
         ORDER BY CAST(selected.key AS INTEGER)"#,
         ids
     )
     .fetch_all(&ctx.db)
-    .await?)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let address = row.address.as_deref().unwrap_or("未填写邮箱");
+            format!("{}：{address}", row.name)
+        })
+        .collect())
 }
 
-async fn email_names(ctx: &Context, ids: &[i64]) -> Result<Vec<String>, CallError> {
+async fn email_targets(ctx: &Context, ids: &[i64]) -> Result<Vec<String>, CallError> {
     let ids = Json(ids);
-    Ok(sqlx::query_scalar!(
-        r#"SELECT COALESCE(m.name, '找不到邮件对应的导师（邮件可能已被删除）') AS "name!: String"
+    let rows = sqlx::query!(
+        r#"SELECT COALESCE(m.name, '找不到邮件对应的导师（邮件可能已被删除）') AS "name!: String",
+            (SELECT address FROM mentor_email
+                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String",
+            COUNT(*) AS "count!: i64"
         FROM json_each(?) selected
         LEFT JOIN email e ON e.id = selected.value
         LEFT JOIN mentor m ON m.id = e.mentor_id
-        ORDER BY CAST(selected.key AS INTEGER)"#,
+        GROUP BY m.id, CASE WHEN m.id IS NULL THEN selected.value END
+        ORDER BY MIN(CAST(selected.key AS INTEGER))"#,
         ids
     )
     .fetch_all(&ctx.db)
-    .await?)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let address = row.address.as_deref().unwrap_or("未填写邮箱");
+            format!("{}：{address}（{} 封）", row.name, row.count)
+        })
+        .collect())
 }
 
 async fn task_name(ctx: &Context, id: i64) -> Result<String, CallError> {
@@ -93,7 +77,6 @@ async fn task_name(ctx: &Context, id: i64) -> Result<String, CallError> {
         sqlx::query_scalar!("SELECT name FROM task WHERE id = ?", id)
             .fetch_optional(&ctx.db)
             .await?
-            .map(|name| preview_text(&name))
             .unwrap_or_else(|| "找不到的任务（可能已被删除）".into()),
     )
 }
@@ -103,14 +86,12 @@ async fn mailbox_address(ctx: &Context, id: i64) -> Result<String, CallError> {
         sqlx::query_scalar!("SELECT address FROM mailbox WHERE id = ?", id)
             .fetch_optional(&ctx.db)
             .await?
-            .map(|address| preview_text(&address))
             .unwrap_or_else(|| "找不到的邮箱（可能已被删除）".into()),
     )
 }
 
-fn object(action: &str, kind: &str, target: String) -> Description {
-    let target = preview_text(&target);
-    Description::new(format!("{action}{kind}“{target}”"), vec![target])
+fn object(action: &str, target: String) -> Description {
+    Description::new(action.into(), vec![target])
 }
 
 #[derive(Deserialize)]
@@ -127,114 +108,107 @@ pub(crate) async fn confirmation(
     let description = match op {
         "approveTaskEmails" => {
             let input: task::TaskApprovals = parse(input)?;
-            let ids = input.emails.iter().map(|e| e.id).collect::<Vec<_>>();
-            let targets = email_names(ctx, &ids).await?;
+            let ids = input
+                .emails
+                .iter()
+                .map(|email| email.id)
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let targets = email_targets(ctx, &ids).await?;
             Description::new(
-                format!("发出给{}的 {} 封邮件", names(&targets), ids.len()),
+                format!("发出 {} 封邮件，给 {} 位导师", ids.len(), targets.len()),
                 targets,
             )
         }
         "approveFirstEmail" | "approveFollowUp" | "approveReply" => {
             let input: MentorKey = parse(input)?;
-            let targets = mentor_names(ctx, &[input.mentor_id]).await?;
-            let kind = match op {
-                "approveFirstEmail" => "首封邮件",
-                "approveFollowUp" => "追问",
-                _ => "回复邮件",
+            let targets = mentor_targets(ctx, &[input.mentor_id]).await?;
+            let action = match op {
+                "approveFirstEmail" => "发出 1 封首封邮件",
+                "approveFollowUp" => "发出 1 封追问邮件",
+                _ => "发出 1 封回复邮件",
             };
-            Description::new(format!("发出给{}的{kind}", names(&targets)), targets)
+            Description::new(action.into(), targets)
         }
         "sendEmailNow" | "resendEmail" | "retryEmail" => {
             let input: crate::EmailId = parse(input)?;
-            let targets = email_names(ctx, &[input.id]).await?;
+            let targets = email_targets(ctx, &[input.id]).await?;
             let action = match op {
-                "sendEmailNow" => "立即发出",
-                "resendEmail" => "重新发出",
-                _ => "重试发出",
+                "sendEmailNow" => "立即发出 1 封邮件",
+                "resendEmail" => "重新发出 1 封邮件",
+                _ => "重试发出 1 封邮件",
             };
-            Description::new(format!("{action}给{}的邮件", names(&targets)), targets)
+            Description::new(action.into(), targets)
         }
         "resumeTask" | "deleteTask" => {
             let input: crate::TaskId = parse(input)?;
             let target = task_name(ctx, input.id).await?;
             let action = if op == "resumeTask" {
-                format!("恢复任务“{target}”的发信")
+                "恢复 1 个任务的发信"
             } else {
-                format!("永久删除任务“{target}”及其中的草稿")
+                "永久删除 1 个任务及其中的草稿"
             };
-            Description::new(action, vec![target])
+            object(action, target)
         }
         "resumeMailbox" | "deleteMailbox" => {
             let input: crate::MailboxId = parse(input)?;
             let target = mailbox_address(ctx, input.id).await?;
-            if op == "resumeMailbox" {
-                Description::new(format!("恢复邮箱 {target} 的发信"), vec![target])
+            let action = if op == "resumeMailbox" {
+                "恢复 1 个邮箱的发信"
             } else {
-                object("永久删除", "邮箱", target)
-            }
+                "永久删除 1 个邮箱"
+            };
+            object(action, target)
         }
         "changeTaskSchedule" => {
             let input: task::ScheduleEdit = parse(input)?;
             let target = task_name(ctx, input.id).await?;
-            let action = match input.schedule {
-                email::schedule::Schedule::Now => format!("把任务“{target}”改为立即发送"),
+            match input.schedule {
+                email::schedule::Schedule::Now => object("把任务改为立即发送", target),
                 email::schedule::Schedule::Window(window) => {
-                    let dates = window
-                        .dates
-                        .iter()
-                        .map(
-                            |date| match chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
-                                Ok(date) => date.format("%-m月%-d日").to_string(),
-                                // The dispatcher rejects it when allowed; show what the Agent sent.
-                                Err(_) => preview_text(date),
-                            },
-                        )
-                        .collect::<Vec<_>>()
-                        .join("、");
-                    format!(
-                        "把任务“{target}”的发送时间改为 {dates}的 {}–{}，每个窗口最多 {} 封",
-                        preview_text(&window.start),
-                        preview_text(&window.end),
-                        window.per_window
-                    )
+                    let dates = window.dates.join("、");
+                    let target = format!(
+                        "{target}：{dates} 的 {}–{}，每个窗口最多 {} 封",
+                        window.start, window.end, window.per_window
+                    );
+                    object("更改 1 个任务的发送时间", target)
                 }
-            };
-            Description::new(action, vec![target])
+            }
         }
         "rescheduleEmail" => {
             let input: crate::RescheduleEmail = parse(input)?;
-            let targets = email_names(ctx, &[input.id]).await?;
+            let targets = email_targets(ctx, &[input.id]).await?;
             let at = chrono::DateTime::from_timestamp_millis(input.planned_at)
                 .map(|at| {
                     at.with_timezone(&chrono::Local)
-                        .format("%-m月%-d日 %H:%M")
+                        .format("%Y年%-m月%-d日 %H:%M:%S%.3f")
                         .to_string()
                 })
-                .unwrap_or_else(|| "无法识别的时间（请检查所选时间）".into());
+                .unwrap_or_else(|| format!("无法识别的时间：{}", input.planned_at));
             Description::new(
-                format!("把给{}的邮件发送时间改为 {at}", names(&targets)),
-                targets,
+                "更改 1 封邮件的发送时间".into(),
+                targets
+                    .into_iter()
+                    .map(|target| format!("{target}；发送时间：{at}"))
+                    .collect(),
             )
         }
         "deleteMentors" => {
             let input: crate::MentorIds = parse(input)?;
-            let targets = mentor_names(ctx, &input.ids).await?;
-            Description::new(
-                format!("永久删除 {} 位导师：{}", targets.len(), names(&targets)),
-                targets,
-            )
+            let ids = input
+                .ids
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let targets = mentor_targets(ctx, &ids).await?;
+            Description::new(format!("永久删除 {} 位导师", targets.len()), targets)
         }
         "mergeMentors" => {
             let input: crate::MentorMerge = parse(input)?;
-            let targets = mentor_names(ctx, &[input.other, input.keep]).await?;
-            Description::new(
-                format!(
-                    "把导师{}并入{}",
-                    preview_text(&targets[0]),
-                    preview_text(&targets[1])
-                ),
-                targets,
-            )
+            let targets = mentor_targets(ctx, &[input.other, input.keep]).await?;
+            Description::new("合并 2 位导师，前一位并入后一位".into(), targets)
         }
         "deleteTemplate" => {
             let input: crate::TemplateId = parse(input)?;
@@ -242,7 +216,7 @@ pub(crate) async fn confirmation(
                 .fetch_optional(&ctx.db)
                 .await?
                 .unwrap_or_else(|| "找不到的模板（可能已被删除）".into());
-            object("永久删除", "模板", name)
+            object("永久删除 1 个模板", name)
         }
         "deleteMaterial" => {
             let input: crate::MaterialId = parse(input)?;
@@ -250,21 +224,32 @@ pub(crate) async fn confirmation(
                 .fetch_optional(&ctx.db)
                 .await?
                 .unwrap_or_else(|| "找不到的材料（可能已被删除）".into());
-            object("永久删除", "材料", name)
+            object("永久删除 1 份材料", name)
         }
         "deleteCrawl" => {
             let input: crate::CrawlId = parse(input)?;
-            let name = sqlx::query_scalar!(
-                r#"SELECT COALESCE(NULLIF(trim(COALESCE(university, '') || ' ' ||
-                    COALESCE(school, '')), ''), '导师抓取') AS "name!: String"
-                FROM crawl
-                WHERE id = ?"#,
+            let row = sqlx::query!(
+                "SELECT university, school FROM crawl WHERE id = ?",
                 input.id
             )
             .fetch_optional(&ctx.db)
-            .await?
-            .unwrap_or_else(|| "找不到的抓取（可能已被删除）".into());
-            object("永久删除", "抓取", name)
+            .await?;
+            let name = match row {
+                Some(row) => {
+                    let parts = row
+                        .university
+                        .into_iter()
+                        .chain(row.school)
+                        .collect::<Vec<_>>();
+                    if parts.is_empty() {
+                        "导师抓取".into()
+                    } else {
+                        parts.join(" ")
+                    }
+                }
+                None => "找不到的抓取（可能已被删除）".into(),
+            };
+            object("永久删除 1 项抓取记录", name)
         }
         "deleteTag" => {
             let input: crate::TagId = parse(input)?;
@@ -272,7 +257,7 @@ pub(crate) async fn confirmation(
                 .fetch_optional(&ctx.db)
                 .await?
                 .unwrap_or_else(|| "找不到的标签（可能已被删除）".into());
-            object("永久删除", "标签", name)
+            object("永久删除 1 个标签", name)
         }
         "deleteTodo" => {
             let input: crate::TodoId = parse(input)?;
@@ -286,7 +271,7 @@ pub(crate) async fn confirmation(
             .fetch_optional(&ctx.db)
             .await?
             .unwrap_or_else(|| "找不到的待办（可能已被删除）".into());
-            object("永久删除", "待办", name)
+            object("永久删除 1 条待办", name)
         }
         "deleteModelConfig" => {
             let input: crate::ModelConfigId = parse(input)?;
@@ -299,7 +284,7 @@ pub(crate) async fn confirmation(
             .fetch_optional(&ctx.db)
             .await?
             .unwrap_or_else(|| "找不到的模型配置（可能已被删除）".into());
-            object("永久删除", "模型配置", name)
+            object("永久删除 1 个模型配置", name)
         }
         "agreeModel" => {
             let input: crate::ModelAgreement = parse(input)?;
@@ -308,19 +293,21 @@ pub(crate) async fn confirmation(
                     .fetch_optional(&ctx.db)
                     .await?
                     .unwrap_or_else(|| "找不到的模型配置（可能已被删除）".into());
-            let provider = if input.provider == model::providers::CUSTOM {
-                input
-                    .base_url
-                    .unwrap_or_else(|| "自定义服务（未填写地址）".into())
+            let (provider, address) = if input.provider == model::providers::CUSTOM {
+                (
+                    "自定义模型服务",
+                    input.base_url.unwrap_or_else(|| "未填写服务地址".into()),
+                )
             } else {
-                model::providers::find(&input.provider)
-                    .map_or("找不到的模型服务商", |p| p.name)
-                    .into()
+                match model::providers::find(&input.provider) {
+                    Some(provider) => (provider.name, provider.base_url.into()),
+                    None => ("找不到的模型服务商", input.provider),
+                }
             };
-            let provider = preview_text(&provider);
-            let model = preview_text(&model);
-            let target = format!("{provider}（{model}）");
-            Description::new(format!("同意把数据发给 {target}"), vec![target])
+            object(
+                "同意把数据发给这个模型服务",
+                format!("{provider}（{model}）：{address}"),
+            )
         }
         "updateMailbox" => {
             let input: crate::MailboxEdit = parse(input)?;
@@ -337,11 +324,7 @@ pub(crate) async fn confirmation(
             let Some(address) = address else {
                 return Ok(None);
             };
-            let address = preview_text(&address);
-            Description::new(
-                format!("改邮箱 {address} 的设置：会马上恢复发信"),
-                vec![address],
-            )
+            object("改邮箱的设置：会马上恢复发信", address)
         }
         "saveFirstDraft" | "saveReplyDraft" => {
             let (mentor, kind) = if op == "saveFirstDraft" {
@@ -372,9 +355,12 @@ pub(crate) async fn confirmation(
             .fetch_optional(&ctx.db)
             .await?;
             let Some(name) = name else { return Ok(None) };
-            let name = preview_text(&name);
-            let kind = if kind == "first" { "首封" } else { "回复" };
-            Description::new(format!("删除给{name}的{kind}草稿"), vec![name])
+            let action = if kind == "first" {
+                "删除 1 封首封草稿"
+            } else {
+                "删除 1 封回复草稿"
+            };
+            object(action, name)
         }
         "updateMentor" => {
             let input: crate::MentorEdit = parse(input)?;
@@ -429,7 +415,10 @@ async fn changed_recipient(
     address: Option<&str>,
 ) -> Result<Option<Description>, CallError> {
     let row = sqlx::query!(
-        r#"SELECT m.name, COUNT(*) AS count
+        r#"SELECT m.name,
+            (SELECT address FROM mentor_email
+                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "old_address?: String",
+            COUNT(*) AS "count!: i64"
         FROM mentor m
         JOIN email e ON e.mentor_id = m.id
         WHERE m.id = ?1 AND e.state = 'approved'
@@ -442,19 +431,23 @@ async fn changed_recipient(
     .fetch_optional(&ctx.db)
     .await?;
     Ok(row.map(|row| {
-        let name = preview_text(&row.name);
-        let action = match address {
-            Some(address) => format!(
-                "把导师{name}的发信地址改成 {}：已批准还没发出的 {} 封会发到新地址",
-                preview_text(address),
+        let action = if address.is_some() {
+            format!(
+                "改 1 位导师的发信地址：已批准还没发出的 {} 封会发到新地址",
                 row.count
-            ),
-            None => format!(
-                "移除导师{name}的发信地址：已批准还没发出的 {} 封将没有收件地址",
+            )
+        } else {
+            format!(
+                "移除 1 位导师的发信地址：已批准还没发出的 {} 封将没有收件地址",
                 row.count
-            ),
+            )
         };
-        Description::new(action, vec![name])
+        let before = row.old_address.as_deref().unwrap_or("未填写邮箱");
+        let after = address.unwrap_or("未填写邮箱");
+        object(
+            &action,
+            format!("{}：{before} → {after}（{} 封）", row.name, row.count),
+        )
     }))
 }
 
@@ -470,7 +463,9 @@ async fn imported_recipients(
     );
     let rows = sqlx::query!(
         r#"SELECT m.name, json_extract(selected.value, '$[1]') AS "address?: String",
-            COUNT(*) AS count
+            (SELECT address FROM mentor_email
+                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "old_address?: String",
+            COUNT(*) AS "count!: i64"
         FROM json_each(?) selected
         JOIN mentor m ON m.id = json_extract(selected.value, '$[0]')
         JOIN email e ON e.mentor_id = m.id
@@ -485,52 +480,17 @@ async fn imported_recipients(
         return Ok(None);
     }
     let count: i64 = rows.iter().map(|row| row.count).sum();
-    let details = rows
-        .iter()
-        .take(5)
+    let action = format!(
+        "改 {} 位导师的发信地址：影响已批准还没发出的 {count} 封邮件",
+        rows.len()
+    );
+    let targets = rows
+        .into_iter()
         .map(|row| {
-            let address = row.address.as_deref().unwrap_or("无发信地址");
-            format!(
-                "{} → {}（{} 封）",
-                preview_text(&row.name),
-                preview_text(address),
-                row.count
-            )
+            let before = row.old_address.as_deref().unwrap_or("未填写邮箱");
+            let after = row.address.as_deref().unwrap_or("未填写邮箱");
+            format!("{}：{before} → {after}（{} 封）", row.name, row.count)
         })
-        .collect::<Vec<_>>()
-        .join("、");
-    let targets = rows.into_iter().map(|row| row.name).collect::<Vec<_>>();
-    let more = if targets.len() > 5 {
-        format!("等 {} 位导师", targets.len())
-    } else {
-        String::new()
-    };
-    Ok(Some(Description::new(
-        format!(
-            "更改导师的发信地址：{details}{more}；已批准还没发出的 {count} 封将使用更改后的地址"
-        ),
-        targets,
-    )))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::preview_text;
-
-    #[test]
-    fn preview_collapses_controls_line_breaks_and_whitespace() {
-        assert_eq!(
-            preview_text(" \u{1b}王伟\n\r\t\u{2028}  教授\0\u{2029} "),
-            "王伟 教授"
-        );
-    }
-
-    #[test]
-    fn preview_truncates_by_unicode_characters() {
-        assert_eq!(preview_text(&"😀".repeat(40)), "😀".repeat(40));
-        assert_eq!(
-            preview_text(&"😀".repeat(41)),
-            format!("{}…", "😀".repeat(40))
-        );
-    }
+        .collect();
+    Ok(Some(Description::new(action, targets)))
 }
