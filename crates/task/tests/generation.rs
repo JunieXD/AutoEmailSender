@@ -388,10 +388,14 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
         .execute(&db)
         .await
         .unwrap();
+    sqlx::query("UPDATE profile SET name = '林晓'")
+        .execute(&db)
+        .await
+        .unwrap();
     sqlx::query(
         r#"UPDATE task
         SET template_subject = '申请{导师姓名}',
-            template_body_md = '{导师姓名}老师：原始底稿'"#,
+            template_body_md = '{导师姓名}老师：我是{我的姓名}，原始底稿'"#,
     )
     .execute(&db)
     .await
@@ -404,6 +408,14 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
         old.body
             .to_string()
             .contains(&format!("申请王{}", ids[0] - 1))
+    );
+    let message: serde_json::Value =
+        serde_json::from_str(old.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(message["个人资料"]["姓名"], "林晓");
+    assert_eq!(message["导师"]["姓名"], format!("王{}", ids[0] - 1));
+    assert_eq!(
+        message["现在的信"]["正文"],
+        format!("王{}老师：我是林晓，原始底稿", ids[0] - 1)
     );
     drop(run);
     run = Runner::start(&db, Default::default());

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO reply_processing (message_id, action, state)\n            SELECT id, 'outcome', 'queued' FROM message\n            WHERE kind = 'reply' AND outcome IS NULL\n            ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "b46a2c9b4ddf2f079724413e49a0d18bc3919884e5be148a233a5c1e296fc994"
+}

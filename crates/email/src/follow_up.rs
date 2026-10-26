@@ -180,13 +180,7 @@ impl From<sqlx::Error> for Error {
 }
 
 pub async fn create(db: &SqlitePool, mentor: i64, now: i64) -> Result<FollowUpDraft, Error> {
-    let mut tx = db.begin().await?;
-    sqlx::query!(
-        "UPDATE mentor SET updated_at = updated_at WHERE id = ?",
-        mentor
-    )
-    .execute(&mut *tx)
-    .await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let own = sqlx::query_scalar!(
         "SELECT id FROM email
          WHERE mentor_id = ? AND kind = 'follow_up' AND task_id IS NULL AND state = 'review'",

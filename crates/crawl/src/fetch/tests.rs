@@ -29,18 +29,18 @@ async fn subdomains_share_two_request_slots_and_start_spacing() {
     let second_site = fetcher
         .site(&PageUrl::parse("https://www.pku.edu.cn/b").unwrap())
         .await;
-    let first = first_site.start().await.unwrap();
+    let first = first_site.start().await;
     let mut second = std::pin::pin!(second_site.start());
     assert!(std::future::poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx).is_pending())).await);
     tokio::time::advance(REQUEST_INTERVAL - Duration::from_millis(1)).await;
     assert!(std::future::poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx).is_pending())).await);
     tokio::time::advance(Duration::from_millis(1)).await;
-    let second = second.await.unwrap();
+    let second = second.await;
     let mut third = std::pin::pin!(first_site.start());
     tokio::time::advance(REQUEST_INTERVAL).await;
     assert!(std::future::poll_fn(|cx| Poll::Ready(third.as_mut().poll(cx).is_pending())).await);
     drop(first);
-    let third = third.await.unwrap();
+    let third = third.await;
     drop((second, third));
 }
 impl Drop for Server {
@@ -224,8 +224,7 @@ async fn linked_profiles_cannot_request_a_private_host_hidden_by_trailing_dots()
             "<a href='http://127.0.0.1..:{}/private'>导师个人页</a>",
             server.port
         ),
-    )
-    .unwrap();
+    );
     let net = net::Net::new(vec![]).unwrap();
     let fetcher = Fetcher::new(&net).unwrap();
     let scope = Scope::new(&start);

@@ -2,11 +2,11 @@ use ego_tree::iter::Edge;
 use regex::Regex;
 use scraper::{ElementRef, Html, Node, Selector};
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
+use std::sync::LazyLock;
 
 use crate::{
-    CrawlError, PageUrl,
-    email::{Emails, cloudflare},
+    PageUrl,
+    email::{EMAILS, Emails, cloudflare},
     pagination::{self, Control, input_button},
 };
 
@@ -54,8 +54,6 @@ pub struct Unit {
     pub path: Vec<usize>,
     /// UTF-8 positions after rendered line breaks; the block itself starts at zero.
     pub line_starts: Vec<usize>,
-    /// UTF-8 ranges of link labels inserted from alternative text attributes.
-    pub alternative_text: Vec<Range<usize>>,
     pub in_footer_or_nav: bool,
 }
 
@@ -93,9 +91,28 @@ impl Material {
     }
 }
 
-pub(crate) fn selector(value: &str) -> Result<Selector, CrawlError> {
-    Selector::parse(value).map_err(|e| CrawlError::Parse(format!("selector: {e}")))
+struct Selectors {
+    scripts: Selector,
+    title: Selector,
+    mounts: Selector,
+    noscript: Selector,
+    teacher_regions: Selector,
+    external_scripts: Selector,
 }
+
+static SELECTORS: LazyLock<Selectors> = LazyLock::new(|| {
+    let compile = |value| {
+        Selector::parse(value).unwrap_or_else(|_| unreachable!("fixed page selector is valid"))
+    };
+    Selectors {
+        scripts: compile("script"),
+        title: compile("title"),
+        mounts: compile("#root, #app, #__next, #__nuxt, [data-reactroot], [ng-app]"),
+        noscript: compile("noscript"),
+        teacher_regions: compile("[id], [class]"),
+        external_scripts: compile("script[src]"),
+    }
+});
 
 fn encrypted_field(element: ElementRef<'_>) -> bool {
     element.value().attr("_tsites_encrypt_field").is_some()
@@ -248,21 +265,8 @@ fn alternative_text(element: ElementRef<'_>) -> Option<String> {
     None
 }
 
-fn add_alternative(unit: &mut Unit, text: &str) {
-    let start = unit.text.len();
-    unit.text.push_str(text);
-    unit.alternative_text.push(start..unit.text.len());
-}
-
-/// Extracts data only; no scripts or event handlers are ever executed.
-pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
-    parse_page(url, html, false)
-}
-
-fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, CrawlError> {
-    let document = Html::parse_document(html);
-    let emails = Emails::new()?;
-    let navigation_pattern = Regex::new(
+static NAVIGATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
         r#"(?ix)
         ^\s*(?:javascript:\s*)?(?:return\s+)?
         (?:
@@ -276,10 +280,23 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
         \s*;?\s*(?:return\s+false\s*;?\s*)?$
     "#,
     )
-    .map_err(|e| CrawlError::Parse(e.to_string()))?;
-    let scripts = selector("script")?;
-    let has_scripts = document.select(&scripts).any(executable_script);
-    let title = document.select(&selector("title")?).next().map(|e| {
+    .unwrap_or_else(|_| unreachable!("fixed navigation pattern is valid"))
+});
+
+static PUNCTUATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[\p{P}\s]").unwrap_or_else(|_| unreachable!("fixed punctuation pattern is valid"))
+});
+
+/// Extracts data only; no scripts or event handlers are ever executed.
+pub fn parse(url: &PageUrl, html: &str) -> Material {
+    parse_page(url, html, false)
+}
+
+fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
+    let document = Html::parse_document(html);
+    let emails = &*EMAILS;
+    let has_scripts = document.select(&SELECTORS.scripts).any(executable_script);
+    let title = document.select(&SELECTORS.title).next().map(|e| {
         e.text()
             .collect::<String>()
             .split_whitespace()
@@ -319,7 +336,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
                     continue;
                 }
                 if block(element.value().name()) {
-                    finish(&mut current, &mut units, &emails);
+                    finish(&mut current, &mut units, emails);
                     blocks.push(path.clone());
                     current.path = path.clone();
                 } else if element.value().name() == "br" {
@@ -355,7 +372,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
                         && alternative_text(parent).is_some())
                     && let Some(text) = alternative_text(element)
                 {
-                    add_alternative(&mut current, &text);
+                    current.text.push_str(&text);
                 }
                 let direct = href
                     .filter(|h| !h.trim().is_empty() && !h.trim().starts_with('#'))
@@ -365,11 +382,11 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
                         element
                             .value()
                             .attr("onclick")
-                            .and_then(|s| navigation(s, &navigation_pattern, url))
+                            .and_then(|s| navigation(s, &NAVIGATION, url))
                     })
                     .or_else(|| {
                         href.filter(|h| h.trim().to_lowercase().starts_with("javascript:"))
-                            .and_then(|s| navigation(s, &navigation_pattern, url))
+                            .and_then(|s| navigation(s, &NAVIGATION, url))
                     });
                 let control = if element.value().name() == "input" {
                     input_button(element)
@@ -385,7 +402,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
                         && visible_text(element).is_empty()
                         && let Some(text) = alternative_text(element)
                     {
-                        add_alternative(&mut current, &text);
+                        current.text.push_str(&text);
                     }
                     let text = if element.value().name() == "input" {
                         element
@@ -418,28 +435,24 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
                     continue;
                 }
                 if block(element.value().name()) {
-                    finish(&mut current, &mut units, &emails);
+                    finish(&mut current, &mut units, emails);
                     blocks.pop();
                     current.path = blocks.last().cloned().unwrap_or_default();
                 }
             }
         }
     }
-    finish(&mut current, &mut units, &emails);
+    finish(&mut current, &mut units, emails);
     for unit in &mut units {
         unit.in_footer_or_nav = regions.iter().any(|ordinal| unit.path.contains(ordinal));
     }
-    let pagination = pagination::extract(&controls, url, has_scripts)?;
-    let script_entry = document.select(&scripts).any(|e| {
+    let pagination = pagination::extract(&controls, url, has_scripts);
+    let script_entry = document.select(&SELECTORS.scripts).any(|e| {
         executable_script(e)
             && (e.value().attr("type") == Some("module")
                 || e.value().attr("src").is_some_and(|s| !s.trim().is_empty()))
     });
-    let mounts: Vec<_> = document
-        .select(&selector(
-            "#root, #app, #__next, #__nuxt, [data-reactroot], [ng-app]",
-        )?)
-        .collect();
+    let mounts: Vec<_> = document.select(&SELECTORS.mounts).collect();
     let mount_ordinals: Vec<_> = document
         .root_element()
         .descendants()
@@ -448,18 +461,17 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
         .filter(|(_, e)| mounts.iter().any(|mount| mount.id() == e.id()))
         .map(|(ordinal, _)| ordinal)
         .collect();
-    let javascript_hint = document.select(&selector("noscript")?).any(|e| {
+    let javascript_hint = document.select(&SELECTORS.noscript).any(|e| {
         let text = e.text().collect::<String>().to_lowercase();
         text.contains("javascript")
             && ["enable", "need", "required", "启用", "开启", "需要"]
                 .iter()
                 .any(|cue| text.contains(cue))
     });
-    let punctuation = Regex::new(r"[\p{P}\s]").map_err(|e| CrawlError::Parse(e.to_string()))?;
     let placeholder_only = units.iter().all(|unit| {
         unit.links.is_empty()
             && unit.emails.is_empty()
-            && loading_placeholder(&unit.text, &punctuation)
+            && loading_placeholder(&unit.text, &PUNCTUATION)
             && mount_ordinals
                 .iter()
                 .any(|ordinal| unit.path.contains(ordinal))
@@ -467,7 +479,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
     let application_shell =
         placeholder_only && (javascript_hint || (script_entry && !mounts.is_empty()));
     let teacher_regions: Vec<_> = document
-        .select(&selector("[id], [class]")?)
+        .select(&SELECTORS.teacher_regions)
         .filter(|e| {
             !matches!(e.value().name(), "body" | "html")
                 && ["id", "class"]
@@ -489,7 +501,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
         && teacher_regions
             .iter()
             .any(|e| e.text().map(str::trim).map(str::len).sum::<usize>() < 300)
-        && document.select(&selector("script[src]")?).any(|e| {
+        && document.select(&SELECTORS.external_scripts).any(|e| {
             e.value()
                 .attr("src")
                 .is_some_and(|s| s.contains("search_teacher"))
@@ -503,13 +515,13 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, Cra
     } else {
         None
     };
-    Ok(Material {
+    Material {
         url: url.clone(),
         title,
         units,
         pagination,
         needs_browser,
-    })
+    }
 }
 
 fn finish(current: &mut Unit, units: &mut Vec<Unit>, emails: &Emails) {
@@ -519,10 +531,6 @@ fn finish(current: &mut Unit, units: &mut Vec<Unit>, emails: &Emails) {
         *start = positions[*start];
     }
     unit.line_starts.dedup();
-    for range in &mut unit.alternative_text {
-        range.start = positions[range.start];
-        range.end = text[..positions[range.end]].trim_end().len();
-    }
     unit.text = text;
     for evidence in &mut unit.emails {
         if let EmailLocation::Attribute { offset, .. } = &mut evidence.location {
@@ -599,6 +607,6 @@ fn loading_placeholder(text: &str, punctuation: &Regex) -> bool {
 }
 
 /// Parse the DOM after browser scripts have run.
-pub fn parse_rendered(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
+pub fn parse_rendered(url: &PageUrl, html: &str) -> Material {
     parse_page(url, html, true)
 }

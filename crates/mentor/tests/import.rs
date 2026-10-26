@@ -7,14 +7,13 @@ use sheet::Sheet;
 use sqlx::SqlitePool;
 
 fn table(rows: &[&[&str]]) -> Vec<Sheet> {
-    let sheet = Sheet {
+    vec![Sheet {
         name: "导师".into(),
         rows: rows
             .iter()
             .map(|r| r.iter().map(|s| (*s).into()).collect())
             .collect(),
-    };
-    sheet::read("导师.xlsx", &sheet::write_xlsx(&[sheet]).unwrap()).unwrap()
+    }]
 }
 async fn add(db: &SqlitePool, name: &str, emails: &[&str], university: &str) -> i64 {
     mentor::create(
@@ -691,8 +690,8 @@ async fn shared_email_must_precede_fuzzy_candidate(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn shared_email_chain_rejects_only_real_owner_conflicts(db: SqlitePool) {
-    add(&db, "王明", &["w@a.cn"], "北京大学").await;
-    add(&db, "李明", &["l@a.cn"], "北京大学").await;
+    let wang = add(&db, "王明", &["w@a.cn"], "北京大学").await;
+    let li = add(&db, "李明", &["l@a.cn"], "北京大学").await;
     let sheets = table(&[
         &["姓名", "邮箱"],
         &["王明", "w@a.cn;new@a.cn"],
@@ -707,6 +706,12 @@ async fn shared_email_chain_rejects_only_real_owner_conflicts(db: SqlitePool) {
         p.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
         [2, 3, 4]
     );
+    for error in &p.errors {
+        for (name, id) in [("王明", wang), ("李明", li)] {
+            assert!(error.reason.contains(name));
+            assert!(error.reason.contains(&format!("编号 {id}")));
+        }
+    }
     assert_eq!(p.created, 1);
     let result = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((result.created, result.updated), (1, 0));

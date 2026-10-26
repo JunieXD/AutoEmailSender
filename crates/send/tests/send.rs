@@ -6,6 +6,11 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::path::Path;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicI64, Ordering},
+};
+use tokio::sync::Notify;
 
 use base64::Engine;
 use email::{Approval, Delivery};
@@ -22,16 +27,27 @@ const DAY: i64 = 24 * 60 * MINUTE;
 
 /// A mailbox on a fake server that sends at most two emails a day, a minute apart.
 async fn mailbox(db: &SqlitePool, secret: &str) -> (Net, Inbox) {
-    mailbox_with_rcpt_hook(db, secret, || {}).await
+    mailbox_with_hooks(
+        db,
+        secret,
+        || std::future::ready(()),
+        || std::future::ready(()),
+    )
+    .await
 }
 
-async fn mailbox_with_rcpt_hook(
+async fn mailbox_with_hooks<R, B>(
     db: &SqlitePool,
     secret: &str,
-    on_rcpt: impl Fn() + Send + Sync + 'static,
-) -> (Net, Inbox) {
+    on_rcpt: impl Fn() -> R + Send + Sync + 'static,
+    on_body: impl Fn() -> B + Send + Sync + 'static,
+) -> (Net, Inbox)
+where
+    R: Future<Output = ()> + Send + 'static,
+    B: Future<Output = ()> + Send + 'static,
+{
     let pki = fakemail::pki();
-    let (port, inbox) = fakemail::smtp_with_rcpt_hook(&pki, false, on_rcpt).await;
+    let (port, inbox) = fakemail::smtp_with_hooks(&pki, false, on_rcpt, on_body).await;
     let server = |port| Server {
         host: Cow::Borrowed("localhost"),
         port,
@@ -640,7 +656,7 @@ async fn an_unreachable_server_pauses_for_one_minute_and_resume_or_edit_retries(
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn throttling_restores_prior_evidence_and_respects_cancellation(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
     send::step(&db, &net, nowhere(), || T).await.unwrap();
@@ -677,12 +693,12 @@ async fn throttling_restores_prior_evidence_and_respects_cancellation(db: Sqlite
     assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
     assert_eq!(evidence().await, before);
     mailbox::resume(&db, 1).await.unwrap();
-    change_during_commit(
+    change_during_envelope(
         &db,
         &net,
+        &envelope,
         id,
-        T + 2 * MINUTE,
-        T + 2 * MINUTE,
+        (T + 2 * MINUTE, T + 2 * MINUTE),
         move |db| async move {
             mentor::trash::trash(&db, &[mentor], T + 2 * MINUTE)
                 .await
@@ -1105,6 +1121,21 @@ async fn approve_reply(db: &SqlitePool) -> i64 {
 async fn a_reply_goes_out_in_its_parent_thread_and_assigns_the_receiving_mailbox(db: SqlitePool) {
     let (net, inbox) = mailbox(&db, SECRET).await;
     let mentor = approve_reply(&db).await;
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::Ready)
+    ));
     assert_eq!(
         send::step(&db, &net, nowhere(), || T).await.unwrap(),
         Next::Now
@@ -1167,6 +1198,21 @@ async fn a_reply_never_rotates_to_an_unrelated_mailbox_after_its_sender_is_delet
         .unwrap();
     let failed = first_email(&db, mentor).await.id;
     assert!(email::retry(&db, failed, T).await.unwrap());
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::Ready)
+    ));
     assert_eq!(
         send::step(&db, &replacement_net, nowhere(), || T)
             .await
@@ -1310,6 +1356,26 @@ async fn a_reply_uses_the_responsible_mailbox_selected_after_approval(db: Sqlite
         .execute(&db)
         .await
         .unwrap();
+    sqlx::query("UPDATE mailbox SET paused_until = ?, pause_reason = '服务商限流' WHERE id = 1")
+        .bind(T + DAY)
+        .execute(&db)
+        .await
+        .unwrap();
+    let plan = send::plan::list(
+        &db,
+        &send::plan::PlanQuery {
+            column: send::plan::PlanColumn::Upcoming,
+            page: std::num::NonZeroU32::MIN,
+        },
+        T,
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.total, 1);
+    assert!(matches!(
+        plan.emails[0].waiting,
+        Some(send::plan::Waiting::Ready)
+    ));
     assert_eq!(
         send::step(&db, &net, nowhere(), || T).await.unwrap(),
         Next::Now
@@ -1786,7 +1852,22 @@ async fn deadline_crossed_while_reading_attachment_must_not_send(db: SqlitePool)
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let clock = Arc::new(AtomicI64::new(T));
+    let active = Arc::new(AtomicBool::new(false));
+    let advancing = clock.clone();
+    let enabled = active.clone();
+    let (net, inbox) = mailbox_with_hooks(
+        &db,
+        SECRET,
+        move || {
+            if enabled.load(Ordering::SeqCst) {
+                advancing.store(T + MINUTE + 3_600_000, Ordering::SeqCst);
+            }
+            std::future::ready(())
+        },
+        || std::future::ready(()),
+    )
+    .await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
     send::step(&db, &net, nowhere(), || T).await.unwrap();
     let id = first_email(&db, mentor).await.id;
@@ -1816,17 +1897,11 @@ async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool
         .unwrap()
     };
     let before = evidence().await;
-    let calls = Cell::new(0);
-    send::step(&db, &net, nowhere(), || {
-        calls.set(calls.get() + 1);
-        if calls.get() < 4 {
-            T + MINUTE
-        } else {
-            T + MINUTE + 3_600_000
-        }
-    })
-    .await
-    .unwrap();
+    clock.store(T + MINUTE, Ordering::SeqCst);
+    active.store(true, Ordering::SeqCst);
+    send::step(&db, &net, nowhere(), || clock.load(Ordering::SeqCst))
+        .await
+        .unwrap();
     assert_eq!(inbox.lock().unwrap().len(), 1);
     assert_eq!(evidence().await, before);
     let email = first_email(&db, mentor).await;
@@ -1848,9 +1923,15 @@ async fn review_deadline_crossed_during_envelope_must_not_upload(db: SqlitePool)
     };
     let clock = Arc::new(AtomicI64::new(T));
     let advancing = clock.clone();
-    let (net, inbox) = mailbox_with_rcpt_hook(&db, SECRET, move || {
-        advancing.store(T + 3_600_000, Ordering::SeqCst);
-    })
+    let (net, inbox) = mailbox_with_hooks(
+        &db,
+        SECRET,
+        move || {
+            advancing.store(T + 3_600_000, Ordering::SeqCst);
+            std::future::ready(())
+        },
+        || std::future::ready(()),
+    )
     .await;
     let mentor = approve(&db, "envelope@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
@@ -1887,17 +1968,24 @@ async fn review_deadline_crossed_during_envelope_must_not_upload(db: SqlitePool)
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn deadline_crossed_after_body_upload_keeps_the_uncertain_attempt(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let clock = Arc::new(AtomicI64::new(T));
+    let advancing = clock.clone();
+    let (net, inbox) = mailbox_with_hooks(
+        &db,
+        SECRET,
+        || std::future::ready(()),
+        move || {
+            advancing.store(T + 3_600_000, Ordering::SeqCst);
+            std::future::ready(())
+        },
+    )
+    .await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
     email::schedule::reschedule(&db, id, T, T).await.unwrap();
-    let calls = Cell::new(0);
-    send::step(&db, &net, nowhere(), || {
-        calls.set(calls.get() + 1);
-        if calls.get() <= 4 { T } else { T + 3_600_000 }
-    })
-    .await
-    .unwrap();
+    send::step(&db, &net, nowhere(), || clock.load(Ordering::SeqCst))
+        .await
+        .unwrap();
     assert_eq!(inbox.lock().unwrap().len(), 1);
     assert!(matches!(
         first_email(&db, mentor).await.delivery,
@@ -1910,70 +1998,77 @@ async fn deadline_crossed_after_body_upload_keeps_the_uncertain_attempt(db: Sqli
     assert_eq!(inbox.lock().unwrap().len(), 1);
 }
 
-/// Changes business state after the claim commits, with no timed sleeps.
-async fn change_during_commit<F: Future<Output = ()>>(
-    db: &SqlitePool,
-    net: &Net,
-    id: i64,
-    at: i64,
-    after: i64,
-    change: impl FnOnce(SqlitePool) -> F + Send + 'static,
-) {
-    let options = db.connect_options().as_ref().clone();
-    let (request, requested) = std::sync::mpsc::channel();
-    let (finish, finished) = std::sync::mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let db = sqlx::sqlite::SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect_with(options)
-                    .await
-                    .unwrap();
-                requested.recv().unwrap();
-                assert_eq!(
-                    sqlx::query_scalar::<_, String>(
-                        r#"SELECT state
-                           FROM email
-                           WHERE id = ?"#
-                    )
-                    .bind(id)
-                    .fetch_one(&db)
-                    .await
-                    .unwrap(),
-                    "sending"
-                );
-                change(db.clone()).await;
-                db.close().await;
-                finish.send(()).unwrap();
-            });
-    });
-    let calls = Cell::new(0);
-    // Only catches a hang; a loaded machine may take seconds to finish the step.
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        send::step_in_zone(
-            db,
-            net,
-            nowhere(),
-            || {
-                calls.set(calls.get() + 1);
-                if calls.get() == 4 {
-                    request.send(()).unwrap();
-                    finished.recv().unwrap();
+#[derive(Default)]
+struct Envelope {
+    active: AtomicBool,
+    reached: Notify,
+    release: Notify,
+}
+
+async fn controlled_mailbox(db: &SqlitePool) -> (Net, Inbox, Arc<Envelope>) {
+    let envelope = Arc::new(Envelope::default());
+    let gate = envelope.clone();
+    let (net, inbox) = mailbox_with_hooks(
+        db,
+        SECRET,
+        move || {
+            let gate = gate.clone();
+            async move {
+                if gate.active.load(Ordering::SeqCst) {
+                    gate.reached.notify_one();
+                    gate.release.notified().await;
                 }
-                if calls.get() < 4 { at } else { after }
-            },
-            &chrono::Utc,
-            &mut |_| 0,
-        ),
+            }
+        },
+        || std::future::ready(()),
     )
     .await;
-    writer.join().unwrap();
-    result.expect("sending must finish").unwrap();
+    (net, inbox, envelope)
+}
+
+/// The SMTP envelope proves the claim has committed; change state before allowing any upload.
+async fn change_during_envelope<F: Future<Output = ()>>(
+    db: &SqlitePool,
+    net: &Net,
+    envelope: &Envelope,
+    id: i64,
+    times: (i64, i64),
+    change: impl FnOnce(SqlitePool) -> F,
+) {
+    let (at, after) = times;
+    let clock = AtomicI64::new(at);
+    envelope.active.store(true, Ordering::SeqCst);
+    let mut random = |_| 0;
+    let sending = send::step_in_zone(
+        db,
+        net,
+        nowhere(),
+        || clock.load(Ordering::SeqCst),
+        &chrono::Utc,
+        &mut random,
+    );
+    let changing = async {
+        envelope.reached.notified().await;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(db)
+                .await
+                .unwrap(),
+            "sending"
+        );
+        change(db.clone()).await;
+        clock.store(after, Ordering::SeqCst);
+        envelope.release.notify_one();
+    };
+    // Only catches a hang; no timeout arranges the business ordering.
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        tokio::join!(sending, changing)
+    })
+    .await
+    .expect("sending must finish");
+    result.unwrap();
+    envelope.active.store(false, Ordering::SeqCst);
 }
 
 async fn scheduled_task(db: &SqlitePool, email: i64) -> (i64, i64) {
@@ -2011,14 +2106,21 @@ async fn scheduled_task(db: &SqlitePool, email: i64) -> (i64, i64) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn review_expiry_restore_must_respect_trashing_during_commit(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+async fn review_expiry_restore_must_respect_trashing_during_envelope(db: SqlitePool) {
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let mentor = approve(&db, "trash@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
     let (_, at) = scheduled_task(&db, id).await;
-    change_during_commit(&db, &net, id, at, at + 3_600_000, move |db| async move {
-        mentor::trash::trash(&db, &[mentor], at).await.unwrap();
-    })
+    change_during_envelope(
+        &db,
+        &net,
+        &envelope,
+        id,
+        (at, at + 3_600_000),
+        move |db| async move {
+            mentor::trash::trash(&db, &[mentor], at).await.unwrap();
+        },
+    )
     .await;
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
         r#"SELECT state, cancel_reason, planned_at, latest_at
@@ -2046,14 +2148,21 @@ async fn review_expiry_restore_must_respect_trashing_during_commit(db: SqlitePoo
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn review3_trash_then_restore_must_not_revive_canceled_contact(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let mentor = approve(&db, "restored@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
     let (_, at) = scheduled_task(&db, id).await;
-    change_during_commit(&db, &net, id, at, at + 3_600_000, move |db| async move {
-        mentor::trash::trash(&db, &[mentor], at).await.unwrap();
-        mentor::trash::restore(&db, &[mentor], at).await.unwrap();
-    })
+    change_during_envelope(
+        &db,
+        &net,
+        &envelope,
+        id,
+        (at, at + 3_600_000),
+        move |db| async move {
+            mentor::trash::trash(&db, &[mentor], at).await.unwrap();
+            mentor::trash::restore(&db, &[mentor], at).await.unwrap();
+        },
+    )
     .await;
     assert!(inbox.lock().unwrap().is_empty());
     let restored = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
@@ -2086,7 +2195,7 @@ async fn review3_trash_then_restore_must_not_revive_canceled_contact(db: SqliteP
 async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_rejection(
     db: SqlitePool,
 ) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     for (offset, address, expected) in [
         (0, "sent@example.edu.cn", "sent"),
         (DAY, "hangup@example.edu.cn", "maybe_sent"),
@@ -2096,7 +2205,7 @@ async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_
         let mentor = approve(&db, address, &[], at).await;
         let id = first_email(&db, mentor).await.id;
         email::schedule::reschedule(&db, id, at, at).await.unwrap();
-        change_during_commit(&db, &net, id, at, at, move |db| async move {
+        change_during_envelope(&db, &net, &envelope, id, (at, at), move |db| async move {
             mentor::trash::trash(&db, &[mentor], at).await.unwrap();
             assert_eq!(
                 sqlx::query_as::<_, (String, Option<String>)>(
@@ -2147,7 +2256,7 @@ async fn cancellation_during_handover_keeps_success_and_uncertainty_but_cancels_
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn review_expiry_restore_after_mailbox_deleted_must_finish(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
     send::step(&db, &net, nowhere(), || T).await.unwrap();
     let id = first_email(&db, mentor).await.id;
@@ -2180,12 +2289,12 @@ async fn review_expiry_restore_after_mailbox_deleted_must_finish(db: SqlitePool)
         .unwrap()
     };
     let before = evidence().await;
-    change_during_commit(
+    change_during_envelope(
         &db,
         &net,
+        &envelope,
         id,
-        T + MINUTE,
-        T + MINUTE + 3_600_000,
+        (T + MINUTE, T + MINUTE + 3_600_000),
         |db| async move {
             mailbox::delete(&db, 1).await.unwrap();
         },
@@ -2269,13 +2378,13 @@ async fn cancellation_crash_child() {
         return;
     };
     let db = db::open(Path::new(&path)).await.unwrap();
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let (id, mentor) = sqlx::query_as::<_, (i64, i64)>("SELECT id, mentor_id FROM email")
         .fetch_one(&db)
         .await
         .unwrap();
     email::schedule::reschedule(&db, id, T, T).await.unwrap();
-    change_during_commit(&db, &net, id, T, T, move |db| async move {
+    change_during_envelope(&db, &net, &envelope, id, (T, T), move |db| async move {
         mentor::trash::trash(&db, &[mentor], T).await.unwrap();
         mentor::trash::restore(&db, &[mentor], T).await.unwrap();
         assert_eq!(
@@ -2335,11 +2444,11 @@ async fn cancellation_survives_crash_recovery(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn cancellation_survives_unknown_outcome(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
     email::schedule::reschedule(&db, id, T, T).await.unwrap();
-    change_during_commit(&db, &net, id, T, T, move |db| async move {
+    change_during_envelope(&db, &net, &envelope, id, (T, T), move |db| async move {
         mentor::trash::trash(&db, &[mentor], T).await.unwrap();
         mentor::trash::restore(&db, &[mentor], T).await.unwrap();
     })
@@ -2369,7 +2478,7 @@ async fn cancellation_survives_unknown_outcome(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let mut confirmed = Vec::new();
     for (offset, proof) in ["original", "replacement", "bounce", "rejected"]
         .into_iter()
@@ -2410,16 +2519,19 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
                 .await
                 .unwrap()
         );
-        change_during_commit(
+        change_during_envelope(
             &db,
             &net,
+            &envelope,
             id,
-            at + MINUTE,
-            if proof == "rejected" {
-                at + MINUTE
-            } else {
-                at + MINUTE + 3_600_000
-            },
+            (
+                at + MINUTE,
+                if proof == "rejected" {
+                    at + MINUTE
+                } else {
+                    at + MINUTE + 3_600_000
+                },
+            ),
             move |db| async move {
                 mentor::trash::trash(&db, &[mentor], at).await.unwrap();
                 mentor::trash::restore(&db, &[mentor], at).await.unwrap();
@@ -2547,7 +2659,14 @@ async fn immediate_task(db: &SqlitePool, emails: &[i64]) -> i64 {
 }
 
 /// The first upload is uncertain; removing the retry after its claim cancels it before upload.
-async fn cancel_task_retry(db: &SqlitePool, net: &Net, task: i64, id: i64, at: i64) {
+async fn cancel_task_retry(
+    db: &SqlitePool,
+    net: &Net,
+    envelope: &Envelope,
+    task: i64,
+    id: i64,
+    at: i64,
+) {
     send::step(db, net, nowhere(), || at).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
@@ -2563,12 +2682,12 @@ async fn cancel_task_retry(db: &SqlitePool, net: &Net, task: i64, id: i64, at: i
             .await
             .unwrap()
     );
-    change_during_commit(
+    change_during_envelope(
         db,
         net,
+        envelope,
         id,
-        at + MINUTE,
-        at + MINUTE + 3_600_000,
+        (at + MINUTE, at + MINUTE + 3_600_000),
         move |db| async move {
             task::remove(&db, &task::TaskEmail { task_id: task, id }, at)
                 .await
@@ -2685,7 +2804,7 @@ async fn late_bounce_after_cleanup(
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let receiving = bounce_mailbox(&db).await;
     let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
     let id = first_email(&db, mentor).await.id;
@@ -2710,7 +2829,7 @@ async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) 
             .unwrap(),
         ("canceled".into(), None)
     );
-    cancel_task_retry(&db, &net, task, id, T).await;
+    cancel_task_retry(&db, &net, &envelope, task, id, T).await;
     task::delete(&db, task).await.unwrap();
     assert!(
         sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE id = ?")
@@ -2728,7 +2847,7 @@ async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) 
 async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
     for (offset, state) in ["canceled", "maybe_sent", "sent"].into_iter().enumerate() {
         let at = T + offset as i64 * 2 * DAY;
-        let (net, inbox) = mailbox(&db, SECRET).await;
+        let (net, inbox, envelope) = controlled_mailbox(&db).await;
         let address = format!(
             "{}@case{offset}.edu.cn",
             if state == "sent" { "sent" } else { "hangup" }
@@ -2737,7 +2856,7 @@ async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
         let id = first_email(&db, mentor).await.id;
         if state == "canceled" {
             let task = immediate_task(&db, &[id]).await;
-            cancel_task_retry(&db, &net, task, id, at).await;
+            cancel_task_retry(&db, &net, &envelope, task, id, at).await;
             task::delete(&db, task).await.unwrap();
         } else {
             send::step(&db, &net, nowhere(), || at).await.unwrap();
@@ -2844,7 +2963,7 @@ async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     let receiving = bounce_mailbox(&db).await;
     for (offset, (keep_canceled, partner_sent)) in
         [(false, true), (true, true), (false, false), (true, false)]
@@ -2877,7 +2996,7 @@ async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
             .await
             .unwrap();
         }
-        cancel_task_retry(&db, &net, task, id, at + MINUTE).await;
+        cancel_task_retry(&db, &net, &envelope, task, id, at + MINUTE).await;
         let (keep, other) = if keep_canceled {
             (canceled, partner)
         } else {
@@ -2969,18 +3088,28 @@ async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: SqlitePool) {
-    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (net, inbox, envelope) = controlled_mailbox(&db).await;
     for (offset, expired) in [false, true].into_iter().enumerate() {
         let at = T + offset as i64 * DAY;
-        let address = format!("unknown@never{offset}.edu.cn");
+        let address = format!(
+            "{}@never{offset}.edu.cn",
+            if expired { "expired" } else { "unknown" }
+        );
         let mentor = approve(&db, &address, &[], at).await;
         let id = first_email(&db, mentor).await.id;
         email::schedule::reschedule(&db, id, at, at).await.unwrap();
         let after = if expired { at + 3_600_000 } else { at };
-        change_during_commit(&db, &net, id, at, after, move |db| async move {
-            mentor::trash::trash(&db, &[mentor], at).await.unwrap();
-            mentor::trash::restore(&db, &[mentor], at).await.unwrap();
-        })
+        change_during_envelope(
+            &db,
+            &net,
+            &envelope,
+            id,
+            (at, after),
+            move |db| async move {
+                mentor::trash::trash(&db, &[mentor], at).await.unwrap();
+                mentor::trash::restore(&db, &[mentor], at).await.unwrap();
+            },
+        )
         .await;
         let (state, sent_at, message_id) =
             sqlx::query_as::<_, (String, Option<i64>, Option<String>)>(

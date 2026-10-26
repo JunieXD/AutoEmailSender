@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "INSERT INTO task (name, kind, writer, schedule, state, created_at)\n        VALUES (?, ?, 'ai', 'now', 'active', ?)\n        RETURNING id AS \"id!\"",
+  "query": "SELECT id FROM task\n        WHERE id = ? AND state <> 'stopped'",
   "describe": {
     "columns": [
       {
-        "name": "id!",
+        "name": "id",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 1
     },
     "nullable": [
       false
     ]
   },
-  "hash": "cd9bedc57aaeaf97243720fd2c136154307aec10ad115163f6745959e71743f2"
+  "hash": "bd1a66580cb59f9eec0b4dd1cb94b5896df4881e948f202c8190025142e1b8bb"
 }

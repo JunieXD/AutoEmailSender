@@ -360,10 +360,24 @@ CREATE TABLE message_mentor (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX message_mentor_message ON message_mentor (message_id);
 
+-- Sender and sending plan resolve the same responsible mailbox.
+CREATE VIEW email_own_mailbox AS
+SELECT e.id AS email_id,
+  CASE WHEN e.kind IN ('reply', 'follow_up') THEN coalesce(m.mailbox_id,
+    (SELECT p.mailbox_id FROM email p
+     WHERE p.mentor_id = e.mentor_id
+       AND (p.message_id = e.reply_to OR p.copy_message_id = e.reply_to)),
+    (SELECT r.mailbox_id FROM message r
+     JOIN message_mentor mm ON mm.message_id = r.id
+     WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to
+       AND r.kind = CASE e.kind WHEN 'reply' THEN 'reply' ELSE 'sent' END))
+  ELSE m.mailbox_id END AS mailbox_id
+FROM email e
+JOIN mentor m ON m.id = e.mentor_id;
+
 CREATE TABLE reply_processing (
   message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   action TEXT NOT NULL CHECK (action IN ('outcome', 'todos')),
-  queued_at INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'failed')),
   claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0),
   error TEXT,
@@ -477,7 +491,7 @@ CREATE TABLE candidate (
   evidence TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(evidence)),
   review TEXT NOT NULL CHECK (review IN ('pending', 'accepted', 'rejected', 'merged')),
   mentor_id INTEGER REFERENCES mentor(id) ON DELETE SET NULL,
-  enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done', 'failed')),
+  enrich TEXT NOT NULL CHECK (enrich IN ('none', 'queued', 'running', 'done')),
   enrich_changes TEXT CHECK (enrich_changes IS NULL OR (json_valid(enrich_changes) AND json_type(enrich_changes) = 'array')),
   enrich_error TEXT,
   name TEXT NOT NULL,
@@ -494,7 +508,6 @@ CREATE TABLE candidate (
   CHECK (affiliations IS NULL OR (json_valid(affiliations) AND json_type(affiliations) = 'array')),
   CHECK (homepages IS NULL OR (json_valid(homepages) AND json_type(homepages) = 'array')),
   CHECK (papers IS NULL OR (json_valid(papers) AND json_type(papers) = 'array')),
-  CHECK (enrich != 'failed' OR enrich_error IS NOT NULL),
   UNIQUE (crawl_id, profile_url)
 ) STRICT;
 CREATE INDEX candidate_review ON candidate ((review != 'pending'), id, crawl_id);

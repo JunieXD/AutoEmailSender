@@ -74,43 +74,68 @@ pub fn estimate(
     )
 }
 
-/// Drafts a letter to the mentor when `current` is blank, and otherwise rewrites it; the letter
-/// may mention the materials attached.
-pub async fn write(
+pub struct Prepared<'a> {
+    pub mentor: MentorDetail,
+    pub me: profile::Profile,
+    attached: Vec<String>,
+    basis: Basis<'a>,
+}
+
+pub async fn prepare<'a>(
     db: &SqlitePool,
-    net: &net::Net,
     mentor_id: i64,
-    current: &Letter,
     attachments: &[i64],
-    now: i64,
-    basis: Basis<'_>,
-) -> Result<Letter, Error> {
-    let Basis {
-        chosen,
-        references,
-        kind,
-    } = basis;
-    if !chosen.agreed {
+    basis: Basis<'a>,
+) -> Result<Prepared<'a>, Error> {
+    if !basis.chosen.agreed {
         return Err(Error::NotAgreed);
     }
     let mentor = mentor::get(db, mentor_id).await?.ok_or(Error::NoMentor)?;
     let me = profile::get(db).await?;
-    let attached: Vec<String> = material::list(db)
+    let attached = material::list(db)
         .await?
         .into_iter()
         .filter(|m| attachments.contains(&m.id))
         .map(|m| m.file_name)
         .collect();
+    Ok(Prepared {
+        mentor,
+        me,
+        attached,
+        basis,
+    })
+}
+
+/// Drafts a letter when `current` is blank, and otherwise rewrites it using the same inputs that
+/// filled its template.
+pub async fn write(
+    db: &SqlitePool,
+    net: &net::Net,
+    input: &Prepared<'_>,
+    current: &Letter,
+    now: i64,
+) -> Result<Letter, Error> {
+    let Prepared {
+        mentor,
+        me,
+        attached,
+        basis: Basis {
+            chosen,
+            references,
+            kind,
+        },
+    } = input;
+    let kind = *kind;
     let blank = current.body_md.trim().is_empty()
         && (kind.body_only() || current.subject.trim().is_empty());
     let current = (!blank).then_some(current);
-    let system = system(&me, kind);
-    let message = message(&me, references, &attached, &mentor, current, kind);
+    let system = system(me, kind);
+    let message = message(me, references, attached, mentor, current, kind);
     let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
         .await
         .map_err(Error::Model)?;
     tracing::info!(
-        mentor_id,
+        mentor_id = mentor.id,
         model = chosen.model,
         usage = ?answer.usage,
         finish_reason = answer.finish_reason,

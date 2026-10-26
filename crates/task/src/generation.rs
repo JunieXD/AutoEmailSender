@@ -97,32 +97,31 @@ async fn generate(
         None
     };
     tx.commit().await?;
-    let Some(m) = mentor::get(db, claim.mentor).await? else {
-        return Ok(Outcome::Requeue);
-    };
-    let me = profile::get(db).await?;
-    let current = match (t.template_subject, t.template_body_md) {
-        (Some(s), Some(b)) => fill(&s, &b, &m, me.name.as_deref()),
-        _ => writing::Letter {
-            subject: String::new(),
-            body_md: String::new(),
-        },
-    };
-    let answer = writing::write(
-        db,
-        net,
-        claim.mentor,
-        &current,
-        &attachments,
-        now(),
-        writing::Basis {
-            chosen: &chosen,
-            references: &refs,
-            kind: previous
-                .as_deref()
-                .map_or(writing::Kind::First, writing::Kind::FollowUp),
-        },
-    )
+    let answer = async {
+        let input = writing::prepare(
+            db,
+            claim.mentor,
+            &attachments,
+            writing::Basis {
+                chosen: &chosen,
+                references: &refs,
+                kind: previous
+                    .as_deref()
+                    .map_or(writing::Kind::First, writing::Kind::FollowUp),
+            },
+        )
+        .await?;
+        let current = match (t.template_subject, t.template_body_md) {
+            (Some(subject), Some(body)) => {
+                fill(&subject, &body, &input.mentor, input.me.name.as_deref())
+            }
+            _ => writing::Letter {
+                subject: String::new(),
+                body_md: String::new(),
+            },
+        };
+        writing::write(db, net, &input, &current, now()).await
+    }
     .await;
     Ok(match answer {
         Ok(mut l) => {
@@ -265,9 +264,7 @@ async fn apply(
             tx.commit().await?;
             Ok(applied)
         }
-        Outcome::Failed(reason) => {
-            emails::fail(&mut *connection(db).await, claim, reason, at).await
-        }
+        Outcome::Failed(reason) => emails::fail(&mut *db.acquire().await?, claim, reason, at).await,
         Outcome::Pause(reason, config) => {
             requeue(db, claim, Some((reason, config.as_ref())), at).await
         }
@@ -445,17 +442,6 @@ pub async fn run(
                     tokio::time::sleep_until(at).await;
                 }
             }, if cooling => {},
-        }
-    }
-}
-async fn connection(db: &SqlitePool) -> sqlx::pool::PoolConnection<sqlx::Sqlite> {
-    loop {
-        match db.acquire().await {
-            Ok(c) => return c,
-            Err(e) => {
-                tracing::error!("draft connection: {e}");
-                tokio::time::sleep(RETRY).await;
-            }
         }
     }
 }

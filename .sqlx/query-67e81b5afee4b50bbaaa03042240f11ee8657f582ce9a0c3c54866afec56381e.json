@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT template_id, template_subject AS \"subject!: String\",\n                template_body_md AS \"body_md!: String\"\n            FROM task\n            WHERE id = ? AND template_subject IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "template_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_id"
+          }
+        }
+      },
+      {
+        "name": "subject!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_subject"
+          }
+        }
+      },
+      {
+        "name": "body_md!: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "template_body_md"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "67e81b5afee4b50bbaaa03042240f11ee8657f582ce9a0c3c54866afec56381e"
+}

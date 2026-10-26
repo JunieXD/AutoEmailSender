@@ -671,7 +671,7 @@ impl Session<'_> {
             None
         };
         if reply.is_some() {
-            email::todos::enqueue(&mut tx, id, self.now).await?;
+            email::todos::enqueue(&mut tx, id).await?;
         }
         tx.commit().await?;
         if let Some(reply) = reply {
@@ -702,7 +702,7 @@ impl Session<'_> {
                 email::follow_up::cancel_replied(tx, mentor, self.now).await?;
             }
         }
-        email::outcome::enqueue(tx, id, self.now).await?;
+        email::outcome::enqueue(tx, id).await?;
         Ok(())
     }
 

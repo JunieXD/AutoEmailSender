@@ -1316,11 +1316,32 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePool) {
-    use std::cell::Cell;
-    use std::sync::mpsc;
+async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqlitePool) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    };
+    use tokio::sync::Notify;
+    let clock = Arc::new(AtomicI64::new(T));
+    let reached = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let signal = reached.clone();
+    let proceed = release.clone();
     let pki = fakemail::pki();
-    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let (port, inbox) = fakemail::smtp_with_hooks(
+        &pki,
+        false,
+        move || {
+            let signal = signal.clone();
+            let proceed = proceed.clone();
+            async move {
+                signal.notify_one();
+                proceed.notified().await;
+            }
+        },
+        || std::future::ready(()),
+    )
+    .await;
     let server = |port| mailbox::Server {
         host: "localhost".into(),
         port,
@@ -1355,52 +1376,29 @@ async fn review_expiry_restore_must_respect_stopping_during_commit(db: SqlitePoo
     .unwrap();
     let id = draft.id;
     email::schedule::reschedule(&db, id, T, T).await.unwrap();
-    let options = db.connect_options().as_ref().clone();
-    let (request, requested) = mpsc::channel();
-    let (finish, finished) = mpsc::channel();
-    let writer = std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let db = sqlx::sqlite::SqlitePoolOptions::new()
-                    .max_connections(1)
-                    .connect_with(options)
-                    .await
-                    .unwrap();
-                requested.recv().unwrap();
-                assert_eq!(
-                    sqlx::query_scalar::<_, String>(
-                        r#"SELECT state
-                           FROM email
-                           WHERE id = ?"#
-                    )
-                    .bind(id)
-                    .fetch_one(&db)
-                    .await
-                    .unwrap(),
-                    "sending"
-                );
-                stop(&db, task, T).await.unwrap();
-                db.close().await;
-                finish.send(()).unwrap();
-            });
-    });
-    let calls = Cell::new(0);
     let net = net::Net::new(vec![pki.root.clone()]).unwrap();
     let nowhere = std::path::Path::new("unused");
-    send::step(&db, &net, nowhere, || {
-        calls.set(calls.get() + 1);
-        if calls.get() == 4 {
-            request.send(()).unwrap();
-            finished.recv().unwrap();
-        }
-        if calls.get() < 4 { T } else { T + 3_600_000 }
+    let sending = send::step(&db, &net, nowhere, || clock.load(Ordering::SeqCst));
+    let stopping = async {
+        reached.notified().await;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT state FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            "sending"
+        );
+        stop(&db, task, T).await.unwrap();
+        clock.store(T + 3_600_000, Ordering::SeqCst);
+        release.notify_one();
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        tokio::join!(sending, stopping)
     })
     .await
-    .unwrap();
-    writer.join().unwrap();
+    .expect("sending must finish");
+    result.unwrap();
     let canceled = sqlx::query_as::<_, (String, Option<String>, Option<i64>, Option<i64>)>(
         r#"SELECT state, cancel_reason, planned_at, latest_at
            FROM email
@@ -1708,6 +1706,100 @@ async fn task_name_checks_and_problem_counts_agree(db: SqlitePool) {
     .unwrap();
     assert_eq!(page.total, 1);
     assert_eq!(page.drafts[0].problems, p.len());
+    sqlx::query(
+        r#"INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port,
+            smtp_security, imap_host, imap_port, imap_security, auth, secret,
+            daily_limit, min_interval_s, rotation_order, created_at)
+        VALUES ('me@example.com', '我', 'custom', 'localhost', 465, 'tls', 'localhost',
+            993, 'tls', 'password', 'test', 50, 0, 1, 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    for (kind, n) in [(Kind::First, 11), (Kind::FollowUp, 21)] {
+        let a = mentor(&db, n, true).await;
+        let b = mentor(&db, n + 1, true).await;
+        previous(&db, a, false, T - 1000).await;
+        previous(&db, b, false, T - 1000).await;
+        let mut form = form(&db, vec![a, b]).await;
+        form.kind = kind;
+        let task = create(&db, &form, T).await.unwrap();
+        let d = items(&db, task).await.remove(0);
+        let result = email::fact_check::FactCheck::Completed {
+            findings: ["申请", "3 篇论文"]
+                .into_iter()
+                .map(|quote| email::fact_check::Finding {
+                    quote: quote.into(),
+                    reason: "没有材料依据".into(),
+                })
+                .collect(),
+        };
+        assert!(
+            email::fact_check::save(&db, d.id, 0, &result, T)
+                .await
+                .unwrap()
+        );
+        let mut edit = DraftEdit {
+            task_id: task,
+            id: d.id,
+            subject: "申请【请补充：主题】".into(),
+            body_md: format!(
+                "导师{n}老师：导师{}老师提到附件。【请补充：时间】我发表了 3 篇论文。",
+                n + 1
+            ),
+            attachments: vec![],
+        };
+        for changed in [false, true] {
+            if changed {
+                edit.subject = "新的主题".into();
+                edit.body_md = format!("导师{n}老师：您好。疑问已修改。");
+            }
+            let editor = check(&db, &edit, T).await.unwrap();
+            assert_eq!(
+                editor
+                    .iter()
+                    .filter(|p| matches!(p, check::Problem::UnsupportedClaim { .. }))
+                    .count(),
+                if changed {
+                    usize::from(kind == Kind::FollowUp)
+                } else {
+                    2
+                }
+            );
+            assert_eq!(
+                editor
+                    .iter()
+                    .any(|p| matches!(p, check::Problem::RecentlyContacted { .. })),
+                kind == Kind::First
+            );
+            assert_eq!(editor.iter().any(|p| matches!(p, check::Problem::Placeholder { name } if name == "【请补充：主题】")), !changed && kind == Kind::First);
+            if changed {
+                let saved = pending(&db, task, T).await.unwrap();
+                assert!(saved.iter().find(|r| r.draft.id == d.id).unwrap().problems > editor.len());
+            }
+            save(&db, &edit, T).await.unwrap();
+            let list = drafts(
+                &db,
+                &DraftQuery {
+                    task_id: task,
+                    filter: DraftFilter::All,
+                    page: std::num::NonZeroU32::MIN,
+                },
+                T,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                list.drafts.iter().find(|r| r.id == d.id).unwrap().problems,
+                editor.len()
+            );
+            let bulk = pending(&db, task, T).await.unwrap();
+            assert_eq!(
+                bulk.iter().find(|r| r.draft.id == d.id).unwrap().problems,
+                editor.len()
+            );
+        }
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -2962,4 +3054,113 @@ async fn restart_requires_an_existing_source_and_all_selected_mentors(db: Sqlite
         .await
         .unwrap();
     assert!(inbox.lock().unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn background_work_only_includes_paused_generating_and_failed_tasks(db: SqlitePool) {
+    sqlx::query(
+        r#"WITH RECURSIVE n(id) AS (VALUES(1) UNION ALL SELECT id + 1 FROM n WHERE id < 1000)
+        INSERT INTO task (id, name, kind, writer, schedule, state, created_at)
+        SELECT id, '已结束', 'first', 'ai', 'now',
+            CASE WHEN id % 2 = 0 THEN 'stopped' ELSE 'active' END, 0 FROM n"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let mentor = mentor(&db, 1, true).await;
+    for (id, task_state, paused, email_state, count) in [
+        (1001, "paused", false, "review", 1),
+        (1002, "active", true, "generating", 2),
+        (1003, "active", false, "generating", 3),
+        (1004, "active", false, "generation_failed", 1),
+        (1005, "stopped", false, "failed", 1),
+        (1006, "stopped", true, "canceled", 1),
+        (1007, "active", false, "review", 1),
+        (1008, "active", false, "approved", 1),
+        (1009, "paused", false, "canceled", 1),
+        (1010, "active", false, "sending", 1),
+        (1011, "active", false, "cloud", 1),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO task (id, name, kind, writer, schedule, state, created_at,
+                generation_paused_at, generation_pause_reason)
+            VALUES (?, '后台任务', 'first', 'ai', 'now', ?, 0, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(task_state)
+        .bind(paused.then_some(T))
+        .bind(paused.then_some("模型配置需要确认"))
+        .execute(&db)
+        .await
+        .unwrap();
+        for offset in 0..count {
+            let member = if offset == 0 {
+                mentor
+            } else {
+                self::mentor(&db, id + offset, true).await
+            };
+            sqlx::query(
+                r#"INSERT INTO email (task_id, mentor_id, kind, state, subject, body_md,
+                    html, text, error, cancel_reason, planned_at, message_id,
+                    from_address, sent_at, created_at, updated_at)
+                VALUES (?1, ?2, 'first', ?3, '主题', '正文', '<p>正文</p>', '正文', ?4,
+                    CASE WHEN ?3 = 'canceled' THEN '任务停止' END, 0,
+                    CASE WHEN ?3 = 'sending' THEN '<work-' || ?1 || '@example.com>' END,
+                    CASE WHEN ?3 = 'sending' THEN 'me@example.com' END,
+                    CASE WHEN ?3 = 'sending' THEN ?5 END, 0, 0)"#,
+            )
+            .bind(id)
+            .bind(member)
+            .bind(email_state)
+            .bind(matches!(email_state, "generation_failed" | "failed").then_some("失败原因"))
+            .bind(T)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+    }
+    let failed_mentor = self::mentor(&db, 2000, true).await;
+    sqlx::query(
+        r#"INSERT INTO email (task_id, mentor_id, kind, state, subject, body_md,
+            html, text, error, planned_at, created_at, updated_at)
+        SELECT id, ?, 'first', 'failed', '主题', '正文', '<p>正文</p>', '正文',
+            '失败原因', 0, 0, 0
+        FROM task WHERE id IN (1010, 1011)"#,
+    )
+    .bind(failed_mentor)
+    .execute(&db)
+    .await
+    .unwrap();
+    let tasks = work(&db).await.unwrap();
+    let page = list(
+        &db,
+        &TaskQuery {
+            page: std::num::NonZeroU32::MIN,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        tasks.iter().map(|t| t.id).collect::<Vec<_>>(),
+        [1011, 1010, 1009, 1005, 1004, 1003, 1002, 1001]
+    );
+    for (t, (state, generating)) in tasks.iter().zip([
+        (TaskState::Active, 0),
+        (TaskState::Active, 0),
+        (TaskState::Paused, 0),
+        (TaskState::Stopped, 0),
+        (TaskState::Completed, 0),
+        (TaskState::Active, 3),
+        (TaskState::Paused, 2),
+        (TaskState::Paused, 0),
+    ]) {
+        assert_eq!(t.state, state);
+        assert_eq!(t.generating, generating);
+        assert_eq!(t.state, get(&db, t.id).await.unwrap().unwrap().state);
+        assert_eq!(
+            t.state,
+            page.tasks.iter().find(|row| row.id == t.id).unwrap().state
+        );
+    }
+    assert_eq!(tasks[6].pause_reason.as_deref(), Some("模型配置需要确认"));
 }

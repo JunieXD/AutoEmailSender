@@ -951,7 +951,7 @@ pub async fn follow_up(db: &SqlitePool, now: i64) -> Result {
 }
 
 /// Explicit reply scenarios keep every outcome and work state visible in development.
-pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
+pub async fn reply_outcomes(db: &SqlitePool) -> Result {
     let ids: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM message WHERE kind = 'reply' ORDER BY sent_at DESC, id DESC LIMIT 6",
     )
@@ -994,11 +994,10 @@ pub async fn reply_outcomes(db: &SqlitePool, now: i64) -> Result {
             .execute(db)
             .await?;
         sqlx::query(
-            r#"INSERT INTO reply_processing (message_id, action, queued_at, state, error)
-            VALUES (?, 'outcome', ?, ?, ?)"#,
+            r#"INSERT INTO reply_processing (message_id, action, state, error)
+            VALUES (?, 'outcome', ?, ?)"#,
         )
         .bind(id)
-        .bind(now)
         .bind(state)
         .bind((state == "failed").then_some("模型没有按要求标出回信结果，可以重试或换个模型。"))
         .execute(db)

@@ -7,7 +7,7 @@ fn url() -> PageUrl {
 }
 
 fn check(html: &str, people: &[(&str, &[&str])]) {
-    let page = parse(&url(), html).unwrap();
+    let page = parse(&url(), html);
     let names: Vec<_> = people.iter().map(|(name, _)| *name).collect();
     for (name, own) in people {
         for (other, addresses) in people {
@@ -27,7 +27,7 @@ fn check(html: &str, people: &[(&str, &[&str])]) {
 }
 
 fn pairings(html: &str, names: [&str; 2], addresses: [&str; 2]) -> [[bool; 2]; 2] {
-    let page = parse(&url(), html).unwrap();
+    let page = parse(&url(), html);
     names.map(|name| addresses.map(|address| owns_email(&page, &names, &[name], address)))
 }
 
@@ -305,7 +305,7 @@ fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
                 &html,
                 &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
             );
-            let page = parse(&url(), &html).unwrap();
+            let page = parse(&url(), &html);
             for name in ["Alice", "Bob"] {
                 assert!(
                     !owns_email(&page, &["Alice", "Bob"], &[name], "office@pku.edu.cn"),
@@ -322,7 +322,7 @@ fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
         pairings(html, ["Alice", "Bob"], ["a@pku.edu.cn", "b@pku.edu.cn"]),
         [[false, false], [false, true]]
     );
-    let page = parse(&url(), html).unwrap();
+    let page = parse(&url(), html);
     assert!(!owns_email(
         &page,
         &["Alice", "Bob"],
@@ -374,7 +374,7 @@ fn shared_name_blocks_without_ordered_contacts_are_rejected() {
     for html in
         ["<main><div><h2>Alice</h2><h2>Bob</h2></div><p>a@pku.edu.cn b@pku.edu.cn</p></main>"]
     {
-        let page = parse(&url(), html).unwrap();
+        let page = parse(&url(), html);
         let names = ["Alice", "Bob"];
         for name in names {
             for address in ["a@pku.edu.cn", "b@pku.edu.cn"] {
@@ -401,8 +401,7 @@ fn blocks_keep_order_paths_and_only_their_own_evidence() {
         &url(),
         "<main>前<div>张 <span>三</span><a href='mailto:a@pku.edu.cn'>联系</a></div>后<p>\
         b@pku.edu.cn</p></main>",
-    )
-    .unwrap();
+    );
     assert_eq!(
         page.units
             .iter()
@@ -428,8 +427,7 @@ fn every_real_mcgill_person_accepts_own_email_and_rejects_adjacent_emails() {
     let page = parse(
         &PageUrl::parse("https://www.cs.mcgill.ca/people/faculty/").unwrap(),
         include_str!("pages/mcgill.html"),
-    )
-    .unwrap();
+    );
     let people: Vec<_> = include_str!("pages/mcgill-emails.tsv")
         .lines()
         .map(|line| line.split_once('\t').unwrap())
@@ -458,8 +456,7 @@ fn mcgill_footer_email_does_not_belong_to_the_last_mentor() {
     let page = parse(
         &PageUrl::parse("https://www.cs.mcgill.ca/people/faculty/").unwrap(),
         include_str!("pages/mcgill.html"),
-    )
-    .unwrap();
+    );
     let names: Vec<_> = include_str!("pages/mcgill-emails.tsv")
         .lines()
         .map(|line| line.split_once('\t').unwrap().0)
@@ -488,7 +485,7 @@ fn contacts_before_names_do_not_cross_sibling_articles() {
 
 #[test]
 fn real_profiles_require_both_the_name_and_an_evidenced_address() {
-    let toronto = parse(&url(), include_str!("pages/toronto.html")).unwrap();
+    let toronto = parse(&url(), include_str!("pages/toronto.html"));
     let names = ["Geoffrey E. Hinton", "Jennifer Cressman"];
     assert!(owns_email(
         &toronto,
@@ -519,7 +516,7 @@ fn real_profiles_require_both_the_name_and_an_evidenced_address() {
         include_str!("pages/nju.html").to_owned(),
         crawl::fetch::decode(include_bytes!("pages/nju-gbk.html"), None).unwrap(),
     ] {
-        let page = parse(&url(), &html).unwrap();
+        let page = parse(&url(), &html);
         for address in ["zhouzh@nju.edu.cn", "zhouzh.gm@gmail.com"] {
             assert!(owns_email(
                 &page,

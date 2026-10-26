@@ -124,7 +124,7 @@ async fn message(db: &SqlitePool, mentor: i64, kind: &str, at: i64, body: &str) 
         .execute(&mut *tx)
         .await
         .unwrap();
-    queue::enqueue(&mut tx, id, at).await.unwrap();
+    queue::enqueue(&mut tx, id).await.unwrap();
     tx.commit().await.unwrap();
     id
 }
@@ -143,13 +143,13 @@ async fn switches_backfill_deduplicate_and_invalidate_deleted_claim_generations(
     message(&db, m, "auto_reply", 2, "自动回复").await;
     message(&db, m, "sent", 3, "学生的信").await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
-    queue::set_enabled(&db, true, 4).await.unwrap();
-    queue::set_enabled(&db, true, 5).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 1);
     let old = queue::next(&db).await.unwrap().unwrap();
     assert_eq!(old.id, first);
-    queue::set_enabled(&db, false, 6).await.unwrap();
-    queue::set_enabled(&db, true, 6).await.unwrap();
+    queue::set_enabled(&db, false).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let new = queue::next(&db).await.unwrap().unwrap();
     assert_ne!(old, new);
     assert!(!queue::complete(&db, old, R::Declined).await.unwrap());
@@ -157,14 +157,14 @@ async fn switches_backfill_deduplicate_and_invalidate_deleted_claim_generations(
     assert!(queue::set(&db, first, R::NoSlot).await.unwrap());
     assert!(!queue::complete(&db, new, R::Interested).await.unwrap());
     assert_eq!(outcome(&db, first).await.as_deref(), Some("no_slot"));
-    queue::set_enabled(&db, true, 7).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn newest_first_recovery_trash_merge_and_cascade_preserve_work(db: SqlitePool) {
     let m = setup(&db).await;
-    queue::set_enabled(&db, true, 0).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let a = message(&db, m, "reply", 1, "旧").await;
     let b = message(&db, m, "reply", 2, "新").await;
     let old = queue::next(&db).await.unwrap().unwrap();
@@ -323,7 +323,7 @@ async fn prompt_contains_only_fresh_reply_and_referenced_student_letter_and_reco
         .unwrap();
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 3).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut p).await;
     let text = req.body["messages"][1]["content"].as_str().unwrap();
@@ -358,7 +358,7 @@ async fn references_find_external_parent_strip_quotes_and_limit_total_characters
         .unwrap();
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 3).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut p).await;
     let text = req.body["messages"][1]["content"].as_str().unwrap();
@@ -416,7 +416,7 @@ async fn assert_fresh_input(db: SqlitePool, body: &str, fresh: &str) {
         .unwrap();
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 3).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut p).await;
     let data: Value =
@@ -436,7 +436,7 @@ async fn invalid_output_retries_once_fails_then_user_retry_succeeds(db: SqlitePo
     let id = message(&db, m, "reply", 1, "答复").await;
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     for _ in 0..2 {
         request(&mut p)
@@ -455,7 +455,7 @@ async fn invalid_output_retries_once_fails_then_user_retry_succeeds(db: SqlitePo
             ..
         } if reason.contains("模型")
     ));
-    assert!(queue::retry(&db, id, 3).await.unwrap());
+    assert!(queue::retry(&db, id).await.unwrap());
     runner.processor.wake();
     request(&mut p)
         .await
@@ -480,7 +480,7 @@ async fn invalid_output_retries_once_fails_then_user_retry_succeeds(db: SqlitePo
 async fn missing_model_and_consent_pause_and_resume_without_losing_the_queue(db: SqlitePool) {
     let m = setup(&db).await;
     let id = message(&db, m, "reply", 1, "答复").await;
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     runner.until(&db, |p| p.pause.is_some()).await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 1);
@@ -522,7 +522,7 @@ async fn late_model_results_and_errors_cannot_override_manual_changes_or_new_wor
     let id = message(&db, m, "reply", 1, "答复").await;
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let old = request(&mut p).await;
     queue::set(&db, id, R::Declined).await.unwrap();
@@ -548,8 +548,8 @@ async fn late_model_results_and_errors_cannot_override_manual_changes_or_new_wor
     let second = message(&db, m, "reply", 3, "第二封").await;
     runner.processor.wake();
     let old = request(&mut p).await;
-    queue::set_enabled(&db, false, 4).await.unwrap();
-    queue::set_enabled(&db, true, 4).await.unwrap();
+    queue::set_enabled(&db, false).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     runner.processor.wake();
     let new = request(&mut p).await;
     old.respond
@@ -572,7 +572,7 @@ async fn current_config_errors_pause_old_config_errors_only_requeue(db: SqlitePo
     message(&db, m, "reply", 1, "答复").await;
     let mut old_provider = Provider::start().await.unwrap();
     config(&db, &old_provider.address).await;
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let old = request(&mut old_provider).await;
     let mut new_provider = Provider::start().await.unwrap();
@@ -615,7 +615,7 @@ async fn waiting_for_shared_capacity_reads_latest_model_and_consent(db: SqlitePo
     message(&db, m, "reply", 1, "答复").await;
     let mut old = Provider::start().await.unwrap();
     config(&db, &old.address).await;
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let limit = model::background::Limit::default();
     let permits = [
         limit.acquire().await,
@@ -657,7 +657,7 @@ async fn rate_limit_uses_retry_after_without_polling_on_controlled_time(db: Sqli
     message(&db, m, "reply", 1, "答复").await;
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut p).await;
     let clock_guard = tokio::spawn(async {
@@ -704,7 +704,7 @@ async fn model_work_never_exceeds_shared_capacity_and_restoration_wakes_retained
     }
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    queue::set_enabled(&db, true, 6).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let mut requests = vec![];
     for _ in 0..3 {
@@ -765,7 +765,7 @@ async fn shared_reply_stays_eligible_until_every_mentor_is_trashed(db: SqlitePoo
     )
     .await
     .unwrap();
-    queue::set_enabled(&db, true, 1).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let id = message(&db, m, "reply", 2, "共同回信").await;
     sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
         .bind(other)
@@ -791,8 +791,8 @@ async fn storage_rejects_half_pauses_and_failed_work_without_a_reason(db: Sqlite
     let id = message(&db, m, "reply", 1, "答复").await;
     assert!(
         sqlx::query(
-            r#"INSERT INTO reply_processing (message_id, action, queued_at, state)
-            VALUES (?, 'outcome', 1, 'failed')"#
+            r#"INSERT INTO reply_processing (message_id, action, state)
+            VALUES (?, 'outcome', 'failed')"#
         )
         .bind(id)
         .execute(&db)
@@ -801,8 +801,8 @@ async fn storage_rejects_half_pauses_and_failed_work_without_a_reason(db: Sqlite
     );
     assert!(
         sqlx::query(
-            r#"INSERT INTO reply_processing (message_id, action, queued_at, state, error)
-            VALUES (?, 'outcome', 1, 'queued', '失败原因')"#
+            r#"INSERT INTO reply_processing (message_id, action, state, error)
+            VALUES (?, 'outcome', 'queued', '失败原因')"#
         )
         .bind(id)
         .execute(&db)
@@ -826,7 +826,7 @@ async fn storage_rejects_half_pauses_and_failed_work_without_a_reason(db: Sqlite
 async fn todo_message(db: &SqlitePool, mentor: i64, at: i64, body: &str) -> i64 {
     let id = message(db, mentor, "reply", at, body).await;
     let mut tx = db.begin().await.unwrap();
-    email::todos::enqueue(&mut tx, id, at).await.unwrap();
+    email::todos::enqueue(&mut tx, id).await.unwrap();
     tx.commit().await.unwrap();
     id
 }
@@ -877,7 +877,7 @@ async fn todos_share_limited_material_include_reply_date_and_record_separate_usa
         .execute(&db)
         .await
         .unwrap();
-    queue::set_enabled(&db, true, 2).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let mut runner = Runner::start(&db, Default::default());
@@ -988,7 +988,7 @@ async fn todos_bad_text_and_format_retry_once_fail_then_retry_without_duplicate_
             ..
         }
     ));
-    queue::retry_action(&db, id, queue::Action::Todos, 2)
+    queue::retry_action(&db, id, queue::Action::Todos)
         .await
         .unwrap();
     runner.processor.wake();
@@ -1161,17 +1161,17 @@ async fn todo_queue_recovers_trash_and_atomic_storage_failure_without_partial_to
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn disabling_one_reply_action_preserves_the_other_actions_pause(db: SqlitePool) {
     email::todos::set_enabled(&db, true).await.unwrap();
-    queue::set_enabled(&db, true, 1).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     let mut conn = db.acquire().await.unwrap();
     queue::pause_if_unpaused(&mut conn, 2, "模型配置需要修正")
         .await
         .unwrap();
     drop(conn);
-    queue::set_enabled(&db, false, 3).await.unwrap();
+    queue::set_enabled(&db, false).await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_some());
     email::todos::set_enabled(&db, false).await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_none());
-    queue::set_enabled(&db, true, 4).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     email::todos::set_enabled(&db, true).await.unwrap();
     let mut conn = db.acquire().await.unwrap();
     queue::pause_if_unpaused(&mut conn, 5, "模型配置需要修正")
@@ -1180,6 +1180,6 @@ async fn disabling_one_reply_action_preserves_the_other_actions_pause(db: Sqlite
     drop(conn);
     email::todos::set_enabled(&db, false).await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_some());
-    queue::set_enabled(&db, false, 6).await.unwrap();
+    queue::set_enabled(&db, false).await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_none());
 }

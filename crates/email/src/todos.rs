@@ -155,13 +155,12 @@ pub async fn set_enabled(db: &SqlitePool, enabled: bool) -> Result<(), sqlx::Err
 }
 
 /// Only called for a newly inserted reply from the incremental receive pass.
-pub async fn enqueue(db: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {
+pub async fn enqueue(db: &mut SqliteConnection, id: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "INSERT INTO reply_processing(message_id, action, queued_at, state)
-        SELECT id, 'todos', ?, 'queued' FROM message
+        r#"INSERT INTO reply_processing(message_id, action, state)
+        SELECT id, 'todos', 'queued' FROM message
         WHERE id = ? AND kind = 'reply' AND (SELECT ai_reply_todos FROM profile)
-        ON CONFLICT DO NOTHING",
-        now,
+        ON CONFLICT DO NOTHING"#,
         id
     )
     .execute(db)
