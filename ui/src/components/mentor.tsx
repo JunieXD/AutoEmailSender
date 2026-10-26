@@ -121,6 +121,7 @@ export function refreshMentors(queryClient: QueryClient) {
     ["getFollowUpDraft"],
     ["getFollowUpEntry"],
     ["listConversations"],
+    ["listTodos"],
     ["unreadCount"],
     ["stats"],
   ]) {
