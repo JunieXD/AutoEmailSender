@@ -5,6 +5,7 @@ use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 
 use office_oxide::format::DocumentFormat;
+use office_oxide::ir::{DocumentIR, Element, InlineContent, List, inline_to_text};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
@@ -229,6 +230,91 @@ pub async fn add(
     Ok(id)
 }
 
+/// Detect the Word format from the contents: a DOCX may have been renamed to .doc.
+fn open_word(data: &[u8]) -> office_oxide::Result<office_oxide::Document> {
+    let format = if data.starts_with(b"PK") {
+        DocumentFormat::Docx
+    } else {
+        DocumentFormat::Doc
+    };
+    office_oxide::Document::from_reader(Cursor::new(data.to_vec()), format)
+}
+
+/// Only the letter body, without page furniture, notes, comments or images.
+/// None when the remaining body has no text.
+pub fn word_body(data: &[u8]) -> office_oxide::Result<Option<DocumentIR>> {
+    let document = open_word(data)?;
+    let doc = document.format() == DocumentFormat::Doc;
+    let mut document = document.to_ir();
+    let mut has_text = false;
+    for section in &mut document.sections {
+        section.header = None;
+        section.footer = None;
+        section.first_page_header = None;
+        section.first_page_footer = None;
+        section.even_page_header = None;
+        section.even_page_footer = None;
+        // A DOC's text boxes, its header's among them, all come out alike; a letterhead is more
+        // likely there than letter text.
+        if doc {
+            section
+                .elements
+                .retain(|element| !matches!(element, Element::TextBox(_)));
+        }
+        has_text |= retain_body(&mut section.elements);
+    }
+    Ok(has_text.then_some(document))
+}
+
+fn retain_body(elements: &mut Vec<Element>) -> bool {
+    let mut has_text = false;
+    elements.retain_mut(|element| {
+        match element {
+            // The IR stores comments, including their authors, as Endnote elements.
+            Element::Image(_) | Element::Footnote(_) | Element::Endnote(_) => return false,
+            Element::Heading(heading) => has_text |= retain_body_inline(&mut heading.content),
+            Element::Paragraph(paragraph) => has_text |= retain_body_inline(&mut paragraph.content),
+            Element::Table(table) => {
+                for row in &mut table.rows {
+                    for cell in &mut row.cells {
+                        has_text |= retain_body(&mut cell.content);
+                    }
+                }
+            }
+            Element::List(list) => has_text |= retain_list_body(list),
+            Element::TextBox(text_box) => has_text |= retain_body(&mut text_box.content),
+            Element::CodeBlock(code) => has_text |= !code.content.trim().is_empty(),
+            _ => {}
+        }
+        true
+    });
+    has_text
+}
+
+fn retain_list_body(list: &mut List) -> bool {
+    let mut has_text = false;
+    for item in &mut list.items {
+        has_text |= retain_body(&mut item.content);
+        if let Some(nested) = &mut item.nested {
+            has_text |= retain_list_body(nested);
+        }
+    }
+    has_text
+}
+
+fn retain_body_inline(content: &mut Vec<InlineContent>) -> bool {
+    content.retain(|inline| {
+        !matches!(
+            inline,
+            InlineContent::FootnoteRef(_)
+                | InlineContent::EndnoteRef(_)
+                | InlineContent::CommentStart(_)
+                | InlineContent::CommentRef(_)
+        )
+    });
+    !inline_to_text(content).trim().is_empty()
+}
+
 /// The text of a PDF or Word file, or None when it has none, such as a scan.
 fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
     let mut text = if pdf {
@@ -236,15 +322,11 @@ fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
             .and_then(|d| d.extract_all_text())
             .map_err(|e| e.to_string())?
     } else {
-        // By what the file is rather than its name, as a DOCX may be named .doc.
-        let format = if data.starts_with(b"PK") {
-            DocumentFormat::Docx
-        } else {
-            DocumentFormat::Doc
-        };
-        office_oxide::Document::from_reader(Cursor::new(data.to_vec()), format)
-            .map_err(|e| e.to_string())?
-            .plain_text()
+        let document = open_word(data).map_err(|e| e.to_string())?;
+        if document.plain_text().trim().is_empty() {
+            return Ok(None);
+        }
+        document.to_markdown()
     };
     // Extractors may emit NUL for symbol fonts; SQLite text functions stop at it.
     text.retain(|c| c != '\0');

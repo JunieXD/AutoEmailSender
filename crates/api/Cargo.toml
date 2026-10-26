@@ -39,4 +39,5 @@ tempfile = "3.27.0"
 
 [dev-dependencies]
 fakemail.workspace = true
+office_oxide = "0.1"
 test-fixtures = { path = "../test-fixtures" }

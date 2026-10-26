@@ -280,13 +280,14 @@ operations! {
     "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
     "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
     "listMaterials" => list_materials(Nothing) -> Vec<material::Material>;
-    "addMaterial" => add_material(NewMaterial) -> MaterialId;
+    "addMaterial" => add_material(UploadedFile) -> MaterialId;
     "setMaterialPurpose" => set_material_purpose(MaterialPurpose) -> ();
     "getMaterialText" => get_material_text(MaterialId) -> Option<String>;
     "deleteMaterial" => delete_material(MaterialId) -> ();
     "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
     "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
     "getTemplate" => get_template(TemplateId) -> template::Template;
+    "importWordTemplate" => import_word_template(UploadedFile) -> WordFile;
     "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
     "updateTemplate" => update_template(TemplateEdit) -> ();
     "deleteTemplate" => delete_template(TemplateId) -> ();
@@ -1202,7 +1203,7 @@ pub struct MaterialId {
 /// A file the user picked, as base64: JSON carries no bytes.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct NewMaterial {
+pub struct UploadedFile {
     pub file_name: String,
     pub data: String,
 }
@@ -1243,7 +1244,7 @@ async fn list_materials(ctx: &Context, _: Nothing) -> Result<Vec<material::Mater
     Ok(material::list(&ctx.db).await?)
 }
 
-async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, CallError> {
+async fn add_material(ctx: &Context, input: UploadedFile) -> Result<MaterialId, CallError> {
     let data = uploaded_bytes(&input.data)?;
     let extracted = material::extract(input.file_name.trim(), data).await?;
     let id = material::add(&ctx.db, &ctx.materials, extracted, now()).await?;
@@ -1304,6 +1305,43 @@ async fn add_template(
     let fields = form.check().map_err(CallError::invalid)?;
     let id = template::create(&ctx.db, &fields, now()).await?;
     Ok(TemplateId { id })
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WordFile {
+    pub name: String,
+    pub html: String,
+}
+
+async fn import_word_template(_: &Context, input: UploadedFile) -> Result<WordFile, CallError> {
+    let data = uploaded_bytes(&input.data)?;
+    let Some((name, extension)) = input.file_name.trim().rsplit_once('.') else {
+        return Err(CallError::invalid("请选择 DOCX 或 DOC 文件。".into()));
+    };
+    if !extension.eq_ignore_ascii_case("docx") && !extension.eq_ignore_ascii_case("doc") {
+        return Err(CallError::invalid("请选择 DOCX 或 DOC 文件。".into()));
+    }
+    let unreadable = |detail: String| {
+        tracing::warn!("reading a Word template: {detail}");
+        CallError::invalid(
+            "未能读取 Word 文件：文件可能已损坏、设有密码或不是 Word 格式，请换一个文件。".into(),
+        )
+    };
+    // Parsing is slow work, and a library may panic on a damaged file.
+    let html = tokio::task::spawn_blocking(move || {
+        material::word_body(&data)
+            .map(|document| document.map(|body| body.to_html()))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| unreadable(error.to_string()))?
+    .map_err(unreadable)?
+    .ok_or_else(|| CallError::invalid("文件中没有可导入的文字，请换一个 Word 文件。".into()))?;
+    Ok(WordFile {
+        name: name.into(),
+        html,
+    })
 }
 
 async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallError> {

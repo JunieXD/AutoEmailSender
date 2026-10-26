@@ -19,12 +19,26 @@ export function formClose(
   };
 }
 
-export function Field({ label, id, children }: { label: string; id: string; children: ReactNode }) {
+export function Field({
+  label,
+  id,
+  action,
+  children,
+}: {
+  label: string;
+  id: string;
+  /** A control at the end of the label's line. */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div>
-      <label htmlFor={id} className="mb-1.5 block text-sm text-muted-foreground">
-        {label}
-      </label>
+      <div className="mb-1.5 flex items-end justify-between gap-3">
+        <label htmlFor={id} className="text-sm text-muted-foreground">
+          {label}
+        </label>
+        {action}
+      </div>
       {children}
     </div>
   );
