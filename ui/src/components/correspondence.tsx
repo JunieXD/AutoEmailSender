@@ -24,6 +24,7 @@ import { AddTodo, TodoItem } from "@/components/todos";
 import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
 import { toHtml } from "@/markdown";
+import { useNow } from "@/now";
 
 /** Pending mail hides both entry buttons, while a blocked thread still explains why. */
 export function followUpActions(entry: FollowUpEntry, now: number) {
@@ -121,6 +122,11 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
         <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted-foreground">
           {mentor.contact.status === "none" ? `尚未联系${mentor.name}老师。` : contactDetail(mentor.contact)}
         </div>
+        {!mentor.trashed && (
+          <div className="flex flex-col px-5 pb-4 phone:px-3">
+            <AddTodo mentorId={mentor.id} />
+          </div>
+        )}
         {!mentor.trashed && replyDraft.isSuccess && (!replying || begun) && <FirstLetter mentor={mentor} />}
         {!mentor.trashed && replying && <ReplyLetter mentor={mentor} selected={selected} />}
       </>
@@ -396,7 +402,7 @@ function groupTodos(entries: Entry[]): Shown[] {
 }
 
 function TodoGroup({ todos, readOnly }: { todos: Todo[]; readOnly: boolean }) {
-  const [now] = useState(Date.now);
+  const now = useNow();
   return (
     <ul
       aria-label="待办"

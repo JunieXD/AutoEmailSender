@@ -116,6 +116,13 @@ async fn todo_operations_validate_inputs_return_fields_and_preserve_manual_contr
         .code,
         ErrorCode::NotFound
     ));
+    let kept = call(
+        &ctx,
+        "addTodo",
+        json!({"mentorId":m,"text":"寄成绩单","dueDate":null,"dueTime":null}),
+    )
+    .await
+    .unwrap();
     mentor::trash::trash(&ctx.db, &[m], 1).await.unwrap();
     assert!(matches!(
         call(
@@ -128,6 +135,25 @@ async fn todo_operations_validate_inputs_return_fields_and_preserve_manual_contr
         .code,
         ErrorCode::Invalid
     ));
+    // A trashed mentor's correspondence is read-only, including an editor left open.
+    for (op, input) in [
+        (
+            "updateTodo",
+            json!({"id":kept,"text":"改了","dueDate":null,"dueTime":null}),
+        ),
+        ("setTodoDone", json!({"id":kept,"done":true})),
+        ("deleteTodo", json!({"id":kept})),
+    ] {
+        assert!(matches!(
+            call(&ctx, op, input).await.unwrap_err().code,
+            ErrorCode::NotFound
+        ));
+    }
+    let correspondence = call(&ctx, "listCorrespondence", json!({"id":m}))
+        .await
+        .unwrap();
+    assert_eq!(correspondence[0]["todo"]["text"], "寄成绩单");
+    assert_eq!(correspondence[0]["todo"]["done"], false);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

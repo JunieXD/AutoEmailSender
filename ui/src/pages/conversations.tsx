@@ -10,16 +10,16 @@ import {
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronLeft, RefreshCw, UserRound } from "lucide-react";
-import { useEffect, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { TodoPage } from "@/api/types";
 import { Correspondence } from "@/components/correspondence";
 import { Avatar, ContactLabel, placeOf } from "@/components/mentor";
 import { Pager, pageParam, useLastPage } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
-import { TodoCheck, dueLabel, dueTone } from "@/components/todos";
+import { TodoCheck, TodoCheckError, dueLabel, dueTone } from "@/components/todos";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { day, time } from "@/format";
+import { useNow } from "@/now";
 
 export type ConversationSearch = { show?: "unread" | "todos"; page?: number; mentor?: number };
 
@@ -82,11 +82,7 @@ export function ConversationsPage() {
     filters: { mutationKey: ["receiveNow"] },
     select: (m) => m.state.error,
   }).at(-1);
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(timer);
-  }, []);
+  const now = useNow();
   const at = status.data?.receivedAt;
   const minutes = at == null ? 0 : Math.max(0, Math.floor((now - at) / 60_000));
   return (
@@ -212,7 +208,7 @@ export function ConversationsPage() {
 
 /** Every open todo, overdue first, then by due time, those without one last (docs/ui.md#交互). */
 function TodoList({ query, selected }: { query: UseQueryResult<TodoPage>; selected?: number }) {
-  const [now] = useState(Date.now);
+  const now = useNow();
   if (query.isError) return <Notice title="待办没能加载" detail={errorMessage(query.error)} />;
   if (query.data?.total === 0) {
     return <Notice title="没有要做的事。" detail="导师回信里要你做的事、你自己添加的待办会列在这里。" />;
@@ -227,13 +223,16 @@ function TodoList({ query, selected }: { query: UseQueryResult<TodoPage>; select
             className={`flex items-start gap-3 rounded-md px-3 py-3 ${selected === t.mentorId ? "bg-selected" : "hover:bg-muted"}`}
           >
             <TodoCheck todo={t} />
-            <Link to="/conversations" search={(s) => ({ ...s, mentor: t.mentorId })} className="min-w-0 grow">
-              <p className="wrap-anywhere">{t.text}</p>
-              <p className="mt-1 flex justify-between gap-2 text-sm text-muted-foreground">
-                <span className="truncate">{t.mentorName}</span>
-                {due && <span className={`shrink-0 ${dueTone(t, false, now)}`}>{due}</span>}
-              </p>
-            </Link>
+            <div className="min-w-0 grow">
+              <Link to="/conversations" search={(s) => ({ ...s, mentor: t.mentorId })} className="block">
+                <p className="wrap-anywhere">{t.text}</p>
+                <p className="mt-1 flex justify-between gap-2 text-sm text-muted-foreground">
+                  <span className="truncate">{t.mentorName}</span>
+                  {due && <span className={`shrink-0 ${dueTone(t, false, now)}`}>{due}</span>}
+                </p>
+              </Link>
+              <TodoCheckError id={t.id} />
+            </div>
           </li>
         );
       })}

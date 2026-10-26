@@ -192,20 +192,27 @@ pub async fn update(
     let changed = sqlx::query!("UPDATE todo SET text = ?2, due_date = ?3, due_time = ?4,
         reminded_at = CASE WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN NULL ELSE reminded_at END,
         due_changed_at = CASE WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN ?5 ELSE due_changed_at END
-        WHERE id = ?1", id, fields.text, fields.due_date, fields.due_time, now).execute(db).await?;
+        WHERE id = ?1 AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)", id, fields.text, fields.due_date, fields.due_time, now).execute(db).await?;
     Ok(changed.rows_affected() > 0)
 }
 
 pub async fn set_done(db: &SqlitePool, id: i64, done: bool, now: i64) -> Result<bool, sqlx::Error> {
     let at = done.then_some(now);
-    let changed = sqlx::query!("UPDATE todo SET done_at = ? WHERE id = ?", at, id)
+    let changed = sqlx::query!(
+        "UPDATE todo SET done_at = ? WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
+        at,
+        id
+    )
         .execute(db)
         .await?;
     Ok(changed.rows_affected() > 0)
 }
 
 pub async fn delete(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("DELETE FROM todo WHERE id = ?", id)
+    Ok(sqlx::query!(
+        "DELETE FROM todo WHERE id = ? AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)",
+        id
+    )
         .execute(db)
         .await?
         .rows_affected()

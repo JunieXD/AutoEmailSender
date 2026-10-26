@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { CalendarDays, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
@@ -56,6 +56,7 @@ export function dueTone({ dueDate, dueTime }: Due, done: boolean, now: number): 
 export function TodoCheck({ todo }: { todo: Todo }) {
   const queryClient = useQueryClient();
   const set = useMutation({
+    mutationKey: ["setTodoDone", todo.id],
     mutationFn: (done: boolean) => call("setTodoDone", { id: todo.id, done }),
     onSettled: () => refreshTodos(queryClient),
   });
@@ -68,6 +69,15 @@ export function TodoCheck({ todo }: { todo: Todo }) {
       className="mt-[3px]"
     />
   );
+}
+
+/** Why ticking a todo last failed, under its text; ticking it again retries. */
+export function TodoCheckError({ id }: { id: number }) {
+  const error = useMutationState({
+    filters: { mutationKey: ["setTodoDone", id] },
+    select: (m) => m.state.error,
+  }).at(-1);
+  return error == null ? null : <p className="mt-1 text-sm text-destructive">未能保存：{errorMessage(error)}</p>;
 }
 
 /** One todo in a mentor's correspondence: tick it, or click its text to change or delete it. */
@@ -83,7 +93,7 @@ export function TodoItem({ todo, readOnly, now }: { todo: Todo; readOnly: boolea
     mutationFn: () => call("deleteTodo", { id: todo.id }),
     onSettled: () => refreshTodos(queryClient),
   });
-  if (editing) {
+  if (editing && !readOnly) {
     return (
       <TodoEditor
         initial={todo}
@@ -102,14 +112,17 @@ export function TodoItem({ todo, readOnly, now }: { todo: Todo; readOnly: boolea
   return (
     <div className="flex items-start gap-2.5 px-3 py-2">
       {readOnly ? <Checkbox checked={todo.done} disabled className="mt-[3px]" /> : <TodoCheck todo={todo} />}
-      <button
-        type="button"
-        disabled={readOnly}
-        onClick={() => setEditing(true)}
-        className={`min-w-0 grow text-left wrap-anywhere ${todo.done ? "text-faint line-through" : ""}`}
-      >
-        {todo.text}
-      </button>
+      <div className="min-w-0 grow">
+        <button
+          type="button"
+          disabled={readOnly}
+          onClick={() => setEditing(true)}
+          className={`w-full text-left wrap-anywhere ${todo.done ? "text-faint line-through" : ""}`}
+        >
+          {todo.text}
+        </button>
+        <TodoCheckError id={todo.id} />
+      </div>
       {due && <span className={`shrink-0 text-sm ${dueTone(todo, todo.done, now)}`}>{due}</span>}
     </div>
   );
@@ -173,6 +186,7 @@ export function TodoEditor({
               selected={dueDate ? parseDate(dueDate) : undefined}
               onSelect={(d) => {
                 setDueDate(d ? localDate(d) : null);
+                if (!d) setDueTime("");
                 setPicking(false);
               }}
             />
@@ -184,6 +198,7 @@ export function TodoEditor({
                 className="mt-1 w-full"
                 onClick={() => {
                   setDueDate(null);
+                  setDueTime("");
                   setPicking(false);
                 }}
               >

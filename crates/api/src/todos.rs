@@ -86,7 +86,7 @@ pub async fn update_todo(ctx: &Context, input: TodoEdit) -> Result<(), CallError
         .map_err(|error| CallError::invalid(error.into()))?;
     require_applied(
         email::todos::update(&ctx.db, input.id, &fields, now()).await?,
-        "这条待办已删除，请刷新后重试。",
+        "这条待办已删除或导师已在回收站里，请刷新后重试。",
     )?;
     ctx.todo_reminders.wake();
     Ok(())
@@ -95,7 +95,7 @@ pub async fn update_todo(ctx: &Context, input: TodoEdit) -> Result<(), CallError
 pub async fn set_todo_done(ctx: &Context, input: TodoDone) -> Result<(), CallError> {
     require_applied(
         email::todos::set_done(&ctx.db, input.id, input.done, now()).await?,
-        "这条待办已删除，请刷新后重试。",
+        "这条待办已删除或导师已在回收站里，请刷新后重试。",
     )?;
     ctx.todo_reminders.wake();
     Ok(())
@@ -104,7 +104,7 @@ pub async fn set_todo_done(ctx: &Context, input: TodoDone) -> Result<(), CallErr
 pub async fn delete_todo(ctx: &Context, input: TodoId) -> Result<(), CallError> {
     require_applied(
         email::todos::delete(&ctx.db, input.id).await?,
-        "这条待办已删除，请刷新后重试。",
+        "这条待办已删除或导师已在回收站里，请刷新后重试。",
     )?;
     ctx.todo_reminders.wake();
     Ok(())
