@@ -381,8 +381,15 @@ pub async fn run(
                             .retry("save match", || async {
                                 match &outcome {
                                     Outcome::Done(answer, model, started_at) => {
-                                        queue::complete(&db, claim, answer, model, *started_at)
-                                            .await
+                                        queue::complete(
+                                            &db,
+                                            claim,
+                                            answer,
+                                            model,
+                                            *started_at,
+                                            completed_at,
+                                        )
+                                        .await
                                     }
                                     Outcome::Failed(reason) => {
                                         queue::fail(&db, claim, reason).await
@@ -527,13 +534,13 @@ mod tests {
         assert_ne!(old, new);
         assert!(!fail(&db, old, "旧错误").await.unwrap());
         assert!(!requeue(&db, old, Some((5, "旧暂停")), None).await.unwrap());
-        assert!(!complete(&db, old, &answer(), "old", 5).await.unwrap());
+        assert!(!complete(&db, old, &answer(), "old", 5, 5).await.unwrap());
         assert!(progress(&db).await.unwrap().pause.is_none());
         assert_eq!(
             mentor::get(&db, id).await.unwrap().unwrap().analysis.state,
             Some(MatchState::Running)
         );
-        assert!(complete(&db, new, &answer(), "new", 6).await.unwrap());
+        assert!(complete(&db, new, &answer(), "new", 6, 6).await.unwrap());
     }
 
     #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -549,9 +556,9 @@ mod tests {
         assert!(!fail(&db, old, "旧错误").await.unwrap());
         assert!(!requeue(&db, old, Some((2, "旧暂停")), None).await.unwrap());
         enqueue(&db, &[id], true, true, 3).await.unwrap();
-        assert!(!complete(&db, old, &answer(), "old", 4).await.unwrap());
+        assert!(!complete(&db, old, &answer(), "old", 4, 4).await.unwrap());
         cancel(&db).await.unwrap();
-        assert!(!complete(&db, old, &answer(), "old", 5).await.unwrap());
+        assert!(!complete(&db, old, &answer(), "old", 5, 5).await.unwrap());
         assert!(
             mentor::get(&db, id)
                 .await
@@ -576,7 +583,7 @@ mod tests {
                 mentor::trash::trash(&db, &[id], 2).await.unwrap();
                 mentor::trash::delete(&db, &[id]).await.unwrap();
             }
-            assert!(!complete(&db, claim, &answer(), "old", 3).await.unwrap());
+            assert!(!complete(&db, claim, &answer(), "old", 3, 3).await.unwrap());
             assert!(!fail(&db, claim, "旧错误").await.unwrap());
             assert!(
                 !requeue(&db, claim, Some((3, "旧暂停")), None)

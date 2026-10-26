@@ -1,6 +1,19 @@
 use super::*;
 
 #[derive(Debug, Deserialize, TS)]
+pub struct TodayWorkQuery {
+    pub start: i64,
+    pub end: i64,
+}
+
+pub(super) async fn today_work(
+    ctx: &Context,
+    input: TodayWorkQuery,
+) -> Result<stats::TodayWork, CallError> {
+    Ok(stats::today_work(&ctx.db, input.start, input.end).await?)
+}
+
+#[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsPeriod {
     pub range: stats::Range,

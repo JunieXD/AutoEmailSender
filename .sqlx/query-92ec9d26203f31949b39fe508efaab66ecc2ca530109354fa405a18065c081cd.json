@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"count!: i64\"\n        FROM mentor\n        WHERE match_completed_at >= ? AND match_completed_at < ? AND trashed_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "92ec9d26203f31949b39fe508efaab66ecc2ca530109354fa405a18065c081cd"
+}

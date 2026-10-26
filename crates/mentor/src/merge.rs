@@ -179,10 +179,13 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     .await?;
     if a.analysis.result.is_none() && b.analysis.result.is_some() {
         sqlx::query!(
-            "UPDATE mentor SET (match_score, matched_at, match_model) =
-               (SELECT match_score, matched_at, match_model FROM mentor
-                WHERE id = ?2)
-             WHERE id = ?1",
+            r#"UPDATE mentor
+            SET (match_score, matched_at, match_model, match_completed_at) = (
+                SELECT match_score, matched_at, match_model, match_completed_at
+                FROM mentor
+                WHERE id = ?2
+            )
+            WHERE id = ?1"#,
             keep,
             other,
         )
