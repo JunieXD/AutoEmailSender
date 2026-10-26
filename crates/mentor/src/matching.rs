@@ -185,7 +185,11 @@ pub struct Claim {
 
 /// Claims in priority then FIFO order, only while the queue is not paused.
 pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
-    sqlx::query_as!(
+    // SQLite may execute queued commands after cancellation. Before COMMIT is submitted, a
+    // canceled claim rolls back. If COMMIT is submitted but its result is lost, the write lock
+    // ensures it finishes before restart recovery requeues the claim.
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let claim = sqlx::query_as!(
         Claim,
         r#"UPDATE mentor
         SET match_state = 'running', match_claim = match_claim + 1
@@ -198,8 +202,10 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
         ) AND (SELECT match_paused_at FROM profile) IS NULL
         RETURNING id AS "id!", match_claim AS "claim!""#
     )
-    .fetch_optional(db)
-    .await
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(claim)
 }
 
 pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {

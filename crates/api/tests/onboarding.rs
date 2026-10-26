@@ -11,21 +11,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 fn context(db: SqlitePool, materials: &Path) -> Context {
-    Context {
-        agent_access: Default::default(),
-        writes: db::Writes::default(),
-        db,
-        net: net::Net::new(Vec::new()).unwrap(),
-        materials: materials.to_owned(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-    }
+    Context::new(db, net::Net::new(Vec::new()).unwrap(), materials.to_owned())
 }
 
 async fn mailbox(ctx: &mut Context, secret: &str) -> (i64, Inbox) {

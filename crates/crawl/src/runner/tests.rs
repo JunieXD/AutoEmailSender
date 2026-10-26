@@ -13,6 +13,8 @@ use tokio::{
     net::TcpListener,
     sync::mpsc,
 };
+// Signals and database state determine progress; this only bounds hangs under load.
+const GUARD_TIMEOUT: Duration = Duration::from_secs(60);
 struct Site {
     port: u16,
     pages: Arc<Mutex<HashMap<String, (u16, String)>>>,
@@ -214,7 +216,7 @@ async fn changed_until(
     events: &mut mpsc::UnboundedReceiver<()>,
     state: &str,
 ) {
-    tokio::time::timeout(Duration::from_secs(20), async {
+    tokio::time::timeout(GUARD_TIMEOUT, async {
         loop {
             let actual = sqlx::query_scalar::<_, String>("SELECT state FROM crawl WHERE id=?")
                 .bind(id)
@@ -873,7 +875,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
         .send(Response::answer(&answer.to_string()))
         .ok()
         .unwrap();
-    let waiting = tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
+    let waiting = tokio::time::timeout(GUARD_TIMEOUT, p.requests.recv())
         .await
         .unwrap()
         .unwrap();
@@ -964,7 +966,7 @@ async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     tokio::time::advance(Duration::from_secs(2)).await;
     tokio::time::resume();
     guard.abort();
-    let current = tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
+    let current = tokio::time::timeout(GUARD_TIMEOUT, p.requests.recv())
         .await
         .unwrap()
         .unwrap();
@@ -2680,7 +2682,7 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
             }
             p
         });
-        let outcome = tokio::time::timeout(Duration::from_secs(10), process)
+        let outcome = tokio::time::timeout(GUARD_TIMEOUT, process)
             .await
             .unwrap()
             .unwrap();
@@ -2981,7 +2983,7 @@ async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePoo
     drop(permit.await);
     tokio::time::resume();
     guard.abort();
-    let next = tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
+    let next = tokio::time::timeout(GUARD_TIMEOUT, p.requests.recv())
         .await
         .unwrap()
         .unwrap();

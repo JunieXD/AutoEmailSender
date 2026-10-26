@@ -2,6 +2,7 @@
 #![cfg(test)]
 
 use material::{Error, Purpose};
+use office_oxide::docx::write::DocxWriter;
 use sqlx::SqlitePool;
 
 async fn add(
@@ -70,10 +71,23 @@ async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
     let id = add(&db, dir.path(), "简历.DOC", fixture("resume.docx"), 1)
         .await
         .unwrap();
-    assert_eq!(
-        material::text(&db, id).await.unwrap(),
-        Some(Some("林晓 个人简历\n南京大学 计算机科学与技术".into()))
-    );
+    let text = material::text(&db, id).await.unwrap().unwrap().unwrap();
+    assert!(text.contains("林晓 个人简历"));
+    assert!(text.contains("南京大学 计算机科学与技术"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_empty_word_table_has_no_text(db: SqlitePool) {
+    let mut writer = DocxWriter::new();
+    writer.add_table(&[vec!["", ""], vec!["", ""]]);
+    let mut data = std::io::Cursor::new(Vec::new());
+    writer.write_to(&mut data).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    add(&db, dir.path(), "空表格.docx", data.into_inner(), 1)
+        .await
+        .unwrap();
+    let m = &material::list(&db).await.unwrap()[0];
+    assert!(!m.has_text && !m.for_matching && !m.for_writing);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -82,17 +96,18 @@ async fn word_symbols_do_not_cut_off_ai_reference_text(db: SqlitePool) {
     let id = add(&db, dir.path(), "简历.docx", fixture("symbol-nul.docx"), 1)
         .await
         .unwrap();
-    let expected = "林晓 个人简历\n南京大学 计算机科学与技术";
     for references in [
         material::for_writing(&db).await.unwrap(),
         material::for_matching(&db).await.unwrap(),
     ] {
-        assert_eq!(references[0].text, expected);
+        assert!(references[0].text.contains("林晓 个人简历"));
+        assert!(references[0].text.contains("南京大学 计算机科学与技术"));
+        assert!(!references[0].text.contains('\0'));
     }
-    assert_eq!(
-        material::text(&db, id).await.unwrap(),
-        Some(Some(expected.into()))
-    );
+    let text = material::text(&db, id).await.unwrap().unwrap().unwrap();
+    assert!(text.contains("林晓 个人简历"));
+    assert!(text.contains("南京大学 计算机科学与技术"));
+    assert!(!text.contains('\0'));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

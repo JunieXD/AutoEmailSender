@@ -50,7 +50,10 @@ pub async fn list_task_drafts(
     ctx: &Context,
     q: task::DraftQuery,
 ) -> Result<task::DraftPage, CallError> {
-    Ok(task::drafts(&ctx.db, &q, now()).await?)
+    Ok(task::drafts(&ctx.db, &q, now(), |address| {
+        ctx.mail_domains.known_or_start(address)
+    })
+    .await?)
 }
 pub async fn get_task_draft(
     ctx: &Context,
@@ -146,7 +149,10 @@ pub async fn prepare_task_approval(
     ctx: &Context,
     key: TaskId,
 ) -> Result<Vec<task::ApprovalCandidate>, CallError> {
-    Ok(task::pending(&ctx.db, key.id, now()).await?)
+    Ok(task::pending(&ctx.db, key.id, now(), |address| {
+        ctx.mail_domains.known_or_start(address)
+    })
+    .await?)
 }
 pub async fn approve_task_emails(
     ctx: &Context,

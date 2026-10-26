@@ -545,7 +545,7 @@ pub async fn run(path: &Path) -> Result {
     };
     report(
         "审核页草稿列表一页（500 封的任务，含规则及 AI 核对问题数）",
-        median(async || task::drafts(&db, &query, NOW).await.map(drop)).await?,
+        median(async || task::drafts(&db, &query, NOW, |_| None).await.map(drop)).await?,
         home,
     );
 

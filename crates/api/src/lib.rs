@@ -6,7 +6,9 @@ use agent::{get_agent_access, set_agent_access};
 pub mod backup;
 mod crawling;
 mod fact_check;
+mod mail_domains;
 use fact_check::*;
+pub use mail_domains::MailDomains;
 pub mod startup;
 mod statistics;
 mod tasks;
@@ -35,8 +37,31 @@ pub struct Context {
     pub crawler: crawl::runner::Crawler,
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
+    pub mail_domains: MailDomains,
     /// Where material files are kept.
     pub materials: std::path::PathBuf,
+}
+
+impl Context {
+    pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
+        let writes = db::Writes::default();
+        Self {
+            agent_access: Default::default(),
+            crawler: crawl::runner::Crawler::new(writes.clone()),
+            writes,
+            db,
+            net,
+            materials,
+            sender: Default::default(),
+            receiver: Default::default(),
+            matcher: Default::default(),
+            reply_processor: Default::default(),
+            todo_reminders: Default::default(),
+            generator: Default::default(),
+            model_limit: Default::default(),
+            mail_domains: Default::default(),
+        }
+    }
 }
 
 /// What the UI shows when an operation fails.
@@ -343,13 +368,14 @@ operations! {
     "getLetterStyle" => get_letter_style(Nothing) -> profile::LetterStyle;
     "updateLetterStyle" => update_letter_style(profile::LetterStyle) -> ();
     "listMaterials" => list_materials(Nothing) -> Vec<material::Material>;
-    "addMaterial" => add_material(NewMaterial) -> MaterialId;
+    "addMaterial" => add_material(UploadedFile) -> MaterialId;
     "setMaterialPurpose" => set_material_purpose(MaterialPurpose) -> ();
     "getMaterialText" => get_material_text(MaterialId) -> Option<String>;
     "deleteMaterial" => delete_material(MaterialId) -> ();
     "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
     "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
     "getTemplate" => get_template(TemplateId) -> template::Template;
+    "importWordTemplate" => import_word_template(UploadedFile) -> WordFile;
     "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
     "updateTemplate" => update_template(TemplateEdit) -> ();
     "deleteTemplate" => delete_template(TemplateId) -> ();
@@ -1265,7 +1291,7 @@ pub struct MaterialId {
 /// A file the user picked, as base64: JSON carries no bytes.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
-pub struct NewMaterial {
+pub struct UploadedFile {
     pub file_name: String,
     pub data: String,
 }
@@ -1306,7 +1332,7 @@ async fn list_materials(ctx: &Context, _: Nothing) -> Result<Vec<material::Mater
     Ok(material::list(&ctx.db).await?)
 }
 
-async fn add_material(ctx: &Context, input: NewMaterial) -> Result<MaterialId, CallError> {
+async fn add_material(ctx: &Context, input: UploadedFile) -> Result<MaterialId, CallError> {
     let data = uploaded_bytes(&input.data)?;
     let extracted = material::extract(input.file_name.trim(), data).await?;
     let id = material::add(&ctx.db, &ctx.materials, extracted, now()).await?;
@@ -1367,6 +1393,43 @@ async fn add_template(
     let fields = form.check().map_err(CallError::invalid)?;
     let id = template::create(&ctx.db, &fields, now()).await?;
     Ok(TemplateId { id })
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WordFile {
+    pub name: String,
+    pub html: String,
+}
+
+async fn import_word_template(_: &Context, input: UploadedFile) -> Result<WordFile, CallError> {
+    let data = uploaded_bytes(&input.data)?;
+    let Some((name, extension)) = input.file_name.trim().rsplit_once('.') else {
+        return Err(CallError::invalid("请选择 DOCX 或 DOC 文件。".into()));
+    };
+    if !extension.eq_ignore_ascii_case("docx") && !extension.eq_ignore_ascii_case("doc") {
+        return Err(CallError::invalid("请选择 DOCX 或 DOC 文件。".into()));
+    }
+    let unreadable = |detail: String| {
+        tracing::warn!("reading a Word template: {detail}");
+        CallError::invalid(
+            "未能读取 Word 文件：文件可能已损坏、设有密码或不是 Word 格式，请换一个文件。".into(),
+        )
+    };
+    // Parsing is slow work, and a library may panic on a damaged file.
+    let html = tokio::task::spawn_blocking(move || {
+        material::word_body(&data)
+            .map(|document| document.map(|body| body.to_html()))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| unreadable(error.to_string()))?
+    .map_err(unreadable)?
+    .ok_or_else(|| CallError::invalid("文件中没有可导入的文字，请换一个 Word 文件。".into()))?;
+    Ok(WordFile {
+        name: name.into(),
+        html,
+    })
 }
 
 async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallError> {
@@ -1604,16 +1667,10 @@ pub struct MailAddress {
 /// A lookup that fails, such as when offline, tells nothing: the interface shows no error and
 /// asks again later (docs/design.md#联系).
 async fn check_mail_domain(
-    _: &Context,
+    ctx: &Context,
     input: MailAddress,
 ) -> Result<Option<check::Problem>, CallError> {
-    check::mail_domain(&input.address).await.map_err(|e| {
-        tracing::warn!("looking up a mail domain: {e}");
-        CallError {
-            code: ErrorCode::External,
-            message: "未能查询导师邮箱的域名。".into(),
-        }
-    })
+    ctx.mail_domains.check(&input.address).await
 }
 
 /// The mentor's first draft as the user approved it, with the HTML and plain text the interface
@@ -2435,21 +2492,7 @@ mod writing_tests {
         )
         .await
         .unwrap();
-        let ctx = Context {
-            agent_access: Default::default(),
-            writes: db::Writes::default(),
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         let (old_address, old_received) = provider::scripted(vec![(
             "<subject>申请</subject><body>旧地址的信</body>",
             "stop",
@@ -2549,21 +2592,7 @@ mod writing_tests {
         )
         .await
         .unwrap();
-        let ctx = Context {
-            agent_access: Default::default(),
-            writes: db::Writes::default(),
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         // Follow-ups share checkReplyDraft with replies; all entry points reach check::letter.
         for op in ["checkFirstDraft", "checkReplyDraft"] {
             let problems = call(
@@ -2634,21 +2663,7 @@ mod reply_outcome_tests {
                 .unwrap();
             ids.push(id);
         }
-        let ctx = Context {
-            agent_access: Default::default(),
-            writes: db::Writes::default(),
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         assert_eq!(
             call(&ctx, "getAiReplyOutcome", json!({})).await.unwrap(),
             false

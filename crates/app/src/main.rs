@@ -215,7 +215,6 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
         .map_err(StartupError::Agent)?;
     app.manage(agent);
     let api::Context {
-        agent_access: _,
         writes,
         db,
         net,
@@ -228,6 +227,7 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
         crawler,
         generator,
         model_limit,
+        ..
     } = &*ctx;
     let ui = app.clone();
     tauri::async_runtime::spawn(send::run(

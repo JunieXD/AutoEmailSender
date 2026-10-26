@@ -11,6 +11,8 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, timeout},
 };
+// Signals and database state determine progress; this only bounds hangs under load.
+const GUARD_TIMEOUT: Duration = Duration::from_secs(60);
 const LETTER: &str = "<subject>申请</subject><body>王老师：您好，我希望申请读研。</body>";
 const MATCH: &str =
     r#"{"score":80,"reason":"方向相近","directions":[],"highlights":[],"risks":[]}"#;
@@ -54,7 +56,7 @@ impl Runner {
         }
     }
     async fn until(&mut self, db: &SqlitePool, id: i64, p: impl Fn(&task::TaskSummary) -> bool) {
-        timeout(Duration::from_secs(10), async {
+        timeout(GUARD_TIMEOUT, async {
             loop {
                 if p(&task::get(db, id).await.unwrap().unwrap()) {
                     return;
@@ -66,14 +68,14 @@ impl Runner {
         .unwrap();
     }
     async fn finished(&mut self) -> DraftsFinished {
-        timeout(Duration::from_secs(10), self.done.recv())
+        timeout(GUARD_TIMEOUT, self.done.recv())
             .await
             .unwrap()
             .unwrap()
     }
 }
 async fn request(p: &mut Provider) -> provider::Request {
-    timeout(Duration::from_secs(10), p.requests.recv())
+    timeout(GUARD_TIMEOUT, p.requests.recv())
         .await
         .unwrap()
         .unwrap()
@@ -134,6 +136,31 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn canceling_a_blocked_claim_keeps_the_draft_available(db: SqlitePool) {
+    let (id, _) = setup(&db, "http://127.0.0.1:1/v1", 1).await;
+    let claims = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .test_before_acquire(false)
+        .connect_with((*db.connect_options()).clone())
+        .await
+        .unwrap();
+    let lock = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    // With a ready connection, polling submits the claim to SQLite, where the write lock blocks it.
+    let mut claim = Box::pin(email::tasks::next(&claims));
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(claim.as_mut().poll(cx).is_pending()))
+            .await
+    );
+    drop(claim);
+    lock.rollback().await.unwrap();
+    // Closing drains the canceled command on SQLite's worker before checking the queue.
+    claims.close().await;
+    let claim = email::tasks::next(&db).await.unwrap().unwrap();
+    assert_eq!(claim.task, id);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn usage_write_failures_keep_the_letter_and_findings_without_calling_again(db: SqlitePool) {
     for block_check in [false, true] {
         let mut p = Provider::start().await.unwrap();
@@ -170,7 +197,7 @@ async fn usage_write_failures_keep_the_letter_and_findings_without_calling_again
                 LETTER
             }))
             .unwrap();
-        timeout(Duration::from_secs(10), async {
+        timeout(GUARD_TIMEOUT, async {
             while run.writes.failure().is_none() {
                 assert!(
                     task::get(&db, id)
@@ -203,7 +230,7 @@ async fn usage_write_failures_keep_the_letter_and_findings_without_calling_again
                 .unwrap();
         }
         assert_eq!(run.finished().await.generated, 1);
-        let drafts = task::pending(&db, id, 1).await.unwrap();
+        let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
         assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
         assert!(matches!(
             &drafts[0].draft.fact_check,
@@ -348,7 +375,12 @@ async fn failed_regeneration_is_not_counted_as_a_finished_draft(db: SqlitePool) 
         .ok()
         .unwrap();
     assert_eq!(run.finished().await.generated, 1);
-    let email = task::pending(&db, id, 1).await.unwrap().remove(0).draft.id;
+    let email = task::pending(&db, id, 1, |_| None)
+        .await
+        .unwrap()
+        .remove(0)
+        .draft
+        .id;
     task::regenerate(&db, id, Some(email), false, 2)
         .await
         .unwrap();
@@ -524,7 +556,7 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
         .ok();
     new.respond.send(Response::answer(LETTER)).ok().unwrap();
     assert_eq!(run.finished().await.generated, 1);
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.subject, "申请");
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -917,7 +949,7 @@ async fn disabling_fact_checks_while_writing_skips_the_second_call(db: SqlitePoo
     profile::set_ai_fact_check(&db, false).await.unwrap();
     writing.respond.send(Response::answer(LETTER)).ok().unwrap();
     assert_eq!(run.finished().await.generated, 1);
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
     assert_eq!(drafts[0].draft.fact_check, None);
     assert!(p.requests.try_recv().is_err());
@@ -938,7 +970,7 @@ async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
         }
         while run.changes.try_recv().is_ok() {}
         writing.respond.send(Response::answer(LETTER)).ok().unwrap();
-        timeout(Duration::from_secs(10), async {
+        timeout(GUARD_TIMEOUT, async {
             tokio::select! {
                 changed = run.changes.recv() => {
                     changed.unwrap();
@@ -1047,7 +1079,7 @@ async fn fact_check_rate_limit_cools_the_queue_without_regenerating_the_letter(d
             break;
         }
     }
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
     assert!(matches!(&drafts[0].draft.fact_check,
         Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));
@@ -1116,7 +1148,7 @@ async fn fact_check_account_errors_pause_remaining_work_and_keep_the_draft(db: S
         ),
         (1, 3, 0)
     );
-    let drafts = task::pending(&db, id, 1).await.unwrap();
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
     assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
     assert!(matches!(&drafts[0].draft.fact_check,
         Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));

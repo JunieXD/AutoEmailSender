@@ -252,21 +252,11 @@ mod tests {
             .unwrap();
             ids.push(id);
         }
-        let ctx = Context {
-            agent_access: Default::default(),
-            writes: db::Writes::default(),
-            db: db.clone(),
-            net: net::Net::new(vec![]).unwrap(),
-            sender: send::Sender::default(),
-            receiver: receive::Receiver::default(),
-            matcher: matching::Matcher::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            generator: task::generation::Generator::default(),
-            crawler: crawl::runner::Crawler::default(),
-            model_limit: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(
+            db.clone(),
+            net::Net::new(vec![]).unwrap(),
+            Default::default(),
+        );
         sqlx::query!("UPDATE profile SET default_model_config_id = ?", ids[1])
             .execute(&db)
             .await
@@ -334,21 +324,11 @@ mod tests {
         .fetch_one(&db)
         .await
         .unwrap();
-        let ctx = Context {
-            agent_access: Default::default(),
-            writes: db::Writes::default(),
-            db: db.clone(),
-            net: net::Net::new(vec![]).unwrap(),
-            sender: send::Sender::default(),
-            receiver: receive::Receiver::default(),
-            matcher: matching::Matcher::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            generator: task::generation::Generator::default(),
-            crawler: crawl::runner::Crawler::default(),
-            model_limit: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(
+            db.clone(),
+            net::Net::new(vec![]).unwrap(),
+            Default::default(),
+        );
         let error = enrich_candidates(&ctx, CandidateIds { ids: vec![id] })
             .await
             .unwrap_err();

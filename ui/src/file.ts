@@ -1,3 +1,6 @@
+/** material::MAX_SIZE: a larger file is refused before it is read and encoded in memory. */
+export const MAX_UPLOAD = 20 * 1024 * 1024;
+
 /** The file's bytes as base64, which JSON can carry. */
 export async function base64(file: File): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());

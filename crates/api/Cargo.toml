@@ -40,4 +40,5 @@ agent = { version = "3.0.0-alpha.0", path = "../agent" }
 
 [dev-dependencies]
 fakemail.workspace = true
+office_oxide = "0.1"
 test-fixtures = { path = "../test-fixtures" }

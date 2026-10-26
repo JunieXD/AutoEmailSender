@@ -332,6 +332,7 @@ pub async fn drafts(
     db: &SqlitePool,
     q: &DraftQuery,
     now: i64,
+    mut mail_domain: impl FnMut(&str) -> Option<check::Problem>,
 ) -> std::result::Result<DraftPage, sqlx::Error> {
     let filter = match q.filter {
         DraftFilter::All | DraftFilter::Problems => None,
@@ -362,7 +363,7 @@ pub async fn drafts(
     let mut drafts = rows
         .into_iter()
         .map(|r| {
-            let count = problems(&r, &names, now).len();
+            let count = problems(&r, &names, now, &mut mail_domain).len();
             DraftSummary {
                 id: r.id,
                 mentor_id: r.mentor_id,
@@ -390,6 +391,7 @@ struct ReviewRow {
     id: i64,
     mentor_id: i64,
     name: String,
+    address: Option<String>,
     state: DraftState,
     subject: Option<String>,
     kind: Kind,
@@ -410,6 +412,7 @@ async fn review_rows(
     sqlx::query_as!(
         ReviewRow,
         r#"SELECT e.id, e.mentor_id, m.name, e.kind AS "kind: Kind",
+            (SELECT address FROM mentor_email WHERE mentor_id = m.id AND position = 0) AS address,
             e.state AS "state: DraftState", e.subject, e.body_md,
             e.fact_check AS "fact_check: Json<email::fact_check::FactCheck>", (
             SELECT json_group_array(name)
@@ -435,11 +438,16 @@ async fn review_rows(
     .fetch_all(conn)
     .await
 }
-fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
+fn problems(
+    r: &ReviewRow,
+    names: &[String],
+    now: i64,
+    mail_domain: &mut impl FnMut(&str) -> Option<check::Problem>,
+) -> Vec<check::Problem> {
     if r.state != DraftState::Review {
         return vec![];
     }
-    letter_problems(
+    let mut problems = letter_problems(
         ReviewLetter {
             follow_up: r.kind == Kind::FollowUp,
             name: &r.name,
@@ -453,7 +461,9 @@ fn problems(r: &ReviewRow, names: &[String], now: i64) -> Vec<check::Problem> {
         },
         names,
         now,
-    )
+    );
+    problems.extend(r.address.as_deref().and_then(mail_domain));
+    problems
 }
 
 struct ReviewLetter<'a> {
@@ -874,6 +884,7 @@ pub async fn pending(
     db: &SqlitePool,
     task: i64,
     now: i64,
+    mut mail_domain: impl FnMut(&str) -> Option<check::Problem>,
 ) -> std::result::Result<Vec<ApprovalCandidate>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let names = other_names(&mut tx, task).await?;
@@ -881,7 +892,7 @@ pub async fn pending(
     Ok(rows
         .into_iter()
         .map(|r| {
-            let count = problems(&r, &names, now).len();
+            let count = problems(&r, &names, now, &mut mail_domain).len();
             ApprovalCandidate {
                 draft: TaskDraft {
                     fact_check: r.fact_check.map(|v| v.0),

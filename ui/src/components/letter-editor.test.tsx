@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it } from "vitest";
-import { LetterEditor } from "./letter-editor";
+import { LetterEditor, pastedMarkdown } from "./letter-editor";
 
 it.each([
   ["【请**补充**：面谈时间】", "【请补充：面谈时间】"],
@@ -64,4 +64,10 @@ it.each([
     await act(async () => root.unmount());
     container.remove();
   }
+});
+
+it("imports a Word file's HTML as the letter would keep it pasted", () => {
+  const html = `<h1>申请信</h1>
+    <p>{导师姓名}老师：<strong>您好</strong>，见<a href="https://example.com">主页</a>和<a href="javascript:alert(1)">这里</a>。</p>`;
+  expect(pastedMarkdown(html)).toBe("申请信\n\n{导师姓名}老师：**您好**，见[主页](https://example.com)和这里。");
 });

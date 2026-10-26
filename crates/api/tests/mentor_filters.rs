@@ -22,21 +22,7 @@ async fn list_and_export_validate_filters_at_the_boundary(db: SqlitePool) {
     )
     .await
     .unwrap();
-    let ctx = Context {
-        agent_access: Default::default(),
-        writes: Default::default(),
-        db,
-        net: net::Net::new(vec![]).unwrap(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        materials: Default::default(),
-    };
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
     for score in [0, 101, 255] {
         let filter = json!({"matching": {"kind": "atLeast", "score": score}});
         let mut query = filter.clone();
