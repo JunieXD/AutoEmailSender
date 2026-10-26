@@ -638,6 +638,12 @@ isDefault: boolean, };
 
 export type TestLetter = { templateName: string, subject: string, bodyMd: string, attachments: Array<number>, };
 
+export type TodayDrafts = { id: number, name: string, generated: number, };
+
+export type TodayWork = { drafts: Array<TodayDrafts>, matched: number, sent: number, };
+
+export type TodayWorkQuery = { start: number, end: number, };
+
 export type Todo = { id: number, text: string, dueDate: string | null, dueTime: string | null, done: boolean, messageId: number | null, createdAt: number, };
 
 export type TodoDone = { id: number, done: boolean, };
@@ -683,6 +689,7 @@ export interface Operations {
   tokenStats: { input: StatsPeriod; output: TokenUsage };
   checkCrawlUrls: { input: CrawlUrls; output: Array<string> };
   crawlWork: { input: CrawlWorkQuery; output: Array<CrawlSummary> };
+  todayWork: { input: TodayWorkQuery; output: TodayWork };
   startCrawl: { input: CrawlStart; output: CrawlId };
   listCrawls: { input: CrawlQuery; output: CrawlList };
   crawlOptions: { input: Nothing; output: Array<CrawlOption> };

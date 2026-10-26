@@ -35,6 +35,44 @@ export function conversationSearch(search: Record<string, unknown>): Conversatio
   };
 }
 
+/** Receiving now and when mail was last received, the same here and in the background panel. */
+export function useReceive() {
+  const queryClient = useQueryClient();
+  const status = useQuery({
+    queryKey: ["receiveStatus"],
+    queryFn: () => call("receiveStatus", {}),
+    refetchInterval: 60_000,
+  });
+  const mutation = useMutation({
+    mutationKey: ["receiveNow"],
+    mutationFn: () => call("receiveNow", {}),
+    onSuccess: async (received) => {
+      await queryClient.cancelQueries({ queryKey: ["receiveStatus"] });
+      queryClient.setQueryData(["receiveStatus"], received);
+      for (const key of ["listConversations", "unreadCount", "listMailboxes"]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+  // From the cache, so that receiving still under way, or how it ended, shows after leaving the
+  // page and coming back.
+  const receiving = useIsMutating({ mutationKey: ["receiveNow"] }) > 0;
+  const receiveError = useMutationState({
+    filters: { mutationKey: ["receiveNow"] },
+    select: (m) => m.state.error,
+  }).at(-1);
+  const now = useNow();
+  const at = status.data?.receivedAt;
+  const minutes = at == null ? 0 : Math.max(0, Math.floor((now - at) / 60_000));
+  return {
+    status,
+    receive: () => mutation.mutate(),
+    receiving,
+    receiveError,
+    received:
+      at == null ? null : minutes < 1 ? "刚刚收信" : minutes < 60 ? `${minutes} 分钟前收信` : `${time(at)} 收信`,
+  };
+}
 export function ConversationsPage() {
   const search = useSearch({ from: "/conversations" });
   const navigate = useNavigate({ from: "/conversations" });
@@ -58,34 +96,8 @@ export function ConversationsPage() {
     navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }), replace: true }),
   );
   const todoCount = todoQuery.data?.total;
-  const status = useQuery({
-    queryKey: ["receiveStatus"],
-    queryFn: () => call("receiveStatus", {}),
-    refetchInterval: 60_000,
-  });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
-  const queryClient = useQueryClient();
-  const receive = useMutation({
-    mutationKey: ["receiveNow"],
-    mutationFn: () => call("receiveNow", {}),
-    onSuccess: async (received) => {
-      await queryClient.cancelQueries({ queryKey: ["receiveStatus"] });
-      queryClient.setQueryData(["receiveStatus"], received);
-      for (const key of ["listConversations", "unreadCount", "listMailboxes"]) {
-        void queryClient.invalidateQueries({ queryKey: [key] });
-      }
-    },
-  });
-  // From the cache, so that receiving still under way, or how it ended, shows after leaving the
-  // page and coming back.
-  const receiving = useIsMutating({ mutationKey: ["receiveNow"] }) > 0;
-  const receiveError = useMutationState({
-    filters: { mutationKey: ["receiveNow"] },
-    select: (m) => m.state.error,
-  }).at(-1);
-  const now = useNow();
-  const at = status.data?.receivedAt;
-  const minutes = at == null ? 0 : Math.max(0, Math.floor((now - at) / 60_000));
+  const { status, receive, receiving, receiveError, received } = useReceive();
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] phone:grid-cols-1">
       <section
@@ -95,15 +107,11 @@ export function ConversationsPage() {
           <div className="flex items-start justify-between gap-2">
             <h1 className="text-2xl font-semibold phone:text-[22px]">往来</h1>
             <div className="flex shrink-0 flex-col items-end gap-1">
-              <Button variant="ghost" className="px-2" disabled={receiving} onClick={() => receive.mutate()}>
+              <Button variant="ghost" className="px-2" disabled={receiving} onClick={receive}>
                 <RefreshCw strokeWidth={1.6} className={receiving ? "animate-spin" : ""} />
                 立即收信
               </Button>
-              {at != null && (
-                <p className="text-xs text-muted-foreground">
-                  {minutes < 1 ? "刚刚收信" : minutes < 60 ? `${minutes} 分钟前收信` : `${time(at)} 收信`}
-                </p>
-              )}
+              {received && <p className="text-xs text-muted-foreground">{received}</p>}
             </div>
           </div>
           <Segments

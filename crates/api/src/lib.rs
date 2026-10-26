@@ -171,6 +171,7 @@ operations! {
     "tokenStats" => token_stats(StatsPeriod) -> stats::TokenUsage;
     "checkCrawlUrls" => check_crawl_urls(CrawlUrls) -> Vec<String>;
     "crawlWork" => crawl_work(CrawlWorkQuery) -> Vec<crawl::queue::CrawlSummary>;
+    "todayWork" => today_work(TodayWorkQuery) -> stats::TodayWork;
     "startCrawl" => start_crawl(CrawlStart) -> CrawlId;
     "listCrawls" => list_crawls(CrawlQuery) -> crawl::queue::CrawlList;
     "crawlOptions" => crawl_options(Nothing) -> Vec<crawl::queue::CrawlOption>;

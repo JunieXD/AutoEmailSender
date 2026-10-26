@@ -276,12 +276,13 @@ pub async fn complete(
         SET fact_check = ?, state = 'review',
             subject = CASE WHEN kind = 'follow_up' THEN subject
         ELSE ? END, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL,
-            updated_at = ?
+            generated_at = ?, updated_at = ?
         WHERE id = ? AND generation_claim = ? AND state = 'generating'"#,
         fact_check,
         subject,
         body,
         model,
+        now,
         now,
         c.id,
         c.version

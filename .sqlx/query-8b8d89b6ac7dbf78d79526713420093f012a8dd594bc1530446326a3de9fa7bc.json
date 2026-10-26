@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT t.id AS \"id!\", t.name AS \"name!\", count(*) AS \"generated!: i64\"\n        FROM email e\n        JOIN task t ON t.id = e.task_id\n        WHERE e.generated_at >= ? AND e.generated_at < ?\n        GROUP BY t.id\n        ORDER BY max(e.generated_at) DESC, t.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "generated!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "8b8d89b6ac7dbf78d79526713420093f012a8dd594bc1530446326a3de9fa7bc"
+}
