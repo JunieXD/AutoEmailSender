@@ -144,8 +144,11 @@ async fn draft_on(
     mentor: i64,
 ) -> Result<Option<FollowUpDraft>, sqlx::Error> {
     let Some(r) = sqlx::query!(
-        r#"SELECT id, reply_to AS "reply_to!", body_md, fact_check AS "fact_check: Json<FactCheck>" FROM email
-           WHERE mentor_id = ? AND kind = 'follow_up' AND task_id IS NULL AND state = 'review'"#,
+        r#"SELECT id, reply_to AS "reply_to!",
+            body_md, fact_check AS "fact_check: Json<FactCheck>"
+        FROM email
+        WHERE mentor_id = ? AND kind = 'follow_up' AND task_id IS NULL
+        AND state = 'review'"#,
         mentor
     )
     .fetch_optional(&mut *conn)

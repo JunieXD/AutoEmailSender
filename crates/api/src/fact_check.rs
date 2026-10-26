@@ -18,11 +18,14 @@ pub async fn fact_check_email(
         return Ok(None);
     }
     let row = sqlx::query!(
-        "SELECT task_id, kind, mentor_id, subject, body_md, generation_claim FROM email WHERE id = ? AND state = 'review'",
+        r#"SELECT task_id, kind, mentor_id, subject, body_md, generation_claim
+        FROM email
+        WHERE id = ? AND state = 'review'"#,
         input.id,
-    ).fetch_optional(&ctx.db).await?.ok_or_else(|| CallError::invalid(
-        "这封邮件已不在待审核状态，请刷新后重试。".into()
-    ))?;
+    )
+    .fetch_optional(&ctx.db)
+    .await?
+    .ok_or_else(|| CallError::invalid("这封邮件已不在待审核状态，请刷新后重试。".into()))?;
     let result: Result<FactCheck, CallError> = async {
         let (chosen, references) = if let Some(task_id) = row.task_id {
             let config =

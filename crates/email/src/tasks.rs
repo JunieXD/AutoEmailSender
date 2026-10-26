@@ -1,4 +1,5 @@
-//! Task email transitions. Claims fence off late model responses after cancellation or regeneration.
+//! Task email transitions. Claims fence off late model responses after cancellation or
+//! regeneration.
 use super::fact_check::FactCheck;
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
@@ -40,7 +41,24 @@ pub async fn create(
     } else {
         "first"
     };
-    let id = sqlx::query_scalar!("INSERT INTO email (task_id, mentor_id, kind, reply_to, state, subject, body_md, generation_queued_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id AS \"id!\"", task, mentor, kind, reply_to, state, subject, body, queued, now, now).fetch_one(&mut *conn).await?;
+    let id = sqlx::query_scalar!(
+        r#"INSERT INTO email (task_id, mentor_id, kind, reply_to, state, subject, body_md,
+            generation_queued_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING id AS "id!""#,
+        task,
+        mentor,
+        kind,
+        reply_to,
+        state,
+        subject,
+        body,
+        queued,
+        now,
+        now
+    )
+    .fetch_one(&mut *conn)
+    .await?;
     super::attach(conn, id, attachments).await?;
     Ok(id)
 }
@@ -54,7 +72,21 @@ pub async fn save(
     attachments: &[i64],
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    let n = sqlx::query!("UPDATE email SET subject = CASE WHEN kind = 'first' THEN ? ELSE subject END, body_md = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')", subject, body, now, id, task).execute(&mut *conn).await?.rows_affected();
+    let n = sqlx::query!(
+        r#"UPDATE email
+        SET subject = CASE WHEN kind = 'first' THEN ? ELSE subject END, body_md = ?,
+            updated_at = ?
+        WHERE id = ? AND task_id = ? AND state = 'review'
+        AND task_id IN (SELECT id FROM task WHERE state <> 'stopped')"#,
+        subject,
+        body,
+        now,
+        id,
+        task
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
     if n > 0 {
         super::attach(conn, id, attachments).await?;
     }
@@ -96,7 +128,8 @@ pub async fn approve(
 
 pub async fn delete(conn: &mut SqliteConnection, task: i64) -> Result<(), sqlx::Error> {
     // `state = 'canceled' AND sent_at IS NOT NULL` retains a prior attempt's delivery evidence;
-    // cleanup must preserve it for late copies and bounces, just as copied/copy_candidates/bounced do.
+    // cleanup must preserve it for late copies and bounces, just as copied/copy_candidates/bounced
+    // do.
     sqlx::query!(
         "DELETE FROM email WHERE task_id = ?
            AND NOT (state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')
@@ -115,7 +148,25 @@ pub async fn regenerate(
     failed_only: bool,
     now: i64,
 ) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'generating', generation_claim = generation_claim + 1, generation_queued_at = ?, error = NULL, fact_check = NULL, updated_at = ? WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND (state = 'generation_failed' OR (?5 = 0 AND state = 'review')) AND task_id IN (SELECT id FROM task WHERE writer = 'ai' AND state <> 'stopped')", now, now, task, id, failed_only).execute(conn).await?.rows_affected())
+    Ok(sqlx::query!(
+        r#"UPDATE email
+        SET state = 'generating', generation_claim = generation_claim + 1,
+            generation_queued_at = ?, error = NULL, fact_check = NULL, updated_at = ?
+        WHERE task_id = ? AND (?4 IS NULL OR id = ?4) AND (state = 'generation_failed'
+        OR (?5 = 0 AND state = 'review')) AND task_id IN (
+            SELECT id
+            FROM task
+            WHERE writer = 'ai' AND state <> 'stopped'
+        )"#,
+        now,
+        now,
+        task,
+        id,
+        failed_only
+    )
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 pub async fn reapply(
@@ -126,7 +177,26 @@ pub async fn reapply(
     body: &str,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET subject = CASE WHEN kind = 'first' THEN ? ELSE subject END, body_md = ?, updated_at = ? WHERE id = ? AND task_id = ? AND state = 'review' AND task_id IN (SELECT id FROM task WHERE writer = 'template' AND state <> 'stopped')", subject, body, now, id, task).execute(conn).await?.rows_affected() > 0)
+    Ok(sqlx::query!(
+        r#"UPDATE email
+        SET subject = CASE WHEN kind = 'first' THEN ? ELSE subject END, body_md = ?,
+            updated_at = ?
+        WHERE id = ? AND task_id = ? AND state = 'review'
+        AND task_id IN (
+            SELECT id
+            FROM task
+            WHERE writer = 'template' AND state <> 'stopped'
+        )"#,
+        subject,
+        body,
+        now,
+        id,
+        task
+    )
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,21 +208,57 @@ pub struct Claim {
 }
 
 pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
-    sqlx::query!("UPDATE email SET generation_claim = generation_claim + 1, generation_queued_at = coalesce(generation_queued_at, created_at) WHERE state = 'generating'").execute(db).await?;
+    sqlx::query!(
+        r#"UPDATE email
+        SET generation_claim = generation_claim + 1,
+            generation_queued_at = coalesce(generation_queued_at, created_at)
+        WHERE state = 'generating'"#
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 
 pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
-    sqlx::query_as!(Claim, r#"UPDATE email SET generation_claim = generation_claim + 1, generation_queued_at = NULL
-        WHERE id = (SELECT id FROM email WHERE state = 'generating' AND generation_queued_at IS NOT NULL
-          AND task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL)
-          AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)
-          ORDER BY generation_queued_at, id LIMIT 1)
-        RETURNING id, task_id AS "task!", mentor_id AS mentor, generation_claim AS version"#).fetch_optional(db).await
+    sqlx::query_as!(
+        Claim,
+        r#"UPDATE email
+        SET generation_claim = generation_claim + 1, generation_queued_at = NULL
+        WHERE id = (
+            SELECT id
+            FROM email
+            WHERE state = 'generating' AND generation_queued_at IS NOT NULL
+            AND task_id IN (
+                SELECT id
+                FROM task
+                WHERE state = 'active' AND generation_paused_at IS NULL
+            ) AND mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)
+            ORDER BY generation_queued_at, id
+            LIMIT 1
+        )
+        RETURNING id, task_id AS "task!", mentor_id AS mentor,
+            generation_claim AS version"#
+    )
+    .fetch_optional(db)
+    .await
 }
 
 pub async fn valid(db: &SqlitePool, c: Claim) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query_scalar!("SELECT id FROM email WHERE id = ? AND generation_claim = ? AND state = 'generating' AND task_id IN (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL)", c.id, c.version).fetch_optional(db).await?.is_some())
+    Ok(sqlx::query_scalar!(
+        r#"SELECT id
+        FROM email
+        WHERE id = ? AND generation_claim = ? AND state = 'generating'
+        AND task_id IN (
+            SELECT id
+            FROM task
+            WHERE state = 'active' AND generation_paused_at IS NULL
+        )"#,
+        c.id,
+        c.version
+    )
+    .fetch_optional(db)
+    .await?
+    .is_some())
 }
 
 pub async fn complete(
@@ -165,7 +271,25 @@ pub async fn complete(
     now: i64,
 ) -> Result<bool, sqlx::Error> {
     let fact_check = fact_check.map(Json);
-    Ok(sqlx::query!("UPDATE email SET fact_check = ?, state = 'review', subject = CASE WHEN kind='follow_up' THEN subject ELSE ? END, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'generating'", fact_check, subject, body, model, now, c.id, c.version).execute(conn).await?.rows_affected() > 0)
+    Ok(sqlx::query!(
+        r#"UPDATE email
+        SET fact_check = ?, state = 'review',
+            subject = CASE WHEN kind = 'follow_up' THEN subject
+        ELSE ? END, body_md = ?, model = ?, error = NULL, generation_queued_at = NULL,
+            updated_at = ?
+        WHERE id = ? AND generation_claim = ? AND state = 'generating'"#,
+        fact_check,
+        subject,
+        body,
+        model,
+        now,
+        c.id,
+        c.version
+    )
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 pub async fn fail(
@@ -174,11 +298,34 @@ pub async fn fail(
     reason: &str,
     now: i64,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET state = 'generation_failed', error = ?, generation_queued_at = NULL, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'generating'", reason, now, c.id, c.version).execute(conn).await?.rows_affected() > 0)
+    Ok(sqlx::query!(
+        r#"UPDATE email
+        SET state = 'generation_failed', error = ?, generation_queued_at = NULL,
+            updated_at = ?
+        WHERE id = ? AND generation_claim = ? AND state = 'generating'"#,
+        reason,
+        now,
+        c.id,
+        c.version
+    )
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 pub async fn requeue(conn: &mut SqliteConnection, c: Claim) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("UPDATE email SET generation_queued_at = created_at WHERE id = ? AND generation_claim = ? AND state = 'generating'", c.id, c.version).execute(conn).await?.rows_affected() > 0)
+    Ok(sqlx::query!(
+        r#"UPDATE email
+        SET generation_queued_at = created_at
+        WHERE id = ? AND generation_claim = ? AND state = 'generating'"#,
+        c.id,
+        c.version
+    )
+    .execute(conn)
+    .await?
+    .rows_affected()
+        > 0)
 }
 
 /// An upload attaches to this task draft only, without restoring the text from upload start.
@@ -188,9 +335,21 @@ pub async fn attach_material(
     id: i64,
     material: i64,
 ) -> Result<bool, sqlx::Error> {
-    Ok(sqlx::query!("INSERT INTO email_attachment(email_id,material_id,file_name,size)
-        SELECT e.id,m.id,m.file_name,m.size FROM email e CROSS JOIN material m
-        WHERE e.id=?1 AND e.task_id=?2 AND e.state='review' AND m.id=?3
-          AND e.task_id IN (SELECT id FROM task WHERE state <> 'stopped')
-        ON CONFLICT(email_id,file_name) DO UPDATE SET material_id=excluded.material_id,size=excluded.size",id,task,material).execute(db).await?.rows_affected()==1)
+    Ok(sqlx::query!(
+        r#"INSERT INTO email_attachment (email_id, material_id, file_name, size)
+        SELECT e.id, m.id, m.file_name, m.size
+        FROM email e
+        CROSS JOIN material m
+        WHERE e.id = ?1 AND e.task_id = ?2 AND e.state = 'review'
+        AND m.id = ?3 AND e.task_id IN (SELECT id FROM task WHERE state <> 'stopped')
+        ON CONFLICT (email_id, file_name) DO UPDATE SET material_id =
+            excluded.material_id, size = excluded.size"#,
+        id,
+        task,
+        material
+    )
+    .execute(db)
+    .await?
+    .rows_affected()
+        == 1)
 }

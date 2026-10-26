@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT crawl_id AS \"crawl!: i64\", profile_url AS \"url!: PageUrl\"\n            FROM candidate\n            WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "crawl!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "url!: PageUrl",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "profile_url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "8d37f3248356c6e3882f2ecee260b38bbf84009843d9f72fc64101f5d30214f5"
+}

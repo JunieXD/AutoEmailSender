@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mentor_email (address, mentor_id, position)\n            VALUES (?, ?, ?)\n            ON CONFLICT (address) DO UPDATE SET address = excluded.address,\n                position = excluded.position\n            WHERE mentor_id = excluded.mentor_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "c5af415ae07131c2351636ae97664da5acc7c18abed3ce361c4e6daa1070d9b8"
+}

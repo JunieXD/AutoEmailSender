@@ -97,11 +97,15 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
         return Err(MergeError::Gone);
     }
     let busy = sqlx::query!(
-        r#"SELECT m.name, count(*) AS "count!: i64" FROM email e JOIN mentor m ON m.id = e.mentor_id
-           WHERE e.mentor_id IN (?1, ?2)
-             AND (e.state IN ('approved', 'cloud', 'sending', 'failed')
-                  OR e.task_id IS NOT NULL AND e.state IN ('generating', 'generation_failed', 'review'))
-           GROUP BY m.id ORDER BY m.id = ?1 DESC LIMIT 1"#,
+        r#"SELECT m.name, count(*) AS "count!: i64"
+        FROM email e
+        JOIN mentor m ON m.id = e.mentor_id
+        WHERE e.mentor_id IN (?1, ?2) AND (e.state IN ('approved', 'cloud', 'sending',
+            'failed') OR e.task_id IS NOT NULL AND e.state IN ('generating',
+            'generation_failed', 'review'))
+        GROUP BY m.id
+        ORDER BY m.id = ?1 DESC
+        LIMIT 1"#,
         keep,
         other,
     )
@@ -185,10 +189,13 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
         .execute(&mut *tx)
         .await?;
         sqlx::query!(
-            "UPDATE mentor_detail SET (match_reason, match_directions, match_highlights, match_risks) =
-               (SELECT match_reason, match_directions, match_highlights, match_risks
-                FROM mentor_detail WHERE mentor_id = ?2)
-             WHERE mentor_id = ?1",
+            r#"UPDATE mentor_detail
+            SET(match_reason, match_directions, match_highlights, match_risks) = (
+                SELECT match_reason, match_directions, match_highlights, match_risks
+                FROM mentor_detail
+                WHERE mentor_id = ?2
+            )
+            WHERE mentor_id = ?1"#,
             keep,
             other,
         )
@@ -199,7 +206,10 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     // A draft each can have only one: the kept mentor's stays.
     for kind in conflicting_drafts(&mut tx, keep, other).await? {
         sqlx::query!(
-            "DELETE FROM email WHERE mentor_id = ? AND kind = ? AND state = 'review' AND task_id IS NULL",
+            r#"DELETE
+            FROM email
+            WHERE mentor_id = ? AND kind = ? AND state = 'review'
+            AND task_id IS NULL"#,
             other,
             kind,
         )

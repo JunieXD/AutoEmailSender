@@ -45,7 +45,19 @@ async fn sent(db: &SqlitePool, n: i64, time: i64, state: &str) {
     .unwrap();
 }
 async fn message(db: &SqlitePool, mentors: &[i64], time: i64, kind: &str, bounced: bool) {
-    let id=sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,sent_at,from_address,truncated) VALUES(1,'INBOX',1,(SELECT coalesce(max(uid),0)+1 FROM message),?,?,'mentor@example.cn',0)").bind(kind).bind(time).execute(db).await.unwrap().last_insert_rowid();
+    let id = sqlx::query(
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at,
+            from_address, truncated)
+        VALUES (1, 'INBOX', 1,
+            (SELECT coalesce(max(uid), 0) + 1 FROM message), ?, ?, 'mentor@example.cn',
+            0)"#,
+    )
+    .bind(kind)
+    .bind(time)
+    .execute(db)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     for n in mentors {
         sqlx::query("INSERT INTO message_mentor(mentor_id,message_id,bounce_reason) VALUES(?,?,?)")
             .bind(n)
@@ -143,8 +155,30 @@ async fn contact_cohort_shares_contact_rules_and_counts_real_mail(db: SqlitePool
     let conn = &mut db.acquire().await.unwrap();
     test_fixtures::contact::reconciled(conn).await.unwrap();
     for replied in [false, true] {
-        let first_ids: Vec<i64> = sqlx::query_scalar("SELECT f.mentor_id FROM mentor_contact_first f JOIN mentor m ON m.id=f.mentor_id WHERE m.trashed_at IS NULL AND CASE WHEN ? THEN f.reply_at IS NOT NULL ELSE f.first_at IS NOT NULL END ORDER BY f.mentor_id").bind(replied).fetch_all(&db).await.unwrap();
-        let summary_ids: Vec<i64> = sqlx::query_scalar("SELECT c.mentor_id FROM mentor_contact c JOIN mentor m ON m.id=c.mentor_id WHERE m.trashed_at IS NULL AND CASE WHEN ? THEN c.status='replied' ELSE c.last_out_at IS NOT NULL END ORDER BY c.mentor_id").bind(replied).fetch_all(&db).await.unwrap();
+        let first_ids: Vec<i64> = sqlx::query_scalar(
+            r#"SELECT f.mentor_id
+            FROM mentor_contact_first f
+            JOIN mentor m ON m.id = f.mentor_id
+            WHERE m.trashed_at IS NULL AND CASE WHEN ? THEN f.reply_at IS NOT NULL
+            ELSE f.first_at IS NOT NULL END
+            ORDER BY f.mentor_id"#,
+        )
+        .bind(replied)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        let summary_ids: Vec<i64> = sqlx::query_scalar(
+            r#"SELECT c.mentor_id
+            FROM mentor_contact c
+            JOIN mentor m ON m.id = c.mentor_id
+            WHERE m.trashed_at IS NULL AND CASE WHEN ? THEN c.status = 'replied'
+            ELSE c.last_out_at IS NOT NULL END
+            ORDER BY c.mentor_id"#,
+        )
+        .bind(replied)
+        .fetch_all(&db)
+        .await
+        .unwrap();
         assert_eq!(first_ids, summary_ids);
     }
 
@@ -160,7 +194,17 @@ async fn contact_cohort_shares_contact_rules_and_counts_real_mail(db: SqlitePool
             page: NonZeroU32::MIN,
         };
         let listed = mentor::list(&db, &query, now).await.unwrap();
-        let ids:Vec<i64>=sqlx::query_scalar("SELECT c.mentor_id FROM mentor_contact c JOIN mentor m ON m.id=c.mentor_id WHERE c.status=? AND m.trashed_at IS NULL ORDER BY c.mentor_id").bind(expected).fetch_all(&db).await.unwrap();
+        let ids: Vec<i64> = sqlx::query_scalar(
+            r#"SELECT c.mentor_id
+            FROM mentor_contact c
+            JOIN mentor m ON m.id = c.mentor_id
+            WHERE c.status = ? AND m.trashed_at IS NULL
+            ORDER BY c.mentor_id"#,
+        )
+        .bind(expected)
+        .fetch_all(&db)
+        .await
+        .unwrap();
         let mut actual: Vec<_> = listed.mentors.iter().map(|m| m.id).collect();
         actual.sort();
         assert_eq!(actual, ids);
@@ -263,7 +307,16 @@ async fn overview_deduplicates_schools_and_keeps_unanalyzed_and_missing_fields(d
 async fn tokens_use_local_days_and_keep_unpriced_usage(db: SqlitePool) {
     let now = at("2026-03-01T00:10:00+08:00");
     let start = at("2026-02-23T00:00:00+08:00");
-    sqlx::query("INSERT INTO model_config(id,provider,model,api_key,agreed,input_price,output_price,created_at) VALUES(1,'deepseek','fixture','',0,2,8,0),(2,'deepseek','fixture','',0,NULL,NULL,0),(3,'deepseek','fixture','',0,1,1,0)").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO model_config (id, provider, model, api_key, agreed, input_price,
+            output_price, created_at)
+        VALUES (1, 'deepseek', 'fixture', '', 0, 2, 8, 0),
+            (2, 'deepseek', 'fixture', '', 0, NULL, NULL, 0),
+            (3, 'deepseek', 'fixture', '', 0, 1, 1, 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     for (t, config, purpose, input, cached, output) in [
         (start - 1, Some(1), "crawl", 9999, 0, 0),
         (start, Some(1), "match", 1000, 200, 500),
@@ -279,7 +332,20 @@ async fn tokens_use_local_days_and_keep_unpriced_usage(db: SqlitePool) {
             0,
         ),
     ] {
-        sqlx::query("INSERT INTO usage(at,model_config_id,model,purpose,input_tokens,cached_tokens,output_tokens) VALUES(?,?,'fixture',?,?,?,?)").bind(t).bind(config).bind(purpose).bind(input).bind(cached).bind(output).execute(&db).await.unwrap();
+        sqlx::query(
+            r#"INSERT INTO usage (at, model_config_id, model, purpose, input_tokens,
+                cached_tokens, output_tokens)
+            VALUES (?, ?, 'fixture', ?, ?, ?, ?)"#,
+        )
+        .bind(t)
+        .bind(config)
+        .bind(purpose)
+        .bind(input)
+        .bind(cached)
+        .bind(output)
+        .execute(&db)
+        .await
+        .unwrap();
     }
     sqlx::query("DELETE FROM model_config WHERE id=3")
         .execute(&db)

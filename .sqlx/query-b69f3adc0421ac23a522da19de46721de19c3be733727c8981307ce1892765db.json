@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT url AS \"url!: String\"\n        FROM candidate_profile\n        WHERE candidate_id IN (SELECT value FROM json_each(?))\n        ORDER BY candidate_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "url!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate_profile",
+            "name": "url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "b69f3adc0421ac23a522da19de46721de19c3be733727c8981307ce1892765db"
+}

@@ -1,0 +1,232 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, e.kind AS \"kind: email::DraftKind\", e.mentor_id, m.name,\n            e.subject, e.task_id, t.name AS task_name,\n            e.state AS \"state: DraftState\", e.planned_at, e.latest_at, e.sent_at,\n            e.from_address, e.error, e.cancel_reason, e.resend_of,\n            t.state AS task_state, t.generation_paused_at, CASE\n        WHEN e.kind IN ('reply', 'follow_up') THEN coalesce(m.mailbox_id, (\n            SELECT p.mailbox_id\n            FROM email p\n            WHERE p.mentor_id = e.mentor_id AND (p.message_id = e.reply_to\n            OR p.copy_message_id = e.reply_to)\n        ), (\n            SELECT r.mailbox_id\n            FROM message r\n            JOIN message_mentor mm ON mm.message_id = r.id\n            WHERE mm.mentor_id = e.mentor_id AND r.message_id = e.reply_to\n            AND r.kind = CASE e.kind WHEN 'reply' THEN 'reply'\n            ELSE 'sent' END\n        )) ELSE m.mailbox_id END AS own,\n            e.kind IN ('reply', 'follow_up') AS \"reply!: bool\"\n        FROM json_each(?1) j\n        JOIN email e ON e.id = j.value\n        JOIN mentor m ON m.id = e.mentor_id\n        LEFT JOIN task t ON t.id = e.task_id\n        ORDER BY j.key",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "kind: email::DraftKind",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "task_id",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "task_name",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "state: DraftState",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "planned_at",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "error",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "error"
+          }
+        }
+      },
+      {
+        "name": "cancel_reason",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cancel_reason"
+          }
+        }
+      },
+      {
+        "name": "resend_of",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "resend_of"
+          }
+        }
+      },
+      {
+        "name": "task_state",
+        "ordinal": 15,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "generation_paused_at",
+        "ordinal": 16,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "generation_paused_at"
+          }
+        }
+      },
+      {
+        "name": "own",
+        "ordinal": 17,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "reply!: bool",
+        "ordinal": 18,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "161235d8252e0ce31ce7b9aa58463964a5f8c11f66aedd397229afaa89e256f9"
+}

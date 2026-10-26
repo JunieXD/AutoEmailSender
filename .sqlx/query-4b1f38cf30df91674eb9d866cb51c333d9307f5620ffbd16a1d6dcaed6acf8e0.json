@@ -1,0 +1,148 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, e.mentor_id, m.name, e.kind AS \"kind: Kind\",\n            e.state AS \"state: DraftState\", e.subject, e.body_md,\n            e.fact_check AS \"fact_check: Json<email::fact_check::FactCheck>\", (\n            SELECT json_group_array(name)\n            FROM mentor_alias\n            WHERE mentor_id = m.id\n        ) AS \"aliases!: Json<Vec<String>>\", (\n            SELECT json_group_array(material_id)\n            FROM email_attachment\n            WHERE email_id = e.id AND material_id IS NOT NULL\n        ) AS \"attachments!: Json<Vec<i64>>\", c.contact_count, c.last_out_at\n        FROM email e\n        JOIN mentor m ON m.id = e.mentor_id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        WHERE e.task_id = ?1 AND (?2 IS NULL OR e.state = ?2)\n        ORDER BY m.name, e.id\n        LIMIT ?3\n        OFFSET ?4",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "kind: Kind",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "state: DraftState",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "body_md"
+          }
+        }
+      },
+      {
+        "name": "fact_check: Json<email::fact_check::FactCheck>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "fact_check"
+          }
+        }
+      },
+      {
+        "name": "aliases!: Json<Vec<String>>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "attachments!: Json<Vec<i64>>",
+        "ordinal": 9,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "contact_count",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "contact_count"
+          }
+        }
+      },
+      {
+        "name": "last_out_at",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_out_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4b1f38cf30df91674eb9d866cb51c333d9307f5620ffbd16a1d6dcaed6acf8e0"
+}

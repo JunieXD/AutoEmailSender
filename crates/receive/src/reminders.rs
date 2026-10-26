@@ -37,7 +37,10 @@ pub async fn run(
             () = scheduler.0.notified() => {},
             () = async {
                 if let Some(at) = result.next_at {
-                    tokio::time::sleep(Duration::from_millis(at.saturating_sub(super::outcome::now()).max(0) as u64)).await;
+                    tokio::time::sleep(Duration::from_millis(
+                        at.saturating_sub(super::outcome::now()).max(0) as u64,
+                    ))
+                    .await;
                 }
             }, if result.next_at.is_some() => {},
         }

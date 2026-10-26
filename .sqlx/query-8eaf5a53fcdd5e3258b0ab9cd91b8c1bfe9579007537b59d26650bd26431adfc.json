@@ -1,0 +1,194 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, crawl_id, review, mentor_id,\n            name, aliases AS \"aliases: Json<Vec<String>>\",\n            emails AS \"emails: Json<Vec<String>>\",\n            affiliations AS \"affiliations: Json<Vec<mentor::Affiliation>>\",\n            homepages AS \"homepages: Json<Vec<String>>\",\n            research, papers AS \"papers: Json<Vec<String>>\",\n            source_url, enrich AS \"enrich: crate::enrich::EnrichState\",\n            enrich_changes AS \"changes: Json<Vec<crate::enrich::EnrichChange>>\",\n            enrich_error\n        FROM candidate\n        WHERE id IN (SELECT value FROM json_each(?))\n        ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "crawl_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "crawl_id"
+          }
+        }
+      },
+      {
+        "name": "review",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "review"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "aliases: Json<Vec<String>>",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "aliases"
+          }
+        }
+      },
+      {
+        "name": "emails: Json<Vec<String>>",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "emails"
+          }
+        }
+      },
+      {
+        "name": "affiliations: Json<Vec<mentor::Affiliation>>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "affiliations"
+          }
+        }
+      },
+      {
+        "name": "homepages: Json<Vec<String>>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "homepages"
+          }
+        }
+      },
+      {
+        "name": "research",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "research"
+          }
+        }
+      },
+      {
+        "name": "papers: Json<Vec<String>>",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "papers"
+          }
+        }
+      },
+      {
+        "name": "source_url",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "source_url"
+          }
+        }
+      },
+      {
+        "name": "enrich: crate::enrich::EnrichState",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich"
+          }
+        }
+      },
+      {
+        "name": "changes: Json<Vec<crate::enrich::EnrichChange>>",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich_changes"
+          }
+        }
+      },
+      {
+        "name": "enrich_error",
+        "ordinal": 14,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "enrich_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "8eaf5a53fcdd5e3258b0ab9cd91b8c1bfe9579007537b59d26650bd26431adfc"
+}

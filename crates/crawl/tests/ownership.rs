@@ -314,7 +314,10 @@ fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
             }
         }
     }
-    let html = "<main><article><h2>Alice</h2><p>Collaborates with Bob</p><p>a@pku.edu.cn</p><footer>office@pku.edu.cn</footer></article><article><h2>Bob</h2><p>b@pku.edu.cn</p></article></main>";
+    let html = "<main><article><h2>Alice</h2><p>Collaborates with Bob</p>\
+        <p>a@pku.edu.cn</p><footer>office@pku.edu.cn</footer></article>\
+        <article><h2>Bob</h2><p>b@pku.edu.cn</p></article>\
+        </main>";
     assert_eq!(
         pairings(html, ["Alice", "Bob"], ["a@pku.edu.cn", "b@pku.edu.cn"]),
         [[false, false], [false, true]]
@@ -394,7 +397,12 @@ fn repeated_names_and_whitespace_use_any_matching_occurrence() {
 
 #[test]
 fn blocks_keep_order_paths_and_only_their_own_evidence() {
-    let page = parse(&url(), "<main>前<div>张 <span>三</span><a href='mailto:a@pku.edu.cn'>联系</a></div>后<p>b@pku.edu.cn</p></main>").unwrap();
+    let page = parse(
+        &url(),
+        "<main>前<div>张 <span>三</span><a href='mailto:a@pku.edu.cn'>联系</a></div>后<p>\
+        b@pku.edu.cn</p></main>",
+    )
+    .unwrap();
     assert_eq!(
         page.units
             .iter()

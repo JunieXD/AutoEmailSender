@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n        FROM crawl_page\n        WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "34b8fd9129acb14f3c7dd6035ccbf10acc9bb39b2ab6cf9fd10fa58d55ec376f"
+}

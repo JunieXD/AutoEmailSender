@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page\n            SET work_state = 'done',\n                status = CASE WHEN status = 'success' THEN 'failed'\n            ELSE status END, error = CASE WHEN status = 'success' THEN\n                '已取消，页面资料尚未整理完成' ELSE error END\n            WHERE crawl_id = ? AND work_state != 'done'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "76785c391c2a37552beb6536dc79a63e6b72f9fb46206671c474ebd652f33188"
+}

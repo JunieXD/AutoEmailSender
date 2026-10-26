@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.from_name, m.from_address, m.subject, m.sent_at, m.body_text,\n            m.refs, m.message_id, (\n            SELECT address\n            FROM mentor_email\n            WHERE mentor_id = t.id\n            ORDER BY position\n            LIMIT 1\n        ) AS address\n        FROM mentor t\n        JOIN message_mentor mm ON mm.mentor_id = t.id\n        JOIN message m ON m.id = mm.message_id\n        WHERE t.id = ?1 AND m.message_id = ?2 AND m.kind = 'reply'",
+  "describe": {
+    "columns": [
+      {
+        "name": "from_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_name"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "refs"
+          }
+        }
+      },
+      {
+        "name": "message_id",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "address",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "5f4bc9a3155092b2b42c6e3285e941c4d524fd3f21dc488c0bb7bf7657737b2a"
+}

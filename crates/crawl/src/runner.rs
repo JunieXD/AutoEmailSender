@@ -55,7 +55,26 @@ async fn save_material(
     } else {
         PageStatus::Success
     };
-    let saved = sqlx::query!("UPDATE crawl_page SET text = ?,mode = ?,status = ?,error = ?,fetched_at = ? WHERE id = ? AND claim = ? AND work_state = 'running' AND EXISTS(SELECT 1 FROM crawl WHERE id = crawl_page.crawl_id AND state = 'running')",text,method,status,reason,now(),c.id,c.generation).execute(db).await.map_err(|e| {
+    let saved = sqlx::query!(
+        r#"UPDATE crawl_page
+        SET text = ?, mode = ?, status = ?, error = ?, fetched_at = ?
+        WHERE id = ? AND claim = ? AND work_state = 'running'
+        AND EXISTS (
+            SELECT 1
+            FROM crawl
+            WHERE id = crawl_page.crawl_id AND state = 'running'
+        )"#,
+        text,
+        method,
+        status,
+        reason,
+        now(),
+        c.id,
+        c.generation
+    )
+    .execute(db)
+    .await
+    .map_err(|e| {
         tracing::error!("save fetched page: {e}");
         ReadError::Pause("网页资料暂时无法保存，请继续或重启应用。".into())
     })?;
@@ -382,7 +401,11 @@ async fn read(
         }
         drop(conn);
         let mut data = extract::data(&m, 0..m.units.len());
-        data["target"] = serde_json::json!({"name": candidate.fields.name,"aliases":candidate.fields.aliases,"affiliations":candidate.fields.affiliations});
+        data["target"] = serde_json::json!({
+            "name": candidate.fields.name,
+            "aliases": candidate.fields.aliases,
+            "affiliations": candidate.fields.affiliations
+        });
         data["child"] = serde_json::json!(c.kind == PageKind::EnrichChild);
         let result = reader
             .ask::<extract::Enriched>(extract::ENRICH, data)
@@ -587,12 +610,33 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             } else {
                 PageStatus::Success
             };
-            sqlx::query!("UPDATE crawl_page SET work_state = 'done',kind = ?,status = ?,error = ?,text = ?,fetched_at = ? WHERE id = ?",p.kind,status,reason,text,now(),c.id).execute(&mut *tx).await?;
+            sqlx::query!(
+                r#"UPDATE crawl_page
+                SET work_state = 'done', kind = ?, status = ?, error = ?, text = ?,
+                    fetched_at = ?
+                WHERE id = ?"#,
+                p.kind,
+                status,
+                reason,
+                text,
+                now(),
+                c.id
+            )
+            .execute(&mut *tx)
+            .await?;
             if let Some(id) = c.candidate_id {
-                if c.kind == PageKind::EnrichProfile && !sqlx::query_scalar!(
-                    r#"SELECT EXISTS(SELECT 1 FROM crawl_page WHERE candidate_id=? AND kind='enrich_child') AS "selected!: bool""#,
-                    id
-                ).fetch_one(&mut *tx).await? {
+                if c.kind == PageKind::EnrichProfile
+                    && !sqlx::query_scalar!(
+                        r#"SELECT EXISTS (
+                            SELECT 1
+                            FROM crawl_page
+                            WHERE candidate_id = ? AND kind = 'enrich_child'
+                        ) AS "selected!: bool""#,
+                        id
+                    )
+                    .fetch_one(&mut *tx)
+                    .await?
+                {
                     for url in &p.next {
                         enrich::enqueue(&mut tx, c.crawl, id, url, &c.scope, PageKind::EnrichChild)
                             .await?;
@@ -615,9 +659,17 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                         .await?;
                     } else {
                         let target = url.as_str();
-                        if !sqlx::query_scalar!(r#"SELECT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND url = ?) AS "found!: bool""#,c.crawl,target).fetch_one(&mut *tx).await? {
-                        queue::limit(&mut tx, c.crawl, "寻找名单已达到两层链接范围").await?;
-                    }
+                        if !sqlx::query_scalar!(
+                            r#"SELECT EXISTS (SELECT 1 FROM crawl_page WHERE crawl_id = ?
+                                AND url = ?) AS "found!: bool""#,
+                            c.crawl,
+                            target
+                        )
+                        .fetch_one(&mut *tx)
+                        .await?
+                        {
+                            queue::limit(&mut tx, c.crawl, "寻找名单已达到两层链接范围").await?;
+                        }
                     }
                 }
                 if p.kind == PageKind::List {
@@ -681,7 +733,16 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             }
         }
         Outcome::Failed(reason) => {
-            sqlx::query!("UPDATE crawl_page SET work_state = 'done',status = 'failed',error = ?,fetched_at = ? WHERE id = ?",reason,now(),c.id).execute(&mut *tx).await?;
+            sqlx::query!(
+                r#"UPDATE crawl_page
+                SET work_state = 'done', status = 'failed', error = ?, fetched_at = ?
+                WHERE id = ?"#,
+                reason,
+                now(),
+                c.id
+            )
+            .execute(&mut *tx)
+            .await?;
         }
         Outcome::Pause(reason, expected) => {
             sqlx::query!(
@@ -696,8 +757,23 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     .as_ref()
                     .is_some_and(|m| model::background::same_config(m, e))
             }) {
-                sqlx::query!("UPDATE crawl SET state = 'paused',error = ? WHERE id = ? AND state = 'running'",reason,c.crawl).execute(&mut *tx).await?;
-                sqlx::query!("UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE crawl_id = ? AND work_state = 'running'",c.crawl).execute(&mut *tx).await?;
+                sqlx::query!(
+                    r#"UPDATE crawl
+                    SET state = 'paused', error = ?
+                    WHERE id = ? AND state = 'running'"#,
+                    reason,
+                    c.crawl
+                )
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query!(
+                    r#"UPDATE crawl_page
+                    SET work_state = 'queued', claim = claim + 1
+                    WHERE crawl_id = ? AND work_state = 'running'"#,
+                    c.crawl
+                )
+                .execute(&mut *tx)
+                .await?;
                 sqlx::query!(
                     "UPDATE crawl_run SET ended_at = ? WHERE crawl_id = ? AND ended_at IS NULL",
                     now(),
@@ -724,7 +800,19 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
 }
 async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let ids=sqlx::query_scalar!("UPDATE crawl SET state = 'done',finished_at = ? WHERE state = 'running' AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = crawl.id AND work_state != 'done') RETURNING id",at).fetch_all(&mut *tx).await?;
+    let ids = sqlx::query_scalar!(
+        r#"UPDATE crawl
+        SET state = 'done', finished_at = ?
+        WHERE state = 'running' AND NOT EXISTS (
+            SELECT 1
+            FROM crawl_page
+            WHERE crawl_id = crawl.id AND work_state != 'done'
+        )
+        RETURNING id"#,
+        at
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     let mut result = Vec::new();
     for id in ids {
         sqlx::query!(
@@ -745,7 +833,20 @@ async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Er
         .fetch_one(&mut *tx)
         .await?;
         if candidates == 0 && failed > 0 {
-            sqlx::query!("UPDATE crawl SET state = 'failed',error = '本次抓取未能处理任何页面，请查看页面原因后重试' WHERE id = ? AND NOT EXISTS(SELECT 1 FROM crawl_page WHERE crawl_id = ? AND status = 'success')",id,id).execute(&mut *tx).await?;
+            sqlx::query!(
+                r#"UPDATE crawl
+                SET state = 'failed',
+                    error = '本次抓取未能处理任何页面，请查看页面原因后重试'
+                WHERE id = ? AND NOT EXISTS (
+                    SELECT 1
+                    FROM crawl_page
+                    WHERE crawl_id = ? AND status = 'success'
+                )"#,
+                id,
+                id
+            )
+            .execute(&mut *tx)
+            .await?;
         }
         let activity = sqlx::query!(
             r#"SELECT p.candidate_id,c.enrich AS "enrich?: enrich::EnrichState"
@@ -860,16 +961,50 @@ async fn run_with_pages(
             }
         }
         tokio::select! {
-            Some(joined)=workers.join_next_with_id(),if !workers.is_empty()=>{
-                let (c,outcome)=match joined{
-                    Ok((id,(c,result)))=>{claims.remove(&id);let outcome=match result{Ok(o)=>o,Err(e)=>{tracing::error!("crawl database: {e}");Outcome::Pause("抓取数据暂时无法保存，请继续或重启应用。".into(),None)}};(c,outcome)},
-                    Err(e)=>{tracing::error!("crawl worker: {e}");let Some(c)=claims.remove(&e.id())else{continue};(c,Outcome::Pause("抓取意外中断，请继续或重启应用。".into(),None))}
+            Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
+                let (c, outcome) = match joined {
+                    Ok((id, (c, result))) => {
+                        claims.remove(&id);
+                        let outcome = match result {
+                            Ok(o) => o,
+                            Err(e) => {
+                                tracing::error!("crawl database: {e}");
+                                Outcome::Pause(
+                                    "抓取数据暂时无法保存，请继续或重启应用。".into(),
+                                    None,
+                                )
+                            }
+                        };
+                        (c, outcome)
+                    }
+                    Err(e) => {
+                        tracing::error!("crawl worker: {e}");
+                        let Some(c) = claims.remove(&e.id()) else {
+                            continue;
+                        };
+                        (
+                            c,
+                            Outcome::Pause("抓取意外中断，请继续或重启应用。".into(), None),
+                        )
+                    }
                 };
-                loop{match save(&db,&c,&outcome).await{Ok(_)=>break,Err(e)=>{tracing::error!("save crawl: {e}");tokio::time::sleep(RETRY).await;}}};
+                loop {
+                    match save(&db, &c, &outcome).await {
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::error!("save crawl: {e}");
+                            tokio::time::sleep(RETRY).await;
+                        }
+                    }
+                }
                 changed();
             },
-            ()=crawler.0.notified()=>{},
-            ()=async{if let Some(at)=retry_at{tokio::time::sleep_until(at).await;}},if cooling=>{},
+            () = crawler.0.notified() => {},
+            () = async {
+                if let Some(at) = retry_at {
+                    tokio::time::sleep_until(at).await;
+                }
+            }, if cooling => {},
         }
     }
 }

@@ -105,8 +105,20 @@ async fn setup(db: &SqlitePool) -> i64 {
 }
 async fn message(db: &SqlitePool, mentor: i64, kind: &str, at: i64, body: &str) -> i64 {
     let mut tx = db.begin().await.unwrap();
-    let id = sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,message_id,sent_at,from_address,subject,body_text,truncated) VALUES(1,'INBOX',1,?,?,?,?,'mentor@example.edu','回信',?,0)")
-        .bind(at).bind(kind).bind(format!("<m{at}@example.edu>")).bind(at).bind(body).execute(&mut *tx).await.unwrap().last_insert_rowid();
+    let id = sqlx::query(
+        r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id,
+            sent_at, from_address, subject, body_text, truncated)
+        VALUES (1, 'INBOX', 1, ?, ?, ?, ?, 'mentor@example.edu', '回信', ?, 0)"#,
+    )
+    .bind(at)
+    .bind(kind)
+    .bind(format!("<m{at}@example.edu>"))
+    .bind(at)
+    .bind(body)
+    .execute(&mut *tx)
+    .await
+    .unwrap()
+    .last_insert_rowid();
     sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
         .bind(mentor)
         .bind(id)
@@ -278,8 +290,22 @@ async fn prompt_contains_only_fresh_reply_and_referenced_student_letter_and_reco
     db: SqlitePool,
 ) {
     let m = setup(&db).await;
-    sqlx::query("UPDATE profile SET name='不能发给模型的学生姓名', research_interests='不能发给模型的意向研究方向'").execute(&db).await.unwrap();
-    sqlx::query("INSERT INTO material(file_name,size,for_matching,for_writing,attach_by_default,created_at,extracted_text) VALUES('简历.pdf',1,1,1,0,1,'不能发给模型的材料')").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"UPDATE profile
+        SET name = '不能发给模型的学生姓名',
+            research_interests = '不能发给模型的意向研究方向'"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO material (file_name, size, for_matching, for_writing,
+            attach_by_default, created_at, extracted_text)
+        VALUES ('简历.pdf', 1, 1, 1, 0, 1, '不能发给模型的材料')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     let email = test_fixtures::mail::first_email(&db, m, "sent", 1)
         .await
         .unwrap();
@@ -423,9 +449,13 @@ async fn invalid_output_retries_once_fails_then_user_retry_succeeds(db: SqlitePo
     }
     runner.until(&db, |p| p.failed == 1).await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
-    assert!(
-        matches!(&receive::list(&db,m).await.unwrap()[0].kind,receive::MessageKind::Reply{marking:Some(queue::OutcomeMarking::Failed{reason}),..} if reason.contains("模型"))
-    );
+    assert!(matches!(
+        &receive::list(&db, m).await.unwrap()[0].kind,
+        receive::MessageKind::Reply {
+            marking: Some(queue::OutcomeMarking::Failed { reason }),
+            ..
+        } if reason.contains("模型")
+    ));
     assert!(queue::retry(&db, id, 3).await.unwrap());
     runner.processor.wake();
     request(&mut p)
@@ -760,8 +790,26 @@ async fn shared_reply_stays_eligible_until_every_mentor_is_trashed(db: SqlitePoo
 async fn storage_rejects_half_pauses_and_failed_work_without_a_reason(db: SqlitePool) {
     let m = setup(&db).await;
     let id = message(&db, m, "reply", 1, "答复").await;
-    assert!(sqlx::query("INSERT INTO reply_processing(message_id,action,queued_at,state) VALUES(?,'outcome',1,'failed')").bind(id).execute(&db).await.is_err());
-    assert!(sqlx::query("INSERT INTO reply_processing(message_id,action,queued_at,state,error) VALUES(?,'outcome',1,'queued','失败原因')").bind(id).execute(&db).await.is_err());
+    assert!(
+        sqlx::query(
+            r#"INSERT INTO reply_processing (message_id, action, queued_at, state)
+            VALUES (?, 'outcome', 1, 'failed')"#
+        )
+        .bind(id)
+        .execute(&db)
+        .await
+        .is_err()
+    );
+    assert!(
+        sqlx::query(
+            r#"INSERT INTO reply_processing (message_id, action, queued_at, state, error)
+            VALUES (?, 'outcome', 1, 'queued', '失败原因')"#
+        )
+        .bind(id)
+        .execute(&db)
+        .await
+        .is_err()
+    );
     assert!(
         sqlx::query("UPDATE profile SET reply_processing_paused_at=1")
             .execute(&db)
@@ -1092,7 +1140,14 @@ async fn todo_queue_recovers_trash_and_atomic_storage_failure_without_partial_to
         .unwrap()
     };
     let items = [fields("发材料"), fields("报名")];
-    sqlx::query("CREATE TRIGGER fail_todo BEFORE INSERT ON todo WHEN NEW.text='报名' BEGIN SELECT RAISE(ABORT, 'disk failure fixture'); END").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"CREATE TRIGGER fail_todo BEFORE INSERT ON todo WHEN NEW.text = '报名' BEGIN
+        SELECT RAISE(ABORT, 'disk failure fixture');
+        END"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     assert!(email::todos::complete(&db, claim, &items, 6).await.is_err());
     assert!(email::todos::for_mentor(&db, m).await.unwrap().is_empty());
     assert!(queue::running(&db, claim).await.unwrap());

@@ -61,7 +61,21 @@ pub async fn record_crawl(
     usage: Usage,
     now: i64,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!("INSERT INTO usage (at, model_config_id, model, purpose, crawl_id, input_tokens, cached_tokens, output_tokens) VALUES (?, (SELECT id FROM model_config WHERE id = ?), ?, 'crawl', (SELECT id FROM crawl WHERE id = ?), ?, ?, ?)", now, config_id, model, crawl_id, usage.input, usage.cached, usage.output).execute(db).await?;
+    sqlx::query!(
+        r#"INSERT INTO usage (at, model_config_id, model, purpose, crawl_id, input_tokens,
+            cached_tokens, output_tokens)
+        VALUES (?, (SELECT id FROM model_config WHERE id = ?), ?, 'crawl',
+            (SELECT id FROM crawl WHERE id = ?), ?, ?, ?)"#,
+        now,
+        config_id,
+        model,
+        crawl_id,
+        usage.input,
+        usage.cached,
+        usage.output
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 

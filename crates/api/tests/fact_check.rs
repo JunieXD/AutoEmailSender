@@ -23,8 +23,16 @@ fn context(db: SqlitePool) -> Context {
     }
 }
 async fn config(db: &SqlitePool, address: &str) -> i64 {
-    sqlx::query_scalar("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'fixture','',1,0) RETURNING id")
-        .bind(address).fetch_one(db).await.unwrap()
+    sqlx::query_scalar(
+        r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+            created_at)
+        VALUES ('custom', ?, 'fixture', '', 1, 0)
+        RETURNING id"#,
+    )
+    .bind(address)
+    .fetch_one(db)
+    .await
+    .unwrap()
 }
 async fn mentor(db: &SqlitePool) -> i64 {
     mentor::create(
@@ -131,13 +139,18 @@ async fn only_review_drafts_accept_results_even_if_state_changes_during_check(db
                     .await
                     .unwrap();
             } else {
-                sqlx::query("UPDATE email SET state=?,html='<p>正文</p>',text='正文',planned_at=1,cancel_reason=CASE WHEN ?='canceled' THEN '用户取消' END WHERE id=?")
-                    .bind(state)
-                    .bind(state)
-                    .bind(id)
-                    .execute(&ctx.db)
-                    .await
-                    .unwrap();
+                sqlx::query(
+                    r#"UPDATE email
+                    SET state = ?, html = '<p>正文</p>', text = '正文', planned_at = 1,
+                        cancel_reason = CASE WHEN ? = 'canceled' THEN '用户取消' END
+                    WHERE id = ?"#,
+                )
+                .bind(state)
+                .bind(state)
+                .bind(id)
+                .execute(&ctx.db)
+                .await
+                .unwrap();
             }
             request.respond.send(Response::answer("[]")).ok().unwrap();
         });
@@ -225,7 +238,12 @@ async fn disabling_while_waiting_for_capacity_skips_the_check(db: SqlitePool) {
     let result = tokio::select! {
         result = &mut checking => result,
         request = p.requests.recv() => {
-            request.unwrap().respond.send(Response::answer("[]")).ok().unwrap();
+            request
+                .unwrap()
+                .respond
+                .send(Response::answer("[]"))
+                .ok()
+                .unwrap();
             checking.await
         }
     };
@@ -245,8 +263,16 @@ async fn manual_checks_cannot_overwrite_a_regenerated_drafts_findings(db: Sqlite
     let config = config(&ctx.db, &p.address).await;
     for answer in ["[]", "不是核对结果"] {
         let id = draft(&ctx.db).await;
-        let task: i64 = sqlx::query_scalar("INSERT INTO task(name,kind,writer,model_config_id,schedule,state,created_at) VALUES('核对','first','ai',?,'now','active',0) RETURNING id")
-            .bind(config).fetch_one(&ctx.db).await.unwrap();
+        let task: i64 = sqlx::query_scalar(
+            r#"INSERT INTO task (name, kind, writer, model_config_id, schedule, state,
+                created_at)
+            VALUES ('核对', 'first', 'ai', ?, 'now', 'active', 0)
+            RETURNING id"#,
+        )
+        .bind(config)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
         sqlx::query("UPDATE email SET task_id=? WHERE id=?")
             .bind(task)
             .bind(id)
@@ -304,8 +330,19 @@ async fn all_draft_checks_filter_saved_quotes_against_current_edits(db: SqlitePo
         ("reply", "getReplyDraft", "checkReplyDraft"),
     ] {
         let mentor_id = mentor(&ctx.db).await;
-        let id: i64 = sqlx::query_scalar("INSERT INTO email(mentor_id,kind,reply_to,state,subject,body_md,fact_check,created_at,updated_at) VALUES(?,?,?,'review','申请','王老师：发表了 3 篇论文。',?,0,0) RETURNING id")
-            .bind(mentor_id).bind(kind).bind((kind != "first").then_some("<target@example.com>")).bind(sqlx::types::Json(&result)).fetch_one(&ctx.db).await.unwrap();
+        let id: i64 = sqlx::query_scalar(
+            r#"INSERT INTO email (mentor_id, kind, reply_to, state, subject, body_md,
+                fact_check, created_at, updated_at)
+            VALUES (?, ?, ?, 'review', '申请', '王老师：发表了 3 篇论文。', ?, 0, 0)
+            RETURNING id"#,
+        )
+        .bind(mentor_id)
+        .bind(kind)
+        .bind((kind != "first").then_some("<target@example.com>"))
+        .bind(sqlx::types::Json(&result))
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
         let loaded = call(&ctx, get, json!({"id":mentor_id})).await.unwrap();
         assert_eq!(loaded["id"], id);
         assert_eq!(loaded["factCheck"], result);
@@ -313,7 +350,19 @@ async fn all_draft_checks_filter_saved_quotes_against_current_edits(db: SqlitePo
             ("王老师：发表了 3 篇论文。", 1),
             ("王老师：参加了课程项目。", 0),
         ] {
-            let problems = call(&ctx, check, json!({"mentorId":mentor_id,"replyTo":"<target@example.com>","subject":"申请","bodyMd":body,"attachments":[]})).await.unwrap();
+            let problems = call(
+                &ctx,
+                check,
+                json!({
+                    "mentorId": mentor_id,
+                    "replyTo": "<target@example.com>",
+                    "subject": "申请",
+                    "bodyMd": body,
+                    "attachments": []
+                }),
+            )
+            .await
+            .unwrap();
             assert_eq!(
                 problems
                     .as_array()
@@ -335,11 +384,36 @@ async fn task_checks_use_task_model_and_references_then_fall_back_after_deletion
     let mut selected = Provider::start().await;
     let chosen = config(&ctx.db, &selected.address).await;
     let mentor_id = mentor(&ctx.db).await;
-    let task: i64 = sqlx::query_scalar("INSERT INTO task(name,kind,writer,model_config_id,schedule,state,created_at) VALUES('核对','first','ai',?,'now','active',0) RETURNING id")
-        .bind(chosen).fetch_one(&ctx.db).await.unwrap();
-    let id: i64 = sqlx::query_scalar("INSERT INTO email(mentor_id,task_id,kind,state,subject,body_md,created_at,updated_at) VALUES(?,?,'first','review','申请','王老师：3 篇论文',0,0) RETURNING id")
-        .bind(mentor_id).bind(task).fetch_one(&ctx.db).await.unwrap();
-    sqlx::query("INSERT INTO material(id,file_name,size,for_matching,for_writing,attach_by_default,created_at,extracted_text) VALUES(1,'固定.pdf',1,0,0,0,0,'固定任务资料'),(2,'当前.pdf',1,0,1,0,0,'当前全局资料')").execute(&ctx.db).await.unwrap();
+    let task: i64 = sqlx::query_scalar(
+        r#"INSERT INTO task (name, kind, writer, model_config_id, schedule, state,
+            created_at)
+        VALUES ('核对', 'first', 'ai', ?, 'now', 'active', 0)
+        RETURNING id"#,
+    )
+    .bind(chosen)
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    let id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO email (mentor_id, task_id, kind, state, subject, body_md,
+            created_at, updated_at)
+        VALUES (?, ?, 'first', 'review', '申请', '王老师：3 篇论文', 0, 0)
+        RETURNING id"#,
+    )
+    .bind(mentor_id)
+    .bind(task)
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO material (id, file_name, size, for_matching, for_writing,
+            attach_by_default, created_at, extracted_text)
+        VALUES (1, '固定.pdf', 1, 0, 0, 0, 0, '固定任务资料'),
+            (2, '当前.pdf', 1, 0, 1, 0, 0, '当前全局资料')"#,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO task_material VALUES(?,1,'reference')")
         .bind(task)
         .execute(&ctx.db)
@@ -380,7 +454,19 @@ async fn task_checks_use_task_model_and_references_then_fall_back_after_deletion
             .iter()
             .any(|p| p["kind"] == "unsupported_claim")
     );
-    let problems = call(&ctx,"checkTaskDraft",json!({"taskId":task,"id":id,"subject":"申请","bodyMd":"王老师：课程项目","attachments":[]})).await.unwrap();
+    let problems = call(
+        &ctx,
+        "checkTaskDraft",
+        json!({
+            "taskId": task,
+            "id": id,
+            "subject": "申请",
+            "bodyMd": "王老师：课程项目",
+            "attachments": []
+        }),
+    )
+    .await
+    .unwrap();
     assert!(
         !problems
             .as_array()

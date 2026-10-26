@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, provider, base_url, model, api_key, agreed AS \"agreed: bool\"\n        FROM model_config\n        WHERE id = coalesce((SELECT id FROM model_config WHERE id = ?1),\n            (SELECT default_model_config_id FROM profile),\n            (SELECT min(id) FROM model_config))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "provider",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "name": "base_url",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "base_url"
+          }
+        }
+      },
+      {
+        "name": "model",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "model"
+          }
+        }
+      },
+      {
+        "name": "api_key",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "api_key"
+          }
+        }
+      },
+      {
+        "name": "agreed: bool",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "model_config",
+            "name": "agreed"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "36796e7789003d1804dd8f3fa73345108d1690f88aabcee04ff696693d2eb2ec"
+}

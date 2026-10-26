@@ -19,7 +19,8 @@ impl Emails {
         let domain = r"[a-z0-9\-]+";
         Ok(Self {
             candidate: compile(&format!(
-                r"(?i){local}(?:{dot}{local})*(?:{at}|[ \t]*#[ \t]*){domain}(?:(?:\.|{dot}){domain})+"
+                "(?i){local}(?:{dot}{local})*(?:{at}|[ \\t]*#[ \\t]*)\
+                {domain}(?:(?:\\.|{dot}){domain})+"
             ))?,
             at: compile(&format!("(?i){at}"))?,
             dot: compile(&format!("(?i){dot}"))?,

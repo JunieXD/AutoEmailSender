@@ -93,14 +93,22 @@ pub async fn delete(db: &SqlitePool, ids: &[i64]) -> Result<(), sqlx::Error> {
     .execute(&mut *tx)
     .await?;
     sqlx::query!(
-        "DELETE FROM mentor_search WHERE rowid IN
-           (SELECT id FROM mentor WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL)",
+        r#"DELETE
+        FROM mentor_search
+        WHERE rowid IN (
+            SELECT id
+            FROM mentor
+            WHERE id IN (SELECT value FROM json_each(?))
+            AND trashed_at IS NOT NULL
+        )"#,
         ids,
     )
     .execute(&mut *tx)
     .await?;
     sqlx::query!(
-        "DELETE FROM mentor WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL",
+        r#"DELETE
+        FROM mentor
+        WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL"#,
         ids,
     )
     .execute(&mut *tx)

@@ -65,9 +65,21 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
     let site = Site::new().await;
     challenge(&site);
     let browser = Arc::new(FakeBrowser::default());
-    browser.page(&site.url("/"), "<title>名单</title><p>张三 a@school.example.edu</p><nav><button onclick='next()'>下一页</button></nav>");
-    browser.page(&site.url("/"), "<title>名单</title><p>李四 b@school.example.edu</p><nav><button onclick='next()'>下一页</button></nav>");
-    browser.page(&site.url("/"), "<title>名单</title><p>王五 c@school.example.edu</p><nav><button disabled>下一页</button></nav>");
+    browser.page(
+        &site.url("/"),
+        "<title>名单</title><p>张三 a@school.example.edu</p><nav><button onclick='next()'>\
+        下一页</button></nav>",
+    );
+    browser.page(
+        &site.url("/"),
+        "<title>名单</title><p>李四 b@school.example.edu</p><nav><button onclick='next()'>\
+        下一页</button></nav>",
+    );
+    browser.page(
+        &site.url("/"),
+        "<title>名单</title><p>王五 c@school.example.edu</p><nav><button disabled>\
+        下一页</button></nav>",
+    );
     let mut provider = Provider::start().await;
     let model = config(&db, &provider.address).await;
     let responder = tokio::spawn(async move {

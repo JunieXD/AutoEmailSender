@@ -91,7 +91,10 @@ impl Fetcher {
         for redirects in 0..=MAX_REDIRECTS {
             let (response, slot) = match self.send(&self.trusted, &url, &site).await {
                 Err(CrawlError::Http(error)) if net::untrusted(&error) => {
-                    tracing::debug!(website = %url.website(), "retry public page with relaxed certificate checks");
+                    tracing::debug!(
+                        website = %url.website(),
+                        "retry public page with relaxed certificate checks"
+                    );
                     relaxed_certificate = true;
                     self.send(&self.untrusted, &url, &site).await?
                 }

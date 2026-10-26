@@ -97,6 +97,21 @@ fn midnight(tz: Tz, date: NaiveDate) -> Result<i64, String> {
 pub async fn first_event<'e>(
     db: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
 ) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar!("SELECT min(at) FROM (SELECT min(e.sent_at) AS at FROM contact_email e JOIN mentor m ON m.id=e.mentor_id WHERE m.trashed_at IS NULL UNION ALL SELECT min(msg.sent_at) FROM contact_message msg JOIN message_mentor mm ON mm.message_id=msg.id JOIN mentor m ON m.id=mm.mentor_id WHERE m.trashed_at IS NULL)")
-        .fetch_one(db).await
+    sqlx::query_scalar!(
+        r#"SELECT min(at)
+        FROM (
+            SELECT min(e.sent_at) AS at
+            FROM contact_email e
+            JOIN mentor m ON m.id = e.mentor_id
+            WHERE m.trashed_at IS NULL
+            UNION ALL
+            SELECT min(msg.sent_at)
+            FROM contact_message msg
+            JOIN message_mentor mm ON mm.message_id = msg.id
+            JOIN mentor m ON m.id = mm.mentor_id
+            WHERE m.trashed_at IS NULL
+        )"#
+    )
+    .fetch_one(db)
+    .await
 }

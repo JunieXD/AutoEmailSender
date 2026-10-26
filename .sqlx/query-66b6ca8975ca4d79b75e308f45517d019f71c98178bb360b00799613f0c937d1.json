@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor\n        SET match_state = 'queued', match_error = NULL, match_queued_at = ?1,\n            match_priority = ?2, match_claim = match_claim + 1\n        WHERE id IN (SELECT value FROM json_each(?3)) AND trashed_at IS NULL\n        AND (match_state IS NULL OR match_state = 'failed')\n        AND id IN (\n            SELECT mentor_id\n            FROM mentor_detail\n            WHERE research IS NOT NULL OR coalesce(json_array_length(papers), 0) > 0\n        ) AND (?4 OR match_score IS NULL OR matched_at < (SELECT\n            match_basis_changed_at FROM profile))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "66b6ca8975ca4d79b75e308f45517d019f71c98178bb360b00799613f0c937d1"
+}

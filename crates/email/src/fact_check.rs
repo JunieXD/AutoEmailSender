@@ -26,7 +26,9 @@ pub async fn save(
     now: i64,
 ) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query!(
-        "UPDATE email SET fact_check = ?, updated_at = ? WHERE id = ? AND generation_claim = ? AND state = 'review'",
+        r#"UPDATE email
+        SET fact_check = ?, updated_at = ?
+        WHERE id = ? AND generation_claim = ? AND state = 'review'"#,
         Json(result),
         now,
         id,

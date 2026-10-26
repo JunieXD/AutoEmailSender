@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n            SELECT 1\n            FROM crawl_page p\n            JOIN crawl c ON c.id = p.crawl_id\n            WHERE p.id = ? AND p.claim = ? AND p.work_state = 'running'\n            AND c.state = 'running' AND (p.candidate_id IS NULL\n            OR EXISTS (\n                SELECT 1\n                FROM candidate\n                WHERE id = p.candidate_id AND review = 'pending'\n                AND enrich IN ('queued', 'running')\n            ))\n        ) AS \"valid!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "valid!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4fe67dc6056271aa87aea463c07dd27e5fe665d57abf32c8816534214f3e21a3"
+}

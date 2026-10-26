@@ -167,7 +167,8 @@ pub async fn move_tag(db: &SqlitePool, id: i64, direction: Direction) -> Result<
     Ok(())
 }
 
-/// Puts the tag on these mentors, or takes it off them. Adding or removing one tag at a time means a
+/// Puts the tag on these mentors, or takes it off them. Adding or removing one tag at a time means
+/// a
 /// change made from an out-of-date view never undoes another tag.
 pub async fn tag_mentors(
     db: &SqlitePool,
@@ -178,7 +179,9 @@ pub async fn tag_mentors(
     let mentor_ids = Json(mentor_ids);
     if on {
         sqlx::query!(
-            "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id) SELECT value, ? FROM json_each(?)",
+            r#"INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id)
+            SELECT value, ?
+            FROM json_each(?)"#,
             tag_id,
             mentor_ids
         )
@@ -186,7 +189,9 @@ pub async fn tag_mentors(
         .await?;
     } else {
         sqlx::query!(
-            "DELETE FROM mentor_tag WHERE tag_id = ? AND mentor_id IN (SELECT value FROM json_each(?))",
+            r#"DELETE
+            FROM mentor_tag
+            WHERE tag_id = ? AND mentor_id IN (SELECT value FROM json_each(?))"#,
             tag_id,
             mentor_ids
         )
@@ -216,7 +221,16 @@ pub async fn add_by_name(
                 .fetch_one(&mut *conn)
                 .await?;
             let color = COLORS[count as usize % COLORS.len()];
-            sqlx::query_scalar!("INSERT INTO tag (name, color, position) VALUES (?, ?, (SELECT coalesce(max(position) + 1, 0) FROM tag)) RETURNING id", name, color).fetch_one(&mut *conn).await?
+            sqlx::query_scalar!(
+                r#"INSERT INTO tag (name, color, position)
+                VALUES (?, ?,
+                    (SELECT coalesce(max(position) + 1, 0) FROM tag))
+                RETURNING id"#,
+                name,
+                color
+            )
+            .fetch_one(&mut *conn)
+            .await?
         }
     };
     sqlx::query!(

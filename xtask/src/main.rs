@@ -7,12 +7,13 @@ mod web;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "用法：cargo xtask <命令>
-
-  types [--check]  生成界面用的 TypeScript 类型（ui/src/api/types.ts）；--check 只检查是否最新
-  seed             给开发版（.dev-data）填上示例数据
-  web              启动浏览器预览（真实核心，不运行后台工作）
-  bench            按 docs/data-model.md 的规模生成数据，测首页查询和写邮件状态的耗时";
+const USAGE: &str = "用法：cargo xtask <命令>\n\
+    \n  \
+    types [--check]  生成界面用的 TypeScript 类型（ui/src/api/types.ts）；--check \
+    只检查是否最新\n  \
+    seed             给开发版（.dev-data）填上示例数据\n  \
+    web              启动浏览器预览（真实核心，不运行后台工作）\n  \
+    bench            按 docs/data-model.md 的规模生成数据，测首页查询和写邮件状态的耗时";
 
 #[tokio::main]
 async fn main() -> ExitCode {

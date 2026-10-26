@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO todo (mentor_id, message_id, text, due_date, due_time,\n                created_at, due_changed_at)\n            VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "9619bb83ccf7b182b47a85b3ab5be9515bf42e8f0dbd5326ac78b780f7354238"
+}

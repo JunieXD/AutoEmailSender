@@ -102,7 +102,8 @@ async fn limit<T>(
     })
 }
 
-/// Says goodbye to a server in the background once its work is done. Its answer changes nothing, and
+/// Says goodbye to a server in the background once its work is done. Its answer changes nothing,
+/// and
 /// some servers, such as Gmail through a proxy, drop the connection or never answer.
 pub(crate) fn farewell<E: Display>(
     server: &str,
@@ -334,7 +335,10 @@ mod tests {
         }
         let refused = tunnel(Some(&Proxy::Http(at(http().await))), "localhost", 25).await;
         assert!(
-            matches!(refused, Err(MailError::ProxyFailed { ref reason, .. }) if reason.contains("403")),
+            matches!(
+                refused,
+                Err(MailError::ProxyFailed { ref reason, .. }) if reason.contains("403")
+            ),
             "{refused:?}"
         );
     }

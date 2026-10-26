@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT subject, body_text, in_reply_to, refs, sent_at\n        FROM message\n        WHERE id = ? AND kind = 'reply'",
+  "describe": {
+    "columns": [
+      {
+        "name": "subject",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      },
+      {
+        "name": "in_reply_to",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "in_reply_to"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "refs"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "fe9a8ce560aa8d6fefc0f1401bcfe9d0cee276297df866dabb675ef75d6b3267"
+}

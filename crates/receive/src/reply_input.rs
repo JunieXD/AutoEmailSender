@@ -32,7 +32,9 @@ pub async fn input(
 ) -> Result<Option<(String, Option<i64>, Option<String>)>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let Some(reply) = sqlx::query!(
-        "SELECT subject, body_text, in_reply_to, refs, sent_at FROM message WHERE id = ? AND kind = 'reply'",
+        r#"SELECT subject, body_text, in_reply_to, refs, sent_at
+        FROM message
+        WHERE id = ? AND kind = 'reply'"#,
         id
     )
     .fetch_optional(&mut *tx)
@@ -49,15 +51,27 @@ pub async fn input(
             .split_whitespace()
             .rev(),
     );
-    let parent = sqlx::query!(r#"SELECT email_id AS "email_id?: i64", subject AS "subject?: String", body AS "body?: String" FROM (
-        SELECT e.id AS email_id, e.subject, e.body_md AS body, r.key AS priority, 1 AS source
-        FROM json_each(?1) r JOIN email e ON e.message_id = r.value OR e.copy_message_id = r.value
-        WHERE e.sent_at IS NOT NULL
-        UNION ALL
-        SELECT NULL, m.subject, m.body_text, r.key, 0
-        FROM json_each(?1) r JOIN message m ON m.message_id = r.value WHERE m.kind = 'sent'
-        ) ORDER BY priority, source DESC LIMIT 1"#, Json(ids))
-        .fetch_optional(&mut *tx).await?;
+    let parent = sqlx::query!(
+        r#"SELECT email_id AS "email_id?: i64", subject AS "subject?: String",
+            body AS "body?: String"
+        FROM (
+            SELECT e.id AS email_id, e.subject, e.body_md AS body, r.key AS priority,
+                1 AS source
+            FROM json_each(?1) r
+            JOIN email e ON e.message_id = r.value OR e.copy_message_id = r.value
+            WHERE e.sent_at IS NOT NULL
+            UNION ALL
+            SELECT NULL, m.subject, m.body_text, r.key, 0
+            FROM json_each(?1) r
+            JOIN message m ON m.message_id = r.value
+            WHERE m.kind = 'sent'
+        )
+        ORDER BY priority, source DESC
+        LIMIT 1"#,
+        Json(ids)
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
     let (reply_date, reply_weekday) = if todos {
         let (date, weekday) = email::todos::reply_date(reply.sent_at)?;
         (Some(date), Some(weekday))

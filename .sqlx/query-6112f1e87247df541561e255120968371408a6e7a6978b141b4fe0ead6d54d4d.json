@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT c.id, p.mentor_id\n        FROM candidate c\n        JOIN candidate p ON p.crawl_id = c.crawl_id AND p.mentor_id IS NOT NULL\n        WHERE c.id IN (SELECT value FROM json_each(?)) AND (EXISTS (\n            SELECT 1\n            FROM json_each(c.emails) a\n            JOIN json_each(p.emails) b ON a.value = b.value COLLATE NOCASE\n        ) OR EXISTS (\n            SELECT 1\n            FROM candidate_profile a\n            JOIN candidate_profile b ON a.crawl_id = b.crawl_id\n            AND a.url = b.url\n            WHERE a.candidate_id = c.id AND b.candidate_id = p.id\n        ))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "mentor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "6112f1e87247df541561e255120968371408a6e7a6978b141b4fe0ead6d54d4d"
+}

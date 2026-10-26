@@ -73,20 +73,81 @@ pub(crate) async fn profiles(
         )
     })
     .collect();
-    for r in sqlx::query!("SELECT mentor_id, name FROM mentor_alias WHERE mentor_id IN (SELECT value FROM json_each(?)) ORDER BY position", ids).fetch_all(&mut *conn).await? {
-        if let Some(p) = profiles.get_mut(&r.mentor_id) { p.fields.aliases.push(r.name); }
+    for r in sqlx::query!(
+        r#"SELECT mentor_id, name
+        FROM mentor_alias
+        WHERE mentor_id IN (SELECT value FROM json_each(?))
+        ORDER BY position"#,
+        ids
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    {
+        if let Some(p) = profiles.get_mut(&r.mentor_id) {
+            p.fields.aliases.push(r.name);
+        }
     }
-    for r in sqlx::query!("SELECT mentor_id, address FROM mentor_email WHERE mentor_id IN (SELECT value FROM json_each(?)) ORDER BY position", ids).fetch_all(&mut *conn).await? {
-        if let Some(p) = profiles.get_mut(&r.mentor_id) { p.fields.emails.push(r.address); }
+    for r in sqlx::query!(
+        r#"SELECT mentor_id, address
+        FROM mentor_email
+        WHERE mentor_id IN (SELECT value FROM json_each(?))
+        ORDER BY position"#,
+        ids
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    {
+        if let Some(p) = profiles.get_mut(&r.mentor_id) {
+            p.fields.emails.push(r.address);
+        }
     }
-    for r in sqlx::query!("SELECT mentor_id, university, school, department, title FROM mentor_affiliation WHERE mentor_id IN (SELECT value FROM json_each(?)) ORDER BY position", ids).fetch_all(&mut *conn).await? {
-        if let Some(p) = profiles.get_mut(&r.mentor_id) { p.fields.affiliations.push(Affiliation { university: r.university, school: r.school, department: r.department, title: r.title }); }
+    for r in sqlx::query!(
+        r#"SELECT mentor_id, university, school, department, title
+        FROM mentor_affiliation
+        WHERE mentor_id IN (SELECT value FROM json_each(?))
+        ORDER BY position"#,
+        ids
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    {
+        if let Some(p) = profiles.get_mut(&r.mentor_id) {
+            p.fields.affiliations.push(Affiliation {
+                university: r.university,
+                school: r.school,
+                department: r.department,
+                title: r.title,
+            });
+        }
     }
-    for r in sqlx::query!("SELECT mentor_id, url FROM mentor_homepage WHERE mentor_id IN (SELECT value FROM json_each(?)) ORDER BY position", ids).fetch_all(&mut *conn).await? {
-        if let Some(p) = profiles.get_mut(&r.mentor_id) { p.fields.homepages.push(r.url); }
+    for r in sqlx::query!(
+        r#"SELECT mentor_id, url
+        FROM mentor_homepage
+        WHERE mentor_id IN (SELECT value FROM json_each(?))
+        ORDER BY position"#,
+        ids
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    {
+        if let Some(p) = profiles.get_mut(&r.mentor_id) {
+            p.fields.homepages.push(r.url);
+        }
     }
-    for r in sqlx::query!("SELECT mt.mentor_id, t.name FROM mentor_tag mt JOIN tag t ON t.id = mt.tag_id WHERE mt.mentor_id IN (SELECT value FROM json_each(?)) ORDER BY t.position", ids).fetch_all(&mut *conn).await? {
-        if let Some(p) = profiles.get_mut(&r.mentor_id) { p.tags.push(r.name); }
+    for r in sqlx::query!(
+        r#"SELECT mt.mentor_id, t.name
+        FROM mentor_tag mt
+        JOIN tag t ON t.id = mt.tag_id
+        WHERE mt.mentor_id IN (SELECT value FROM json_each(?))
+        ORDER BY t.position"#,
+        ids
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    {
+        if let Some(p) = profiles.get_mut(&r.mentor_id) {
+            p.tags.push(r.name);
+        }
     }
     Ok(profiles)
 }
@@ -99,8 +160,30 @@ pub async fn export(
 ) -> Result<Vec<Vec<String>>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let ids = match scope {
-        Scope::Filter(f) => filtered_ids(&mut tx, f.status, f.reply_outcome, f.keyword.as_deref().and_then(keyword).as_deref(), -1, 0, f.unanswered_days.map(|d| now - i64::from(d.get()) * 86_400_000)).await?,
-        Scope::Ids(ids) => sqlx::query_scalar!("SELECT id FROM mentor WHERE trashed_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY match_score DESC, id", Json(ids)).fetch_all(&mut *tx).await?,
+        Scope::Filter(f) => {
+            filtered_ids(
+                &mut tx,
+                f.status,
+                f.reply_outcome,
+                f.keyword.as_deref().and_then(keyword).as_deref(),
+                -1,
+                0,
+                f.unanswered_days
+                    .map(|d| now - i64::from(d.get()) * 86_400_000),
+            )
+            .await?
+        }
+        Scope::Ids(ids) => {
+            sqlx::query_scalar!(
+                r#"SELECT id
+                FROM mentor
+                WHERE trashed_at IS NULL AND id IN (SELECT value FROM json_each(?))
+                ORDER BY match_score DESC, id"#,
+                Json(ids)
+            )
+            .fetch_all(&mut *tx)
+            .await?
+        }
     };
     let mut data = profiles(&mut tx, &ids).await?;
     let groups = data

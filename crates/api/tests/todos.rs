@@ -166,7 +166,13 @@ async fn ai_switch_requires_model_consent_and_does_not_backfill(db: SqlitePool) 
             .code,
         ErrorCode::Invalid
     ));
-    sqlx::query("INSERT INTO model_config(provider,model,api_key,agreed,created_at) VALUES('deepseek','fixture','',0,0)").execute(&ctx.db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO model_config (provider, model, api_key, agreed, created_at)
+        VALUES ('deepseek', 'fixture', '', 0, 0)"#,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
     assert!(matches!(
         call(&ctx, "setAiReplyTodos", json!({"enabled":true}))
             .await
@@ -197,10 +203,29 @@ async fn ai_switch_requires_model_consent_and_does_not_backfill(db: SqlitePool) 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn extracted_todos_follow_their_reply_and_manual_todos_use_creation_time(db: SqlitePool) {
     let m = mentor(&db).await;
-    sqlx::query("INSERT INTO mailbox(address,sender_name,provider,smtp_host,smtp_port,smtp_security,imap_host,imap_port,imap_security,auth,secret,daily_limit,min_interval_s,rotation_order,created_at) VALUES('me@example.com','学生','custom','localhost',465,'tls','localhost',993,'tls','password','',50,60,1,0)").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO mailbox (address, sender_name, provider, smtp_host, smtp_port,
+            smtp_security, imap_host, imap_port, imap_security, auth, secret,
+            daily_limit, min_interval_s, rotation_order, created_at)
+        VALUES ('me@example.com', '学生', 'custom', 'localhost', 465, 'tls',
+            'localhost', 993, 'tls', 'password', '', 50, 60, 1, 0)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     let mut replies = Vec::new();
     for (at, uid) in [(10, 1), (20, 2)] {
-        let id = sqlx::query("INSERT INTO message(mailbox_id,folder,uidvalidity,uid,kind,sent_at,from_address,truncated) VALUES(1,'INBOX',1,?,'reply',?,'mentor@edu',0)").bind(uid).bind(at).execute(&db).await.unwrap().last_insert_rowid();
+        let id = sqlx::query(
+            r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, sent_at,
+                from_address, truncated)
+            VALUES (1, 'INBOX', 1, ?, 'reply', ?, 'mentor@edu', 0)"#,
+        )
+        .bind(uid)
+        .bind(at)
+        .execute(&db)
+        .await
+        .unwrap()
+        .last_insert_rowid();
         sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
             .bind(m)
             .bind(id)
@@ -214,7 +239,18 @@ async fn extracted_todos_follow_their_reply_and_manual_todos_use_creation_time(d
         (Some(replies[1]), 31, "回信二"),
         (None, 15, "手动"),
     ] {
-        sqlx::query("INSERT INTO todo(mentor_id,message_id,text,created_at,due_changed_at) VALUES(?,?,?,?,?)").bind(m).bind(message).bind(text).bind(at).bind(at).execute(&db).await.unwrap();
+        sqlx::query(
+            r#"INSERT INTO todo (mentor_id, message_id, text, created_at, due_changed_at)
+            VALUES (?, ?, ?, ?, ?)"#,
+        )
+        .bind(m)
+        .bind(message)
+        .bind(text)
+        .bind(at)
+        .bind(at)
+        .execute(&db)
+        .await
+        .unwrap();
     }
     let ctx = context(db);
     let entries = call(&ctx, "listCorrespondence", json!({"id":m}))

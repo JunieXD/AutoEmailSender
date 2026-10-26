@@ -77,7 +77,16 @@ async fn request(p: &mut Provider) -> provider::Request {
 }
 async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
     profile::set_ai_fact_check(db, false).await.unwrap();
-    let config=sqlx::query_scalar::<_,i64>("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'fixture','',1,0) RETURNING id").bind(address).fetch_one(db).await.unwrap();
+    let config = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+            created_at)
+        VALUES ('custom', ?, 'fixture', '', 1, 0)
+        RETURNING id"#,
+    )
+    .bind(address)
+    .fetch_one(db)
+    .await
+    .unwrap();
     let mut ids = vec![];
     let offset: i64 = sqlx::query_scalar("SELECT count(*) FROM mentor")
         .fetch_one(db)
@@ -125,7 +134,18 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
 async fn generates_and_regenerates_follow_up_body_with_the_fixed_subject(db: SqlitePool) {
     let mut p = Provider::start().await;
     let (_, ids) = setup(&db, &p.address, 1).await;
-    sqlx::query("UPDATE email SET state='sent',subject='申请',body_md='之前发出的申请',html='<p>之前发出的申请</p>',text='之前发出的申请',planned_at=1,sent_at=1,from_address='me@example.com',to_address='m0@example.com',message_id='<first@example.com>' WHERE mentor_id=?").bind(ids[0]).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"UPDATE email
+        SET state = 'sent', subject = '申请', body_md = '之前发出的申请',
+            html = '<p>之前发出的申请</p>', text = '之前发出的申请', planned_at = 1,
+            sent_at = 1, from_address = 'me@example.com',
+            to_address = 'm0@example.com', message_id = '<first@example.com>'
+        WHERE mentor_id = ?"#,
+    )
+    .bind(ids[0])
+    .execute(&db)
+    .await
+    .unwrap();
     let id = task::create(
         &db,
         &NewTask {
@@ -356,13 +376,27 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
 ) {
     let mut p = Provider::start().await;
     let (id, ids) = setup(&db, &p.address, 1).await;
-    sqlx::query("INSERT INTO material(id,file_name,size,for_matching,for_writing,attach_by_default,created_at,extracted_text) VALUES (1,'参考.pdf',1,0,0,0,0,'固定资料：课程项目')").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO material (id, file_name, size, for_matching, for_writing,
+            attach_by_default, created_at, extracted_text)
+        VALUES (1, '参考.pdf', 1, 0, 0, 0, 0, '固定资料：课程项目')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO task_material VALUES (?,1,'reference')")
         .bind(id)
         .execute(&db)
         .await
         .unwrap();
-    sqlx::query("UPDATE task SET template_subject='申请{导师姓名}',template_body_md='{导师姓名}老师：原始底稿'").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"UPDATE task
+        SET template_subject = '申请{导师姓名}',
+            template_body_md = '{导师姓名}老师：原始底稿'"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     let mut run = Runner::start(&db, Default::default());
     let old = request(&mut p).await;
     assert!(old.body.to_string().contains("固定资料"));
@@ -634,9 +668,10 @@ async fn failed_fact_check_enters_review_and_stale_check_cannot_replace_a_new_cl
     };
     let draft = task::draft(&db, &key).await.unwrap().unwrap();
     assert_eq!(draft.state, email::tasks::DraftState::Review);
-    assert!(
-        matches!(draft.fact_check,Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty())
-    );
+    assert!(matches!(
+        draft.fact_check,
+        Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()
+    ));
     assert_eq!(
         task::get(&db, id).await.unwrap().unwrap().state,
         task::TaskState::Paused
@@ -697,8 +732,15 @@ async fn fact_check_refreshes_configuration_and_consent_after_writing(db: Sqlite
     let (id, _) = setup(&db, &writing.address, 1).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
     let mut checking = Provider::start().await;
-    sqlx::query("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'replacement','',1,1)")
-        .bind(&checking.address).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+            created_at)
+        VALUES ('custom', ?, 'replacement', '', 1, 1)"#,
+    )
+    .bind(&checking.address)
+    .execute(&db)
+    .await
+    .unwrap();
     let mut run = Runner::start(&db, Default::default());
     let old = request(&mut writing).await;
     sqlx::query("DELETE FROM model_config WHERE model='fixture'")
@@ -786,9 +828,16 @@ async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
         writing.respond.send(Response::answer(LETTER)).ok().unwrap();
         timeout(Duration::from_secs(10), async {
             tokio::select! {
-                changed = run.changes.recv() => { changed.unwrap(); }
+                changed = run.changes.recv() => {
+                    changed.unwrap();
+                }
                 request = p.requests.recv() => {
-                    request.unwrap().respond.send(Response::answer("[]")).ok().unwrap();
+                    request
+                        .unwrap()
+                        .respond
+                        .send(Response::answer("[]"))
+                        .ok()
+                        .unwrap();
                     panic!("invalidated work started a fact check");
                 }
             }
@@ -971,8 +1020,15 @@ async fn fact_check_pause_compares_its_own_configuration_with_the_current_one(db
         let mut run = Runner::start(&db, Default::default());
         let writing = request(&mut p).await;
         // The check can use a configuration different from the writing request.
-        sqlx::query("UPDATE model_config SET model='check-model' WHERE id=(SELECT model_config_id FROM task WHERE id=?)")
-            .bind(id).execute(&db).await.unwrap();
+        sqlx::query(
+            r#"UPDATE model_config
+            SET model = 'check-model'
+            WHERE id = (SELECT model_config_id FROM task WHERE id = ?)"#,
+        )
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
         writing.respond.send(Response::answer(LETTER)).ok().unwrap();
         let check = request(&mut p).await;
         assert_eq!(check.body["model"], "check-model");
@@ -982,8 +1038,16 @@ async fn fact_check_pause_compares_its_own_configuration_with_the_current_one(db
             .await
             .unwrap();
         if field == "id" {
-            let replacement: i64 = sqlx::query_scalar("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom',?,'check-model','',1,0) RETURNING id")
-                .bind(&p.address).fetch_one(&db).await.unwrap();
+            let replacement: i64 = sqlx::query_scalar(
+                r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+                    created_at)
+                VALUES ('custom', ?, 'check-model', '', 1, 0)
+                RETURNING id"#,
+            )
+            .bind(&p.address)
+            .fetch_one(&db)
+            .await
+            .unwrap();
             sqlx::query("UPDATE task SET model_config_id=? WHERE id=?")
                 .bind(replacement)
                 .bind(id)
@@ -991,8 +1055,21 @@ async fn fact_check_pause_compares_its_own_configuration_with_the_current_one(db
                 .await
                 .unwrap();
         } else if field != "unchanged" {
-            sqlx::query("UPDATE model_config SET name=CASE WHEN ?1='name' THEN 'changed' ELSE name END, model=CASE WHEN ?1='model' THEN 'changed' ELSE model END, base_url=CASE WHEN ?1='base_url' THEN 'http://127.0.0.1:1/v1' ELSE base_url END, api_key=CASE WHEN ?1='api_key' THEN 'changed' ELSE api_key END WHERE id=?2")
-                .bind(field).bind(config).execute(&db).await.unwrap();
+            sqlx::query(
+                r#"UPDATE model_config
+                SET name = CASE WHEN ?1 = 'name' THEN 'changed'
+                ELSE name END,
+                    model = CASE WHEN ?1 = 'model' THEN 'changed'
+                ELSE model END, base_url = CASE WHEN ?1 = 'base_url' THEN
+                    'http://127.0.0.1:1/v1' ELSE base_url END, api_key = CASE
+                WHEN ?1 = 'api_key' THEN 'changed' ELSE api_key END
+                WHERE id = ?2"#,
+            )
+            .bind(field)
+            .bind(config)
+            .execute(&db)
+            .await
+            .unwrap();
         }
         check
             .respond

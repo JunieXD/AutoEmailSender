@@ -1,4 +1,5 @@
-//! Measures the queries in docs/data-model.md#性能 at the scale given there, and fails when one is over
+//! Measures the queries in docs/data-model.md#性能 at the scale given there, and fails when one is
+//! over
 //! its budget. Add each new high-traffic query here when its module lands.
 
 use std::num::NonZeroU32;
@@ -107,7 +108,15 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
-    sqlx::query("UPDATE message SET outcome = CASE id % 5 WHEN 0 THEN 'interested' WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' WHEN 3 THEN 'unclear' ELSE NULL END WHERE kind = 'reply'").execute(&db).await?;
+    sqlx::query(
+        r#"UPDATE message
+        SET outcome = CASE id % 5 WHEN 0 THEN 'interested'
+        WHEN 1 THEN 'no_slot' WHEN 2 THEN 'declined' WHEN 3 THEN 'unclear'
+        ELSE NULL END
+        WHERE kind = 'reply'"#,
+    )
+    .execute(&db)
+    .await?;
     for filter in [
         mentor::ReplyOutcomeFilter::Interested,
         mentor::ReplyOutcomeFilter::NoSlot,
@@ -136,7 +145,18 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
-    sqlx::query("INSERT INTO todo(mentor_id,message_id,text,due_date,due_time,created_at,due_changed_at) SELECT mm.mentor_id,m.id,'发材料',CASE WHEN m.id % 5 <> 0 THEN '2026-10-28' END,CASE WHEN m.id % 5 = 1 THEN '17:00' END,0,0 FROM message m JOIN message_mentor mm ON mm.message_id=m.id WHERE m.kind='reply'").execute(&db).await?;
+    sqlx::query(
+        r#"INSERT INTO todo (mentor_id, message_id, text, due_date, due_time, created_at,
+            due_changed_at)
+        SELECT mm.mentor_id, m.id, '发材料',
+            CASE WHEN m.id % 5 <> 0 THEN '2026-10-28' END,
+            CASE WHEN m.id % 5 = 1 THEN '17:00' END, 0, 0
+        FROM message m
+        JOIN message_mentor mm ON mm.message_id = m.id
+        WHERE m.kind = 'reply'"#,
+    )
+    .execute(&db)
+    .await?;
     for n in [1, 100] {
         let query = email::todos::TodoQuery {
             page: NonZeroU32::new(n).ok_or("invalid todo page")?,
@@ -250,8 +270,10 @@ pub async fn run(path: &Path) -> Result {
         .await?;
     let write = median(async || {
         sqlx::query(
-            "UPDATE email SET state = CASE state WHEN 'sent' THEN 'bounced' ELSE 'sent' END, error = '退信'
-             WHERE id = ?",
+            r#"UPDATE email
+            SET state = CASE state WHEN 'sent' THEN 'bounced'
+            ELSE 'sent' END, error = '退信'
+            WHERE id = ?"#,
         )
         .bind(email)
         .execute(&db)
@@ -261,15 +283,35 @@ pub async fn run(path: &Path) -> Result {
     .await?;
     report("写一封邮件的状态", write, Duration::from_millis(1));
 
-    sqlx::query("UPDATE mentor SET match_state = NULL, match_error = NULL, match_queued_at = NULL, match_priority = NULL WHERE match_state IS NOT NULL").execute(&db).await?;
-    sqlx::query("UPDATE mentor SET match_state = 'queued', match_queued_at = ?, match_priority = 0 WHERE id IN (SELECT id FROM mentor WHERE trashed_at IS NULL LIMIT 10000)").bind(NOW).execute(&db).await?;
+    sqlx::query(
+        r#"UPDATE mentor
+        SET match_state = NULL, match_error = NULL, match_queued_at = NULL,
+            match_priority = NULL
+        WHERE match_state IS NOT NULL"#,
+    )
+    .execute(&db)
+    .await?;
+    sqlx::query(
+        r#"UPDATE mentor
+        SET match_state = 'queued', match_queued_at = ?, match_priority = 0
+        WHERE id IN (SELECT id FROM mentor WHERE trashed_at IS NULL LIMIT 10000)"#,
+    )
+    .bind(NOW)
+    .execute(&db)
+    .await?;
     report(
         "取下一位匹配分析（10 万位导师、1 万位排队）",
         median(async || mentor::matching::next(&db).await.map(drop)).await?,
         Duration::from_millis(1),
     );
 
-    sqlx::query("INSERT INTO model_config(provider,base_url,model,api_key,agreed,created_at) VALUES('custom','http://127.0.0.1:1','fixture','',0,1)").execute(&db).await?;
+    sqlx::query(
+        r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
+            created_at)
+        VALUES ('custom', 'http://127.0.0.1:1', 'fixture', '', 0, 1)"#,
+    )
+    .execute(&db)
+    .await?;
     let crawl: i64 = sqlx::query_scalar(
         "INSERT INTO crawl (kind, state, created_at) VALUES ('agent', 'running', ?) RETURNING id",
     )
@@ -287,19 +329,41 @@ pub async fn run(path: &Path) -> Result {
     .execute(&db)
     .await?;
     sqlx::query(
-        "WITH RECURSIVE people(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM people WHERE n<10000)
-         INSERT INTO candidate (crawl_id,review,enrich,name,emails,affiliations,source_url,match_names,match_schools,profile_url)
-         SELECT ?,'pending','none',CASE WHEN n%4 IN (0,3) THEN '新候选'||n ELSE m.name END,
-           CASE WHEN n%4=0 THEN json_array('candidate'||n||'@example.edu.cn')
-                WHEN n%4=1 THEN (SELECT json_group_array(address) FROM mentor_email WHERE mentor_id=m.id)
-                ELSE '[]' END,
-           (SELECT json_group_array(json_object('university',university,'school',school,'department',department,'title',title)) FROM mentor_affiliation WHERE mentor_id=m.id),
-           'https://school.edu.cn/faculty',
-           CASE WHEN n%4 IN (0,3) THEN json_array('新候选'||n) ELSE (SELECT json_group_array(name) FROM mentor_name WHERE mentor_id=m.id) END,
-           (SELECT json_group_array(university_match) FROM mentor_affiliation WHERE mentor_id=m.id AND university_match IS NOT NULL),
-           'https://school.edu.cn/people/'||n
-           FROM people JOIN mentor m ON m.id=n"
-    ).bind(crawl).execute(&db).await?;
+        r#"WITH RECURSIVE people(n) AS (
+        VALUES (1)
+        UNION ALL
+        SELECT n + 1
+        FROM people
+        WHERE n < 10000) INSERT INTO candidate (crawl_id, review, enrich, name, emails,
+            affiliations, source_url, match_names, match_schools, profile_url)
+        SELECT ?, 'pending', 'none',
+            CASE WHEN n % 4 IN (0, 3) THEN '新候选' || n
+        ELSE m.name END, CASE WHEN n % 4 = 0 THEN json_array('candidate' || n ||
+            '@example.edu.cn') WHEN n % 4 = 1 THEN(
+            SELECT json_group_array(address)
+            FROM mentor_email
+            WHERE mentor_id = m.id
+        ) ELSE '[]' END, (
+            SELECT json_group_array(json_object('university', university, 'school',
+                school, 'department', department, 'title', title))
+            FROM mentor_affiliation
+            WHERE mentor_id = m.id
+        ), 'https://school.edu.cn/faculty', CASE WHEN n % 4 IN (0, 3) THEN json_array(
+            '新候选' || n) ELSE(
+            SELECT json_group_array(name)
+            FROM mentor_name
+            WHERE mentor_id = m.id
+        ) END, (
+            SELECT json_group_array(university_match)
+            FROM mentor_affiliation
+            WHERE mentor_id = m.id AND university_match IS NOT NULL
+        ), 'https://school.edu.cn/people/' || n
+        FROM people
+        JOIN mentor m ON m.id = n"#,
+    )
+    .bind(crawl)
+    .execute(&db)
+    .await?;
     let candidates = crawl::review::CandidateQuery {
         crawl_id: None,
         processed: false,
@@ -365,10 +429,34 @@ pub async fn run(path: &Path) -> Result {
     .await?;
     sqlx::query("DELETE FROM task").execute(&db).await?;
     for id in 1..=20 {
-        sqlx::query("INSERT INTO task(id,name,kind,writer,schedule,state,created_at) VALUES (?,'基准任务','first','ai','now','active',?)").bind(id).bind(NOW).execute(&db).await?;
+        sqlx::query(
+            r#"INSERT INTO task (id, name, kind, writer, schedule, state, created_at)
+            VALUES (?, '基准任务', 'first', 'ai', 'now', 'active', ?)"#,
+        )
+        .bind(id)
+        .bind(NOW)
+        .execute(&db)
+        .await?;
     }
-    sqlx::query("WITH ranked AS MATERIALIZED (SELECT id, row_number() OVER (PARTITION BY mentor_id ORDER BY id) AS n FROM email) UPDATE email SET task_id = ranked.n+1 FROM ranked WHERE ranked.id=email.id").execute(&db).await?;
-    sqlx::query("UPDATE email SET task_id=1 WHERE id IN (SELECT min(id) FROM email GROUP BY mentor_id LIMIT 500)").execute(&db).await?;
+    sqlx::query(
+        r#"WITH ranked AS MATERIALIZED(
+            SELECT id, row_number() OVER(PARTITION BY mentor_id
+            ORDER BY id) AS n
+            FROM email
+        ) UPDATE email
+        SET task_id = ranked.n + 1
+        FROM ranked
+        WHERE ranked.id = email.id"#,
+    )
+    .execute(&db)
+    .await?;
+    sqlx::query(
+        r#"UPDATE email
+        SET task_id = 1
+        WHERE id IN (SELECT min(id) FROM email GROUP BY mentor_id LIMIT 500)"#,
+    )
+    .execute(&db)
+    .await?;
     let query = task::TaskQuery {
         page: NonZeroU32::MIN,
     };
@@ -404,7 +492,16 @@ pub async fn run(path: &Path) -> Result {
     );
 
     let mut table = vec![vec!["姓名".into(), "邮箱".into(), "研究方向".into()]];
-    let existing: Vec<(String, String)> = sqlx::query_as("SELECT m.name, e.address FROM mentor m JOIN mentor_email e ON e.mentor_id = m.id WHERE m.trashed_at IS NULL AND e.position = 0 ORDER BY m.id LIMIT 500").fetch_all(&db).await?;
+    let existing: Vec<(String, String)> = sqlx::query_as(
+        r#"SELECT m.name, e.address
+        FROM mentor m
+        JOIN mentor_email e ON e.mentor_id = m.id
+        WHERE m.trashed_at IS NULL AND e.position = 0
+        ORDER BY m.id
+        LIMIT 500"#,
+    )
+    .fetch_all(&db)
+    .await?;
     for (name, email) in existing {
         table.push(vec![name, email, "导入补充的研究方向".into()]);
     }

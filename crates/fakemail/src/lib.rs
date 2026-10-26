@@ -32,7 +32,8 @@ pub const SECRET: &str = "right secret";
 
 /// A test authority and a `localhost` certificate it signed. macOS refuses certificates valid for
 /// over 825 days or without the server purpose, even from an authority it is told to trust. Each
-/// authority has its own name, and the certificate names its key: Windows otherwise picks up another
+/// authority has its own name, and the certificate names its key: Windows otherwise picks up
+/// another
 /// test's authority by name and fails to verify the signature.
 pub fn pki() -> Pki {
     let now = time::OffsetDateTime::now_utc();
@@ -82,7 +83,8 @@ trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 
 /// Starts a fake server on a free port and returns the port. Each connection is served by `serve`
-/// on a task of its own, given a stream that is already encrypted unless the server speaks STARTTLS.
+/// on a task of its own, given a stream that is already encrypted unless the server speaks
+/// STARTTLS.
 async fn listen<F, Fut>(tls: &TlsAcceptor, starttls: bool, serve: F) -> u16
 where
     F: Fn(BufReader<Box<dyn Stream>>) -> Fut + Send + Sync + 'static,
@@ -117,7 +119,8 @@ where
 /// Mail the fake SMTP server accepted.
 pub type Inbox = Arc<Mutex<Vec<String>>>;
 
-/// An SMTP server that takes mail for anyone, except that it refuses recipients named `unknown`, and
+/// An SMTP server that takes mail for anyone, except that it refuses recipients named `unknown`,
+/// and
 /// hangs up without answering once it has the mail for one named `hangup`.
 pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
     smtp_with_rcpt_hook(pki, starttls, || {}).await

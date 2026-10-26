@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO mentor_tag (mentor_id, tag_id)\n            SELECT value, ?\n            FROM json_each(?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "4ab4e066e17a264de78f02a8574d5692b9d811cc0c177d05185ca18b58689e7a"
+}

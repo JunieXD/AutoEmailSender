@@ -51,9 +51,10 @@ pub async fn update(db: &SqlitePool, form: &ProfileForm, now: i64) -> Result<(),
         filled(&form.rewrite_preference),
     );
     sqlx::query!(
-        "UPDATE profile SET name = ?1, research_interests = ?2, rewrite_preference = ?3,
-           match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(coalesce(match_basis_changed_at, ?4), ?4)
-                                        ELSE match_basis_changed_at END",
+        r#"UPDATE profile
+        SET name = ?1, research_interests = ?2, rewrite_preference = ?3,
+            match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(
+            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END"#,
         name,
         research_interests,
         rewrite_preference,

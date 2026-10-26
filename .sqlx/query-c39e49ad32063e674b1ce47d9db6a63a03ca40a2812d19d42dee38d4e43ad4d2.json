@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH classified AS MATERIALIZED(\n            SELECT c.id, CASE WHEN c.mentor_id IS NOT NULL\n            OR EXISTS (\n                SELECT 1\n                FROM json_each(c.emails) e\n                JOIN mentor_email m ON m.address = e.value\n            ) THEN 'supplement' WHEN EXISTS (\n                SELECT 1\n                FROM json_each(c.match_names) n\n                JOIN mentor_name mn ON mn.name = n.value\n                WHERE (coalesce(json_array_length(c.emails), 0) = 0\n                OR NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id =\n                    mn.mentor_id)) AND (json_array_length(c.match_schools) = 0\n                OR EXISTS (\n                    SELECT 1\n                    FROM mentor_affiliation a\n                    WHERE a.mentor_id = mn.mentor_id AND a.university_match IN (SELECT\n                        value FROM json_each(c.match_schools))\n                ))\n            ) THEN 'maybe' ELSE 'new' END AS category\n            FROM candidate c\n            WHERE (?1 IS NULL OR c.crawl_id = ?1) AND (c.review != 'pending') = ?2\n            AND (NOT ?4 OR coalesce(json_array_length(c.emails), 0) = 0)\n        ), filtered AS MATERIALIZED(\n            SELECT id, category\n            FROM classified\n            WHERE ?3 IS NULL OR category = ?3\n        )\n        SELECT(\n            SELECT json_group_array(json_object('id', id, 'category', category))\n            FROM (\n                SELECT id, category\n                FROM filtered\n                ORDER BY id\n                LIMIT 50\n                OFFSET ?5\n            )\n        ) AS \"ids!: Json<Vec<Classified>>\", count(*) AS \"total!: i64\"\n        FROM filtered",
+  "describe": {
+    "columns": [
+      {
+        "name": "ids!: Json<Vec<Classified>>",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "total!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "c39e49ad32063e674b1ce47d9db6a63a03ca40a2812d19d42dee38d4e43ad4d2"
+}

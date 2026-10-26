@@ -175,8 +175,9 @@ pub async fn create(
 ) -> Result<i64, sqlx::Error> {
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
-        "INSERT INTO model_config (name, provider, base_url, model, api_key, agreed, created_at, input_price, output_price)
-         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)",
+        r#"INSERT INTO model_config (name, provider, base_url, model, api_key, agreed,
+            created_at, input_price, output_price)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)"#,
         fields.name,
         provider,
         base_url,
@@ -201,9 +202,10 @@ pub async fn update(
 ) -> Result<bool, sqlx::Error> {
     let (provider, base_url) = (fields.source.id(), fields.source.custom_url());
     let row = sqlx::query!(
-        "UPDATE model_config SET agreed = agreed AND provider = ? AND base_url IS ?,
-           name = ?, provider = ?, base_url = ?, model = ?, api_key = ?, input_price = ?, output_price = ?
-         WHERE id = ?",
+        r#"UPDATE model_config
+        SET agreed = agreed AND provider = ? AND base_url IS ?, name = ?, provider = ?,
+            base_url = ?, model = ?, api_key = ?, input_price = ?, output_price = ?
+        WHERE id = ?"#,
         provider,
         base_url,
         fields.name,
@@ -263,9 +265,10 @@ pub async fn selected<'a>(
 ) -> Result<Option<Chosen>, sqlx::Error> {
     let Some(row) = sqlx::query!(
         r#"SELECT id, provider, base_url, model, api_key, agreed AS "agreed: bool"
-           FROM model_config
-           WHERE id = coalesce((SELECT id FROM model_config WHERE id = ?1), (SELECT default_model_config_id FROM profile),
-                               (SELECT min(id) FROM model_config))"#,
+        FROM model_config
+        WHERE id = coalesce((SELECT id FROM model_config WHERE id = ?1),
+            (SELECT default_model_config_id FROM profile),
+            (SELECT min(id) FROM model_config))"#,
         id
     )
     .fetch_optional(db)

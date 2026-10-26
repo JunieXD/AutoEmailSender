@@ -69,7 +69,8 @@ impl ModelError {
                 format!("{address} 的证书不受信任，连接可能被拦截了。换个网络再试。")
             }
             ModelError::Unreachable { address, .. } => format!(
-                "连不上 {address}。检查网络是否连通；开了系统代理的，确认代理软件在运行；国内用 OpenAI、Gemini 这类国外服务要开代理。"
+                "连不上 {address}。检查网络是否连通；开了系统代理的，确认代理软件在运行；\
+                国内用 OpenAI、Gemini 这类国外服务要开代理。"
             ),
             ModelError::TimedOut { address } => format!(
                 "{address} 迟迟没有响应。稍后再试；国内用 OpenAI、Gemini 这类国外服务要开代理。"
@@ -80,7 +81,8 @@ impl ModelError {
                 ),
                 402 => format!("账户余额不足（服务商回复：{reply}）。到服务商网站充值后再试。"),
                 404 => format!(
-                    "服务商找不到这个模型或接口（服务商回复：{reply}）。检查模型名有没有填错；自定义的接口地址一般以 /v1 结尾。"
+                    "服务商找不到这个模型或接口（服务商回复：{reply}）。检查模型名有没有填错；\
+                    自定义的接口地址一般以 /v1 结尾。"
                 ),
                 429 => format!(
                     "请求太频繁或额度已用完（服务商回复：{reply}）。稍后再试，或者到服务商网站查看额度。"
@@ -98,7 +100,8 @@ impl ModelError {
                 finish_reason.as_deref().unwrap_or("未说明")
             ),
             ModelError::Broken(e) => format!(
-                "服务商的回复看不懂（{e}）。检查接口地址是不是 OpenAI 兼容接口；一直出错时，导出日志发给开发者。"
+                "服务商的回复看不懂（{e}）。检查接口地址是不是 OpenAI 兼容接口；一直出错时，\
+                导出日志发给开发者。"
             ),
         }
     }

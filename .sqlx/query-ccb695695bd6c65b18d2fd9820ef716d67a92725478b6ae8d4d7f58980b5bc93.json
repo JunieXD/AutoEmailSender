@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n            SET enrich = 'queued', enrich_error = NULL\n            WHERE review = 'pending' AND id IN (\n                SELECT candidate_id\n                FROM crawl_page\n                WHERE crawl_id = ? AND work_state = 'queued'\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ccb695695bd6c65b18d2fd9820ef716d67a92725478b6ae8d4d7f58980b5bc93"
+}

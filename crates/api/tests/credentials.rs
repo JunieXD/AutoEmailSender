@@ -19,9 +19,16 @@ async fn restored_credentials_must_be_refilled_before_editing_or_testing(db: Sql
         reply_processor: Default::default(),
         todo_reminders: Default::default(),
     };
-    let mailbox = json!({"address":"me@example.invalid","senderName":"学生","provider":"custom",
-        "smtp":{"host":"localhost","port":1,"security":"tls"},
-        "imap":{"host":"localhost","port":1,"security":"tls"},"dailyLimit":50,"minIntervalS":60,"secret":"fixture"});
+    let mailbox = json!({
+        "address": "me@example.invalid",
+        "senderName": "学生",
+        "provider": "custom",
+        "smtp": {"host": "localhost", "port": 1, "security": "tls"},
+        "imap": {"host": "localhost", "port": 1, "security": "tls"},
+        "dailyLimit": 50,
+        "minIntervalS": 60,
+        "secret": "fixture"
+    });
     let id = call(&ctx, "addMailbox", mailbox.clone()).await.unwrap()["id"].clone();
     sqlx::query("UPDATE mailbox SET secret=NULL")
         .execute(&ctx.db)
@@ -57,7 +64,13 @@ async fn restored_credentials_must_be_refilled_before_editing_or_testing(db: Sql
     call(&ctx, "updateMailbox", edit).await.unwrap();
     assert!(!mailbox::list(&ctx.db, 0).await.unwrap()[0].needs_secret);
 
-    let model = json!({"name":"模型","provider":"custom","baseUrl":"http://127.0.0.1:1/v1","model":"m","apiKey":"fixture"});
+    let model = json!({
+        "name": "模型",
+        "provider": "custom",
+        "baseUrl": "http://127.0.0.1:1/v1",
+        "model": "m",
+        "apiKey": "fixture"
+    });
     let id = call(&ctx, "addModelConfig", model.clone()).await.unwrap()["id"].clone();
     sqlx::query("UPDATE model_config SET api_key=NULL")
         .execute(&ctx.db)

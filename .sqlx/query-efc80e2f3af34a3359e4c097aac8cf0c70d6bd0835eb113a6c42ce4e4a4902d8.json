@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO template (name, subject, body_md, created_at, updated_at)\n        VALUES (?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "efc80e2f3af34a3359e4c097aac8cf0c70d6bd0835eb113a6c42ce4e4a4902d8"
+}

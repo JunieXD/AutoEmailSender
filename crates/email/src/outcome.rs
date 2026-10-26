@@ -74,8 +74,14 @@ pub async fn set_enabled(db: &SqlitePool, enabled: bool, now: i64) -> Result<(),
         sqlx::query!("DELETE FROM reply_processing WHERE action = 'outcome'")
             .execute(&mut *tx)
             .await?;
-        sqlx::query!("UPDATE profile SET reply_processing_paused_at = NULL, reply_processing_pause_reason = NULL WHERE NOT ai_reply_todos")
-            .execute(&mut *tx).await?;
+        sqlx::query!(
+            r#"UPDATE profile
+            SET reply_processing_paused_at = NULL,
+                reply_processing_pause_reason = NULL
+            WHERE NOT ai_reply_todos"#
+        )
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await
 }
@@ -182,15 +188,21 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
         .await?;
     let claim = sqlx::query_as!(
         Claim,
-        r#"UPDATE reply_processing SET state = 'running',
-        claim = (SELECT reply_processing_claim FROM profile)
+        r#"UPDATE reply_processing
+        SET state = 'running', claim = (SELECT reply_processing_claim FROM profile)
         WHERE (message_id, action) = (
-            SELECT q.message_id, q.action FROM reply_processing q JOIN message msg ON msg.id = q.message_id
+            SELECT q.message_id, q.action
+            FROM reply_processing q
+            JOIN message msg ON msg.id = q.message_id
             WHERE q.state = 'queued' AND EXISTS (
-                SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
-                WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL)
-            ORDER BY msg.sent_at DESC, msg.id DESC, q.action LIMIT 1)
-          AND (SELECT reply_processing_paused_at IS NULL FROM profile)
+                SELECT 1
+                FROM message_mentor mm
+                JOIN mentor m ON m.id = mm.mentor_id
+                WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL
+            )
+            ORDER BY msg.sent_at DESC, msg.id DESC, q.action
+            LIMIT 1
+        ) AND (SELECT reply_processing_paused_at IS NULL FROM profile)
         RETURNING message_id AS "id!", action AS "action!: Action", claim AS "claim!""#
     )
     .fetch_optional(&mut *tx)

@@ -58,8 +58,12 @@ impl Error {
     pub fn message(&self) -> String {
         match self {
             Self::Invalid(message) => message.clone(),
-            Self::Io(_) => "备份文件无法读写。请检查文件是否存在、磁盘空间和目录权限后重试。".into(),
-            Self::Database(_) => "备份数据库无法读取或处理，文件可能已损坏。请换一份备份重试；仍然失败时导出日志发给开发者。".into(),
+            Self::Io(_) => {
+                "备份文件无法读写。请检查文件是否存在、磁盘空间和目录权限后重试。".into()
+            }
+            Self::Database(_) => "备份数据库无法读取或处理，文件可能已损坏。请换一份备份重试；\
+                仍然失败时导出日志发给开发者。"
+                .into(),
             Self::Migration(_) => "这份备份的数据库和本应用的对不上，不能恢复。".into(),
             Self::Worker(_) => "备份处理未能完成，请重试；仍然失败时导出日志发给开发者。".into(),
         }
@@ -140,11 +144,17 @@ pub async fn export(db: &SqlitePool, materials: &Path, target: &Path, now: i64) 
 }
 
 async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
-    sqlx::raw_sql("UPDATE mailbox SET secret = NULL;
-        UPDATE model_config SET api_key = CASE WHEN provider = 'custom' AND api_key = '' THEN '' END;
-        UPDATE crawl_page SET text = CASE WHEN status = 'success' THEN '' END;
-        VACUUM;")
-        .execute(conn).await?;
+    sqlx::raw_sql(
+        r#"UPDATE mailbox
+        SET secret = NULL;
+        UPDATE model_config
+        SET api_key = CASE WHEN provider = 'custom' AND api_key = '' THEN '' END;
+        UPDATE crawl_page
+        SET text = CASE WHEN status = 'success' THEN '' END;
+        VACUUM;"#,
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 

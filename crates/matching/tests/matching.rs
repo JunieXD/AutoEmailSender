@@ -11,7 +11,8 @@ use tokio::{
 #[path = "../../model/tests/common/provider.rs"]
 mod provider;
 use provider::{Provider, Response};
-const VALID: &str = r#"{"score":88,"reason":"研究方向相近，有可迁移的项目经历。","directions":["视觉"],"highlights":["课程项目"],"risks":[]}"#;
+const VALID: &str = "{\"score\":88,\"reason\":\"研究方向相近，有可迁移的项目经历。\",\"directions\":[\"视觉\"],\
+    \"highlights\":[\"课程项目\"],\"risks\":[]}";
 
 struct Runner {
     matcher: Matcher,
@@ -128,7 +129,15 @@ async fn normal_analysis_records_result_usage_and_estimate_with_student_prefix(d
     let mut p = Provider::start().await;
     let ids = setup(&db, &p.address, 2).await;
     let text = "中".repeat(10_000) + "不应读取尾部";
-    sqlx::query("INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at, extracted_text) VALUES ('简历.pdf', 1, 1, 1, 0, 1, ?)").bind(text).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"INSERT INTO material (file_name, size, for_matching, for_writing,
+            attach_by_default, created_at, extracted_text)
+        VALUES ('简历.pdf', 1, 1, 1, 0, 1, ?)"#,
+    )
+    .bind(text)
+    .execute(&db)
+    .await
+    .unwrap();
     queue::cancel(&db).await.unwrap();
     let estimate = matching::plan(&db, &ids, false).await.unwrap();
     assert_eq!(estimate.plan.analyze, 2);
@@ -220,9 +229,11 @@ async fn invalid_output_retries_once_then_succeeds_or_fails(db: SqlitePool) {
     assert_eq!(runner.finished().await.failed, 1);
     let m = mentor::get(&db, ids[0]).await.unwrap().unwrap();
     assert!(m.analysis.result.is_some());
-    assert!(
-        matches!(m.analysis.state, Some(MatchState::Failed { error }) if error == "模型没有按要求回答，可以重试或换个模型")
-    );
+    assert!(matches!(
+        m.analysis.state,
+        Some(MatchState::Failed { error })
+            if error == "模型没有按要求回答，可以重试或换个模型"
+    ));
     let calls: i64 = sqlx::query_scalar("SELECT count(*) FROM usage")
         .fetch_one(&db)
         .await
@@ -751,7 +762,9 @@ async fn cancelled_invalid_answer_does_not_start_a_format_retry(db: SqlitePool) 
         .unwrap();
     timeout(Duration::from_secs(10), async {
         tokio::select! {
-            change = runner.changes.recv() => { change.unwrap(); }
+            change = runner.changes.recv() => {
+                change.unwrap();
+            }
             _ = p.requests.recv() => panic!("cancelled analysis called the model again"),
         }
     })

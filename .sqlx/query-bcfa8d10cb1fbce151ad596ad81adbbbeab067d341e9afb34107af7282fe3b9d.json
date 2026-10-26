@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n                            SELECT 1\n                            FROM crawl_page\n                            WHERE candidate_id = ? AND kind = 'enrich_child'\n                        ) AS \"selected!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "selected!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "bcfa8d10cb1fbce151ad596ad81adbbbeab067d341e9afb34107af7282fe3b9d"
+}

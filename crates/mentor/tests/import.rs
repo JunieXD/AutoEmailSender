@@ -339,7 +339,15 @@ async fn trash_and_round_trip(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn failed_import_rolls_back_profiles_and_tags(db: SqlitePool) {
     let id = add(&db, "王明", &["w@a.cn"], "北京大学").await;
-    sqlx::query("CREATE TRIGGER refuse_import BEFORE INSERT ON mentor WHEN new.name = '拒绝写入' BEGIN SELECT RAISE(ABORT, 'interrupted'); END").execute(&db).await.unwrap();
+    sqlx::query(
+        r#"CREATE TRIGGER refuse_import BEFORE INSERT ON mentor
+        WHEN new.name = '拒绝写入' BEGIN
+        SELECT RAISE(ABORT, 'interrupted');
+        END"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     let sheets = table(&[
         &["姓名", "邮箱", "备注", "标签"],
         &["王明", "w@a.cn", "新增备注", "新标签"],
@@ -426,7 +434,15 @@ async fn export_uses_all_filtered_pages_and_list_order(db: SqlitePool) {
         ids.push(add(&db, &format!("王明{i}"), &[], "北京大学").await);
     }
     let other = add(&db, "其他导师", &[], "清华大学").await;
-    sqlx::query("UPDATE mentor SET match_state = NULL, match_score = 95, matched_at = 1, match_model = 'm' WHERE id = ?").bind(ids[54]).execute(&db).await.unwrap();
+    sqlx::query(
+        r#"UPDATE mentor
+        SET match_state = NULL, match_score = 95, matched_at = 1, match_model = 'm'
+        WHERE id = ?"#,
+    )
+    .bind(ids[54])
+    .execute(&db)
+    .await
+    .unwrap();
     mentor::trash::trash(&db, &[ids[0]], 1).await.unwrap();
     let rows = export::export(
         &db,

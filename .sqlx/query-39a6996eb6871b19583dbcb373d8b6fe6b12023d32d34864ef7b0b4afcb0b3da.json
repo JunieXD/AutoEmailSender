@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n            SET enrich = 'running'\n            WHERE id = ? AND enrich = 'queued' AND review = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "39a6996eb6871b19583dbcb373d8b6fe6b12023d32d34864ef7b0b4afcb0b3da"
+}

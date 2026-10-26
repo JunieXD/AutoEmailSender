@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email\n        SET fact_check = ?, updated_at = ?\n        WHERE id = ? AND generation_claim = ? AND state = 'review'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "25f5f1058016106d804add74c05ebbdd6f74d2285137ed80817dc5424c5006a8"
+}

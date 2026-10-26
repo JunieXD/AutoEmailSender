@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n                FROM material\n                WHERE id = ?1 AND (?2 = 'attachment' OR extracted_text IS NOT NULL)",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3a2c07c3a51579a7080c06d017ed9c94e877a55a619f2326a3b1adea7ebac34b"
+}

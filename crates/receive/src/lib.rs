@@ -232,7 +232,9 @@ async fn receive(
     let names: Vec<_> = folders.iter().map(|(_, n)| n).collect();
     // A sent folder that is no longer one.
     sqlx::query!(
-        "DELETE FROM mailbox_folder WHERE mailbox_id = ? AND folder NOT IN (SELECT value FROM json_each(?))",
+        r#"DELETE
+        FROM mailbox_folder
+        WHERE mailbox_id = ? AND folder NOT IN (SELECT value FROM json_each(?))"#,
         mailbox_id,
         Json(&names)
     )
@@ -332,7 +334,9 @@ impl Session<'_> {
 
     async fn reached(&self, folder: &str, uid: u32) -> Result<(), Error> {
         sqlx::query!(
-            "UPDATE mailbox_folder SET last_uid = max(last_uid, ?) WHERE mailbox_id = ? AND folder = ?",
+            r#"UPDATE mailbox_folder
+            SET last_uid = max(last_uid, ?)
+            WHERE mailbox_id = ? AND folder = ?"#,
             uid,
             self.mailbox_id,
             folder
@@ -556,7 +560,8 @@ impl Session<'_> {
         .await?)
     }
 
-    /// Whether a copy in the sent folder under a Message-ID of the provider's own is of an email the
+    /// Whether a copy in the sent folder under a Message-ID of the provider's own is of an email
+    /// the
     /// app sent: one with the same text in full and the same attachments. `raw` is the start of it,
     /// which holds the text unless pictures or files come first; a letter whose text runs on past
     /// it is not taken for the app's, as one that only starts the same is another.
@@ -615,10 +620,12 @@ impl Session<'_> {
     ) -> Result<(), Error> {
         let mut tx = self.db.begin().await?;
         let inserted = sqlx::query_scalar!(
-            "INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id, in_reply_to,
-               sent_at, from_address, from_name, subject, refs, body_text, truncated)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT DO NOTHING RETURNING id AS \"id!\"",
+            r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind,
+                message_id, in_reply_to, sent_at, from_address, from_name, subject,
+                refs, body_text, truncated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+            RETURNING id AS "id!""#,
             self.mailbox_id,
             at.folder,
             at.uidvalidity,
@@ -748,9 +755,19 @@ impl Session<'_> {
                 > 0;
         }
         if marked {
-            let mentors = sqlx::query_scalar!(r#"SELECT mentor_id FROM email WHERE state='bounced' AND (message_id=?1 OR copy_message_id=?1)
-                UNION SELECT mm.mentor_id FROM message_mentor mm JOIN message m ON m.id=mm.message_id
-                WHERE m.message_id=?1 AND mm.bounce_reason IS NOT NULL"#, bounce.original).fetch_all(&mut *tx).await?;
+            let mentors = sqlx::query_scalar!(
+                r#"SELECT mentor_id
+                FROM email
+                WHERE state = 'bounced' AND (message_id = ?1
+                OR copy_message_id = ?1)
+                UNION SELECT mm.mentor_id
+                FROM message_mentor mm
+                JOIN message m ON m.id = mm.message_id
+                WHERE m.message_id = ?1 AND mm.bounce_reason IS NOT NULL"#,
+                bounce.original
+            )
+            .fetch_all(&mut *tx)
+            .await?;
             for mentor in mentors {
                 email::cancel(
                     &mut tx,
@@ -856,13 +873,19 @@ pub async fn list_in(
     mentor_id: i64,
 ) -> Result<Vec<Message>, sqlx::Error> {
     let rows = sqlx::query!(
-        r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at, m.read_at,
-             mm.bounce_reason, m.body_text, m.message_id, m.truncated AS "truncated: bool",
-             m.outcome AS "outcome: email::outcome::ReplyOutcome", q.state, q.error, t.state AS todo_state, t.error AS todo_error
-           FROM message m JOIN message_mentor mm ON mm.message_id = m.id
-           LEFT JOIN reply_processing q ON q.message_id = m.id AND q.action = 'outcome'
-           LEFT JOIN reply_processing t ON t.message_id = m.id AND t.action = 'todos'
-           WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id"#,
+        r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at,
+            m.read_at, mm.bounce_reason, m.body_text, m.message_id,
+            m.truncated AS "truncated: bool",
+            m.outcome AS "outcome: email::outcome::ReplyOutcome", q.state, q.error,
+            t.state AS todo_state, t.error AS todo_error
+        FROM message m
+        JOIN message_mentor mm ON mm.message_id = m.id
+        LEFT JOIN reply_processing q ON q.message_id = m.id
+        AND q.action = 'outcome'
+        LEFT JOIN reply_processing t ON t.message_id = m.id
+        AND t.action = 'todos'
+        WHERE mm.mentor_id = ?
+        ORDER BY m.sent_at, m.id"#,
         mentor_id
     )
     .fetch_all(db)

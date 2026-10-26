@@ -91,8 +91,17 @@ impl Provider {
                             text,
                             finish_reason,
                         } => {
-                            let chunk = json!({"choices":[{"delta":{"content":text},"finish_reason":finish_reason}]});
-                            let usage = r#"{"choices":[],"usage":{"prompt_tokens":2000,"completion_tokens":400,"prompt_tokens_details":{"cached_tokens":1500}}}"#;
+                            let chunk = json!({
+                                "choices": [
+                                    {
+                                        "delta": {"content": text},
+                                        "finish_reason": finish_reason
+                                    }
+                                ]
+                            });
+                            let usage = "{\"choices\":[],\"usage\":{\"prompt_tokens\":2000,\
+                                \"completion_tokens\":400,\"prompt_tokens_details\":\
+                                {\"cached_tokens\":1500}}}";
                             (
                                 200,
                                 format!("data: {chunk}\n\ndata: {usage}\n\ndata: [DONE]\n\n"),

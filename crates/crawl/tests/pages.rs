@@ -154,7 +154,12 @@ fn email_spellings_preserve_original_evidence_positions() {
             &unit.text[start..end]
         );
     }
-    let page = parse(&url(), "<p>article#school.edu.cn</p><script>fake@school.edu.cn</script><style>foo@school.edu.cn</style>").unwrap();
+    let page = parse(
+        &url(),
+        "<p>article#school.edu.cn</p><script>fake@school.edu.cn</script><style>\
+        foo@school.edu.cn</style>",
+    )
+    .unwrap();
     assert!(page.units.iter().all(|u| u.emails.is_empty()));
 }
 
@@ -203,7 +208,15 @@ fn mailto_and_cloudflare_have_attribute_evidence() {
             .map(|b| format!("{:02x}", b ^ 0x42))
             .collect::<String>()
     );
-    let page = parse(&url(), &format!(r#"<a href="MAILTO:First%40school.edu.cn,second@school.edu.cn?subject=ignore@evil.edu">联系</a><span data-cfemail="{encoded}">[email protected]</span><span data-cfemail="0zz"></span>"#)).unwrap();
+    let page = parse(
+        &url(),
+        &format!(
+            "<a href=\"MAILTO:First%40school.edu.cn,second@school.edu.cn?subject=ignore@evil.edu\">\
+            联系</a><span data-cfemail=\"{encoded}\">[email protected]</span><span \
+            data-cfemail=\"0zz\"></span>"
+        ),
+    )
+    .unwrap();
     let unit = &page.units[0];
     for expected in ["first@school.edu.cn", "second@school.edu.cn", address] {
         assert!(
@@ -253,7 +266,15 @@ fn real_fzu_page_keeps_image_mailto_contacts() {
 
 #[test]
 fn pagination_returns_safe_urls_and_marks_click_only_controls() {
-    let page = parse(&url(), r#"<nav class="pagination"><a href="list.htm?page=2#top">下一页</a><a href="list.htm?page=3">3</a><a href="javascript:go(4)">4</a><button>下一页</button><a href="http://127.0.0.1/a?page=5">下一页</a><a href="https://other.edu/a?page=6">下一页</a></nav><a href="/other?page=7">更多</a><a href="/2026">2026</a>"#).unwrap();
+    let page = parse(
+        &url(),
+        "<nav class=\"pagination\"><a href=\"list.htm?page=2#top\">下一页</a><a \
+        href=\"list.htm?page=3\">3</a><a href=\"javascript:go(4)\">4</a><button>\
+        下一页</button><a href=\"http://127.0.0.1/a?page=5\">下一页</a><a href=\"https:\
+        //other.edu/a?page=6\">下一页</a></nav><a href=\"/other?page=7\">更多</a><a \
+        href=\"/2026\">2026</a>",
+    )
+    .unwrap();
     assert_eq!(
         page.pagination
             .urls
@@ -486,7 +507,14 @@ fn last_page_placeholders_do_not_require_browser_pagination() {
 
 #[test]
 fn fallback_keeps_document_order_and_ignores_hidden_executable_content() {
-    let page = parse(&url(), r#"<p>先读这里</p><a href="/image#x"><img alt="图片主页"></a><p>再读这里</p><div onclick="location.href='/profile'">静态主页</div><aside onclick="window.open('https://outside.edu/a')">不执行</aside><template>hidden@school.edu.cn</template><div hidden>hidden@school.edu.cn</div>"#).unwrap();
+    let page = parse(
+        &url(),
+        "<p>先读这里</p><a href=\"/image#x\"><img alt=\"图片主页\"></a><p>再读这里</p><div \
+        onclick=\"location.href='/profile'\">静态主页</div><aside \
+        onclick=\"window.open('https://outside.edu/a')\">不执行</aside><template>\
+        hidden@school.edu.cn</template><div hidden>hidden@school.edu.cn</div>",
+    )
+    .unwrap();
     assert!(page.text().find("先读这里") < page.text().find("再读这里"));
     assert!(
         page.units
@@ -530,7 +558,12 @@ fn real_challenge_and_dynamic_directory_need_browser() {
     assert_eq!(accepted.needs_browser, Some(BrowserReason::Challenge));
     let dynamic = parse(&url(), include_str!("pages/fudan.html")).unwrap();
     assert_eq!(dynamic.needs_browser, Some(BrowserReason::JavaScript));
-    let empty = parse(&url(), "<div id='app'></div><script src='a'></script><script src='b'></script><script src='c'></script>").unwrap();
+    let empty = parse(
+        &url(),
+        "<div id='app'></div><script src='a'></script><script src='b'></script><script src='c'>\
+        </script>",
+    )
+    .unwrap();
     assert_eq!(empty.needs_browser, Some(BrowserReason::JavaScript));
     let encrypted = parse(
         &url(),
@@ -707,7 +740,14 @@ fn loading_placeholders_normalize_punctuation() {
         "加载中！！！",
         "请稍候，……",
     ] {
-        let page = parse(&url(), &format!(r#"<div id="root"><p>{text}</p></div><noscript>Please enable JavaScript</noscript><script src="/app.js"></script>"#)).unwrap();
+        let page = parse(
+            &url(),
+            &format!(
+                "<div id=\"root\"><p>{text}</p></div><noscript>Please enable JavaScript</noscript>\
+                <script src=\"/app.js\"></script>"
+            ),
+        )
+        .unwrap();
         assert_eq!(
             page.needs_browser,
             Some(BrowserReason::JavaScript),
@@ -719,14 +759,26 @@ fn loading_placeholders_normalize_punctuation() {
         "Alice, alice@pku.edu.cn",
         "Loading results: Alice",
     ] {
-        let page = parse(&url(), &format!(r#"<div id="root"><p>{text}</p></div><noscript>Please enable JavaScript</noscript><script src="/app.js"></script>"#)).unwrap();
+        let page = parse(
+            &url(),
+            &format!(
+                "<div id=\"root\"><p>{text}</p></div><noscript>Please enable JavaScript</noscript>\
+                <script src=\"/app.js\"></script>"
+            ),
+        )
+        .unwrap();
         assert_eq!(page.needs_browser, None, "{text}");
     }
 }
 
 #[test]
 fn rendered_breaks_and_alternative_text_keep_byte_positions() {
-    let page = parse(&url(), "<main>前<a href='/zs'><img alt='张 三'></a><br>  <a href='mailto:zs@pku.edu.cn'>张三</a> 后</main>").unwrap();
+    let page = parse(
+        &url(),
+        "<main>前<a href='/zs'><img alt='张 三'></a><br>  <a href='mailto:zs@pku.edu.cn'>\
+        张三</a> 后</main>",
+    )
+    .unwrap();
     let unit = &page.units[0];
     assert_eq!(unit.text, "前张 三\n张三 后");
     assert_eq!(unit.alternative_text.len(), 1);
@@ -805,9 +857,19 @@ fn data_scripts_cannot_bind_pagination_events() {
         assert!(!page.pagination.needs_browser, "{kind}");
         assert_eq!(page.needs_browser, None);
     }
-    let page = parse(&url(), r#"<nav class="pagination"><span>第 4 页 / 共 4 页</span><a href="javascript:void(0)">下一页</a></nav><script type="application/ld+json">{}</script>"#).unwrap();
+    let page = parse(
+        &url(),
+        "<nav class=\"pagination\"><span>第 4 页 / 共 4 页</span><a href=\"javascript:\
+        void(0)\">下一页</a></nav><script type=\"application/ld+json\">{}</script>",
+    )
+    .unwrap();
     assert!(!page.pagination.needs_browser);
-    let page = parse(&url(), r#"<nav><span>第 4 页 / 共 4 页</span><a href="javascript:void(0)">下一页</a></nav><script>document.querySelector('a').onclick=()=>go(5)</script>"#).unwrap();
+    let page = parse(
+        &url(),
+        "<nav><span>第 4 页 / 共 4 页</span><a href=\"javascript:void(0)\">下一页</a></nav>\
+        <script>document.querySelector('a').onclick=()=>go(5)</script>",
+    )
+    .unwrap();
     assert!(!page.pagination.needs_browser);
     assert_eq!(page.needs_browser, None);
     for kind in ["", "text/javascript", "application/javascript", "module"] {

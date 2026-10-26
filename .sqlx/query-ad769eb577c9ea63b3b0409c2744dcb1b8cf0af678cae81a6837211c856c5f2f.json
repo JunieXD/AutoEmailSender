@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO crawl_page (crawl_id, candidate_id, url, scope_url, kind,\n            mode, status, error, work_state)\n        VALUES (?, ?, ?, ?, ?, 'http', 'failed', '尚未读取', 'queued')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "ad769eb577c9ea63b3b0409c2744dcb1b8cf0af678cae81a6837211c856c5f2f"
+}
