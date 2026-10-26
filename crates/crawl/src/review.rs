@@ -341,11 +341,11 @@ pub async fn list(db: &SqlitePool, q: &CandidateQuery) -> Result<CandidatePage, 
             .binary_search(&c.id)
             .unwrap_or_else(|_| unreachable!("selected candidate"))
             + 1) as u32;
-        let issue = preview.errors.iter().find(|e| e.row == row).map(|e| {
-            e.reason
-                .replace("这些行的邮箱", "这位候选的邮箱")
-                .replace("或修改表格", "后再接受")
-        });
+        let issue = preview
+            .errors
+            .iter()
+            .find(|e| e.row == row)
+            .map(|e| e.reason.clone());
         matching.push(CandidateRow {
             id: c.id,
             crawl_id: c.crawl_id,

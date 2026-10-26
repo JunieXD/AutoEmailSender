@@ -403,12 +403,6 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
     let id = queue::start(&db, &[site.url("/")], config, 1)
         .await
         .unwrap();
-    assert!(
-        crate::store::visited_page(&db, id, &site.url("/"), &[])
-            .await
-            .unwrap()
-            .is_none()
-    );
     let old = queue::next(&db).await.unwrap().unwrap();
     queue::control(&db, id, "pause", 2).await.unwrap();
     assert!(
@@ -539,7 +533,6 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
     )
     .await
     .unwrap();
-    let _ = third;
     let same = mentor::create(
         &db,
         &MentorFields {
@@ -598,7 +591,11 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
     let maybe = page.candidates.iter().find(|c| c.name == "张三").unwrap();
     assert_eq!(maybe.category, CandidateFilter::Maybe);
     let conflict = page.candidates.iter().find(|c| c.name == "冲突").unwrap();
-    assert!(conflict.issue.is_some());
+    let reason = conflict.issue.as_ref().unwrap();
+    for (name, id) in [("王五", other), ("赵六", third)] {
+        assert!(reason.contains(name));
+        assert!(reason.contains(&format!("编号 {id}")));
+    }
     let input = ReviewInput {
         ids: vec![new.id, supplement.id, maybe.id, conflict.id],
         decisions: Decisions::default(),
@@ -683,8 +680,7 @@ fn segments_preserve_blocks_and_external_output_is_checked() {
             "甲".repeat(4000),
             "乙".repeat(4000)
         ),
-    )
-    .unwrap();
+    );
     let segments = extract::segments(&m);
     assert_eq!(segments.len(), 2);
     assert!(
@@ -713,37 +709,32 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     let mut p = Provider::start().await;
     let config = config(&db, &p.address).await;
     let site = Site::new().await;
-    for n in 0..3 {
-        site.page(
-            &format!("/p{n}"),
-            "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
-        );
-    }
-    let urls: Vec<_> = (0..3).map(|n| site.url(&format!("/p{n}"))).collect();
-    queue::start(&db, &urls, config, 1).await.unwrap();
-    let mut enriched = Vec::new();
-    for n in 0..3 {
-        let (_, id) = enrichment::candidate(&db, &site, &format!("/p{n}")).await;
-        enriched.push(id);
-    }
-    crate::enrich::start(&db, &enriched, 1).await.unwrap();
-    let mut ids = Vec::new();
-    for n in 0..6 {
-        ids.push(
-            mentor::create(
-                &db,
-                &MentorFields {
-                    name: format!("导师{n}"),
-                    emails: vec![format!("m{n}@example.edu")],
-                    research: Some("机器学习".into()),
-                    ..Default::default()
-                },
-                1,
-            )
-            .await
-            .unwrap(),
-        );
-    }
+    site.page(
+        "/crawl",
+        "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
+    );
+    site.page(
+        "/enrich",
+        "<title>张三</title><p>张三 a@school.example.edu 机器学习</p>",
+    );
+    queue::start(&db, &[site.url("/crawl")], config, 1)
+        .await
+        .unwrap();
+    let (_, candidate) = enrichment::candidate(&db, &site, "/enrich").await;
+    crate::enrich::start(&db, &[candidate], 1).await.unwrap();
+    let mentor = mentor::create(
+        &db,
+        &MentorFields {
+            name: "导师".into(),
+            emails: vec!["mentor@example.edu".into()],
+            research: Some("机器学习".into()),
+            ..Default::default()
+        },
+        1,
+    )
+    .await
+    .unwrap();
+    let ids = vec![mentor];
     sqlx::query("UPDATE profile SET research_interests='机器学习'")
         .execute(&db)
         .await
@@ -808,62 +799,59 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
             .is_err()
     );
     tokio::time::resume();
-    let (mut matches, mut drafts, mut routes, mut profiles, mut checks) = (0, 0, 0, 0, 0);
-    for _ in 0..27 {
-        // A route's next call needs its response first; do not hold that response while
-        // waiting for a replacement call after the other two queues have drained.
-        let r = if active.is_empty() {
-            tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
-                .await
-                .unwrap()
-                .unwrap()
-        } else {
-            active.remove(0)
-        };
-        let system = r.body["messages"][0]["content"].as_str().unwrap();
-        let answer = if system.starts_with("你整理学院") {
-            routes += 1;
-            json!({"kind":"profile","next":[]}).to_string()
-        } else if system.starts_with("你整理一位") {
-            profiles += 1;
-            person("张三", "a@school.example.edu").to_string()
+    let purpose = |request: &provider::Request| {
+        let system = request.body["messages"][0]["content"].as_str().unwrap();
+        if system.starts_with("你整理学院") {
+            "crawl"
         } else if system.starts_with("你补全指定") {
-            let mut answer = person("张三", "a@school.example.edu");
-            answer["names"] = json!(["张三"]);
-            answer["next"] = json!([]);
-            answer.to_string()
-        } else if system.starts_with("核对学生") {
-            checks += 1;
-            "[]".into()
+            "enrich"
         } else if system.contains("分数不是录取") {
-            matches += 1;
-            r#"{"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]}"#.into()
+            "matching"
+        } else if system.starts_with("你帮一位学生") {
+            "drafting"
         } else {
-            drafts += 1;
-            "<subject>申请</subject><body>老师：您好，申请读研。</body>".into()
-        };
-        r.respond.send(Response::answer(&answer)).ok().unwrap();
-    }
-    assert_eq!((matches, drafts, routes, profiles, checks), (6, 6, 3, 3, 6));
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let completed = sqlx::query_scalar::<_, i64>(
-                "SELECT count(*) FROM candidate WHERE enrich='done' AND emails!='[]'",
-            )
-            .fetch_one(&db)
-            .await
-            .unwrap();
-            if completed == 3 {
-                break;
-            }
-            tokio::task::yield_now().await;
+            panic!("unexpected model request");
         }
-    })
-    .await
-    .unwrap();
-    crawl.abort();
-    matching.abort();
-    writing.abort();
+    };
+    let mut seen = active
+        .iter()
+        .map(purpose)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(seen.len(), 3);
+    // These entries finish in one call, so releasing one cannot start a follow-up request.
+    let index = active
+        .iter()
+        .position(|r| matches!(purpose(r), "matching" | "enrich"))
+        .unwrap();
+    let released = active.remove(index);
+    let answer = if purpose(&released) == "matching" {
+        json!({"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]})
+    } else {
+        let mut answer = person("张三", "a@school.example.edu");
+        answer["names"] = json!(["张三"]);
+        answer["next"] = json!([]);
+        answer
+    };
+    released
+        .respond
+        .send(Response::answer(&answer.to_string()))
+        .ok()
+        .unwrap();
+    let waiting = tokio::time::timeout(Duration::from_secs(10), p.requests.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(seen.insert(purpose(&waiting)));
+    assert_eq!(
+        seen,
+        std::collections::BTreeSet::from(["crawl", "enrich", "matching", "drafting"])
+    );
+    for worker in [&crawl, &matching, &writing] {
+        worker.abort();
+    }
+    for worker in [crawl, matching, writing] {
+        assert!(worker.await.unwrap_err().is_cancelled());
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -975,9 +963,10 @@ async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     let detail = queue::detail(&db, id, 1).await.unwrap().unwrap();
     assert!(detail.runs.len() >= 3);
     assert!(
-        crate::store::page_text(&db, detail.pages[0].id)
+        sqlx::query_scalar::<_, String>("SELECT text FROM crawl_page WHERE id=?")
+            .bind(detail.pages[0].id)
+            .fetch_one(&db)
             .await
-            .unwrap()
             .unwrap()
             .contains("Hinton")
     );
@@ -1819,8 +1808,7 @@ async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
     let material = crate::parse(
         &site.url("/"),
         &format!("<a href='{}'>张三</a>", old.as_str()),
-    )
-    .unwrap();
+    );
     let scope = Scope::new(&site.url("/"));
     let listed = extract::listed(
         &material,
@@ -3159,3 +3147,92 @@ impl Pages {
 }
 
 mod browser;
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deleting_a_crawl_removes_pages_and_pending_candidates_but_keeps_reviewed_data(
+    db: SqlitePool,
+) {
+    let site = Site::new().await;
+    let model = config(&db, "http://127.0.0.1:1").await;
+    let crawl = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let material = crate::parse(&site.url("/"), "<p>导师名单</p>");
+    save_material(&db, &claim, &material, PageMethod::Http)
+        .await
+        .unwrap();
+    let page = claim.id;
+    let mentor = sqlx::query_scalar!(
+        r#"INSERT INTO mentor (name, created_at, updated_at)
+        VALUES ('已接受的导师', 1, 1)
+        RETURNING id"#
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    sqlx::query!(
+        r#"INSERT INTO candidate (crawl_id, list_page_id, review, enrich, name)
+        VALUES (?, ?, 'pending', 'none', '待审核')"#,
+        crawl,
+        page
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let accepted = sqlx::query_scalar!(
+        r#"INSERT INTO candidate (crawl_id, list_page_id, review, mentor_id, enrich, name,
+            emails, affiliations, homepages, aliases)
+        VALUES (?, ?, 'accepted', ?, 'done', '已接受',
+            '["a@pku.edu.cn","b@pku.edu.cn"]',
+            '[{"university":"北京大学","title":"教授"}]',
+            '["https://cs.pku.edu.cn/a"]', '["Alice"]')
+        RETURNING id"#,
+        crawl,
+        page,
+        mentor
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    sqlx::query!("DELETE FROM crawl WHERE id = ?", crawl)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query_scalar!("SELECT id FROM crawl_page WHERE id = ?", page)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let candidate = sqlx::query!(
+        "SELECT crawl_id, list_page_id, mentor_id FROM candidate WHERE id = ?",
+        accepted
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(candidate.crawl_id, None);
+    assert_eq!(candidate.list_page_id, None);
+    assert_eq!(candidate.mentor_id, Some(mentor));
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM candidate")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM mentor WHERE id = ?", mentor)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM crawl_run")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        0
+    );
+}

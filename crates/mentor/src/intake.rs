@@ -344,7 +344,7 @@ pub async fn calculate(
                 preview.errors.push(RowError {
                     row: row.number,
                     reason: format!(
-                        "这些行的邮箱对应{count}已有的导师：{names}。请先合并这些导师或修改表格"
+                        "这些邮箱对应{count}已有的导师：{names}。请先合并这些导师或修改资料"
                     ),
                 });
             }

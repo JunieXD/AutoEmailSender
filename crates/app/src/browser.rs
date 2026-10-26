@@ -20,6 +20,7 @@ use tauri::{
     AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
     webview::{NewWindowResponse, PageLoadEvent},
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PREFIX: &str = "crawl-browser-";
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -63,32 +64,14 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 pub struct Browser {
     app: AppHandle,
-    available: tauri::async_runtime::Mutex<tauri::async_runtime::Receiver<()>>,
-    returned: tauri::async_runtime::Sender<()>,
+    slots: Arc<Semaphore>,
 }
 
 impl Browser {
     pub fn new(app: AppHandle) -> Self {
-        let (returned, available) = tauri::async_runtime::channel(2);
-        for _ in 0..2 {
-            returned
-                .try_send(())
-                .unwrap_or_else(|_| unreachable!("two empty browser slots"));
-        }
         Self {
             app,
-            available: tauri::async_runtime::Mutex::new(available),
-            returned,
-        }
-    }
-}
-
-struct Slot(tauri::async_runtime::Sender<()>);
-impl Drop for Slot {
-    fn drop(&mut self) {
-        // Native destruction can finish after the browser queue has shut down.
-        if self.0.try_send(()).is_err() && !self.0.is_closed() {
-            unreachable!("only acquired browser slots are returned");
+            slots: Arc::new(Semaphore::new(2)),
         }
     }
 }
@@ -152,13 +135,12 @@ impl Render for Browser {
         steps: &'a [PageStep],
     ) -> Pin<Box<dyn Future<Output = Result<RenderedPage, BrowserError>> + Send + 'a>> {
         Box::pin(async move {
-            self.available
-                .lock()
+            let slot = self
+                .slots
+                .clone()
+                .acquire_owned()
                 .await
-                .recv()
-                .await
-                .ok_or_else(|| failed("浏览器已停止，请重启应用"))?;
-            let slot = Slot(self.returned.clone());
+                .unwrap_or_else(|_| unreachable!("browser capacity is never closed"));
             let state = Arc::new(State::default());
             let window = Window {
                 app: self.app.clone(),
@@ -214,7 +196,7 @@ fn render(
     target: PageTarget,
     steps: &[PageStep],
     state: &Arc<State>,
-    slot: Slot,
+    slot: OwnedSemaphorePermit,
 ) -> Result<RenderedPage, BrowserError> {
     state.check()?;
     let nav_state = state.clone();
@@ -495,13 +477,6 @@ mod tests {
             &mut since,
             committed + STABLE
         ));
-    }
-
-    #[test]
-    fn destroyed_window_can_return_slot_after_browser_shutdown() {
-        let (sender, receiver) = tauri::async_runtime::channel(2);
-        drop(receiver);
-        drop(Slot(sender));
     }
 
     #[test]

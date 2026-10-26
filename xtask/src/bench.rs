@@ -407,18 +407,6 @@ pub async fn run(path: &Path) -> Result {
         median(async || crawl::queue::work(&db, NOW, NOW + 1).await.map(drop)).await?,
         home,
     );
-    let url = crawl::PageUrl::parse("https://school.edu.cn/people/99999")?;
-    report(
-        "查已访问的抓取页面（10 万页，不读正文）",
-        median(async || {
-            crawl::store::visited_page(&db, crawl, &url, &[])
-                .await
-                .map(drop)
-        })
-        .await?,
-        Duration::from_millis(1),
-    );
-
     // Every task/mentor pair is unique even when a mentor has several historical letters.
     sqlx::query(
         r#"UPDATE email SET planned_at = coalesce(planned_at, ?1), latest_at = NULL, task_id =

@@ -1,6 +1,7 @@
 use regex::Regex;
+use std::sync::LazyLock;
 
-use crate::{CrawlError, EmailEvidence, EmailLocation};
+use crate::{EmailEvidence, EmailLocation};
 
 pub(crate) struct Emails {
     candidate: Regex,
@@ -9,25 +10,25 @@ pub(crate) struct Emails {
     hash: Regex,
 }
 
-impl Emails {
-    pub fn new() -> Result<Self, CrawlError> {
-        let compile =
-            |s| Regex::new(s).map_err(|e| CrawlError::Parse(format!("email pattern: {e}")));
-        let at = r"[ \t]*(?:\([ \t]*at[ \t]*\)|\[[ \t]*at[ \t]*\]|[ \t]+at[ \t]+|@)[ \t]*";
-        let dot = r"[ \t]*(?:\([ \t]*dot[ \t]*\)|\[[ \t]*dot[ \t]*\]|[ \t]+dot[ \t]+)[ \t]*";
-        let local = r"[a-z0-9.!#$%&'*+/=?^_`{|}~\-]+";
-        let domain = r"[a-z0-9\-]+";
-        Ok(Self {
-            candidate: compile(&format!(
-                "(?i){local}(?:{dot}{local})*(?:{at}|[ \\t]*#[ \\t]*)\
+pub(crate) static EMAILS: LazyLock<Emails> = LazyLock::new(|| {
+    let compile =
+        |s| Regex::new(s).unwrap_or_else(|_| unreachable!("fixed email pattern is valid"));
+    let at = r"[ \t]*(?:\([ \t]*at[ \t]*\)|\[[ \t]*at[ \t]*\]|[ \t]+at[ \t]+|@)[ \t]*";
+    let dot = r"[ \t]*(?:\([ \t]*dot[ \t]*\)|\[[ \t]*dot[ \t]*\]|[ \t]+dot[ \t]+)[ \t]*";
+    let local = r"[a-z0-9.!#$%&'*+/=?^_`{|}~\-]+";
+    let domain = r"[a-z0-9\-]+";
+    Emails {
+        candidate: compile(&format!(
+            "(?i){local}(?:{dot}{local})*(?:{at}|[ \\t]*#[ \\t]*)\
                 {domain}(?:(?:\\.|{dot}){domain})+"
-            ))?,
-            at: compile(&format!("(?i){at}"))?,
-            dot: compile(&format!("(?i){dot}"))?,
-            hash: compile(r"[ \t]*#[ \t]*")?,
-        })
+        )),
+        at: compile(&format!("(?i){at}")),
+        dot: compile(&format!("(?i){dot}")),
+        hash: compile(r"[ \t]*#[ \t]*"),
     }
+});
 
+impl Emails {
     pub fn text(&self, text: &str) -> Vec<EmailEvidence> {
         let mut normalized = String::new();
         let mut positions = Vec::new();

@@ -788,7 +788,7 @@ function ReviewDialog({
               <IntakeChoices preview={preview.data} decisions={decisions} onChange={setDecisions} source="候选" />
               {preview.data.errors.map((e) => (
                 <p key={e.row} className="text-sm text-warning">
-                  第 {e.row} 位：{e.reason.replace("这些行的邮箱", "候选的邮箱").replace("或修改表格", "后再接受")}
+                  第 {e.row} 位：{e.reason}
                 </p>
               ))}
               {preview.data.trashed.length > 0 && (

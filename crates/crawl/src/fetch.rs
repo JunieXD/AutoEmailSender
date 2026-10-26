@@ -22,16 +22,16 @@ struct SiteLimit {
 }
 
 impl SiteLimit {
-    async fn start(&self) -> Result<SemaphorePermit<'_>, CrawlError> {
+    async fn start(&self) -> SemaphorePermit<'_> {
         let slot = self
             .slots
             .acquire()
             .await
-            .map_err(|e| CrawlError::Parse(e.to_string()))?;
+            .unwrap_or_else(|_| unreachable!("site capacity is never closed"));
         let mut next = self.next.lock().await;
         sleep_until(*next).await;
         *next = Instant::now() + REQUEST_INTERVAL;
-        Ok(slot)
+        slot
     }
 }
 
@@ -154,7 +154,7 @@ impl Fetcher {
         url: &PageUrl,
         site: &'a SiteLimit,
     ) -> Result<(reqwest::Response, SemaphorePermit<'a>), CrawlError> {
-        let slot = site.start().await?;
+        let slot = site.start().await;
         let response = client
             .get(url.as_str())
             .header(
@@ -268,7 +268,7 @@ pub fn response_material(
     } else {
         html
     };
-    let mut material = crate::parse(url, &html)?;
+    let mut material = crate::parse(url, &html);
     if challenge {
         material.needs_browser = Some(BrowserReason::Challenge);
     }
