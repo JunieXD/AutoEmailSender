@@ -318,7 +318,7 @@ V3 的产品范围和全局决定。
   - 备份：用 SQLite 的 `VACUUM INTO` 导出数据库快照，压缩后和材料文件一起打包；本地备份是一个文件，云端备份把快照和每个材料文件分别加密上传。
     - 本地备份是 zip：`manifest.json`（应用标识、应用版本、数据库版本即最后一个迁移的编号、导出时间），`app.db`（在快照上清空授权码、OAuth 令牌、API Key 和抓取保存的网页内容，再 `VACUUM` 一次），`materials/` 下的材料文件。先写到保存位置旁边的临时文件，写完再改名。
     - 恢复分两步，中途被打断也不坏数据：先把备份解到数据目录的 `restore` 里检查（认得的文件名，路径不出这个目录；manifest 对得上，数据库能打开、完整，数据库版本不比应用新；在暂存的数据库上照常升级，升级后的结构要和本应用的完全一致（防止备份里带着别的触发器、视图这类会执行的东西）；数据库里登记的材料文件都在）；用户确认后，把现有的数据导出成一份同样的备份放进 `backups`（保留最近 3 份），写下"待恢复"标记，重启应用。启动时在打开数据库之前看到标记，就把现有的数据库和材料移开、换上暂存的，再删掉标记和移开的旧数据；断电后下次启动接着做完。用户取消就删掉暂存的。
-- 文档：PDF 用 pdf_oxide 提取文字，Word（DOCX 和 DOC）用随它引入的 office_oxide，都是纯 Rust。pdf-extract 和 lopdf 遇到常见的中文 PDF 会乱码，或把"人""大"这类字提取成部首字符。代价是程序大约多 6 MB。
+- 文档：PDF 用 pdf_oxide 提取文字，Word（DOCX 和 DOC）用随它引入的 office_oxide，都是纯 Rust。Word 材料按结构读成 Markdown（标题、列表、表格），模型读得出简历里表格的行列；导入 Word 模板时另外只取[邮件格式](#邮件格式)允许的写法。pdf-extract 和 lopdf 遇到常见的中文 PDF 会乱码，或把"人""大"这类字提取成部首字符。代价是程序大约多 6 MB。
 - 密钥：邮箱授权码、OAuth 令牌和 API Key 存在本地数据库里，只有收发信和调用模型的代码读取：界面拿到的数据里没有，不写进日志，云端备份不带，删除邮箱或模型配置时一起删掉。不用系统钥匙串：应用没有 Apple 签名，每次更新后 macOS 都会弹窗要钥匙串密码。
 - 网络：HTTP 请求和隐藏的 WebView 都跟随系统代理，包括 SOCKS 代理，代理设置改了不用重启应用。收发信也走系统代理（国内连 Gmail 要走代理）：
   - 每次连接时读系统代理：macOS 用 system-configuration 读，Windows 读注册表里的 Internet 设置。连本机的服务器不走代理。自动代理配置（PAC）和代理的例外列表暂不支持：macOS 的例外列表没有不用 unsafe 的读法，常用的代理软件也会自己让内网和国内地址直连。
@@ -359,7 +359,7 @@ V3 的产品范围和全局决定。
   - HTTP：同一网站最多 2 个在途请求，请求开始至少相隔 300 毫秒；单次请求最多 20 秒，一个页面含等待和跳转最多 40 秒。解压后的响应不超过 4 MiB。编码按 BOM、HTTP 声明、HTML 声明的顺序读取；未声明时先认 UTF-8，否则用 GBK。证书错误只为当前请求换用宽松客户端重试一次，不用于其他请求或发送凭据。
   - 访问过的页面存进数据库，内存里的缓存有上限，长时间抓取时内存不随页数增长。
   - 基准：V2 在 113 个学院上的实测结果（`git show v2.6.5:website/data/crawl-benchmark.json`），中位数是每位导师约 4,700 token、19 秒，一个学院 26 分钟，邮箱覆盖率 88%。V3 用同一批学院对比，不能比它差。
-- 文档：PDF 提取文字用 pdf_oxide 或 pdfium，用真实的中文简历实测后选定；DOCX 解析成 Markdown。表格用 calamine 读、rust_xlsxwriter 写。
+- 表格：用 calamine 读、rust_xlsxwriter 写。
 - 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap，Markdown 用 marked 解析、写回由界面自己的序列化器完成（`ui/src/markdown.ts`），图表是几种简单的柱状图和横条，用 HTML 和 CSS 画，不引入图表库。
 - CLI 和 MCP：一个 Rust 小程序，MCP 用官方的 Rust SDK。用户在设置里开启后装到 PATH，也可以一键写进 Claude、Cursor 等工具的 MCP 配置。在 Windows 的 PowerShell 和 cmd 里读到的中文输出不能乱码。
 
