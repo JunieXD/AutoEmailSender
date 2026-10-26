@@ -97,22 +97,22 @@ async fn input(db: &SqlitePool, id: i64) -> Result<Option<(String, Option<i64>)>
     let reply = Letter {
         subject: take(reply.subject.as_deref().unwrap_or_default(), &mut remaining),
         text: take(
-            super::quote::split(reply.body_text.as_deref().unwrap_or_default()).0,
+            &super::quote::for_ai(reply.body_text.as_deref().unwrap_or_default()),
             &mut remaining,
         ),
     };
     let email_id = parent.as_ref().and_then(|p| p.email_id);
     let student = parent.map(|p| {
-        let body = p.body.as_deref().unwrap_or_default();
+        let body = p.body.unwrap_or_default();
         // Application drafts already exclude the quote appended when sending.
         let text = if p.email_id.is_some() {
             body
         } else {
-            super::quote::split(body).0
+            super::quote::for_ai(&body)
         };
         Letter {
             subject: take(p.subject.as_deref().unwrap_or_default(), &mut remaining),
-            text: take(text, &mut remaining),
+            text: take(&text, &mut remaining),
         }
     });
     // All fields are strings; serializing this closed shape is infallible.

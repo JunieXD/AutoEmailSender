@@ -21,6 +21,35 @@ pub fn split(text: &str) -> (&str, &str) {
     }
 }
 
+/// Model input must exclude inline quotes even when the UI keeps the whole message visible.
+pub fn for_ai(text: &str) -> String {
+    let mut fresh: Vec<&str> = Vec::new();
+    let mut previous = None;
+    let mut attribution = None;
+    for line in split(text).0.lines() {
+        if line.trim_start().starts_with('>') {
+            if let Some(start) = attribution.take() {
+                fresh.truncate(start);
+            }
+        } else {
+            if !line.trim().is_empty() {
+                let count = attribution_lines(line.trim(), previous);
+                attribution = (count > 0).then(|| fresh.len() + 1 - count);
+            }
+            fresh.push(line.trim_end());
+        }
+        previous = Some(line);
+    }
+    let mut blank = true;
+    fresh.retain(|line| {
+        let empty = line.is_empty();
+        let keep = !empty || !blank;
+        blank = empty;
+        keep
+    });
+    fresh.join("\n").trim_end().to_owned()
+}
+
 /// Where a quote starts if line `i` begins one.
 fn quote_start(lines: &[(usize, &str)], i: usize) -> Option<usize> {
     let line = lines[i].1.trim();
@@ -57,15 +86,26 @@ fn quote_start(lines: &[(usize, &str)], i: usize) -> Option<usize> {
     }
     // 在 2026年10月20日 10:00，张三 写道：  On Mon, 20 Oct 2026 at 10:00, Zhang wrote:
     // followed by the quoted lines; the English one may be wrapped over two lines.
-    if ATTRIBUTIONS.iter().any(|a| line.ends_with(a)) && quoted_to_end() {
-        let wrapped = i > 0 && lines[i - 1].1.trim().starts_with("On ") && !line.starts_with("On ");
-        return Some(if wrapped { i - 1 } else { i });
+    let count = attribution_lines(line, i.checked_sub(1).map(|i| lines[i].1));
+    if count > 0 && quoted_to_end() {
+        return Some(i + 1 - count);
     }
     // Quoted lines to the end.
     if line.starts_with('>') && following().all(|l| l.starts_with('>')) {
         return Some(i);
     }
     None
+}
+
+fn attribution_lines(line: &str, previous: Option<&str>) -> usize {
+    if !ATTRIBUTIONS.iter().any(|a| line.ends_with(a)) {
+        return 0;
+    }
+    if previous.is_some_and(|line| line.trim().starts_with("On ")) && !line.starts_with("On ") {
+        2
+    } else {
+        1
+    }
 }
 
 fn starts_with_any(line: &str, starts: &[&str]) -> bool {
@@ -97,7 +137,49 @@ const ATTRIBUTIONS: [&str; 3] = ["写道：", "写道:", "wrote:"];
 
 #[cfg(test)]
 mod tests {
-    use super::split;
+    use super::{for_ai, split};
+
+    #[test]
+    fn model_input_keeps_answers_between_quotes_and_normalizes_blank_lines() {
+        let cases = [
+            (
+                "> 能否参加夏令营？\n可以。\n\n\n> 需要推荐信吗？\n\n需要两封。\n> 旧签名",
+                "可以。\n\n需要两封。",
+            ),
+            (
+                "在 2026年10月20日，张三 写道：\n> 可以报考吗？\n欢迎报考。\n张三 写道:\n> 需要材料吗？\n请发成绩单。",
+                "欢迎报考。\n请发成绩单。",
+            ),
+            (
+                "On Mon, Oct 20, 2026, Zhang wrote:\n> Can I apply?\nYes.\nOn Tue, Oct 21, 2026,\nZhang <me@example.edu> wrote:\n\n> Any documents?\nYour transcript.",
+                "Yes.\nYour transcript.",
+            ),
+            ("> 李老师：\n  > 您好！\n\n> > 更早的引用", ""),
+            ("张三 写道：\n\n> 旧内容", ""),
+            ("On Mon, Oct 20, 2026,\nZhang wrote:\n> Old text", ""),
+            ("同学你好，\n\n欢迎报考。", "同学你好，\n\n欢迎报考。"),
+            (
+                "你在信中写道：\n希望读博。我们组今年有名额。",
+                "你在信中写道：\n希望读博。我们组今年有名额。",
+            ),
+            ("答复。\n-----原始邮件-----\n旧内容", "答复。"),
+            ("\r\n \r\n> Old text\r\n\r\nYes.\r\n\r\n", "Yes."),
+            ("", ""),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(for_ai(text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn wrapped_attributions_must_be_adjacent_in_the_original_message() {
+        assert_eq!(
+            for_ai(
+                "On campus, I can meet you.\n> Earlier question\nZhang wrote:\n> Another question\nFriday works."
+            ),
+            "On campus, I can meet you.\nFriday works."
+        );
+    }
 
     /// Replies as mail apps write them: what the mentor wrote, then the quote.
     #[test]
