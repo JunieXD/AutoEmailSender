@@ -46,7 +46,7 @@ function edit(value: string) {
   return act(async () => {
     const input = nameInput();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
-    EventTarget.prototype.dispatchEvent.call(input, new Event("input", { bubbles: true }));
+    input?.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
@@ -127,7 +127,7 @@ it("finishes onboarding after an in-flight profile save and keeps the completed 
     await edit("林晓");
     await vi.waitFor(() => expect(remote.save).toHaveBeenCalledTimes(1));
     const finish = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "完成");
-    await act(async () => HTMLElement.prototype.click.call(finish));
+    await act(async () => finish?.click());
     expect(remote.finish).not.toHaveBeenCalled();
     expect(remote.navigate).not.toHaveBeenCalled();
     remote.profile = { ...initial, name: "林晓" };

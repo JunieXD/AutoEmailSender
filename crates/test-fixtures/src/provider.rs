@@ -53,33 +53,25 @@ impl Drop for Provider {
     }
 }
 impl Provider {
+    #[expect(
+        clippy::unwrap_used,
+        reason = "test fixture listener failures must panic at their source"
+    )]
     pub async fn start() -> io::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = format!("http://127.0.0.1:{}/v1", listener.local_addr()?.port());
         let (tx, requests) = mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
-            let result: io::Result<()> = async {
-                let mut connections = JoinSet::new();
-                loop {
-                    tokio::select! {
-                        accepted = listener.accept() => {
-                            let (stream, _) = accepted?;
-                            let tx = tx.clone();
-                            connections.spawn(async move {
-                                let result = serve(stream, tx).await;
-                                assert!(
-                                    result.is_ok(),
-                                    "model fixture connection failed: {result:?}"
-                                );
-                            });
-                        },
-                        // Each connection reports its own failure; reaping it must not stop the listener.
-                        Some(_) = connections.join_next() => {},
-                    }
+            let mut connections = JoinSet::new();
+            loop {
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        let (stream, _) = accepted.unwrap();
+                        connections.spawn(serve(stream, tx.clone()));
+                    },
+                    Some(_) = connections.join_next() => {},
                 }
             }
-            .await;
-            assert!(result.is_ok(), "model fixture listener failed: {result:?}");
         });
         Ok(Self {
             address,
@@ -89,36 +81,42 @@ impl Provider {
     }
 }
 
-async fn serve(stream: TcpStream, requests: mpsc::UnboundedSender<Request>) -> io::Result<()> {
+#[expect(
+    clippy::unwrap_used,
+    reason = "test fixture request failures must panic at their source"
+)]
+async fn serve(stream: TcpStream, requests: mpsc::UnboundedSender<Request>) {
     let mut io = BufReader::new(stream);
     let mut line = String::new();
-    if io.read_line(&mut line).await? == 0 {
-        return Ok(());
+    if io.read_line(&mut line).await.unwrap() == 0 {
+        return;
     }
     let mut length = 0;
     let mut authorization = String::new();
     loop {
         let mut header = String::new();
-        if io.read_line(&mut header).await? == 0 {
-            return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
-        }
+        assert_ne!(
+            io.read_line(&mut header).await.unwrap(),
+            0,
+            "incomplete request headers"
+        );
         if header == "\r\n" {
             break;
         }
         if let Some((name, value)) = header.trim_end().split_once(": ") {
             match name.to_ascii_lowercase().as_str() {
-                "content-length" => length = value.parse().map_err(io::Error::other)?,
+                "content-length" => length = value.parse().unwrap(),
                 "authorization" => authorization = value.into(),
                 _ => {}
             }
         }
     }
     let mut body = vec![0; length];
-    io.read_exact(&mut body).await?;
+    io.read_exact(&mut body).await.unwrap();
     let body = if body.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&body).map_err(io::Error::other)?
+        serde_json::from_slice(&body).unwrap()
     };
     let (respond, response) = oneshot::channel();
     let (finished, completed) = oneshot::channel();
@@ -132,10 +130,10 @@ async fn serve(stream: TcpStream, requests: mpsc::UnboundedSender<Request>) -> i
         })
         .is_err()
     {
-        return Ok(());
+        return;
     }
     let Ok(response) = response.await else {
-        return Ok(());
+        return;
     };
     let (status, content, extra) = match response {
         Response::Raw { status, content } => (status, content, String::new()),
@@ -178,10 +176,10 @@ async fn serve(stream: TcpStream, requests: mpsc::UnboundedSender<Request>) -> i
         connection: close\r\n{extra}\r\n",
         content.len()
     );
-    io.write_all((head + &content).as_bytes()).await?;
-    // Most callers only need the response; scripted consumers wait before dropping the server.
-    let _ = finished.send(());
-    Ok(())
+    // Canceled calls may disconnect; a failed write closes completed without signaling success.
+    if io.write_all((head + &content).as_bytes()).await.is_ok() {
+        let _ = finished.send(());
+    }
 }
 
 pub type Received = Arc<Mutex<Vec<(String, String)>>>;
