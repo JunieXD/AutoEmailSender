@@ -168,7 +168,10 @@ mod tests {
                 "你在信中写道：\n希望读博。我们组今年有名额。",
             ),
             ("答复。\n-----原始邮件-----\n旧内容", "答复。"),
-            ("\n-----Original Message-----\nFrom: Zhang\nSent: Monday\n\nOld text", ""),
+            (
+                "\n-----Original Message-----\nFrom: Zhang\nSent: Monday\n\nOld text",
+                "",
+            ),
             (
                 "________________________________\n发件人: 张三\n发送时间: 2026年10月20日 10:00\n收件人: 我\n主题: 旧\n\n旧正文",
                 "",
