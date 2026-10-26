@@ -20,45 +20,89 @@ pub struct Window {
     pub per_window: u32,
 }
 
-impl Window {
-    pub fn validate(&self) -> Result<(), &'static str> {
-        if self.dates.is_empty()
-            || self.dates.iter().any(|d| {
-                !NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok_and(|date| date.to_string() == *d)
-            })
-            || !NaiveTime::parse_from_str(&self.start, "%H:%M")
-                .is_ok_and(|t| t.format("%H:%M").to_string() == self.start)
-            || !NaiveTime::parse_from_str(&self.end, "%H:%M")
-                .is_ok_and(|t| t.format("%H:%M").to_string() == self.end)
-            || self.start >= self.end
-            || self.per_window == 0
-        {
-            return Err("请选择日期、同一天内的有效时间窗口和每个窗口的数量");
-        }
-        Ok(())
-    }
+#[derive(Debug)]
+pub enum ValidatedSchedule {
+    Now,
+    Window(ValidatedWindow),
+}
 
-    fn windows<T: TimeZone>(&self, zone: &T) -> Vec<Slot> {
-        let (Ok(start), Ok(end)) = (
-            NaiveTime::parse_from_str(&self.start, "%H:%M"),
-            NaiveTime::parse_from_str(&self.end, "%H:%M"),
-        ) else {
-            return vec![];
+#[derive(Debug)]
+pub struct ValidatedWindow {
+    dates: Vec<NaiveDate>,
+    start: NaiveTime,
+    end: NaiveTime,
+    per_window: u32,
+}
+
+impl Schedule {
+    pub fn validate(&self) -> Result<ValidatedSchedule, &'static str> {
+        match self {
+            Self::Now => Ok(ValidatedSchedule::Now),
+            Self::Window(window) => window.validate().map(ValidatedSchedule::Window),
+        }
+    }
+}
+
+impl ValidatedSchedule {
+    pub fn form(&self) -> Schedule {
+        match self {
+            ValidatedSchedule::Now => Schedule::Now,
+            ValidatedSchedule::Window(w) => Schedule::Window(Window {
+                dates: w.dates.iter().map(ToString::to_string).collect(),
+                start: w.start.format("%H:%M").to_string(),
+                end: w.end.format("%H:%M").to_string(),
+                per_window: w.per_window,
+            }),
+        }
+    }
+}
+
+impl Window {
+    pub fn validate(&self) -> Result<ValidatedWindow, &'static str> {
+        let invalid = "请选择日期、同一天内的有效时间窗口和每个窗口的数量";
+        let dates = self
+            .dates
+            .iter()
+            .map(|value| {
+                let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| invalid)?;
+                (date.to_string() == *value).then_some(date).ok_or(invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let time = |value: &str| {
+            let time = NaiveTime::parse_from_str(value, "%H:%M").map_err(|_| invalid)?;
+            (time.format("%H:%M").to_string() == value)
+                .then_some(time)
+                .ok_or(invalid)
         };
-        let mut dates = self.dates.iter().collect::<Vec<_>>();
+        let start = time(&self.start)?;
+        let end = time(&self.end)?;
+        if dates.is_empty() || start >= end || self.per_window == 0 {
+            return Err(invalid);
+        }
+        Ok(ValidatedWindow {
+            dates,
+            start,
+            end,
+            per_window: self.per_window,
+        })
+    }
+}
+
+impl ValidatedWindow {
+    fn windows<T: TimeZone>(&self, zone: &T) -> Vec<Slot> {
+        let mut dates = self.dates.clone();
         dates.sort();
         dates.dedup();
         dates
             .into_iter()
             .filter_map(|date| {
-                let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
                 Some(Slot {
                     planned_at: zone
-                        .from_local_datetime(&date.and_time(start))
+                        .from_local_datetime(&date.and_time(self.start))
                         .earliest()?
                         .timestamp_millis(),
                     latest_at: zone
-                        .from_local_datetime(&date.and_time(end))
+                        .from_local_datetime(&date.and_time(self.end))
                         .earliest()?
                         .timestamp_millis(),
                 })
@@ -97,7 +141,7 @@ pub struct Capacity {
 /// A repeated wall time uses its first occurrence; a window with a missing DST boundary is skipped.
 /// Reservations include sent letters, so a running task never exceeds its window capacity.
 pub fn plan<T: TimeZone>(
-    window: &Window,
+    window: &ValidatedWindow,
     reserved: &[i64],
     now: i64,
     zone: &T,
@@ -130,7 +174,7 @@ pub fn plan<T: TimeZone>(
     None
 }
 
-pub async fn get(conn: &mut SqliteConnection, task: i64) -> Result<Schedule, sqlx::Error> {
+pub async fn get(conn: &mut SqliteConnection, task: i64) -> Result<ValidatedSchedule, sqlx::Error> {
     let r = sqlx::query!(
         r#"SELECT schedule, window_dates AS "dates: Json<Vec<String>>", window_start, window_end,
              per_window
@@ -147,15 +191,16 @@ pub async fn get(conn: &mut SqliteConnection, task: i64) -> Result<Schedule, sql
         r.window_end,
         r.per_window,
     ) {
-        ("now", ..) => Ok(Schedule::Now),
-        ("window", Some(dates), Some(start), Some(end), Some(per_window)) => {
-            Ok(Schedule::Window(Window {
-                dates: dates.0,
-                start,
-                end,
-                per_window: u32::try_from(per_window).map_err(|e| sqlx::Error::Decode(e.into()))?,
-            }))
+        ("now", ..) => Ok(ValidatedSchedule::Now),
+        ("window", Some(dates), Some(start), Some(end), Some(per_window)) => Window {
+            dates: dates.0,
+            start,
+            end,
+            per_window: u32::try_from(per_window).map_err(|e| sqlx::Error::Decode(e.into()))?,
         }
+        .validate()
+        .map(ValidatedSchedule::Window)
+        .map_err(|error| sqlx::Error::Decode(error.into())),
         _ => Err(sqlx::Error::Decode("invalid task schedule".into())),
     }
 }
@@ -163,9 +208,10 @@ pub async fn get(conn: &mut SqliteConnection, task: i64) -> Result<Schedule, sql
 pub async fn save(
     conn: &mut SqliteConnection,
     task: i64,
-    schedule: &Schedule,
+    schedule: &ValidatedSchedule,
 ) -> Result<(), sqlx::Error> {
-    let (kind, dates, start, end, count) = match schedule {
+    let form = schedule.form();
+    let (kind, dates, start, end, count) = match &form {
         Schedule::Now => ("now", None, None, None, None),
         Schedule::Window(w) => (
             "window",
@@ -201,11 +247,11 @@ pub async fn assign<T: TimeZone>(
     random: &mut impl FnMut(i64) -> i64,
 ) -> Result<(), sqlx::Error> {
     let slot = match get(conn, task).await? {
-        Schedule::Now => Some(Slot {
+        ValidatedSchedule::Now => Some(Slot {
             planned_at: now,
             latest_at: now,
         }),
-        Schedule::Window(w) => {
+        ValidatedSchedule::Window(w) => {
             let reserved = sqlx::query_scalar!(
                 r#"SELECT planned_at AS "planned_at!"
                    FROM email

@@ -164,7 +164,7 @@ async fn list_page(
             pause_reason: r.generation_pause_reason,
             model_config_id: r.model_config_id,
             progress,
-            schedule: email::schedule::get(&mut tx, r.id).await?,
+            schedule: email::schedule::get(&mut tx, r.id).await?.form(),
         });
     }
     Ok(TaskPage { tasks, total })
@@ -240,7 +240,7 @@ pub async fn get(
         pause_reason: r.generation_pause_reason,
         model_config_id: r.model_config_id,
         progress,
-        schedule: email::schedule::get(&mut tx, id).await?,
+        schedule: email::schedule::get(&mut tx, id).await?.form(),
     }))
 }
 
@@ -646,7 +646,7 @@ pub async fn preview_schedule(
         dates: vec![],
         unplaced: 0,
     };
-    if let email::schedule::Schedule::Window(w) = schedule {
+    if let email::schedule::ValidatedSchedule::Window(w) = schedule {
         let count = sqlx::query_scalar!(
             r#"SELECT count(*)
                FROM email

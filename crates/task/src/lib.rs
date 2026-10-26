@@ -335,7 +335,7 @@ pub fn schedule_capacity(
     window: &email::schedule::Window,
     now: i64,
 ) -> Result<email::schedule::Capacity> {
-    window
+    let window = window
         .validate()
         .map_err(|message| Error::Invalid(message.into()))?;
     Ok(window.capacity(now, &chrono::Local))
@@ -345,8 +345,12 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     if form.name.trim().is_empty() {
         return Err(Error::Invalid("请填写任务名称".into()));
     }
-    if let email::schedule::Schedule::Window(w) = &form.schedule {
-        let count = schedule_capacity(w, now)?.emails;
+    let schedule = form
+        .schedule
+        .validate()
+        .map_err(|s| Error::Invalid(s.into()))?;
+    if let email::schedule::ValidatedSchedule::Window(w) = &schedule {
+        let count = w.capacity(now, &chrono::Local).emails;
         if count < form.ids.len() as u64 {
             return Err(Error::Invalid(format!(
                 "发送容量不足，还差 {} 封",
@@ -371,7 +375,7 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
     .fetch_one(&mut *tx)
     .await?;
     validate_source(&mut tx, form).await?;
-    email::schedule::save(&mut tx, id, &form.schedule).await?;
+    email::schedule::save(&mut tx, id, &schedule).await?;
     let template = template_content(&mut tx, form).await?;
     if form.writer == Writer::Template && template.is_none() {
         return Err(Error::Invalid("请选择模板".into()));
@@ -597,9 +601,10 @@ pub struct ScheduleEdit {
 }
 
 pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> Result<u64> {
-    if let email::schedule::Schedule::Window(w) = &edit.schedule {
-        w.validate().map_err(|s| Error::Invalid(s.into()))?;
-    }
+    let schedule = edit
+        .schedule
+        .validate()
+        .map_err(|s| Error::Invalid(s.into()))?;
     let mut tx = db.begin().await?;
     if sqlx::query!(
         r#"UPDATE task SET name = name
@@ -614,7 +619,7 @@ pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> 
     {
         return Err(Error::Invalid("任务已停止或已删除。".into()));
     }
-    email::schedule::save(&mut tx, edit.id, &edit.schedule).await?;
+    email::schedule::save(&mut tx, edit.id, &schedule).await?;
     let count = sqlx::query!(
         r#"UPDATE email SET planned_at = NULL, latest_at = NULL, manual_schedule = 0
            WHERE task_id = ?
