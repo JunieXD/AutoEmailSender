@@ -200,15 +200,10 @@ pub async fn call_agent(
 ) -> Result<serde_json::Value, CallError> {
     let mut log = AgentCallLog { op, success: false };
     let result = match op {
-        "getAgentAccess"
-        | "setAgentAccess"
-        | "finishOnboarding"
-        | "getBackgroundNotifications"
-        | "setBackgroundNotifications"
-        | "getReplyNotifications"
-        | "setReplyNotifications"
-        | "getTodoReminders"
-        | "setTodoReminders" => Err(CallError::invalid("这个操作只供应用界面使用".into())),
+        // An agent does not decide whether agents may connect.
+        "getAgentAccess" | "setAgentAccess" => {
+            Err(CallError::invalid("这个操作只供应用界面使用".into()))
+        }
         _ if AGENT_CONFIRMATION_REQUIRED.contains(&op) => Err(CallError::invalid(
             "这个操作要你在应用里确认，下一版支持".into(),
         )),
