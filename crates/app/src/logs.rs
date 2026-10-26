@@ -5,6 +5,7 @@ use std::error::Error;
 use std::io::Write;
 use std::path::Path;
 
+use chrono::{DateTime, SecondsFormat};
 use crawl::queue::{CrawlDetail, CrawlState};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -89,16 +90,19 @@ fn files(dir: &Path) -> std::io::Result<Vec<String>> {
     Ok(names)
 }
 
-fn crawl_lines(dir: &Path, id: i64) -> std::io::Result<String> {
+fn crawl_lines(dir: &Path, id: i64, created_at: i64) -> std::io::Result<String> {
+    let start = DateTime::from_timestamp_millis(created_at)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "抓取开始时间不正确"))?
+        .to_rfc3339_opts(SecondsFormat::Micros, true);
     let mut out = String::new();
     let marker = format!("crawl{{id={id}}}:");
     for name in files(dir)? {
         let content = std::fs::read_to_string(dir.join(name))?;
         for line in content.lines() {
-            if line
-                .split_whitespace()
-                .nth(2)
-                .is_some_and(|span| span.starts_with(&marker))
+            let mut fields = line.split_whitespace();
+            // Fixed-width UTC RFC 3339 timestamps sort chronologically as strings.
+            if fields.next().is_some_and(|time| time >= start.as_str())
+                && fields.nth(1).is_some_and(|span| span.starts_with(&marker))
             {
                 out.push_str(line);
                 out.push('\n');
@@ -132,7 +136,7 @@ fn crawl_content(dir: &Path, detail: &CrawlDetail, started: &str) -> std::io::Re
 ",
         detail.summary.id
     ));
-    let lines = crawl_lines(dir, detail.summary.id)?;
+    let lines = crawl_lines(dir, detail.summary.id, detail.summary.created_at)?;
     out.push_str(if lines.is_empty() {
         "没有找到这次抓取的日志。\n"
     } else {
@@ -213,23 +217,27 @@ mod tests {
         std::fs::write(
             dir.path().join("app.2026-10-26.log"),
             concat!(
-                "2026-10-26T12:00:00Z  INFO crawl{id=50}: crawl::runner: other crawl\n",
-                "2026-10-26T12:01:00Z  INFO crawl{id=5}: crawl::runner: resumed\n",
-                "2026-10-26T12:02:00Z  WARN crawl{id=5}: crawl: failed\n",
-                "2026-10-26T12:03:00Z ERROR crawl{id=5}: crawl: error\n",
-                "2026-10-26T12:04:00Z  INFO crawl{id=15}: crawl: wrong id\n",
-                "2026-10-26T12:05:00Z  INFO app: text crawl{id=5}\n",
-                "2026-10-26T12:06:00Z  INFO othercrawl{id=5}: app: wrong span\n",
+                "2026-10-26T12:00:00.000000Z  INFO crawl{id=50}: crawl::runner: other crawl\n",
+                "2026-10-26T12:01:00.000000Z  INFO crawl{id=5}: crawl::runner: resumed\n",
+                "2026-10-26T12:02:00.000000Z  WARN crawl{id=5}: crawl: failed\n",
+                "2026-10-26T12:03:00.000000Z ERROR crawl{id=5}: crawl: error\n",
+                "2026-10-26T12:04:00.000000Z  INFO crawl{id=15}: crawl: wrong id\n",
+                "2026-10-26T12:05:00.000000Z  INFO app: text crawl{id=5}\n",
+                "2026-10-26T12:06:00.000000Z  INFO othercrawl{id=5}: app: wrong span\n",
             ),
         )
         .unwrap();
         std::fs::write(
             dir.path().join("app.2026-10-25.log"),
-            "2026-10-25T12:00:00Z  INFO crawl{id=5}: crawl: started\n",
+            concat!(
+                "2026-10-25T11:59:59.999999Z  INFO crawl{id=5}: crawl: previous crawl\n",
+                "2026-10-25T12:00:00.000000Z  INFO crawl{id=5}: crawl: started\n",
+            ),
         )
         .unwrap();
         std::fs::write(dir.path().join(".DS_Store"), "unrelated").unwrap();
-        let lines = crawl_lines(dir.path(), 5).unwrap();
+        let lines = crawl_lines(dir.path(), 5, 1_792_929_600_000).unwrap();
+        assert!(!lines.contains("previous crawl"));
         assert_eq!(lines.lines().count(), 4);
         assert!(lines.starts_with("2026-10-25"));
         assert!(lines.contains("resumed"));
@@ -261,14 +269,11 @@ mod tests {
             crawl_filename(&detail, "2026-10-26").unwrap(),
             "抓取日志 school.example.edu 2026-10-26.txt"
         );
-        let file = std::fs::File::create(dir.path().join("app.2026-10-26.log")).unwrap();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_writer(std::sync::Mutex::new(file))
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
-            crawl::span(5).in_scope(|| tracing::info!("crawl started"));
-        });
+        std::fs::write(
+            dir.path().join("app.2026-10-26.log"),
+            "2026-10-26T08:00:00.000000Z  INFO crawl{id=5}: crawl: crawl started\n",
+        )
+        .unwrap();
         let content = crawl_content(dir.path(), &detail, started).unwrap();
         assert!(content.contains("crawl{id=5}"));
         assert!(content.contains("crawl started"));
