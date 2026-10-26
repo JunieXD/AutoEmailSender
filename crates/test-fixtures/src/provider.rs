@@ -45,7 +45,7 @@ impl Response {
 pub struct Provider {
     pub address: String,
     pub requests: mpsc::UnboundedReceiver<Request>,
-    task: JoinHandle<io::Result<()>>,
+    task: JoinHandle<()>,
 }
 impl Drop for Provider {
     fn drop(&mut self) {
@@ -58,16 +58,28 @@ impl Provider {
         let address = format!("http://127.0.0.1:{}/v1", listener.local_addr()?.port());
         let (tx, requests) = mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
-            let mut connections = JoinSet::new();
-            loop {
-                tokio::select! {
-                    accepted = listener.accept() => {
-                        let (stream, _) = accepted?;
-                        connections.spawn(serve(stream, tx.clone()));
-                    },
-                    Some(result) = connections.join_next() => { result.map_err(io::Error::other)??; },
+            let result: io::Result<()> = async {
+                let mut connections = JoinSet::new();
+                loop {
+                    tokio::select! {
+                        accepted = listener.accept() => {
+                            let (stream, _) = accepted?;
+                            let tx = tx.clone();
+                            connections.spawn(async move {
+                                let result = serve(stream, tx).await;
+                                assert!(
+                                    result.is_ok(),
+                                    "model fixture connection failed: {result:?}"
+                                );
+                            });
+                        },
+                        // Each connection reports its own failure; reaping it must not stop the listener.
+                        Some(_) = connections.join_next() => {},
+                    }
                 }
             }
+            .await;
+            assert!(result.is_ok(), "model fixture listener failed: {result:?}");
         });
         Ok(Self {
             address,
@@ -173,6 +185,10 @@ async fn serve(stream: TcpStream, requests: mpsc::UnboundedSender<Request>) -> i
 }
 
 pub type Received = Arc<Mutex<Vec<(String, String)>>>;
+#[expect(
+    clippy::unwrap_used,
+    reason = "scripted test data and response failures must panic at their source"
+)]
 pub async fn scripted(
     answers: Vec<(&'static str, &'static str)>,
 ) -> io::Result<(String, Received)> {
@@ -182,33 +198,23 @@ pub async fn scripted(
     let log = received.clone();
     tokio::spawn(async move {
         for (text, finish_reason) in answers {
-            let request = provider
-                .requests
-                .recv()
-                .await
-                .ok_or_else(|| io::Error::other("provider stopped"))?;
+            let request = provider.requests.recv().await.unwrap();
             let content = |i: usize| {
                 request.body["messages"][i]["content"]
                     .as_str()
-                    .map(str::to_owned)
-                    .ok_or_else(|| io::Error::other("missing message content"))
+                    .unwrap()
+                    .to_owned()
             };
-            log.lock()
-                .map_err(|e| io::Error::other(e.to_string()))?
-                .push((content(0)?, content(1)?));
-            if request
+            log.lock().unwrap().push((content(0), content(1)));
+            request
                 .respond
                 .send(Response::Answer {
                     text: text.into(),
                     finish_reason: finish_reason.into(),
                 })
-                .is_err()
-            {
-                return Ok::<_, io::Error>(());
-            }
-            request.completed.await.map_err(io::Error::other)?;
+                .unwrap();
+            request.completed.await.unwrap();
         }
-        Ok(())
     });
     Ok((address, received))
 }
