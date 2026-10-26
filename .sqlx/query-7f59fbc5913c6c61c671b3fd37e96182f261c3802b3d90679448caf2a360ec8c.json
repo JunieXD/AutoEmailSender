@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(m.name, '找不到的导师（可能已被删除）') AS \"name!: String\",\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"address?: String\"\n        FROM json_each(?) selected\n        LEFT JOIN mentor m ON m.id = selected.value\n        ORDER BY CAST(selected.key AS INTEGER)",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "address?: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      false
+    ]
+  },
+  "hash": "7f59fbc5913c6c61c671b3fd37e96182f261c3802b3d90679448caf2a360ec8c"
+}

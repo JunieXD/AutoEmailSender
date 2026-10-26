@@ -49,21 +49,32 @@ async fn run() -> Result<bool, String> {
         .write_all(format!("{}\n{request}\n", credentials.token).as_bytes())
         .await
         .map_err(|error| connection_error("发送请求", error))?;
-    let mut response = String::new();
-    BufReader::new(stream)
-        .read_line(&mut response)
-        .await
-        .map_err(|error| connection_error("读取结果", error))?;
-    if response.is_empty() {
-        return Err(OPEN_APP.into());
+    let mut reader = BufReader::new(stream);
+    loop {
+        let mut response = String::new();
+        reader
+            .read_line(&mut response)
+            .await
+            .map_err(|error| connection_error("读取结果", error))?;
+        if response.is_empty() {
+            return Err(OPEN_APP.into());
+        }
+        let result: Value = serde_json::from_str(&response)
+            .map_err(|error| format!("应用返回的 JSON 不正确：{error}"))?;
+        if let Some(waiting) = result.get("waiting") {
+            let action = waiting
+                .get("action")
+                .and_then(Value::as_str)
+                .ok_or("应用返回的确认说明不正确")?;
+            eprintln!("等你在 Auto Email Sender 里确认：{action}");
+            continue;
+        }
+        // Rust writes Unicode directly to Windows consoles; redirected output remains UTF-8.
+        io::stdout()
+            .write_all(response.as_bytes())
+            .map_err(|error| format!("无法输出结果：{error}"))?;
+        return Ok(result.get("error").is_none());
     }
-    let result: Value = serde_json::from_str(&response)
-        .map_err(|error| format!("应用返回的 JSON 不正确：{error}"))?;
-    // Rust writes Unicode directly to Windows consoles; redirected output remains UTF-8.
-    io::stdout()
-        .write_all(response.as_bytes())
-        .map_err(|error| format!("无法输出结果：{error}"))?;
-    Ok(result.get("error").is_none())
 }
 
 fn connection_error(action: &str, error: io::Error) -> String {

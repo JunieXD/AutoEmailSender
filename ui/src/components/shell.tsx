@@ -17,6 +17,7 @@ import { refreshTodos } from "@/components/todos";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
+import { AgentRequests } from "@/components/agent-requests";
 import { useResume } from "@/pages/mailboxes";
 import { useReceive } from "@/pages/conversations";
 
@@ -108,6 +109,20 @@ export function Shell() {
     });
     return () => void stop.then((unlisten) => unlisten());
   }, [queryClient]);
+  // What an Agent did may touch anything on screen. It often calls many operations in a row, so
+  // refresh at most twice a second while it works.
+  useEffect(() => {
+    let waiting = false;
+    const stop = listen("agent-called", () => {
+      if (waiting) return;
+      waiting = true;
+      setTimeout(() => {
+        waiting = false;
+        void queryClient.invalidateQueries();
+      }, 500);
+    });
+    return () => void stop.then((unlisten) => unlisten());
+  }, [queryClient]);
   if (failure.isPending) return null;
   if (failure.data) return <StartupFailure reason={failure.data} />;
   return (
@@ -128,6 +143,7 @@ export function Shell() {
       </aside>
       <main className="relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
         <Outlet />
+        <AgentRequests />
         {completed && (
           <div
             role="status"

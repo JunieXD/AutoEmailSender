@@ -8,189 +8,202 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::Instant;
 use ts_rs::TS;
 
-use crate::{
-    CallError, Context, FirstDraftEdit, ImportMentors, MailboxEdit, MentorAddress, MentorEdit,
-    Nothing, ReplyDraftEdit,
-};
+use crate::{CallError, Context, Nothing};
 
 // Four slots let a few tools connect together while keeping untrusted pipe resources small.
 const MAX_AUTHENTICATING: usize = 4;
 
-/// These operations require the user's confirmation in the app before an Agent can run them.
-const AGENT_CONFIRMATION_REQUIRED: &[&str] = &[
-    "approveTaskEmails",
-    "approveFirstEmail",
-    "approveFollowUp",
-    "approveReply",
-    "sendEmailNow",
-    "resendEmail",
-    "retryEmail",
-    "resumeTask",
-    "resumeMailbox",
-    "changeTaskSchedule",
-    "rescheduleEmail",
-    "deleteMentors",
-    "deleteTask",
-    "deleteTemplate",
-    "deleteMailbox",
-    "deleteMaterial",
-    "deleteCrawl",
-    "deleteTag",
-    "deleteTodo",
-    "deleteModelConfig",
-    "mergeMentors",
-    "agreeModel",
-];
+mod confirmation;
+pub use confirmation::Description;
+pub(crate) use confirmation::confirmation;
 
-// This check precedes the write; concurrent UI or background changes order before or after it.
-pub(crate) async fn requires_confirmation(
-    ctx: &Context,
-    op: &str,
-    input: &serde_json::Value,
-) -> Result<bool, CallError> {
-    if AGENT_CONFIRMATION_REQUIRED.contains(&op) {
-        return Ok(true);
-    }
-    match op {
-        "updateMailbox" => {
-            let input: MailboxEdit =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            let at = crate::now();
-            Ok(sqlx::query_scalar!(
-                r#"SELECT EXISTS (
-                    SELECT 1 FROM mailbox WHERE id = ? AND paused_until > ?
-                ) AS "paused!: bool""#,
-                input.id,
-                at
-            )
-            .fetch_one(&ctx.db)
-            .await?)
-        }
-        "saveFirstDraft" => {
-            let input: FirstDraftEdit =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            if !input.subject.trim().is_empty() || !input.body_md.trim().is_empty() {
-                return Ok(false);
-            }
-            Ok(sqlx::query_scalar!(
-                r#"SELECT EXISTS (
-                    SELECT 1 FROM email
-                    WHERE mentor_id = ? AND kind = 'first' AND task_id IS NULL AND state = 'review'
-                ) AS "present!: bool""#,
-                input.mentor_id
-            )
-            .fetch_one(&ctx.db)
-            .await?)
-        }
-        "saveReplyDraft" => {
-            let input: ReplyDraftEdit =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            if !input.body_md.trim().is_empty() || !input.attachments.is_empty() {
-                return Ok(false);
-            }
-            Ok(sqlx::query_scalar!(
-                r#"SELECT EXISTS (
-                    SELECT 1 FROM email
-                    WHERE mentor_id = ? AND kind = 'reply' AND state = 'review'
-                ) AS "present!: bool""#,
-                input.mentor_id
-            )
-            .fetch_one(&ctx.db)
-            .await?)
-        }
-        "updateMentor" => {
-            let input: MentorEdit =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            let fields = input.form.check().map_err(CallError::invalid)?;
-            changes_approved_recipient(ctx, input.id, fields.emails.first().map(String::as_str))
-                .await
-        }
-        "addMentorEmail" => {
-            let input: MentorAddress =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            let address = input.address.trim();
-            if !mentor::is_email(address) {
-                return Err(CallError::invalid(format!("邮箱地址“{address}”格式不正确")));
-            }
-            let addresses = sqlx::query_scalar!(
-                "SELECT address FROM mentor_email WHERE mentor_id = ? ORDER BY position",
-                input.id
-            )
-            .fetch_all(&ctx.db)
-            .await?;
-            if addresses
+const CONFIRM_FOR: Duration = Duration::from_secs(5 * 60);
+
+pub enum Event {
+    Requested(Description),
+    RequestsChanged,
+    Called,
+}
+
+#[derive(Clone, serde::Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRequest {
+    pub id: u64,
+    pub op: String,
+    pub description: Description,
+    pub created_at: i64,
+}
+
+#[derive(Deserialize, TS)]
+pub struct AgentAnswer {
+    pub id: u64,
+    pub allow: bool,
+}
+
+#[derive(Default)]
+struct Requests {
+    next_id: u64,
+    pending: std::collections::VecDeque<Pending>,
+}
+
+struct Pending {
+    request: AgentRequest,
+    expires: Instant,
+    answer: oneshot::Sender<bool>,
+}
+
+struct Confirmation<'a> {
+    access: &'a Access,
+    id: u64,
+    decision: &'static str,
+}
+
+impl Drop for Confirmation<'_> {
+    fn drop(&mut self) {
+        let removed = {
+            let mut requests = self.access.requests();
+            requests
+                .pending
                 .iter()
-                .any(|old| old.eq_ignore_ascii_case(address))
-                || mentor::place(&addresses, address) != 0
-            {
-                return Ok(false);
-            }
-            changes_approved_recipient(ctx, input.id, Some(address)).await
+                .position(|p| p.request.id == self.id)
+                .and_then(|index| requests.pending.remove(index))
+        };
+        if let Some(pending) = removed {
+            tracing::info!(
+                op = pending.request.op,
+                decision = self.decision,
+                "agent confirmation"
+            );
+            self.access.emit(Event::RequestsChanged);
         }
-        "importMentors" => {
-            let input: ImportMentors =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            let sheets = crate::read_import(&input.file).await?;
-            let mut tx = ctx.db.begin().await?;
-            let (_, changes) =
-                mentor::import::calculate(&mut tx, &sheets, &input.file.setup, &input.decisions)
-                    .await?;
-            approved_changes(&mut tx, &changes).await
-        }
-        "acceptCandidates" => {
-            let input: crawl::review::ReviewInput =
-                serde_json::from_value(input.clone()).map_err(CallError::bad_input)?;
-            let mut tx = ctx.db.begin().await?;
-            let plan = crawl::review::plan(&mut tx, &input).await?;
-            approved_changes(&mut tx, &plan.changes).await
-        }
-        _ => Ok(false),
     }
 }
 
-async fn changes_approved_recipient(
-    ctx: &Context,
-    mentor: i64,
-    address: Option<&str>,
-) -> Result<bool, CallError> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT EXISTS (
-            SELECT 1 FROM email
-            WHERE mentor_id = ?1 AND state = 'approved'
-            AND (SELECT address FROM mentor_email
-                WHERE mentor_id = ?1 ORDER BY position LIMIT 1) IS NOT ?2 COLLATE NOCASE
-        ) AS "changed!: bool""#,
-        mentor,
-        address
-    )
-    .fetch_one(&ctx.db)
-    .await?)
+impl Access {
+    fn requests(&self) -> std::sync::MutexGuard<'_, Requests> {
+        self.requests.lock().unwrap_or_else(|_| {
+            unreachable!("agent request updates cannot panic while holding the lock")
+        })
+    }
+
+    pub(crate) fn emit(&self, event: Event) {
+        if let Some(emit) = self.events.get() {
+            emit(event);
+        }
+    }
+
+    fn cancel_requests(&self) {
+        let pending = std::mem::take(&mut self.requests().pending);
+        if pending.is_empty() {
+            return;
+        }
+        for pending in pending {
+            tracing::info!(
+                op = pending.request.op,
+                decision = "cancelled",
+                "agent confirmation"
+            );
+        }
+        self.emit(Event::RequestsChanged);
+    }
+
+    pub(crate) async fn confirm(
+        &self,
+        op: &str,
+        description: Description,
+        waiting: impl FnOnce(&Description),
+        cancelled: impl std::future::Future<Output = ()>,
+    ) -> Result<(), CallError> {
+        let (answer, result) = oneshot::channel();
+        let expires = Instant::now() + CONFIRM_FOR;
+        let id = {
+            let mut requests = self.requests();
+            requests.next_id += 1;
+            let id = requests.next_id;
+            requests.pending.push_back(Pending {
+                request: AgentRequest {
+                    id,
+                    op: op.into(),
+                    description: description.clone(),
+                    created_at: crate::now(),
+                },
+                expires,
+                answer,
+            });
+            id
+        };
+        let mut confirmation = Confirmation {
+            access: self,
+            id,
+            decision: "cancelled",
+        };
+        self.emit(Event::Requested(description.clone()));
+        waiting(&description);
+        let answer = tokio::select! {
+            // A recorded answer owns the operation even if the connection has just closed.
+            biased;
+            answer = tokio::time::timeout_at(expires, result) => answer,
+            () = cancelled => return Err(CallError::invalid("这个请求已经失效".into())),
+        };
+        match answer {
+            Ok(Ok(true)) => Ok(()),
+            Ok(Ok(false)) => Err(CallError::invalid("你在应用里拒绝了这个操作".into())),
+            // Closing access removes unanswered requests and drops their answer senders.
+            Ok(Err(_)) => Err(CallError::invalid("这个请求已经失效".into())),
+            Err(_) => {
+                confirmation.decision = "timeout";
+                Err(CallError::invalid("你没有在应用里确认".into()))
+            }
+        }
+    }
 }
 
-async fn approved_changes(
-    conn: &mut sqlx::SqliteConnection,
-    changes: &[mentor::intake::Change],
-) -> Result<bool, CallError> {
-    let mentors = sqlx::types::Json(
-        changes
+pub async fn list_agent_requests(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Vec<AgentRequest>, CallError> {
+    Ok(ctx
+        .agent_access
+        .requests()
+        .pending
+        .iter()
+        .filter(|p| p.expires > Instant::now())
+        .map(|p| p.request.clone())
+        .collect())
+}
+
+pub async fn answer_agent_request(ctx: &Context, input: AgentAnswer) -> Result<(), CallError> {
+    let pending = {
+        let mut requests = ctx.agent_access.requests();
+        let index = requests
+            .pending
             .iter()
-            .filter_map(mentor::intake::Change::changed_recipient)
-            .collect::<Vec<_>>(),
+            .position(|p| p.request.id == input.id && p.expires > Instant::now())
+            .ok_or_else(|| CallError::invalid("这个请求已经失效".into()))?;
+        requests
+            .pending
+            .remove(index)
+            .unwrap_or_else(|| unreachable!("the index was just found"))
+    };
+    let answered = pending.answer.send(input.allow);
+    tracing::info!(
+        op = pending.request.op,
+        decision = if answered.is_err() {
+            "cancelled"
+        } else if input.allow {
+            "allowed"
+        } else {
+            "denied"
+        },
+        "agent confirmation"
     );
-    Ok(sqlx::query_scalar!(
-        r#"SELECT EXISTS (
-            SELECT 1 FROM email
-            WHERE state = 'approved' AND mentor_id IN (SELECT value FROM json_each(?))
-        ) AS "present!: bool""#,
-        mentors
-    )
-    .fetch_one(conn)
-    .await?)
+    ctx.agent_access.emit(Event::RequestsChanged);
+    answered.map_err(|_| CallError::invalid("这个请求已经失效".into()))
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -201,6 +214,8 @@ pub struct AgentAccess {
 #[derive(Default)]
 pub struct Access {
     commands: OnceLock<mpsc::Sender<Change>>,
+    requests: std::sync::Mutex<Requests>,
+    events: OnceLock<Box<dyn Fn(Event) + Send + Sync>>,
 }
 
 struct Change {
@@ -238,7 +253,15 @@ impl Drop for Server {
     }
 }
 
-pub async fn start(ctx: Arc<Context>, dir: PathBuf) -> Result<Server, CallError> {
+pub async fn start(
+    ctx: Arc<Context>,
+    dir: PathBuf,
+    events: impl Fn(Event) + Send + Sync + 'static,
+) -> Result<Server, CallError> {
+    ctx.agent_access
+        .events
+        .set(Box::new(events))
+        .map_err(|_| CallError::internal("agent host already started"))?;
     let running = if profile::agent_access(&ctx.db).await? {
         Some(listen(&dir)?)
     } else {
@@ -324,7 +347,8 @@ async fn serve(
     mut running: Option<Running>,
     mut changes: mpsc::Receiver<Change>,
 ) {
-    let mut clients = JoinSet::new();
+    let mut clients = JoinSet::<io::Result<()>>::new();
+    let (mut shutdown, _) = watch::channel(false);
     let authenticating = Arc::new(Semaphore::new(MAX_AUTHENTICATING));
     let mut accept_after = Instant::now();
     loop {
@@ -347,8 +371,13 @@ async fn serve(
             biased;
             change = changes.recv() => {
                 let Some(change) = change else { return };
-                let result = change_access(&ctx, &dir, &mut running, &mut clients, change.enabled)
-                    .await;
+                let result = change_access(
+                    &ctx,
+                    &dir,
+                    &mut running,
+                    &mut shutdown,
+                    change.enabled,
+                ).await;
                 if result.is_ok() {
                     accept_after = Instant::now();
                 }
@@ -371,7 +400,10 @@ async fn serve(
                 match stream {
                     Ok((stream, token, permit)) => {
                         let ctx = ctx.clone();
-                        clients.spawn(async move { session(&ctx, stream, &token, permit).await });
+                        let shutdown = shutdown.subscribe();
+                        clients.spawn(async move {
+                            session(&ctx, stream, &token, permit, shutdown).await
+                        });
                     }
                     Err(error) if matches!(error.kind(),
                         io::ErrorKind::ConnectionRefused | io::ErrorKind::ConnectionAborted
@@ -391,29 +423,21 @@ async fn change_access(
     ctx: &Context,
     dir: &Path,
     running: &mut Option<Running>,
-    clients: &mut JoinSet<io::Result<()>>,
+    shutdown: &mut watch::Sender<bool>,
     enabled: bool,
 ) -> Result<(), CallError> {
     if enabled {
         if running.is_none() {
             let started = listen(dir)?;
             profile::set_agent_access(&ctx.db, true).await?;
+            // Old sessions must stay closed even if they have not polled their signal yet.
+            *shutdown = watch::channel(false).0;
             *running = Some(started);
         }
     } else {
         profile::set_agent_access(&ctx.db, false).await?;
-        clients.abort_all();
-        while let Some(result) = clients.join_next().await {
-            match result {
-                Err(error) if !error.is_cancelled() => {
-                    tracing::error!("agent connection task failed: {error}");
-                }
-                Ok(Err(error)) => {
-                    tracing::warn!(kind = ?error.kind(), "agent connection ended");
-                }
-                _ => {}
-            }
-        }
+        shutdown.send_replace(true);
+        ctx.agent_access.cancel_requests();
         if let Some(running) = running.take() {
             running.close().map_err(CallError::internal)?;
         } else {
@@ -436,9 +460,16 @@ async fn session(
     stream: ::agent::Incoming,
     token: &str,
     permit: OwnedSemaphorePermit,
+    mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
-    let mut stream = BufReader::new(stream);
-    let authentication = tokio::time::timeout(Duration::from_secs(5), line(&mut stream, 128)).await;
+    let (reader, mut writer) = tokio::io::split(stream);
+    let mut reader = BufReader::new(reader);
+    let authentication = tokio::time::timeout(Duration::from_secs(5), line(&mut reader, 128));
+    let authentication = tokio::select! {
+        biased;
+        () = wait_closed(&mut shutdown) => return Ok(()),
+        authentication = authentication => authentication,
+    };
     match authentication {
         Ok(Ok(Some(line))) if line == token.as_bytes() => {}
         // Each Windows pipe instance has its own client. Never write before authentication,
@@ -447,22 +478,127 @@ async fn session(
         Ok(Err(error)) => return Err(error),
     }
     drop(permit);
-    // Matches the preview host's limit, including a base64-encoded 20 MiB material upload.
-    while let Some(line) = line(&mut stream, 28 * 1024 * 1024).await? {
-        let result = match serde_json::from_slice::<Request>(&line) {
-            Ok(request) => crate::call_agent(ctx, &request.op, request.input).await,
-            Err(error) => Err(CallError::bad_input(error)),
-        };
-        let response = match result {
-            Ok(output) => serde_json::json!({ "ok": output }),
-            Err(error) => serde_json::json!({ "error": error }),
-        };
-        stream
-            .get_mut()
-            .write_all(format!("{response}\n").as_bytes())
-            .await?;
+    let (frames, mut requests) = mpsc::channel(1);
+    let (closed, mut cancelled) = watch::channel(false);
+    let mut reader_closed = closed.subscribe();
+    let mut call_shutdown = shutdown.clone();
+    let reading = async {
+        let result = async {
+            loop {
+                // Includes a base64-encoded 20 MiB material upload, like the preview host.
+                let frame = tokio::select! {
+                    biased;
+                    () = wait_closed(&mut shutdown) => return Ok(()),
+                    () = wait_closed(&mut reader_closed) => return Ok(()),
+                    frame = line(&mut reader, 28 * 1024 * 1024) => frame?,
+                };
+                let Some(frame) = frame else { return Ok(()) };
+                // Bound pipelining without blocking detection of a disconnected Agent.
+                frames.try_send(frame).map_err(|error| match error {
+                    mpsc::error::TrySendError::Full(_) => {
+                        io::Error::new(io::ErrorKind::InvalidData, "too many pending agent frames")
+                    }
+                    mpsc::error::TrySendError::Closed(_) => {
+                        io::Error::new(io::ErrorKind::BrokenPipe, "agent dispatcher closed")
+                    }
+                })?;
+            }
+        }
+        .await;
+        drop(frames);
+        closed.send_replace(true);
+        result
+    };
+    let calling = async {
+        while let Some(frame) = requests.recv().await {
+            if *closed.borrow() {
+                break;
+            }
+            let (waiting, mut progress) = oneshot::channel();
+            let call = async {
+                match serde_json::from_slice::<Request>(&frame) {
+                    Ok(request) => {
+                        crate::call_agent(
+                            ctx,
+                            &request.op,
+                            request.input,
+                            |description| {
+                                // The transport may already have been closed.
+                                let _ = waiting.send(description.clone());
+                            },
+                            async {
+                                tokio::select! {
+                                    () = wait_closed(&mut cancelled) => {},
+                                    () = wait_closed(&mut call_shutdown) => {},
+                                }
+                            },
+                        )
+                        .await
+                    }
+                    Err(error) => Err(CallError::bad_input(error)),
+                }
+            };
+            tokio::pin!(call);
+            // A recorded answer may finish in the same poll as registration. The intermediate
+            // frame must precede the final result, and a write failure must not drop execution.
+            let result = tokio::select! {
+                result = &mut call => {
+                    if let Ok(description) = progress.await {
+                        write_frame(
+                            &mut writer,
+                            &closed,
+                            serde_json::json!({ "waiting": description }),
+                        ).await;
+                    }
+                    result
+                }
+                description = &mut progress => {
+                    if let Ok(description) = description {
+                        write_frame(
+                            &mut writer,
+                            &closed,
+                            serde_json::json!({ "waiting": description }),
+                        ).await;
+                    }
+                    call.await
+                }
+            };
+            let response = match result {
+                Ok(output) => serde_json::json!({ "ok": output }),
+                Err(error) => serde_json::json!({ "error": error }),
+            };
+            write_frame(&mut writer, &closed, response).await;
+        }
+        closed.send_replace(true);
+    };
+    // Reading can cancel preparation and unanswered requests, never an allowed execution.
+    let (result, ()) = tokio::join!(reading, calling);
+    result
+}
+
+async fn wait_closed(closed: &mut watch::Receiver<bool>) {
+    // Dropping the host also invalidates a connection's unfinished confirmation.
+    let _ = closed.wait_for(|closed| *closed).await;
+}
+
+async fn write_frame(
+    writer: &mut (impl tokio::io::AsyncWrite + Unpin),
+    closed: &watch::Sender<bool>,
+    frame: serde_json::Value,
+) {
+    let mut cancelled = closed.subscribe();
+    let result = tokio::select! {
+        biased;
+        () = wait_closed(&mut cancelled) => Err(io::Error::from(io::ErrorKind::NotConnected)),
+        result = async { writer.write_all(format!("{frame}\n").as_bytes()).await } => result,
+    };
+    if let Err(error) = result {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "agent response discarded"
+        );
+        closed.send_replace(true);
     }
-    Ok(())
 }
 
 async fn line(reader: &mut (impl AsyncBufRead + Unpin), limit: u64) -> io::Result<Option<Vec<u8>>> {

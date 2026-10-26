@@ -19,7 +19,9 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "time"
 uuid = { version = "1.29.0", features = ["v4"] }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 api.workspace = true
 profile.workspace = true
+sqlx.workspace = true
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["test-util"] }

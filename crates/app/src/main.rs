@@ -210,9 +210,36 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
     }
     let (ctx, restored) = api::startup::open(&dir).await.map_err(StartupError::Core)?;
     let ctx = Arc::new(ctx);
-    let agent = api::agent::start(ctx.clone(), dir)
-        .await
-        .map_err(StartupError::Agent)?;
+    let ui = app.clone();
+    let agent = api::agent::start(ctx.clone(), dir, move |event| match event {
+        api::agent::Event::Requested(description) => {
+            if let Err(e) = ui.emit("agent-requests-changed", ()) {
+                tracing::warn!("refresh agent requests: {e}");
+            }
+            show(&ui);
+            if let Err(e) = ui
+                .notification()
+                .builder()
+                .title("Agent 请求确认")
+                .body(&description.action)
+                .show()
+            {
+                tracing::warn!("agent confirmation notification: {e}");
+            }
+        }
+        api::agent::Event::RequestsChanged => {
+            if let Err(e) = ui.emit("agent-requests-changed", ()) {
+                tracing::warn!("refresh agent requests: {e}");
+            }
+        }
+        api::agent::Event::Called => {
+            if let Err(e) = ui.emit("agent-called", ()) {
+                tracing::warn!("refresh agent call: {e}");
+            }
+        }
+    })
+    .await
+    .map_err(StartupError::Agent)?;
     app.manage(agent);
     let api::Context {
         writes,
