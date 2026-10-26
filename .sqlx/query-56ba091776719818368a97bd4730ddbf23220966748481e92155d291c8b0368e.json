@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH trash AS MATERIALIZED (\n            SELECT id FROM mentor WHERE trashed_at IS NOT NULL\n        ), active_count AS MATERIALIZED (\n            SELECT count(*) AS total FROM mentor WHERE trashed_at IS NULL\n        )\n        SELECT 'university' AS \"field!: AffiliationField\", university AS \"value?\",\n            count(DISTINCT mentor_id) AS \"count!: i64\"\n        FROM mentor_affiliation\n        WHERE university IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        GROUP BY university\n        UNION ALL\n        SELECT 'university', NULL,\n            (SELECT total FROM active_count) - count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE university IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        UNION ALL\n        SELECT 'school', school,\n            count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE school IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        GROUP BY school\n        UNION ALL\n        SELECT 'school', NULL,\n            (SELECT total FROM active_count) - count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE school IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        UNION ALL\n        SELECT 'department', department,\n            count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE department IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        GROUP BY department\n        UNION ALL\n        SELECT 'department', NULL,\n            (SELECT total FROM active_count) - count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE department IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        UNION ALL\n        SELECT 'title', title,\n            count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE title IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        GROUP BY title\n        UNION ALL\n        SELECT 'title', NULL,\n            (SELECT total FROM active_count) - count(DISTINCT mentor_id)\n        FROM mentor_affiliation\n        WHERE title IS NOT NULL AND mentor_id NOT IN (SELECT id FROM trash)\n        ORDER BY 3 DESC, 2",
+  "describe": {
+    "columns": [
+      {
+        "name": "field!: AffiliationField",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "value?",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_affiliation",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null,
+      true,
+      null
+    ]
+  },
+  "hash": "56ba091776719818368a97bd4730ddbf23220966748481e92155d291c8b0368e"
+}

@@ -253,19 +253,18 @@ async fn latest_marked_reply_filters_all_results_and_unmarked_with_summary_in_sy
     .enumerate()
     {
         let query = MentorQuery {
-            status: Some(ContactStatus::Replied),
-            reply_outcome: Some(filter),
-            keyword: None,
-            unanswered_days: None,
+            filter: mentor::filters::MentorFilter {
+                status: Some(ContactStatus::Replied),
+                reply_outcome: Some(filter),
+                ..Default::default()
+            },
             page: std::num::NonZeroU32::MIN,
         };
         let found = mentor::list(&db, &query, 30).await.unwrap();
         assert_eq!(found.total, 1);
         assert_eq!(found.mentors[0].id, ids[i]);
-        let ignored = MentorQuery {
-            status: None,
-            ..query
-        };
+        let mut ignored = query;
+        ignored.filter.status = None;
         assert_eq!(mentor::list(&db, &ignored, 30).await.unwrap().total, 5);
     }
     queue::set(&db, newest, R::Declined).await.unwrap();

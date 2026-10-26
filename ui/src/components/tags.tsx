@@ -37,7 +37,7 @@ function useTags() {
 
 /** After tags change, everything that shows them is out of date. */
 function refreshTags(queryClient: ReturnType<typeof useQueryClient>) {
-  for (const queryKey of [["listTags"], ["getMentor"], ["listMentors"], ["listTrash"]]) {
+  for (const queryKey of [["listTags"], ["getMentor"], ["listMentors"], ["mentorFilterOptions"], ["listTrash"]]) {
     void queryClient.invalidateQueries({ queryKey });
   }
 }

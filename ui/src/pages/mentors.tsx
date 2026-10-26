@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Download, Merge, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { ContactStatus, Imported, ReplyOutcomeFilter, Scope, Kind } from "@/api/types";
+import type { ContactStatus, Imported, MentorFilter, ReplyOutcomeFilter, Scope, Kind } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
 import { MergeDialog } from "@/components/merge-dialog";
@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Segments } from "@/components/ui/segments";
+import { type FilterSearch, filterOf, filterSearch, filtered, MentorFilters } from "@/components/mentor-filters";
 
 const STATUSES: [ContactStatus | undefined, string][] = [
   [undefined, "全部"],
@@ -32,7 +33,7 @@ const STATUSES: [ContactStatus | undefined, string][] = [
   ["bounced", "退信"],
 ];
 
-export type MentorSearch = {
+export type MentorSearch = FilterSearch & {
   status?: ContactStatus;
   outcome?: ReplyOutcomeFilter;
   q?: string;
@@ -51,11 +52,23 @@ export function mentorSearch(search: Record<string, unknown>): MentorSearch {
   const q = typeof search.q === "string" && search.q !== "" ? search.q : undefined;
   const days = Number(search.unansweredDays);
   return {
+    ...filterSearch(search),
     status,
     outcome: status === "replied" ? OUTCOME_FILTERS.find(([o]) => o === search.outcome)?.[0] : undefined,
     q,
     page: pageParam(search.page),
     unansweredDays: status === "contacted" && Number.isInteger(days) && days > 0 && days <= 36500 ? days : undefined,
+  };
+}
+
+/** The same mentors in the list and in an exported table. */
+function listFilter(s: MentorSearch): MentorFilter {
+  return {
+    status: s.status,
+    replyOutcome: s.outcome,
+    keyword: s.q,
+    unansweredDays: s.unansweredDays,
+    ...filterOf(s),
   };
 }
 
@@ -65,14 +78,7 @@ export function MentorsPage() {
   const page = search.page ?? 1;
   const query = useQuery({
     queryKey: ["listMentors", search],
-    queryFn: () =>
-      call("listMentors", {
-        status: search.status,
-        replyOutcome: search.outcome,
-        keyword: search.q,
-        unansweredDays: search.unansweredDays,
-        page,
-      }),
+    queryFn: () => call("listMentors", { ...listFilter(search), page }),
     placeholderData: keepPreviousData,
   });
   const total = query.data?.total ?? 0;
@@ -92,14 +98,10 @@ export function MentorsPage() {
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [merging, setMerging] = useState<[number, number] | null>(null);
   const [first, second] = selected;
-  const [filter, setFilter] = useState(search);
-  if (
-    filter.status !== search.status ||
-    filter.outcome !== search.outcome ||
-    filter.q !== search.q ||
-    filter.unansweredDays !== search.unansweredDays
-  ) {
-    setFilter(search);
+  const filter = JSON.stringify(listFilter(search));
+  const [shownFilter, setShownFilter] = useState(filter);
+  if (shownFilter !== filter) {
+    setShownFilter(filter);
     setSelected(new Set());
   }
   useLastPage(query.isSuccess && !query.isFetching ? query.data.total : undefined, page, (n) =>
@@ -197,6 +199,10 @@ export function MentorsPage() {
           }
         />
       </div>
+      <MentorFilters
+        search={search}
+        onChange={(next) => navigate({ search: (s) => ({ ...s, ...next, page: undefined }) })}
+      />
 
       {search.status === "replied" && (
         <div className="px-7 pb-3 phone:px-4">
@@ -263,8 +269,8 @@ export function MentorsPage() {
           {query.isError ? (
             <Notice title="导师列表没能加载" detail={errorMessage(query.error)} />
           ) : query.data?.total === 0 ? (
-            search.status || search.q ? (
-              <Notice title="没有符合条件的导师" detail="换个关键词或联系状态再试。" />
+            search.status || search.q || filtered(search) ? (
+              <Notice title="没有符合条件的导师" detail="换个关键词或筛选条件再试。" />
             ) : (
               <Notice title="还没有导师" detail="点“添加导师”填写导师的资料。" />
             )
@@ -349,15 +355,7 @@ export function MentorsPage() {
             disabled={!query.data}
             onClick={() =>
               setExporting({
-                scope: {
-                  kind: "filter",
-                  value: {
-                    status: search.status,
-                    replyOutcome: search.outcome,
-                    keyword: search.q,
-                    unansweredDays: search.unansweredDays,
-                  },
-                },
+                scope: { kind: "filter", value: listFilter(search) },
                 count: total,
               })
             }

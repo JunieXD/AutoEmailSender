@@ -1,7 +1,8 @@
 //! Mentor table columns, export scopes and the profile data needed for round trips.
 
+use crate::filters::MentorFilter;
 use crate::import::Field;
-use crate::{Affiliation, ContactStatus, MentorFields, filtered_ids, keyword};
+use crate::{Affiliation, MentorFields, filtered_ids};
 use serde::Deserialize;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
 use std::collections::BTreeMap;
@@ -10,22 +11,8 @@ use ts_rs::TS;
 #[derive(Debug, Deserialize, TS)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum Scope {
-    Filter(Filter),
+    Filter(MentorFilter),
     Ids(Vec<i64>),
-}
-
-#[derive(Debug, Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct Filter {
-    #[ts(optional)]
-    pub unanswered_days: Option<std::num::NonZeroU32>,
-    #[ts(optional)]
-    pub status: Option<ContactStatus>,
-    /// Applied only with status = replied.
-    #[ts(optional)]
-    pub reply_outcome: Option<super::ReplyOutcomeFilter>,
-    #[ts(optional)]
-    pub keyword: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,19 +147,7 @@ pub async fn export(
 ) -> Result<Vec<Vec<String>>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let ids = match scope {
-        Scope::Filter(f) => {
-            filtered_ids(
-                &mut tx,
-                f.status,
-                f.reply_outcome,
-                f.keyword.as_deref().and_then(keyword).as_deref(),
-                -1,
-                0,
-                f.unanswered_days
-                    .map(|d| now - i64::from(d.get()) * 86_400_000),
-            )
-            .await?
-        }
+        Scope::Filter(f) => filtered_ids(&mut tx, f, now, -1, 0).await?,
         Scope::Ids(ids) => {
             sqlx::query_scalar!(
                 r#"SELECT id
