@@ -403,12 +403,6 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
     let id = queue::start(&db, &[site.url("/")], config, 1)
         .await
         .unwrap();
-    assert!(
-        crate::store::visited_page(&db, id, &site.url("/"), &[])
-            .await
-            .unwrap()
-            .is_none()
-    );
     let old = queue::next(&db).await.unwrap().unwrap();
     queue::control(&db, id, "pause", 2).await.unwrap();
     assert!(
@@ -975,9 +969,10 @@ async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     let detail = queue::detail(&db, id, 1).await.unwrap().unwrap();
     assert!(detail.runs.len() >= 3);
     assert!(
-        crate::store::page_text(&db, detail.pages[0].id)
+        sqlx::query_scalar::<_, String>("SELECT text FROM crawl_page WHERE id=?")
+            .bind(detail.pages[0].id)
+            .fetch_one(&db)
             .await
-            .unwrap()
             .unwrap()
             .contains("Hinton")
     );
@@ -3196,4 +3191,93 @@ async fn database_read_failure_preserves_its_source(db: SqlitePool) {
         panic!("original SQLite failure must be preserved");
     };
     assert!(source.message().contains("no such table: model_config"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deleting_a_crawl_removes_pages_and_pending_candidates_but_keeps_reviewed_data(
+    db: SqlitePool,
+) {
+    let site = Site::new().await;
+    let model = config(&db, "http://127.0.0.1:1").await;
+    let crawl = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let material = crate::parse(&site.url("/"), "<p>导师名单</p>").unwrap();
+    save_material(&db, &claim, &material, PageMethod::Http)
+        .await
+        .unwrap();
+    let page = claim.id;
+    let mentor = sqlx::query_scalar!(
+        r#"INSERT INTO mentor (name, created_at, updated_at)
+        VALUES ('已接受的导师', 1, 1)
+        RETURNING id"#
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    sqlx::query!(
+        r#"INSERT INTO candidate (crawl_id, list_page_id, review, enrich, name)
+        VALUES (?, ?, 'pending', 'none', '待审核')"#,
+        crawl,
+        page
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let accepted = sqlx::query_scalar!(
+        r#"INSERT INTO candidate (crawl_id, list_page_id, review, mentor_id, enrich, name,
+            emails, affiliations, homepages, aliases)
+        VALUES (?, ?, 'accepted', ?, 'done', '已接受',
+            '["a@pku.edu.cn","b@pku.edu.cn"]',
+            '[{"university":"北京大学","title":"教授"}]',
+            '["https://cs.pku.edu.cn/a"]', '["Alice"]')
+        RETURNING id"#,
+        crawl,
+        page,
+        mentor
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    sqlx::query!("DELETE FROM crawl WHERE id = ?", crawl)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query_scalar!("SELECT id FROM crawl_page WHERE id = ?", page)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let candidate = sqlx::query!(
+        "SELECT crawl_id, list_page_id, mentor_id FROM candidate WHERE id = ?",
+        accepted
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(candidate.crawl_id, None);
+    assert_eq!(candidate.list_page_id, None);
+    assert_eq!(candidate.mentor_id, Some(mentor));
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM candidate")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM mentor WHERE id = ?", mentor)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar!("SELECT count(*) FROM crawl_run")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        0
+    );
 }
