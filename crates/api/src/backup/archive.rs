@@ -52,13 +52,18 @@ fn extract(input: &mut dyn Read, output: &mut dyn Write) -> Result<u64> {
     let mut buffer = [0; 8192];
     let mut copied = 0;
     loop {
-        let count = input.read(&mut buffer).map_err(|source| Error::Archive {
-            detail: "zip 内容损坏",
-            source: Box::new(source),
-        })?;
-        if count == 0 {
-            return Ok(copied);
-        }
+        let count = match input.read(&mut buffer) {
+            Ok(0) => return Ok(copied),
+            Ok(count) => count,
+            // The `Read` contract, as `std::io::copy` honours it.
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(source) => {
+                return Err(Error::Archive {
+                    detail: "zip 内容损坏",
+                    source: Box::new(source),
+                });
+            }
+        };
         output
             .write_all(&buffer[..count])
             .map_err(|source| Error::Io {
