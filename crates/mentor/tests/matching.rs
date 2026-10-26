@@ -33,6 +33,32 @@ async fn result(db: &SqlitePool, id: i64, at: i64) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn canceling_a_blocked_claim_keeps_the_mentor_available(db: SqlitePool) {
+    let id = add(&db, Some("视觉")).await;
+    enqueue(&db, &[id], true, true, 1).await.unwrap();
+    let claims = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .min_connections(1)
+        .test_before_acquire(false)
+        .connect_with((*db.connect_options()).clone())
+        .await
+        .unwrap();
+    let lock = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    // With a ready connection, polling submits the claim to SQLite, where the write lock blocks it.
+    let mut claim = Box::pin(next(&claims));
+    assert!(
+        std::future::poll_fn(|cx| std::task::Poll::Ready(claim.as_mut().poll(cx).is_pending()))
+            .await
+    );
+    drop(claim);
+    lock.rollback().await.unwrap();
+    // Closing drains the canceled command on SQLite's worker before checking the queue.
+    claims.close().await;
+    let claim = next(&db).await.unwrap().unwrap();
+    assert_eq!(claim.id, id);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn queue_skips_ineligible_and_current_results_but_redoes_changed(db: SqlitePool) {
     let fresh = add(&db, Some("视觉")).await;
     let old = add(&db, Some("视觉")).await;

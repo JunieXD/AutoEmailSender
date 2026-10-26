@@ -220,7 +220,11 @@ pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
-    sqlx::query_as!(
+    // SQLite may execute queued commands after cancellation. Before COMMIT is submitted, a
+    // canceled claim rolls back. If COMMIT is submitted but its result is lost, the write lock
+    // ensures it finishes before restart recovery requeues the claim.
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let claim = sqlx::query_as!(
         Claim,
         r#"UPDATE email
         SET generation_claim = generation_claim + 1, generation_queued_at = NULL
@@ -239,8 +243,10 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
         RETURNING id, task_id AS "task!", mentor_id AS mentor,
             generation_claim AS version"#
     )
-    .fetch_optional(db)
-    .await
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(claim)
 }
 
 pub async fn valid(db: &SqlitePool, c: Claim) -> Result<bool, sqlx::Error> {
