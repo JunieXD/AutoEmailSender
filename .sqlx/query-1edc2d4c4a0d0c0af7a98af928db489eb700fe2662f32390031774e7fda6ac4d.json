@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = '[]' AND candidate_id IS NULL",
+  "query": "SELECT id FROM crawl_page WHERE crawl_id = ? AND url = ? AND steps = ? AND candidate_id IS NULL",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 3
     },
     "nullable": [
       false
     ]
   },
-  "hash": "6af593df4bdcf28990af88c89001fbb2d2ddd7bb10fa071a5aeebccbbd7f85c2"
+  "hash": "1edc2d4c4a0d0c0af7a98af928db489eb700fe2662f32390031774e7fda6ac4d"
 }

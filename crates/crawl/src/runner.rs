@@ -1,12 +1,14 @@
-//! Background HTTP/model work. Page results and newly discovered work commit together.
+//! Background page/model work. Page results and newly discovered work commit together.
 use crate::{
-    Material, PageTarget, PageUrl, Scope, enrich,
+    Material, PageTarget, PageUrl, Scope,
+    browser::{Browser, BrowserError},
+    enrich,
     extract::{self, Kind, Person},
     fetch::Fetcher,
     now,
     queue::{self, Claim},
     review,
-    store::{PageKind, PageStatus},
+    store::{PageKind, PageMethod, PageStatus, PageStep},
 };
 use model::{
     Chosen,
@@ -35,6 +37,114 @@ pub struct CrawlFinished {
     pub id: i64,
     pub message: String,
 }
+struct Pages {
+    http: Fetcher,
+    browser: Option<Arc<dyn Browser>>,
+}
+
+async fn save_material(
+    db: &SqlitePool,
+    c: &Claim,
+    m: &Material,
+    method: PageMethod,
+) -> Result<(), ReadError> {
+    let text = m.text();
+    let reason = m.needs_browser.as_ref().map(browser);
+    let status = if reason.is_some() {
+        PageStatus::NeedsBrowser
+    } else {
+        PageStatus::Success
+    };
+    let saved = sqlx::query!("UPDATE crawl_page SET text = ?,mode = ?,status = ?,error = ?,fetched_at = ? WHERE id = ? AND claim = ? AND work_state = 'running' AND EXISTS(SELECT 1 FROM crawl WHERE id = crawl_page.crawl_id AND state = 'running')",text,method,status,reason,now(),c.id,c.generation).execute(db).await.map_err(|e| {
+        tracing::error!("save fetched page: {e}");
+        ReadError::Pause("网页资料暂时无法保存，请继续或重启应用。".into())
+    })?;
+    if saved.rows_affected() == 0 {
+        return Err(ReadError::Gone);
+    }
+    Ok(())
+}
+
+impl Pages {
+    async fn fetch(
+        &self,
+        db: &SqlitePool,
+        c: &Claim,
+        target: &PageTarget,
+    ) -> Result<Material, ReadError> {
+        let fetched = self
+            .http
+            .fetch(target)
+            .await
+            .map_err(|e| ReadError::Failed(e.message()))?;
+        let mut m = fetched.material;
+        if !c.steps.is_empty() && m.needs_browser.is_none() {
+            m.needs_browser = Some(crate::BrowserReason::Pagination);
+        }
+        save_material(db, c, &m, PageMethod::Http).await?;
+        let Some(browser) = self
+            .browser
+            .as_ref()
+            .filter(|_| m.needs_browser.is_some() || !c.steps.is_empty())
+        else {
+            return Ok(m);
+        };
+        save_material(db, c, &m, PageMethod::Webview).await?;
+        let render = browser.render(target, &c.steps);
+        let invalidated = async {
+            loop {
+                let mut conn = db.acquire().await.map_err(|_| {
+                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
+                })?;
+                if !queue::valid(&mut conn, c).await.map_err(|_| {
+                    ReadError::Pause("抓取数据暂时无法读取，请继续或重启应用。".into())
+                })? {
+                    return Err(ReadError::Gone);
+                }
+                drop(conn);
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        let rendered = tokio::select! {
+            result = render => result.map_err(|e| ReadError::Failed(match e {
+                BrowserError::TimedOut if fetched.relaxed_certificate => "网站的证书有问题，浏览器打不开".into(),
+                e => e.message(),
+            }))?,
+            result = invalidated => return result,
+        };
+        let url = target
+            .redirect(target.url(), &rendered.url)
+            .map_err(|e| ReadError::Failed(e.message()))?;
+        if rendered.html.len() > crate::fetch::MAX_PAGE_BYTES {
+            return Err(ReadError::Failed(crate::CrawlError::TooLarge.message()));
+        }
+        let mut material =
+            tokio::task::spawn_blocking(move || crate::parse_rendered(&url, &rendered.html))
+                .await
+                .map_err(|e| ReadError::Failed(crate::CrawlError::Worker(e).message()))?
+                .map_err(|e| ReadError::Failed(e.message()))?;
+        // Interactive pagination remains present after rendering, and is now replayable.
+        if material.needs_browser == Some(crate::BrowserReason::Pagination)
+            && !material.pagination.buttons.is_empty()
+        {
+            material.needs_browser = None;
+        }
+        if let Some(reason) = &material.needs_browser {
+            return Err(ReadError::Failed(format!(
+                "浏览器读取后仍未取得页面内容：{}",
+                self::browser(reason)
+            )));
+        }
+        if material.units.is_empty() {
+            return Err(ReadError::Failed(
+                "浏览器读取后仍未取得页面内容，网站可能尚未通过验证".into(),
+            ));
+        }
+        save_material(db, c, &material, PageMethod::Webview).await?;
+        Ok(material)
+    }
+}
+
 struct Page {
     material: Material,
     kind: PageKind,
@@ -183,7 +293,7 @@ impl Reader<'_> {
 async fn process(
     db: &SqlitePool,
     net: &net::Net,
-    fetcher: &Fetcher,
+    fetcher: &Pages,
     limit: &Limit,
     c: &Claim,
     cooldown: &Cooldown,
@@ -214,7 +324,7 @@ async fn process(
 async fn read(
     db: &SqlitePool,
     net: &net::Net,
-    fetcher: &Fetcher,
+    fetcher: &Pages,
     limit: &Limit,
     c: &Claim,
     chosen: &Chosen,
@@ -229,22 +339,7 @@ async fn read(
             .page(c.url.clone())
             .map_err(|e| ReadError::Failed(e.message()))?
     };
-    let m = fetcher
-        .fetch(&target)
-        .await
-        .map_err(|e| ReadError::Failed(e.message()))?
-        .material;
-    let text = m.text();
-    let reason = m.needs_browser.as_ref().map(browser);
-    let status = if reason.is_some() {
-        PageStatus::NeedsBrowser
-    } else {
-        PageStatus::Success
-    };
-    let saved=sqlx::query!("UPDATE crawl_page SET text = ?,status = ?,error = ?,fetched_at = ? WHERE id = ? AND claim = ? AND work_state = 'running' AND EXISTS(SELECT 1 FROM crawl WHERE id = crawl_page.crawl_id AND state = 'running')",text,status,reason,now(),c.id,c.generation).execute(db).await.map_err(|e|{tracing::error!("save fetched page: {e}");ReadError::Pause("网页资料暂时无法保存，请继续或重启应用。".into())})?;
-    if saved.rows_affected() == 0 {
-        return Err(ReadError::Gone);
-    }
+    let m = fetcher.fetch(db, c, &target).await?;
     let reader = Reader {
         db,
         net,
@@ -540,6 +635,33 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                         }
                     }
                 }
+                if p.kind == PageKind::List && p.material.needs_browser.is_none() {
+                    let current = c.steps.last().map_or(1, |s| s.page);
+                    if let Some(button) = p
+                        .material
+                        .pagination
+                        .buttons
+                        .iter()
+                        .filter(|b| b.page.is_none_or(|page| page > current))
+                        .min_by_key(|b| b.page.unwrap_or(current + 1))
+                    {
+                        let mut steps = c.steps.clone();
+                        steps.push(PageStep {
+                            page: button.page.unwrap_or(current + 1),
+                            control: button.control.clone(),
+                        });
+                        queue::enqueue_steps(
+                            &mut tx,
+                            c.crawl,
+                            &c.url,
+                            &c.scope,
+                            c.depth,
+                            PageKind::List,
+                            &steps,
+                        )
+                        .await?;
+                    }
+                }
                 // The transaction serializes duplicate detection with all candidate writes.
                 for person in &p.people {
                     review::save(
@@ -667,24 +789,25 @@ pub async fn run(
     net: net::Net,
     crawler: Crawler,
     limit: Limit,
+    browser: Option<Arc<dyn Browser>>,
     changed: impl Fn() + Send + 'static,
     finished: impl Fn(CrawlFinished) + Send + 'static,
 ) {
     let fetcher = loop {
         match Fetcher::new(&net) {
-            Ok(f) => break Arc::new(f),
+            Ok(f) => break Arc::new(Pages { http: f, browser }),
             Err(e) => {
                 tracing::error!("create crawl fetcher: {e}");
                 tokio::time::sleep(RETRY).await;
             }
         }
     };
-    run_with_fetcher(db, net, fetcher, crawler, limit, changed, finished).await;
+    run_with_pages(db, net, fetcher, crawler, limit, changed, finished).await;
 }
-async fn run_with_fetcher(
+async fn run_with_pages(
     db: SqlitePool,
     net: net::Net,
-    fetcher: Arc<Fetcher>,
+    fetcher: Arc<Pages>,
     crawler: Crawler,
     limit: Limit,
     changed: impl Fn() + Send + 'static,

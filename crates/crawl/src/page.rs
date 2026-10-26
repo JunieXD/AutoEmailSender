@@ -59,10 +59,18 @@ pub struct Unit {
     pub in_footer_or_nav: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ButtonPage {
+    /// None means the next page after the current replay sequence.
+    pub page: Option<u32>,
+    pub control: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Pagination {
     pub urls: Vec<PageUrl>,
     pub needs_browser: bool,
+    pub buttons: Vec<ButtonPage>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,11 +101,8 @@ fn encrypted_field(element: ElementRef<'_>) -> bool {
     element.value().attr("_tsites_encrypt_field").is_some()
 }
 
-fn ignored(element: ElementRef<'_>) -> bool {
-    matches!(
-        element.value().name(),
-        "script" | "style" | "noscript" | "template" | "svg" | "head"
-    ) || element.value().attr("hidden").is_some()
+fn hidden(element: ElementRef<'_>) -> bool {
+    element.value().attr("hidden").is_some()
         || element.value().attr("aria-hidden") == Some("true")
         || element.value().attr("style").is_some_and(|s| {
             let style: String = s
@@ -107,6 +112,13 @@ fn ignored(element: ElementRef<'_>) -> bool {
                 .collect();
             style.contains("display:none") || style.contains("visibility:hidden")
         })
+}
+
+fn ignored(element: ElementRef<'_>) -> bool {
+    matches!(
+        element.value().name(),
+        "script" | "style" | "noscript" | "template" | "svg" | "head"
+    ) || hidden(element)
         || encrypted_field(element)
 }
 
@@ -244,6 +256,10 @@ fn add_alternative(unit: &mut Unit, text: &str) {
 
 /// Extracts data only; no scripts or event handlers are ever executed.
 pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
+    parse_page(url, html, false)
+}
+
+fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Result<Material, CrawlError> {
     let document = Html::parse_document(html);
     let emails = Emails::new()?;
     let navigation_pattern = Regex::new(
@@ -296,8 +312,9 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
                 if matches!(element.value().name(), "footer" | "nav") {
                     regions.push(element_index);
                 }
-                encrypted |= encrypted_field(element);
-                if suppressed > 0 || ignored(element) {
+                let decrypted = rendered && encrypted_field(element) && !hidden(element);
+                encrypted |= encrypted_field(element) && !decrypted;
+                if suppressed > 0 || (ignored(element) && !decrypted) {
                     suppressed += 1;
                     continue;
                 }
@@ -449,23 +466,30 @@ pub fn parse(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
     });
     let application_shell =
         placeholder_only && (javascript_hint || (script_entry && !mounts.is_empty()));
-    let dynamic_list = document.select(&selector("[id], [class]")?).any(|e| {
-        ["id", "class"]
+    let teacher_regions: Vec<_> = document
+        .select(&selector("[id], [class]")?)
+        .filter(|e| {
+            !matches!(e.value().name(), "body" | "html")
+                && ["id", "class"]
+                    .iter()
+                    .filter_map(|a| e.value().attr(a))
+                    .any(|s| s.to_lowercase().contains("teacher"))
+        })
+        .collect();
+    let has_profile_links = |e: &ElementRef<'_>| {
+        e.descendants()
+            .filter_map(ElementRef::wrap)
+            .any(|child| child.value().name() == "a" && child.value().attr("href").is_some())
+    };
+    let dynamic_list = !teacher_regions.iter().any(has_profile_links)
+        && teacher_regions
             .iter()
-            .filter_map(|a| e.value().attr(a))
-            .any(|s| {
-                let s = s.to_lowercase();
-                s.contains("teacher")
-                    && e.text().map(str::trim).map(str::len).sum::<usize>() < 300
-                    && e.descendants().filter_map(ElementRef::wrap).all(|child| {
-                        child.value().name() != "a" || child.value().attr("href").is_none()
-                    })
-            })
-    }) && document.select(&selector("script[src]")?).any(|e| {
-        e.value()
-            .attr("src")
-            .is_some_and(|s| s.contains("search_teacher"))
-    });
+            .any(|e| e.text().map(str::trim).map(str::len).sum::<usize>() < 300)
+        && document.select(&selector("script[src]")?).any(|e| {
+            e.value()
+                .attr("src")
+                .is_some_and(|s| s.contains("search_teacher"))
+        });
     let needs_browser = if encrypted {
         Some(BrowserReason::EncryptedContent)
     } else if dynamic_list || application_shell {
@@ -568,4 +592,9 @@ fn loading_placeholder(text: &str, punctuation: &Regex) -> bool {
             | "请稍候"
             | "请稍等"
     )
+}
+
+/// Parse the DOM after browser scripts have run.
+pub fn parse_rendered(url: &PageUrl, html: &str) -> Result<Material, CrawlError> {
+    parse_page(url, html, true)
 }

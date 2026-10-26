@@ -1,5 +1,6 @@
 //! Public school pages, structured evidence, ownership checks, and the page ledger.
 
+pub mod browser;
 mod email;
 mod extract;
 pub mod fetch;
@@ -15,6 +16,7 @@ mod url;
 pub use ownership::owns_email;
 pub use page::{
     BrowserReason, EmailEvidence, EmailLocation, Link, Material, Pagination, Unit, parse,
+    parse_rendered,
 };
 pub use url::{PageTarget, PageUrl, Scope};
 

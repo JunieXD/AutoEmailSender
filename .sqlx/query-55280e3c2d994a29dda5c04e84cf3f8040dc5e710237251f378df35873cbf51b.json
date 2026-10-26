@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url AS \"url: PageUrl\",scope_url AS \"scope!: PageUrl\",depth,kind AS \"kind: PageKind\",candidate_id",
+  "query": "UPDATE crawl_page SET work_state = 'running',claim = claim + 1 WHERE id = (SELECT p.id FROM crawl_page p JOIN crawl c ON c.id = p.crawl_id WHERE p.work_state = 'queued' AND c.state = 'running' ORDER BY p.kind = 'profile', p.id LIMIT 1) RETURNING id,crawl_id,claim,url AS \"url: PageUrl\",scope_url AS \"scope!: PageUrl\",depth,kind AS \"kind: PageKind\",candidate_id,steps AS \"steps: Json<Vec<PageStep>>\"",
   "describe": {
     "columns": [
       {
@@ -90,6 +90,17 @@
             "name": "candidate_id"
           }
         }
+      },
+      {
+        "name": "steps: Json<Vec<PageStep>>",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl_page",
+            "name": "steps"
+          }
+        }
       }
     ],
     "parameters": {
@@ -103,8 +114,9 @@
       true,
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "d42b64701f961fdcc2f681b15933e3309f4650b41983218b7096b5a5e0c0b5d2"
+  "hash": "55280e3c2d994a29dda5c04e84cf3f8040dc5e710237251f378df35873cbf51b"
 }

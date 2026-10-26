@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod backup;
+mod browser;
 mod logs;
 mod save;
 
@@ -125,7 +126,16 @@ fn main() -> tauri::Result<()> {
             data_location,
             open_data_location
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                browser::close_all(app);
+            }
+        });
+    Ok(())
 }
 
 /// Opens the data directory, the logs and the database.
@@ -240,6 +250,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         net.clone(),
         crawler.clone(),
         model_limit.clone(),
+        Some(std::sync::Arc::new(browser::Browser::new(app.clone()))),
         move || {
             if let Err(e) = ui.emit("crawl-changed", ()) {
                 tracing::warn!("refresh crawl: {e}");

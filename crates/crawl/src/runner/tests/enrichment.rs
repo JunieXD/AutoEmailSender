@@ -26,7 +26,7 @@ async fn process_answer(
     answer: Value,
 ) -> Outcome {
     let net = net::Net::new(vec![]).unwrap();
-    let fetcher = Fetcher::local(site.port);
+    let fetcher = Pages::local(site.port);
     let limit = Limit::default();
     let cooldown = Cooldown::default();
     let read = process(db, &net, &fetcher, &limit, claim, &cooldown);
@@ -297,7 +297,7 @@ async fn enrichment_failure_reasons_and_single_page_retry(db: SqlitePool) {
     let result = process(
         &db,
         &net::Net::new(vec![]).unwrap(),
-        &Fetcher::local(site.port),
+        &Pages::local(site.port),
         &Limit::default(),
         &c,
         &Cooldown::default(),
@@ -352,7 +352,7 @@ async fn enrichment_failure_reasons_and_single_page_retry(db: SqlitePool) {
             process(
                 &db,
                 &net::Net::new(vec![]).unwrap(),
-                &Fetcher::local(site.port),
+                &Pages::local(site.port),
                 &Limit::default(),
                 &c,
                 &Cooldown::default(),
@@ -462,7 +462,7 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
         tokio::select! {r=&mut ask=>assert!(matches!(r,Err(ReadError::Gone))),_=old.requests.recv()=>panic!("stale model request started")}
         save(&db, &c, &Outcome::Gone).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
-        let outcome = process(&db, &net, &Fetcher::local(site.port), &limit, &c, &cooldown)
+        let outcome = process(&db, &net, &Pages::local(site.port), &limit, &c, &cooldown)
             .await
             .unwrap();
         assert!(matches!(outcome, Outcome::Pause(_, _)));
@@ -512,7 +512,7 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
             let result = process(
                 &db,
                 &net::Net::new(vec![]).unwrap(),
-                &Fetcher::local(port),
+                &Pages::local(port),
                 &limit,
                 &claim,
                 &cd,
@@ -1455,7 +1455,7 @@ async fn enrichment_model_receives_existing_affiliations(db: SqlitePool) {
     enrich::start(&db, &[id], 2).await.unwrap();
     let c = queue::next(&db).await.unwrap().unwrap();
     let net = net::Net::new(vec![]).unwrap();
-    let fetcher = Fetcher::local(site.port);
+    let fetcher = Pages::local(site.port);
     let limit = Limit::default();
     let cooldown = Cooldown::default();
     let read = process(&db, &net, &fetcher, &limit, &c, &cooldown);

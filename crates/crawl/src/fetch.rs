@@ -14,7 +14,7 @@ pub const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const PAGE_TIMEOUT: Duration = Duration::from_secs(40);
 const REQUEST_INTERVAL: Duration = Duration::from_millis(300);
-const MAX_REDIRECTS: usize = 5;
+pub const MAX_REDIRECTS: usize = 5;
 
 struct SiteLimit {
     slots: Semaphore,

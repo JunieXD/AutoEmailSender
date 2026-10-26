@@ -820,3 +820,50 @@ fn data_scripts_cannot_bind_pagination_events() {
         );
     }
 }
+
+#[test]
+fn rendered_encrypted_fields_keep_their_visible_email() {
+    let page = crawl::parse_rendered(&url(), include_str!("pages/sdu-rendered.html")).unwrap();
+    assert_eq!(page.needs_browser, None);
+    assert!(
+        page.units
+            .iter()
+            .flat_map(|u| &u.emails)
+            .any(|e| e.address == "lingyunwang@sdu.edu.cn")
+    );
+    let hidden = crawl::parse_rendered(
+        &url(),
+        "<p>王凌云</p><span _tsites_encrypt_field='x' style='display:none'>ciphertext</span>",
+    )
+    .unwrap();
+    assert_eq!(hidden.needs_browser, Some(BrowserReason::EncryptedContent));
+}
+
+#[test]
+fn loaded_directory_is_not_confused_with_its_filter_buttons() {
+    let page = parse(&url(), include_str!("pages/fudan-rendered.html")).unwrap();
+    assert_eq!(page.needs_browser, None);
+    assert!(
+        page.units
+            .iter()
+            .flat_map(|u| &u.links)
+            .any(|l| l.text == "柴洪峰")
+    );
+}
+
+#[test]
+fn browser_pagination_keeps_numbers_and_does_not_treat_last_as_next() {
+    let page = parse(
+        &url(),
+        "<p>名单</p><nav class='pagination'>1/4<button>尾页</button><button>下一页</button></nav>",
+    )
+    .unwrap();
+    assert_eq!(
+        page.pagination
+            .buttons
+            .iter()
+            .map(|b| (b.page, b.control.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(Some(4), "尾页"), (None, "下一页")]
+    );
+}
