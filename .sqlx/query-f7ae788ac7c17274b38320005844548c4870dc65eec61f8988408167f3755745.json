@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT t.id, t.name, t.state, t.generation_paused_at, t.generation_pause_reason,\n            (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generating')\n                AS \"generating!: i64\",\n            EXISTS (SELECT 1 FROM email WHERE task_id = t.id AND state IN ('review', 'approved'))\n                AS \"pending!: bool\"\n        FROM task t\n        WHERE t.state = 'paused'\n            OR (t.state <> 'stopped' AND t.generation_paused_at IS NOT NULL)\n            OR t.id IN (SELECT task_id FROM email\n                WHERE state IN ('generating', 'generation_failed', 'failed'))\n        ORDER BY t.id DESC",
+  "query": "SELECT t.id, t.name, t.state, t.generation_paused_at, t.generation_pause_reason\n        FROM task t\n        WHERE t.state = 'paused'\n            OR (t.state <> 'stopped' AND t.generation_paused_at IS NOT NULL)\n            OR t.id IN (SELECT task_id FROM email\n                WHERE state IN ('generating', 'generation_failed', 'failed'))\n        ORDER BY t.id DESC",
   "describe": {
     "columns": [
       {
@@ -57,18 +57,6 @@
             "name": "generation_pause_reason"
           }
         }
-      },
-      {
-        "name": "generating!: i64",
-        "ordinal": 5,
-        "type_info": "Integer",
-        "origin": "Expression"
-      },
-      {
-        "name": "pending!: bool",
-        "ordinal": 6,
-        "type_info": "Integer",
-        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -79,10 +67,8 @@
       false,
       false,
       true,
-      true,
-      false,
-      false
+      true
     ]
   },
-  "hash": "ac197aec10e7c6ef7e303c58f85fad597c44358ebc25b7a0fa7166bae277c72e"
+  "hash": "f7ae788ac7c17274b38320005844548c4870dc65eec61f8988408167f3755745"
 }

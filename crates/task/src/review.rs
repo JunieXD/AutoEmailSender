@@ -14,6 +14,10 @@ pub struct Progress {
     pub canceled: i64,
 }
 impl Progress {
+    fn unfinished(&self) -> bool {
+        self.generating + self.review + self.approved > 0
+    }
+
     pub fn total(&self) -> i64 {
         self.generating
             + self.review
@@ -119,12 +123,9 @@ pub struct TaskWork {
 }
 
 pub async fn work(db: &SqlitePool) -> std::result::Result<Vec<TaskWork>, sqlx::Error> {
+    let mut tx = db.begin().await?;
     let rows = sqlx::query!(
-        r#"SELECT t.id, t.name, t.state, t.generation_paused_at, t.generation_pause_reason,
-            (SELECT count(*) FROM email WHERE task_id = t.id AND state = 'generating')
-                AS "generating!: i64",
-            EXISTS (SELECT 1 FROM email WHERE task_id = t.id AND state IN ('review', 'approved'))
-                AS "pending!: bool"
+        r#"SELECT t.id, t.name, t.state, t.generation_paused_at, t.generation_pause_reason
         FROM task t
         WHERE t.state = 'paused'
             OR (t.state <> 'stopped' AND t.generation_paused_at IS NOT NULL)
@@ -132,20 +133,25 @@ pub async fn work(db: &SqlitePool) -> std::result::Result<Vec<TaskWork>, sqlx::E
                 WHERE state IN ('generating', 'generation_failed', 'failed'))
         ORDER BY t.id DESC"#,
     )
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
+    let ids = rows.iter().map(|t| t.id).collect::<Vec<_>>();
+    let mut counts = counts(&mut tx, &ids).await?;
     Ok(rows
         .into_iter()
-        .map(|r| TaskWork {
-            id: r.id,
-            name: r.name,
-            state: state(
-                &r.state,
-                r.generation_paused_at.is_some(),
-                r.generating > 0 || r.pending,
-            ),
-            pause_reason: r.generation_pause_reason,
-            generating: r.generating,
+        .map(|r| {
+            let progress = counts.remove(&r.id).unwrap_or_default();
+            TaskWork {
+                id: r.id,
+                name: r.name,
+                state: state(
+                    &r.state,
+                    r.generation_paused_at.is_some(),
+                    progress.unfinished(),
+                ),
+                pause_reason: r.generation_pause_reason,
+                generating: progress.generating,
+            }
         })
         .collect())
 }
@@ -178,7 +184,7 @@ pub async fn list(
         let state = state(
             &r.state,
             r.generation_paused_at.is_some(),
-            progress.generating + progress.review + progress.approved > 0,
+            progress.unfinished(),
         );
         tasks.push(TaskSummary {
             id: r.id,
@@ -264,7 +270,7 @@ pub async fn get(
         state: state(
             &r.state,
             r.generation_paused_at.is_some(),
-            progress.generating + progress.review + progress.approved > 0,
+            progress.unfinished(),
         ),
         created_at: r.created_at,
         pause_reason: r.generation_pause_reason,
