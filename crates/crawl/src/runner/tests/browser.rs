@@ -279,8 +279,9 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
         queue::control(&db, id, action, 2).await.unwrap();
         tokio::time::pause();
         tokio::time::advance(Duration::from_millis(501)).await;
-        assert!(matches!(read.await, Err(ReadError::Gone)));
+        // Auto-advance can expire the pool timeout before SQLite's real threads can reply.
         tokio::time::resume();
+        assert!(matches!(read.await, Err(ReadError::Gone)));
         assert_eq!(browser.active.load(Ordering::SeqCst), 0);
         let before: (String, Option<String>, String) =
             sqlx::query_as("SELECT status,error,text FROM crawl_page WHERE id=?")
