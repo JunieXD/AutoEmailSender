@@ -8,10 +8,8 @@ use model::{ModelError, ModelForm};
 use net::Net;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use test_fixtures::provider::{self, scripted as provider};
 use writing::{Error, Letter};
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
-use provider::scripted as provider;
 const T: i64 = 1_800_000_000_000;
 
 /// A user with a profile and two materials, one of them for writing, and a mentor with a note;
@@ -96,7 +94,8 @@ async fn follow_up_uses_prior_letters_without_private_mentor_fields(db: SqlitePo
         "<body>王伟老师：想请问您是否方便查看之前的申请。谢谢！</body>",
         "stop",
     )])
-    .await;
+    .await
+    .unwrap();
     model(&db, &address, true).await;
     let previous = vec![Letter {
         subject: "申请读博".into(),
@@ -172,7 +171,8 @@ async fn a_blank_letter_is_drafted_from_the_user_and_the_mentor(db: SqlitePool) 
         "<subject>申请攻读博士学位</subject>\n<body>\n王伟老师：\n\n您好！\n</body>",
         "stop",
     )])
-    .await;
+    .await
+    .unwrap();
     model(&db, &address, true).await;
     let net = Net::new(Vec::new()).unwrap();
 
@@ -243,7 +243,7 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
         ("<think>按格式 <subject>主题</subject><body>正文</body> 回答", "length"),
         ("", "length"),
     ])
-    .await;
+    .await.unwrap();
     model(&db, &address, true).await;
     let net = Net::new(Vec::new()).unwrap();
     let current = Letter {
@@ -295,7 +295,7 @@ async fn nothing_is_sent_until_the_user_agrees(db: SqlitePool) {
     let result = current_write(&db, &net, mentor, &blank(), &[], T).await;
     assert!(matches!(result, Err(Error::NoModel)), "{result:?}");
 
-    let (address, received) = provider(Vec::new()).await;
+    let (address, received) = provider(Vec::new()).await.unwrap();
     model(&db, &address, false).await;
     let result = current_write(&db, &net, mentor, &blank(), &[], T).await;
     assert!(matches!(result, Err(Error::NotAgreed)), "{result:?}");
@@ -316,7 +316,8 @@ async fn writing_reads_only_the_first_ten_thousand_characters_of_a_material(db: 
         "<subject>申请</subject><body>王老师您好</body>",
         "stop",
     )])
-    .await;
+    .await
+    .unwrap();
     model(&db, &address, true).await;
     current_write(
         &db,
@@ -454,7 +455,8 @@ async fn reply_drafts_and_rewrites_use_the_fixed_target_and_record_their_purpose
             "stop",
         ),
     ])
-    .await;
+    .await
+    .unwrap();
     model(&db, &address, true).await;
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let references = material::for_writing(&db).await.unwrap();
@@ -533,7 +535,9 @@ async fn reply_context_stops_at_twenty_letters_and_ten_thousand_characters(db: S
     for at in 1..=23 {
         received_message(&db, mentor, "reply", at, &format!("主题{at}"), "正文").await;
     }
-    let (address, received) = provider(vec![("<body>王老师您好</body>", "stop"); 2]).await;
+    let (address, received) = provider(vec![("<body>王老师您好</body>", "stop"); 2])
+        .await
+        .unwrap();
     model(&db, &address, true).await;
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let net = Net::new(Vec::new()).unwrap();
@@ -633,7 +637,7 @@ async fn reply_target_must_still_exist_and_have_a_message_id(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: SqlitePool) {
     let (mentor, _) = setup(&db).await;
-    let mut provider = provider::Provider::start().await;
+    let mut provider = provider::Provider::start().await.unwrap();
     model(&db, &provider.address, true).await;
     let letter = Letter {
         subject: "获得优秀学生奖".into(),
@@ -705,7 +709,9 @@ async fn fact_check_keeps_only_exact_distinct_quotes_and_caps_findings(db: Sqlit
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn incomplete_fact_check_is_an_error_and_still_records_usage(db: SqlitePool) {
     let (mentor, _) = setup(&db).await;
-    let (address, _) = provider(vec![("[]", "length"), ("不是 JSON", "stop")]).await;
+    let (address, _) = provider(vec![("[]", "length"), ("不是 JSON", "stop")])
+        .await
+        .unwrap();
     model(&db, &address, true).await;
     let letter = Letter {
         subject: "申请".into(),

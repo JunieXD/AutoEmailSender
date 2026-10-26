@@ -24,4 +24,5 @@ tokio = { workspace = true, features = ["macros", "sync", "time", "rt"] }
 
 [dev-dependencies]
 db.workspace = true
+test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }

@@ -2,17 +2,16 @@
 
 use email::outcome::{self as queue, ReplyOutcome as R, ReplyProcessing};
 use mentor::{ContactStatus, MentorFields, MentorQuery, ReplyOutcomeFilter as F};
+use provider::{Provider, Response};
 use receive::outcome::Processor;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use test_fixtures::provider;
 use tokio::{
     sync::mpsc,
     task::JoinHandle,
     time::{Duration, timeout},
 };
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
-use provider::{Provider, Response};
 
 const VALID: &str = r#"{"outcome":"interested"}"#;
 
@@ -322,7 +321,7 @@ async fn prompt_contains_only_fresh_reply_and_referenced_student_letter_and_reco
         .execute(&db)
         .await
         .unwrap();
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 3).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -357,7 +356,7 @@ async fn references_find_external_parent_strip_quotes_and_limit_total_characters
         .execute(&db)
         .await
         .unwrap();
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 3).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -415,7 +414,7 @@ async fn assert_fresh_input(db: SqlitePool, body: &str, fresh: &str) {
         .execute(&db)
         .await
         .unwrap();
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 3).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -435,7 +434,7 @@ async fn assert_fresh_input(db: SqlitePool, body: &str, fresh: &str) {
 async fn invalid_output_retries_once_fails_then_user_retry_succeeds(db: SqlitePool) {
     let m = setup(&db).await;
     let id = message(&db, m, "reply", 1, "答复").await;
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 2).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -485,7 +484,7 @@ async fn missing_model_and_consent_pause_and_resume_without_losing_the_queue(db:
     let mut runner = Runner::start(&db, Default::default());
     runner.until(&db, |p| p.pause.is_some()).await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 1);
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let c = config(&db, &p.address).await;
     sqlx::query("UPDATE model_config SET agreed=0 WHERE id=?")
         .bind(c)
@@ -521,7 +520,7 @@ async fn missing_model_and_consent_pause_and_resume_without_losing_the_queue(db:
 async fn late_model_results_and_errors_cannot_override_manual_changes_or_new_work(db: SqlitePool) {
     let m = setup(&db).await;
     let id = message(&db, m, "reply", 1, "答复").await;
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 2).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -571,12 +570,12 @@ async fn late_model_results_and_errors_cannot_override_manual_changes_or_new_wor
 async fn current_config_errors_pause_old_config_errors_only_requeue(db: SqlitePool) {
     let m = setup(&db).await;
     message(&db, m, "reply", 1, "答复").await;
-    let mut old_provider = Provider::start().await;
+    let mut old_provider = Provider::start().await.unwrap();
     config(&db, &old_provider.address).await;
     queue::set_enabled(&db, true, 2).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
     let old = request(&mut old_provider).await;
-    let mut new_provider = Provider::start().await;
+    let mut new_provider = Provider::start().await.unwrap();
     config(&db, &new_provider.address).await;
     old.respond
         .send(Response::Refused {
@@ -614,7 +613,7 @@ async fn current_config_errors_pause_old_config_errors_only_requeue(db: SqlitePo
 async fn waiting_for_shared_capacity_reads_latest_model_and_consent(db: SqlitePool) {
     let m = setup(&db).await;
     message(&db, m, "reply", 1, "答复").await;
-    let mut old = Provider::start().await;
+    let mut old = Provider::start().await.unwrap();
     config(&db, &old.address).await;
     queue::set_enabled(&db, true, 2).await.unwrap();
     let limit = model::background::Limit::default();
@@ -625,7 +624,7 @@ async fn waiting_for_shared_capacity_reads_latest_model_and_consent(db: SqlitePo
     ];
     let mut runner = Runner::start(&db, limit);
     runner.changes.recv().await.unwrap();
-    let mut new = Provider::start().await;
+    let mut new = Provider::start().await.unwrap();
     let c = config(&db, &new.address).await;
     sqlx::query("UPDATE model_config SET agreed=0 WHERE id=?")
         .bind(c)
@@ -656,7 +655,7 @@ async fn waiting_for_shared_capacity_reads_latest_model_and_consent(db: SqlitePo
 async fn rate_limit_uses_retry_after_without_polling_on_controlled_time(db: SqlitePool) {
     let m = setup(&db).await;
     message(&db, m, "reply", 1, "答复").await;
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 2).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -703,7 +702,7 @@ async fn model_work_never_exceeds_shared_capacity_and_restoration_wakes_retained
     for at in 1..=5 {
         message(&db, m, "reply", at, "答复").await;
     }
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     queue::set_enabled(&db, true, 6).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
@@ -879,7 +878,7 @@ async fn todos_share_limited_material_include_reply_date_and_record_separate_usa
         .await
         .unwrap();
     queue::set_enabled(&db, true, 2).await.unwrap();
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let mut runner = Runner::start(&db, Default::default());
     let mut materials = Vec::new();
@@ -927,7 +926,7 @@ async fn todos_validate_dates_times_and_deduplicate_trimmed_text(db: SqlitePool)
     let m = setup(&db).await;
     email::todos::set_enabled(&db, true).await.unwrap();
     let id = todo_message(&db, m, 1_792_972_800_000, "做几件事").await;
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut provider).await;
@@ -966,7 +965,7 @@ async fn todos_bad_text_and_format_retry_once_fail_then_retry_without_duplicate_
     let m = setup(&db).await;
     email::todos::set_enabled(&db, true).await.unwrap();
     let id = todo_message(&db, m, 1, "发材料").await;
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let mut runner = Runner::start(&db, Default::default());
     let long =
@@ -1083,7 +1082,7 @@ async fn todos_disabling_while_model_is_answering_discards_results_but_keeps_usa
     let m = setup(&db).await;
     email::todos::set_enabled(&db, true).await.unwrap();
     todo_message(&db, m, 1, "发材料").await;
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut provider).await;

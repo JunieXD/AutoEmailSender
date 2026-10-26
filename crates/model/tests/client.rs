@@ -10,15 +10,14 @@ use model::usage::Usage;
 use model::{Access, ModelError};
 use net::Net;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpListener;
+use test_fixtures::provider::{Provider, Response};
 
 /// A request the fake provider received.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Request {
     line: String,
     authorization: String,
-    body: String,
+    body: Value,
 }
 
 type Received = Arc<Mutex<Vec<Request>>>;
@@ -26,41 +25,24 @@ type Received = Arc<Mutex<Vec<Request>>>;
 /// Starts a fake provider that answers every request with `status` and `reply`, and returns its
 /// address and what it received.
 async fn provider(status: u16, reply: &'static str) -> (String, Received) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = format!(
-        "http://127.0.0.1:{}/v1",
-        listener.local_addr().unwrap().port()
-    );
+    let mut provider = Provider::start().await.unwrap();
+    let address = provider.address.clone();
     let received = Received::default();
     let log = received.clone();
     tokio::spawn(async move {
-        loop {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut io = BufReader::new(stream);
-            let mut request = Request::default();
-            io.read_line(&mut request.line).await.unwrap();
-            let mut length = 0;
-            loop {
-                let mut header = String::new();
-                io.read_line(&mut header).await.unwrap();
-                let Some((name, value)) = header.trim_end().split_once(": ") else {
-                    break;
-                };
-                match name.to_ascii_lowercase().as_str() {
-                    "authorization" => request.authorization = value.into(),
-                    "content-length" => length = value.parse().unwrap(),
-                    _ => {}
-                }
-            }
-            let mut body = vec![0; length];
-            io.read_exact(&mut body).await.unwrap();
-            request.body = String::from_utf8(body).unwrap();
-            log.lock().unwrap().push(request);
-            let head = format!(
-                "HTTP/1.1 {status} X\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                reply.len()
-            );
-            io.write_all((head + reply).as_bytes()).await.unwrap();
+        while let Some(request) = provider.requests.recv().await {
+            log.lock().unwrap().push(Request {
+                line: request.line,
+                authorization: request.authorization,
+                body: request.body,
+            });
+            request
+                .respond
+                .send(Response::Raw {
+                    status,
+                    content: reply.into(),
+                })
+                .unwrap();
         }
     });
     (address, received)
@@ -95,7 +77,7 @@ async fn a_test_asks_the_model_not_to_think() {
     let received = received.lock().unwrap();
     assert_eq!(received[0].line, "POST /v1/chat/completions HTTP/1.1\r\n");
     assert_eq!(received[0].authorization, "Bearer sk-test");
-    let body: Value = serde_json::from_str(&received[0].body).unwrap();
+    let body = &received[0].body;
     assert_eq!(body["model"], "deepseek-chat");
     assert_eq!(body["stream"], true);
     assert_eq!(body["thinking"], json!({"type": "disabled"}));
@@ -189,7 +171,7 @@ async fn an_answer_says_what_it_cost_however_the_provider_counts() {
         let answer = model::ask(&net, &access(address, None), "m", "规则", "资料")
             .await
             .unwrap();
-        let body: Value = serde_json::from_str(&received.lock().unwrap()[0].body).unwrap();
+        let body = received.lock().unwrap()[0].body.clone();
         assert_eq!(
             body["messages"],
             json!([{"role": "system", "content": "规则"}, {"role": "user", "content": "资料"}])

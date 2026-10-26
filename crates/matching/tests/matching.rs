@@ -2,15 +2,14 @@
 use matching::{MatchFinished, Matcher};
 use mentor::{MatchState, MentorFields, matching as queue};
 use net::Net;
+use provider::{Provider, Response};
 use sqlx::SqlitePool;
+use test_fixtures::provider;
 use tokio::{
     sync::mpsc,
     task::JoinHandle,
     time::{Duration, timeout},
 };
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
-use provider::{Provider, Response};
 const VALID: &str = "{\"score\":88,\"reason\":\"研究方向相近，有可迁移的项目经历。\",\"directions\":[\"视觉\"],\
     \"highlights\":[\"课程项目\"],\"risks\":[]}";
 
@@ -126,7 +125,7 @@ async fn setup(db: &SqlitePool, address: &str, n: usize) -> Vec<i64> {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn normal_analysis_records_result_usage_and_estimate_with_student_prefix(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 2).await;
     let text = "中".repeat(10_000) + "不应读取尾部";
     sqlx::query(
@@ -198,7 +197,7 @@ async fn normal_analysis_records_result_usage_and_estimate_with_student_prefix(d
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn invalid_output_retries_once_then_succeeds_or_fails(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     request(&mut p)
@@ -243,7 +242,7 @@ async fn invalid_output_retries_once_then_succeeds_or_fails(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn unauthorized_still_pauses_after_name_and_price_edits_then_resumes(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     let old = request(&mut p).await;
@@ -294,7 +293,7 @@ async fn unauthorized_still_pauses_after_name_and_price_edits_then_resumes(db: S
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn rate_limit_waits_for_retry_after_on_controlled_time(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     let req = request(&mut p).await;
@@ -336,7 +335,7 @@ async fn rate_limit_waits_for_retry_after_on_controlled_time(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn startup_recovers_running_concurrency_is_three_and_pause_stops_claiming(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 5).await;
     queue::next(&db).await.unwrap();
     let mut runner = Runner::start(&db);
@@ -392,7 +391,7 @@ async fn absent_model_consent_and_student_basis_are_explained_before_calling(db:
         matching::ready(&db).await,
         Err(matching::Error::NoModel)
     ));
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 1).await;
     sqlx::query("UPDATE model_config SET agreed = 0")
         .execute(&db)
@@ -429,7 +428,7 @@ async fn absent_model_consent_and_student_basis_are_explained_before_calling(db:
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn research_removed_while_waiting_is_not_sent_to_the_model(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     sqlx::query("UPDATE mentor_detail SET research = NULL WHERE mentor_id = ?")
         .bind(ids[0])
@@ -451,7 +450,7 @@ async fn research_removed_while_waiting_is_not_sent_to_the_model(db: SqlitePool)
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restored_mentor_discards_the_old_request_after_a_new_claim(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     let id = ids[0];
     let mut runner = Runner::start(&db);
@@ -487,7 +486,7 @@ async fn restored_mentor_discards_the_old_request_after_a_new_claim(db: SqlitePo
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn removed_claim_cannot_pause_an_empty_queue(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     let old = request(&mut p).await;
@@ -509,11 +508,11 @@ async fn removed_claim_cannot_pause_an_empty_queue(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn old_configuration_error_requeues_without_pausing_the_new_default(db: SqlitePool) {
-    let mut old_provider = Provider::start().await;
+    let mut old_provider = Provider::start().await.unwrap();
     let ids = setup(&db, &old_provider.address, 1).await;
     let mut runner = Runner::start(&db);
     let old = request(&mut old_provider).await;
-    let mut new_provider = Provider::start().await;
+    let mut new_provider = Provider::start().await.unwrap();
     setup(&db, &new_provider.address, 0).await;
     let configs = model::list(&db).await.unwrap();
     profile::set_default_model(&db, configs[1].id)
@@ -552,7 +551,7 @@ async fn old_configuration_error_requeues_without_pausing_the_new_default(db: Sq
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn old_key_error_does_not_pause_the_updated_configuration(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     let old = request(&mut p).await;
@@ -603,11 +602,11 @@ async fn old_key_error_does_not_pause_the_updated_configuration(db: SqlitePool) 
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn old_endpoint_error_does_not_pause_the_reconfirmed_configuration(db: SqlitePool) {
-    let mut old_provider = Provider::start().await;
+    let mut old_provider = Provider::start().await.unwrap();
     let ids = setup(&db, &old_provider.address, 1).await;
     let mut runner = Runner::start(&db);
     let old = request(&mut old_provider).await;
-    let mut new_provider = Provider::start().await;
+    let mut new_provider = Provider::start().await.unwrap();
     let config = model::list(&db).await.unwrap().remove(0);
     let fields = model::ModelForm {
         name: "".into(),
@@ -658,7 +657,7 @@ async fn old_endpoint_error_does_not_pause_the_reconfirmed_configuration(db: Sql
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn old_model_name_error_does_not_pause_the_updated_configuration(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     let old = request(&mut p).await;
@@ -693,7 +692,7 @@ async fn old_model_name_error_does_not_pause_the_updated_configuration(db: Sqlit
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn cancelled_inflight_errors_do_not_retry_or_fail(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let ids = setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     for status in [429, 401, 500] {
@@ -750,7 +749,7 @@ async fn cancelled_inflight_errors_do_not_retry_or_fail(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn cancelled_invalid_answer_does_not_start_a_format_retry(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 1).await;
     let mut runner = Runner::start(&db);
     let req = request(&mut p).await;

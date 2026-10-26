@@ -2240,8 +2240,7 @@ mod table_tests {
 }
 
 #[cfg(test)]
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
+use test_fixtures::provider;
 
 #[cfg(test)]
 mod writing_tests {
@@ -2281,12 +2280,14 @@ mod writing_tests {
             "<subject>申请</subject><body>旧地址的信</body>",
             "stop",
         )])
-        .await;
+        .await
+        .unwrap();
         let (new_address, new_received) = provider::scripted(vec![(
             "<subject>申请</subject><body>新地址的信</body>",
             "stop",
         )])
-        .await;
+        .await
+        .unwrap();
         let form = |address: &str| model::ModelForm {
             name: String::new(),
             provider: model::providers::CUSTOM.into(),
