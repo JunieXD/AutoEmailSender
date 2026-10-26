@@ -1,17 +1,16 @@
 #![cfg(test)]
+use provider::{Provider, Response};
 use sqlx::SqlitePool;
 use task::{
     NewTask, Writer,
     generation::{self, DraftsFinished, Generator},
 };
+use test_fixtures::provider;
 use tokio::{
     sync::mpsc,
     task::JoinHandle,
     time::{Duration, timeout},
 };
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
-use provider::{Provider, Response};
 const LETTER: &str = "<subject>申请</subject><body>王老师：您好，我希望申请读研。</body>";
 const MATCH: &str =
     r#"{"score":80,"reason":"方向相近","directions":[],"highlights":[],"risks":[]}"#;
@@ -33,6 +32,7 @@ impl Runner {
         let (done_tx, done) = mpsc::unbounded_channel();
         let worker = tokio::spawn(generation::run(
             db.clone(),
+            db::Writes::default(),
             net::Net::new(vec![]).unwrap(),
             handle.clone(),
             limit,
@@ -132,7 +132,7 @@ async fn setup(db: &SqlitePool, address: &str, n: i64) -> (i64, Vec<i64>) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn generates_and_regenerates_follow_up_body_with_the_fixed_subject(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (_, ids) = setup(&db, &p.address, 1).await;
     sqlx::query(
         r#"UPDATE email
@@ -206,7 +206,7 @@ async fn generates_and_regenerates_follow_up_body_with_the_fixed_subject(db: Sql
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn generates_and_reports_single_failures_and_finishes_once(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 4).await;
     let mut run = Runner::start(&db, Default::default());
     let first = request(&mut p).await;
@@ -242,7 +242,7 @@ async fn generates_and_reports_single_failures_and_finishes_once(db: SqlitePool)
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn failed_regeneration_is_not_counted_as_a_finished_draft(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;
     let mut run = Runner::start(&db, Default::default());
     request(&mut p)
@@ -269,7 +269,7 @@ async fn failed_regeneration_is_not_counted_as_a_finished_draft(db: SqlitePool) 
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn account_errors_pause_only_the_task_and_old_configuration_errors_do_not(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;
     let mut run = Runner::start(&db, Default::default());
     let r = request(&mut p).await;
@@ -316,7 +316,7 @@ async fn account_errors_pause_only_the_task_and_old_configuration_errors_do_not(
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn retry_after_uses_controlled_time_and_does_not_mark_a_failure(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;
     let mut run = Runner::start(&db, Default::default());
     let r = request(&mut p).await;
@@ -374,7 +374,7 @@ async fn retry_after_uses_controlled_time_and_does_not_mark_a_failure(db: Sqlite
 async fn restart_recovers_running_claims_and_fixed_references_and_template_are_used(
     db: SqlitePool,
 ) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, ids) = setup(&db, &p.address, 1).await;
     sqlx::query(
         r#"INSERT INTO material (id, file_name, size, for_matching, for_writing,
@@ -389,10 +389,14 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
         .execute(&db)
         .await
         .unwrap();
+    sqlx::query("UPDATE profile SET name = '林晓'")
+        .execute(&db)
+        .await
+        .unwrap();
     sqlx::query(
         r#"UPDATE task
         SET template_subject = '申请{导师姓名}',
-            template_body_md = '{导师姓名}老师：原始底稿'"#,
+            template_body_md = '{导师姓名}老师：我是{我的姓名}，原始底稿'"#,
     )
     .execute(&db)
     .await
@@ -405,6 +409,14 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
         old.body
             .to_string()
             .contains(&format!("申请王{}", ids[0] - 1))
+    );
+    let message: serde_json::Value =
+        serde_json::from_str(old.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(message["个人资料"]["姓名"], "林晓");
+    assert_eq!(message["导师"]["姓名"], format!("王{}", ids[0] - 1));
+    assert_eq!(
+        message["现在的信"]["正文"],
+        format!("王{}老师：我是林晓，原始底稿", ids[0] - 1)
     );
     drop(run);
     run = Runner::start(&db, Default::default());
@@ -421,7 +433,7 @@ async fn restart_recovers_running_claims_and_fixed_references_and_template_are_u
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn matching_and_writing_share_three_actual_model_calls(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, ids) = setup(&db, &p.address, 6).await;
     sqlx::query("UPDATE profile SET research_interests='机器学习'")
         .execute(&db)
@@ -435,6 +447,7 @@ async fn matching_and_writing_share_three_actual_model_calls(db: SqlitePool) {
     let matcher = matching::Matcher::default();
     let match_worker = tokio::spawn(matching::run(
         db.clone(),
+        db::Writes::default(),
         net::Net::new(vec![]).unwrap(),
         matcher,
         limit,
@@ -478,7 +491,7 @@ async fn matching_and_writing_share_three_actual_model_calls(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn pause_keeps_completed_drafts_and_stop_discards_in_flight_results(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 5).await;
     let mut run = Runner::start(&db, Default::default());
     let mut requests = vec![];
@@ -518,7 +531,7 @@ async fn pause_keeps_completed_drafts_and_stop_discards_in_flight_results(db: Sq
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn fact_check_switch_controls_generation_and_token_estimates(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, ids) = setup(&db, &p.address, 1).await;
     let form = NewTask {
         kind: task::Kind::First,
@@ -635,7 +648,7 @@ async fn fact_check_switch_controls_generation_and_token_estimates(db: SqlitePoo
 async fn failed_fact_check_enters_review_and_stale_check_cannot_replace_a_new_claim(
     db: SqlitePool,
 ) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
     let mut run = Runner::start(&db, Default::default());
@@ -728,10 +741,10 @@ async fn failed_fact_check_enters_review_and_stale_check_cannot_replace_a_new_cl
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn fact_check_refreshes_configuration_and_consent_after_writing(db: SqlitePool) {
-    let mut writing = Provider::start().await;
+    let mut writing = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &writing.address, 1).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
-    let mut checking = Provider::start().await;
+    let mut checking = Provider::start().await.unwrap();
     sqlx::query(
         r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed,
             created_at)
@@ -797,7 +810,7 @@ async fn fact_check_refreshes_configuration_and_consent_after_writing(db: Sqlite
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn disabling_fact_checks_while_writing_skips_the_second_call(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
     let mut run = Runner::start(&db, Default::default());
@@ -814,7 +827,7 @@ async fn disabling_fact_checks_while_writing_skips_the_second_call(db: SqlitePoo
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
     for stop in [true, false] {
-        let mut p = Provider::start().await;
+        let mut p = Provider::start().await.unwrap();
         let (id, _) = setup(&db, &p.address, 1).await;
         profile::set_ai_fact_check(&db, true).await.unwrap();
         let mut run = Runner::start(&db, Default::default());
@@ -877,7 +890,7 @@ async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn expired_generation_claim_skips_the_old_letters_check(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
     let mut run = Runner::start(&db, Default::default());
@@ -904,7 +917,7 @@ async fn expired_generation_claim_skips_the_old_letters_check(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn fact_check_rate_limit_cools_the_queue_without_regenerating_the_letter(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 4).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
     let mut run = Runner::start(&db, Default::default());
@@ -974,7 +987,7 @@ async fn fact_check_rate_limit_cools_the_queue_without_regenerating_the_letter(d
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn fact_check_account_errors_pause_remaining_work_and_keep_the_draft(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 4).await;
     profile::set_ai_fact_check(&db, true).await.unwrap();
     let mut run = Runner::start(&db, Default::default());
@@ -1014,7 +1027,7 @@ async fn fact_check_account_errors_pause_remaining_work_and_keep_the_draft(db: S
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn fact_check_pause_compares_its_own_configuration_with_the_current_one(db: SqlitePool) {
     for field in ["unchanged", "name", "model", "base_url", "api_key", "id"] {
-        let mut p = Provider::start().await;
+        let mut p = Provider::start().await.unwrap();
         let (id, _) = setup(&db, &p.address, 1).await;
         profile::set_ai_fact_check(&db, true).await.unwrap();
         let mut run = Runner::start(&db, Default::default());

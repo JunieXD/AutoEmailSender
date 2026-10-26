@@ -1468,7 +1468,7 @@ async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePoo
     store.deliver("INBOX", T, REPLY);
     round(&db, &net, T + MINUTE).await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
-    queue::set_enabled(&db, true, T + MINUTE).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 1);
     store.deliver(
         "INBOX",
@@ -1500,9 +1500,7 @@ async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePoo
     let found = round(&db, &net, T + 6 * MINUTE).await;
     assert!(found.replies.is_empty());
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 3);
-    queue::set_enabled(&db, false, T + 7 * MINUTE)
-        .await
-        .unwrap();
+    queue::set_enabled(&db, false).await.unwrap();
     store.deliver(
         "INBOX",
         T + 8 * MINUTE,

@@ -77,6 +77,25 @@ async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn word_symbols_do_not_cut_off_ai_reference_text(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let id = add(&db, dir.path(), "简历.docx", fixture("symbol-nul.docx"), 1)
+        .await
+        .unwrap();
+    let expected = "林晓 个人简历\n南京大学 计算机科学与技术";
+    for references in [
+        material::for_writing(&db).await.unwrap(),
+        material::for_matching(&db).await.unwrap(),
+    ] {
+        assert_eq!(references[0].text, expected);
+    }
+    assert_eq!(
+        material::text(&db, id).await.unwrap(),
+        Some(Some(expected.into()))
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_scan_without_text_can_only_be_attached(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     let id = add(&db, dir.path(), "成绩单.pdf", fixture("scan.pdf"), 1)
@@ -231,6 +250,18 @@ async fn long_material_is_marked_and_truncated_by_unicode_character(db: SqlitePo
     assert!(material::list(&db).await.unwrap()[0].exceeds_ai_limit);
     assert_eq!(material::for_ai(&text).chars().count(), 10_000);
     assert_eq!(material::for_ai("短文"), "短文");
+    for reference in [
+        material::for_writing(&db).await.unwrap(),
+        material::for_matching(&db).await.unwrap(),
+    ] {
+        assert_eq!(reference[0].text, material::for_ai(&text));
+    }
+    assert_eq!(material::text(&db, 1).await.unwrap(), Some(Some(text)));
+    assert!(material::has_matching(&db).await.unwrap());
+    material::set_purpose(&db, 1, Purpose::Matching, false, 2)
+        .await
+        .unwrap();
+    assert!(!material::has_matching(&db).await.unwrap());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

@@ -12,7 +12,6 @@ use tokio::{
 };
 
 const CONCURRENCY: usize = model::background::CONCURRENCY;
-const RETRY: Duration = Duration::from_secs(5);
 const NO_MODEL: &str = "尚未添加模型。在“设置 › AI › 模型”里添加后继续回信处理。";
 const NOT_AGREED: &str = "请先在“设置 › AI › 模型”确认发给模型服务商的内容，再继续回信处理。";
 const INVALID: &str = "模型没有按要求标出回信结果，可以重试或换个模型。";
@@ -64,17 +63,9 @@ fn parse(text: &str) -> Result<ReplyOutcome, &'static str> {
 }
 
 pub(crate) fn json_text(text: &str) -> Result<&str, &'static str> {
-    let mut text = text.trim();
-    while let Some(rest) = text.strip_prefix("<think>") {
+    let mut text = model::output::thinking_blocks(text.trim())?;
+    if let Some(rest) = model::output::fence_content(text)? {
         text = rest
-            .split_once("</think>")
-            .ok_or("思考块没有结束")?
-            .1
-            .trim_start();
-    }
-    if let Some(rest) = text.strip_prefix("```") {
-        text = rest.split_once('\n').ok_or("代码围栏没有内容")?.1;
-        text = text
             .trim_end()
             .strip_suffix("```")
             .ok_or("代码围栏没有结束")?
@@ -86,6 +77,7 @@ pub(crate) fn json_text(text: &str) -> Result<&str, &'static str> {
 async fn analyze(
     db: &SqlitePool,
     net: &net::Net,
+    writes: &db::Writes,
     claim: queue::Claim,
     cooldown: &Mutex<Option<Instant>>,
 ) -> Result<Outcome, sqlx::Error> {
@@ -125,24 +117,23 @@ async fn analyze(
         );
         if let Some(usage) = answer.usage {
             let at = now();
-            while let Err(error) = model::usage::record_for_email(
-                db,
-                chosen.id,
-                &chosen.model,
-                if todos {
-                    model::usage::Purpose::ReplyTodos
-                } else {
-                    model::usage::Purpose::ReplyOutcome
-                },
-                email_id,
-                usage,
-                at,
-            )
-            .await
-            {
-                tracing::error!("record reply processing usage: {error}");
-                tokio::time::sleep(RETRY).await;
-            }
+            writes
+                .retry("record reply processing usage", || {
+                    model::usage::record_for_email(
+                        db,
+                        chosen.id,
+                        &chosen.model,
+                        if todos {
+                            model::usage::Purpose::ReplyTodos
+                        } else {
+                            model::usage::Purpose::ReplyOutcome
+                        },
+                        email_id,
+                        usage,
+                        at,
+                    )
+                })
+                .await;
         }
         let parsed = if let Some(date) = &reply_date {
             super::todos::parse(&answer.text, date).map(Outcome::Todos)
@@ -222,54 +213,46 @@ async fn requeue(
 
 pub async fn run(
     db: SqlitePool,
+    writes: db::Writes,
     net: net::Net,
     processor: Processor,
     limit: model::background::Limit,
     changed: impl Fn() + Send + 'static,
 ) {
-    while let Err(e) = queue::recover(&db).await {
-        tracing::error!("recover reply processing queue: {e}");
-        tokio::time::sleep(RETRY).await;
-    }
+    writes
+        .retry("recover reply processing queue", || queue::recover(&db))
+        .await;
     let cooldown = Arc::new(Mutex::new(None));
     let mut workers = JoinSet::new();
     let mut claims = std::collections::HashMap::new();
     let mut retry_at: Option<Instant> = None;
     loop {
-        let progress = match queue::progress(&db).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("reply processing progress: {e}");
-                tokio::time::sleep(RETRY).await;
-                continue;
-            }
-        };
+        let progress = writes
+            .retry("reply processing progress", || queue::progress(&db))
+            .await;
         let cooling = retry_at.is_some_and(|at| at > Instant::now());
-        if progress.pause.is_none() && !cooling && workers.len() < CONCURRENCY {
-            match queue::next(&db).await {
-                Ok(Some(claim)) => {
-                    let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
-                    let cooldown = cooldown.clone();
-                    let task = workers.spawn(async move {
-                        let _permit = limit.acquire().await;
-                        let result = match queue::running(&db, claim).await {
-                            Ok(true) => analyze(&db, &net, claim, &cooldown).await,
-                            Ok(false) => Ok(Outcome::Gone),
-                            Err(e) => Err(e),
-                        };
-                        (claim, result)
-                    });
-                    claims.insert(task.id(), claim);
-                    changed();
-                    continue;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::error!("claim reply processing: {e}");
-                    tokio::time::sleep(RETRY).await;
-                    continue;
-                }
-            }
+        if progress.pause.is_none()
+            && !cooling
+            && workers.len() < CONCURRENCY
+            && let Some(claim) = writes
+                .retry("claim reply processing", || queue::next(&db))
+                .await
+        {
+            let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
+            let cooldown = cooldown.clone();
+            let writes = writes.clone();
+            let task = workers.spawn(async move {
+                let _permit = limit.acquire().await;
+                let result = match queue::running(&db, claim).await {
+                    Ok(true) => analyze(&db, &net, &writes, claim, &cooldown).await,
+                    Ok(false) => Ok(Outcome::Gone),
+                    Err(e) => Err(e),
+                };
+                (claim, result)
+            });
+            claims.insert(task.id(), claim);
+            changed();
+            continue;
         }
         tokio::select! {
             Some(joined) = workers.join_next_with_id(), if !workers.is_empty() => {
@@ -290,28 +273,33 @@ pub async fn run(
                             }
                         };
                         let completed_at = now();
-                        let applied = loop {
-                            let saved = match &outcome {
-                                Outcome::Done(answer) => queue::complete(&db, claim, *answer).await,
-                                Outcome::Todos(todos) => {
-                                    email::todos::complete(&db, claim, todos, completed_at).await
-                                }
-                                Outcome::Failed(reason) => queue::fail(&db, claim, reason).await,
-                                Outcome::Pause(reason, model) => {
-                                    requeue(&db, claim, Some((completed_at, reason)), Some(model))
+                        let applied = writes
+                            .retry("save reply processing", || async {
+                                match &outcome {
+                                    Outcome::Done(answer) => {
+                                        queue::complete(&db, claim, *answer).await
+                                    }
+                                    Outcome::Todos(todos) => {
+                                        email::todos::complete(&db, claim, todos, completed_at)
+                                            .await
+                                    }
+                                    Outcome::Failed(reason) => {
+                                        queue::fail(&db, claim, reason).await
+                                    }
+                                    Outcome::Pause(reason, model) => {
+                                        requeue(
+                                            &db,
+                                            claim,
+                                            Some((completed_at, reason)),
+                                            Some(model),
+                                        )
                                         .await
+                                    }
+                                    Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
+                                    Outcome::Gone => requeue(&db, claim, None, None).await,
                                 }
-                                Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
-                                Outcome::Gone => requeue(&db, claim, None, None).await,
-                            };
-                            match saved {
-                                Ok(applied) => break applied,
-                                Err(e) => {
-                                    tracing::error!(message_id = id, "save reply processing: {e}");
-                                    tokio::time::sleep(RETRY).await;
-                                }
-                            }
-                        };
+                            })
+                            .await;
                         if applied && let Outcome::RateLimit(wait) = outcome {
                             let at = Instant::now() + wait;
                             retry_at = Some(retry_at.map_or(at, |old| old.max(at)));
@@ -322,21 +310,20 @@ pub async fn run(
                     Err(e) => {
                         tracing::error!("reply processing worker: {e}");
                         if let Some(claim) = claims.remove(&e.id()) {
-                            while let Err(e) = requeue(
-                                &db,
-                                claim,
-                                Some((
-                                    now(),
-                                    "回信处理意外中断，请继续或重启应用；\
+                            writes
+                                .retry("recover reply processing worker", || {
+                                    requeue(
+                                        &db,
+                                        claim,
+                                        Some((
+                                            now(),
+                                            "回信处理意外中断，请继续或重启应用；\
                                     仍然出错时，导出日志发给开发者。",
-                                )),
-                                Some(&Guard::Local),
-                            )
-                            .await
-                            {
-                                tracing::error!(message_id = claim.id, "recover worker: {e}");
-                                tokio::time::sleep(RETRY).await;
-                            }
+                                        )),
+                                        Some(&Guard::Local),
+                                    )
+                                })
+                                .await;
                         }
                         changed();
                     }
@@ -356,4 +343,19 @@ pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reply_outcomes_require_a_complete_fence_and_exact_json() {
+        assert!(matches!(
+            parse("<think>one</think><think>two</think>```json\n{\"outcome\":\"interested\"}\n```"),
+            Ok(ReplyOutcome::Interested)
+        ));
+        assert!(parse("```json\n{\"outcome\":\"interested\"}").is_err());
+        assert!(parse("说明：{\"outcome\":\"interested\"}").is_err());
+    }
 }

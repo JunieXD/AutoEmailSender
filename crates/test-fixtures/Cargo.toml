@@ -9,4 +9,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+serde_json.workspace = true
 sqlx.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }

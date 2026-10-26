@@ -44,25 +44,26 @@ pub async fn finish_onboarding(db: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-pub async fn update(db: &SqlitePool, form: &ProfileForm, now: i64) -> Result<(), sqlx::Error> {
+pub async fn update(db: &SqlitePool, form: &ProfileForm, now: i64) -> Result<Profile, sqlx::Error> {
     let (name, research_interests, rewrite_preference) = (
         filled(&form.name),
         filled(&form.research_interests),
         filled(&form.rewrite_preference),
     );
-    sqlx::query!(
+    sqlx::query_as!(
+        Profile,
         r#"UPDATE profile
         SET name = ?1, research_interests = ?2, rewrite_preference = ?3,
             match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(
-            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END"#,
+            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END
+        RETURNING name, research_interests, rewrite_preference, onboarded AS "onboarded: bool""#,
         name,
         research_interests,
         rewrite_preference,
         now,
     )
-    .execute(db)
-    .await?;
-    Ok(())
+    .fetch_one(db)
+    .await
 }
 
 /// How every letter looks (docs/design.md#邮件格式); the interface applies it when rendering one.

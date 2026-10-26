@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+db.workspace = true
 email.workspace = true
 fastrand = "2.5.0"
 mailbox.workspace = true
@@ -25,7 +26,6 @@ ts-rs.workspace = true
 
 [dev-dependencies]
 base64 = "0.22"
-db.workspace = true
 fakemail.workspace = true
 receive.workspace = true
 task.workspace = true

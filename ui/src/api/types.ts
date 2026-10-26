@@ -618,6 +618,8 @@ export type TaskState = "active" | "paused" | "stopped" | "completed";
 
 export type TaskSummary = { id: number, name: string, writer: Writer, kind: Kind, state: TaskState, createdAt: number, pauseReason: string | null, modelConfigId: number | null, progress: Progress, schedule: Schedule, };
 
+export type TaskWork = { id: number, name: string, state: TaskState, pauseReason: string | null, generating: number, };
+
 export type Template = { id: number, name: string, subject: string, bodyMd: string, };
 
 export type TemplateEdit = { id: number, name: string, subject: string, bodyMd: string, };
@@ -675,6 +677,7 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  storageFailure: { input: Nothing; output: string | null };
   contactStats: { input: StatsQuery; output: ContactProgress };
   mentorStats: { input: Nothing; output: MentorOverview };
   tokenStats: { input: StatsPeriod; output: TokenUsage };
@@ -705,7 +708,7 @@ export interface Operations {
   scheduledWork: { input: Nothing; output: ScheduledWork };
   planTask: { input: NewTask; output: TaskPlan };
   createTask: { input: NewTask; output: TaskId };
-  taskWork: { input: Nothing; output: Array<TaskSummary> };
+  taskWork: { input: Nothing; output: Array<TaskWork> };
   listTasks: { input: TaskQuery; output: TaskPage };
   getTask: { input: TaskId; output: TaskSummary };
   listTaskDrafts: { input: DraftQuery; output: DraftPage };
@@ -774,7 +777,7 @@ export interface Operations {
   testReceiving: { input: MailboxTest; output: null };
   sendTestMail: { input: MailboxId; output: null };
   getProfile: { input: Nothing; output: Profile };
-  updateProfile: { input: ProfileForm; output: null };
+  updateProfile: { input: ProfileForm; output: Profile };
   finishOnboarding: { input: Nothing; output: null };
   testLetter: { input: Nothing; output: TestLetter | null };
   sendTestLetter: { input: SendTestLetter; output: null };

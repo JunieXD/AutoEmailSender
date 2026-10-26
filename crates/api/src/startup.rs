@@ -38,8 +38,11 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
         .await
         .map_err(Error::Database)?;
     let net = net::Net::new(Vec::new()).map_err(Error::Net)?;
+    let writes = db::Writes::default();
     Ok((
         Context {
+            crawler: crawl::runner::Crawler::new(writes.clone()),
+            writes,
             db,
             net,
             materials: dir.join("materials"),
@@ -48,7 +51,6 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
             matcher: Default::default(),
             reply_processor: Default::default(),
             todo_reminders: Default::default(),
-            crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
         },

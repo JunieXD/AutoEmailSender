@@ -1,14 +1,14 @@
 #![cfg(test)]
 use api::{Context, ErrorCode, call};
+use provider::{Provider, Response};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
-use provider::{Provider, Response};
+use test_fixtures::provider;
 const T: i64 = 1_800_000_000_000;
 
 fn context(db: SqlitePool) -> Context {
     Context {
+        writes: db::Writes::default(),
         db,
         net: net::Net::new(vec![]).unwrap(),
         sender: Default::default(),
@@ -91,7 +91,7 @@ async fn check_errors_are_saved_and_retry_replaces_them(db: SqlitePool) {
         .unwrap_err();
     assert!(matches!(missing.code, ErrorCode::Invalid));
     assert_eq!(stored(&ctx.db, id).await["state"], "failed");
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&ctx.db, &p.address).await;
     let (result, ()) = tokio::join!(call(&ctx, "factCheckEmail", json!({"id":id})), async {
         p.requests
@@ -126,7 +126,7 @@ async fn check_errors_are_saved_and_retry_replaces_them(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn only_review_drafts_accept_results_even_if_state_changes_during_check(db: SqlitePool) {
     let ctx = context(db);
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&ctx.db, &p.address).await;
     for state in ["approved", "canceled", "deleted"] {
         let id = draft(&ctx.db).await;
@@ -173,7 +173,7 @@ async fn only_review_drafts_accept_results_even_if_state_changes_during_check(db
 async fn waiting_for_capacity_rechecks_consent_before_reading_configuration(db: SqlitePool) {
     use std::{future::Future, task::Poll};
     let ctx = context(db);
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&ctx.db, &p.address).await;
     let id = draft(&ctx.db).await;
     let a = ctx.model_limit.acquire().await;
@@ -221,7 +221,7 @@ async fn disabled_checks_return_null_without_reading_model_or_changing_results(d
 async fn disabling_while_waiting_for_capacity_skips_the_check(db: SqlitePool) {
     use std::{future::Future, task::Poll};
     let ctx = context(db);
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&ctx.db, &p.address).await;
     let id = draft(&ctx.db).await;
     let a = ctx.model_limit.acquire().await;
@@ -259,7 +259,7 @@ async fn disabling_while_waiting_for_capacity_skips_the_check(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn manual_checks_cannot_overwrite_a_regenerated_drafts_findings(db: SqlitePool) {
     let ctx = context(db);
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let config = config(&ctx.db, &p.address).await;
     for answer in ["[]", "不是核对结果"] {
         let id = draft(&ctx.db).await;
@@ -379,9 +379,9 @@ async fn all_draft_checks_filter_saved_quotes_against_current_edits(db: SqlitePo
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn task_checks_use_task_model_and_references_then_fall_back_after_deletion(db: SqlitePool) {
     let ctx = context(db);
-    let mut default = Provider::start().await;
+    let mut default = Provider::start().await.unwrap();
     config(&ctx.db, &default.address).await;
-    let mut selected = Provider::start().await;
+    let mut selected = Provider::start().await.unwrap();
     let chosen = config(&ctx.db, &selected.address).await;
     let mentor_id = mentor(&ctx.db).await;
     let task: i64 = sqlx::query_scalar(

@@ -41,32 +41,31 @@ pub async fn enabled(db: &SqlitePool) -> Result<bool, sqlx::Error> {
 }
 
 /// Called in the receiving transaction, including when an older message gains a mentor link.
-pub async fn enqueue(db: &mut SqliteConnection, id: i64, now: i64) -> Result<(), sqlx::Error> {
+pub async fn enqueue(db: &mut SqliteConnection, id: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "INSERT INTO reply_processing (message_id, action, queued_at, state)
-        SELECT id, 'outcome', ?2, 'queued' FROM message
-        WHERE id = ?1 AND kind = 'reply' AND outcome IS NULL
+        r#"INSERT INTO reply_processing (message_id, action, state)
+        SELECT id, 'outcome', 'queued' FROM message
+        WHERE id = ? AND kind = 'reply' AND outcome IS NULL
           AND (SELECT ai_reply_outcome FROM profile)
-        ON CONFLICT DO NOTHING",
-        id,
-        now
+        ON CONFLICT DO NOTHING"#,
+        id
     )
     .execute(db)
     .await?;
     Ok(())
 }
 
-pub async fn set_enabled(db: &SqlitePool, enabled: bool, now: i64) -> Result<(), sqlx::Error> {
+pub async fn set_enabled(db: &SqlitePool, enabled: bool) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
     sqlx::query!("UPDATE profile SET ai_reply_outcome = ?", enabled)
         .execute(&mut *tx)
         .await?;
     if enabled {
         sqlx::query!(
-            "INSERT INTO reply_processing (message_id, action, queued_at, state)
-            SELECT id, 'outcome', ?, 'queued' FROM message WHERE kind = 'reply' AND outcome IS NULL
-            ON CONFLICT DO NOTHING",
-            now
+            r#"INSERT INTO reply_processing (message_id, action, state)
+            SELECT id, 'outcome', 'queued' FROM message
+            WHERE kind = 'reply' AND outcome IS NULL
+            ON CONFLICT DO NOTHING"#
         )
         .execute(&mut *tx)
         .await?;
@@ -109,20 +108,14 @@ pub async fn set(db: &SqlitePool, id: i64, outcome: ReplyOutcome) -> Result<bool
     Ok(true)
 }
 
-pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
-    retry_action(db, id, Action::Outcome, now).await
+pub async fn retry(db: &SqlitePool, id: i64) -> Result<bool, sqlx::Error> {
+    retry_action(db, id, Action::Outcome).await
 }
 
-pub async fn retry_action(
-    db: &SqlitePool,
-    id: i64,
-    action: Action,
-    now: i64,
-) -> Result<bool, sqlx::Error> {
+pub async fn retry_action(db: &SqlitePool, id: i64, action: Action) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query!(
-        "UPDATE reply_processing SET state = 'queued', error = NULL, queued_at = ?
-        WHERE message_id = ? AND action = ? AND state = 'failed'",
-        now,
+        r#"UPDATE reply_processing SET state = 'queued', error = NULL
+        WHERE message_id = ? AND action = ? AND state = 'failed'"#,
         id,
         action
     )

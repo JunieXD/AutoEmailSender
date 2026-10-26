@@ -80,7 +80,7 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
         "<title>名单</title><p>王五 c@school.example.edu</p><nav><button disabled>\
         下一页</button></nav>",
     );
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let model = config(&db, &provider.address).await;
     let responder = tokio::spawn(async move {
         while let Some(request) = provider.requests.recv().await {
@@ -108,6 +108,7 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
     });
     let id = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
     let pages = Pages {
+        writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser.clone()),
     };
@@ -164,12 +165,13 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
 async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db: SqlitePool) {
     let site = Site::new().await;
     challenge(&site);
-    let provider = Provider::start().await;
+    let provider = Provider::start().await.unwrap();
     let model = config(&db, &provider.address).await;
     let id = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
     let mut claim = queue::next(&db).await.unwrap().unwrap();
     let browser = Arc::new(FakeBrowser::default());
     let pages = Pages {
+        writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser.clone()),
     };
@@ -256,13 +258,14 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
 async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
     let site = Site::new().await;
     challenge(&site);
-    let provider = Provider::start().await;
+    let provider = Provider::start().await.unwrap();
     let model = config(&db, &provider.address).await;
     for action in ["pause", "cancel"] {
         let id = queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
         let claim = queue::next(&db).await.unwrap().unwrap();
         let browser = Arc::new(FakeBrowser::default());
         let pages = Pages {
+            writes: db::Writes::default(),
             http: Fetcher::local(site.port),
             browser: Some(browser.clone()),
         };
@@ -319,7 +322,7 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
     let guard = tracing::subscriber::set_default(subscriber);
 
     let site = Site::new().await;
-    let provider = Provider::start().await;
+    let provider = Provider::start().await.unwrap();
     let model = config(&db, &provider.address).await;
     let id = queue::start(&db, &[site.url("/missing")], model, 1)
         .await
@@ -331,6 +334,7 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
         .unwrap()
         .push_back(Err(BrowserError::TimedOut));
     let pages = Pages {
+        writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser),
     };

@@ -25,7 +25,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 fn failure(e: api::backup::Error) -> String {
-    tracing::error!("backup: {e}");
+    tracing::error!(error = ?e, "backup failed");
     e.message()
 }
 

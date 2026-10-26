@@ -417,15 +417,48 @@ pub async fn preview_decisions(
     Ok(calculate(&mut tx, sheets, setup, decisions).await?.0)
 }
 
+#[derive(Debug)]
+pub enum Error {
+    Invalid(String),
+    Database(sqlx::Error),
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Invalid(reason) => f.write_str(reason),
+            Self::Database(error) => write!(f, "import database: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Invalid(_) => None,
+            Self::Database(error) => Some(error),
+        }
+    }
+}
+
+impl From<sqlx::Error> for Error {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error)
+    }
+}
+
 pub async fn import(
     db: &SqlitePool,
     sheets: &[Sheet],
     setup: &Setup,
     decisions: &Decisions,
     now: i64,
-) -> Result<Imported, sqlx::Error> {
+) -> Result<Imported, Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let (_, changes) = calculate(&mut tx, sheets, setup, decisions).await?;
+    let (preview, changes) = calculate(&mut tx, sheets, setup, decisions).await?;
+    if let Some(issue) = preview.issue {
+        return Err(Error::Invalid(issue));
+    }
     let (result, _) = intake::apply(&mut tx, changes, now).await?;
     tx.commit().await?;
     Ok(result)

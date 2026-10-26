@@ -141,6 +141,7 @@ dependencies = [
  "task",
  "tempfile",
  "template",
+ "test-fixtures",
  "tokio",
  "tracing",
  "ts-rs",
@@ -1075,6 +1076,7 @@ dependencies = [
  "sqlx",
  "task",
  "tempfile",
+ "test-fixtures",
  "tokio",
  "tokio-rustls",
  "tracing",
@@ -1301,6 +1303,7 @@ dependencies = [
  "sqlx",
  "test-fixtures",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3311,6 +3314,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "test-fixtures",
  "tokio",
  "tracing",
  "ts-rs",
@@ -3435,6 +3439,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "test-fixtures",
  "tokio",
  "tracing",
  "ts-rs",
@@ -5969,6 +5974,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "template",
+ "test-fixtures",
  "tokio",
  "tracing",
  "ts-rs",
@@ -6377,7 +6383,9 @@ dependencies = [
 name = "test-fixtures"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "serde_json",
  "sqlx",
+ "tokio",
 ]
 
 [[package]]

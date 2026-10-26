@@ -253,6 +253,7 @@ mod tests {
             ids.push(id);
         }
         let ctx = Context {
+            writes: db::Writes::default(),
             db: db.clone(),
             net: net::Net::new(vec![]).unwrap(),
             sender: send::Sender::default(),
@@ -333,6 +334,7 @@ mod tests {
         .await
         .unwrap();
         let ctx = Context {
+            writes: db::Writes::default(),
             db: db.clone(),
             net: net::Net::new(vec![]).unwrap(),
             sender: send::Sender::default(),

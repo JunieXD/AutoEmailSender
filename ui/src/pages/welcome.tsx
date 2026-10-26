@@ -45,6 +45,7 @@ export function WelcomePage() {
     select: (m) => m.state,
   }).at(-1)?.variables?.to;
   const finish = useMutation({
+    scope: { id: "updateProfile" },
     mutationFn: () => call("finishOnboarding", {}),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["getProfile"] });

@@ -21,6 +21,7 @@ use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
+    pub writes: db::Writes,
     pub db: SqlitePool,
     pub net: net::Net,
     pub sender: send::Sender,
@@ -164,6 +165,7 @@ macro_rules! operations {
 }
 
 operations! {
+    "storageFailure" => storage_failure(Nothing) -> Option<String>;
     "contactStats" => contact_stats(StatsQuery) -> stats::ContactProgress;
     "mentorStats" => mentor_stats(Nothing) -> stats::MentorOverview;
     "tokenStats" => token_stats(StatsPeriod) -> stats::TokenUsage;
@@ -196,7 +198,7 @@ operations! {
     "scheduledWork" => scheduled_work(Nothing) -> send::plan::ScheduledWork;
     "planTask" => plan_task(task::NewTask) -> task::TaskPlan;
     "createTask" => create_task(task::NewTask) -> TaskId;
-    "taskWork" => task_work(Nothing) -> Vec<task::TaskSummary>;
+    "taskWork" => task_work(Nothing) -> Vec<task::TaskWork>;
     "listTasks" => list_tasks(task::TaskQuery) -> task::TaskPage;
     "getTask" => get_task(TaskId) -> task::TaskSummary;
     "listTaskDrafts" => list_task_drafts(task::DraftQuery) -> task::DraftPage;
@@ -266,7 +268,7 @@ operations! {
     "testReceiving" => test_receiving(MailboxTest) -> ();
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
-    "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "updateProfile" => update_profile(profile::ProfileForm) -> profile::Profile;
     "finishOnboarding" => finish_onboarding(Nothing) -> ();
     "testLetter" => test_letter(Nothing) -> Option<TestLetter>;
     "sendTestLetter" => send_test_letter(SendTestLetter) -> ();
@@ -374,6 +376,9 @@ async fn match_mentor(ctx: &Context, input: MentorId) -> Result<u64, CallError> 
     let count = mentor::matching::enqueue(&ctx.db, &[input.id], true, true, now()).await?;
     ctx.matcher.wake();
     Ok(count)
+}
+async fn storage_failure(ctx: &Context, _: Nothing) -> Result<Option<String>, CallError> {
+    Ok(ctx.writes.failure().map(str::to_owned))
 }
 async fn matching_progress(
     ctx: &Context,
@@ -1085,7 +1090,10 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
     Ok(profile::get(&ctx.db).await?)
 }
 
-async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
+async fn update_profile(
+    ctx: &Context,
+    form: profile::ProfileForm,
+) -> Result<profile::Profile, CallError> {
     Ok(profile::update(&ctx.db, &form, now()).await?)
 }
 
@@ -1312,19 +1320,10 @@ async fn fill(
 ) -> Result<FilledTemplate, CallError> {
     let m = get_mentor(ctx, MentorId { id: mentor_id }).await?;
     let me = profile::get(&ctx.db).await?;
-    let main = m.affiliations.first().cloned().unwrap_or_default();
-    let fill = template::Fill {
-        mentor_name: &m.name,
-        mentor_title: main.title.as_deref(),
-        university: main.university.as_deref(),
-        school: main.school.as_deref(),
-        department: main.department.as_deref(),
-        research: m.research.as_deref(),
-        my_name: me.name.as_deref(),
-    };
+    let filled = task::fill(&t.subject, &t.body_md, &m, me.name.as_deref());
     Ok(FilledTemplate {
-        subject: fill.subject(&t.subject),
-        body_md: fill.body(&t.body_md),
+        subject: filled.subject,
+        body_md: filled.body_md,
     })
 }
 
@@ -1426,20 +1425,18 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &current,
         &input.attachments,
-        at,
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::First,
         },
     )
-    .await?)
+    .await?;
+    Ok(writing::write(&ctx.db, &ctx.net, &prepared, &current, at).await?)
 }
 
 impl From<writing::Error> for CallError {
@@ -1788,21 +1785,26 @@ async fn write_follow_up(
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &writing::Letter {
-            subject: String::new(),
-            body_md: input.body_md,
-        },
         &input.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::FollowUp(&previous),
         },
+    )
+    .await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        now(),
     )
     .await?)
 }
@@ -1826,21 +1828,26 @@ async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Le
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &writing::Letter {
-            subject: String::new(),
-            body_md: input.body_md,
-        },
         &input.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::Reply(&previous),
         },
+    )
+    .await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        now(),
     )
     .await?)
 }
@@ -1874,7 +1881,7 @@ async fn get_ai_reply_outcome(ctx: &Context, _: Nothing) -> Result<bool, CallErr
     Ok(email::outcome::enabled(&ctx.db).await?)
 }
 async fn set_ai_reply_outcome(ctx: &Context, input: AiReplyOutcome) -> Result<(), CallError> {
-    email::outcome::set_enabled(&ctx.db, input.enabled, now()).await?;
+    email::outcome::set_enabled(&ctx.db, input.enabled).await?;
     ctx.reply_processor.wake();
     Ok(())
 }
@@ -1889,7 +1896,7 @@ async fn set_reply_outcome(ctx: &Context, input: ReplyOutcomeEdit) -> Result<(),
 }
 async fn retry_reply_outcome(ctx: &Context, input: ReplyMessage) -> Result<(), CallError> {
     require_applied(
-        email::outcome::retry(&ctx.db, input.message_id, now()).await?,
+        email::outcome::retry(&ctx.db, input.message_id).await?,
         "这封回信没有标记失败的结果可重试。",
     )?;
     ctx.reply_processor.wake();
@@ -2139,15 +2146,20 @@ async fn preview_import(
     )
     .await?)
 }
+impl From<mentor::import::Error> for CallError {
+    fn from(error: mentor::import::Error) -> Self {
+        match error {
+            mentor::import::Error::Invalid(reason) => Self::invalid(reason),
+            mentor::import::Error::Database(error) => error.into(),
+        }
+    }
+}
+
 async fn import_mentors(
     ctx: &Context,
     input: ImportMentors,
 ) -> Result<mentor::import::Imported, CallError> {
     let sheets = read_import(&input.file).await?;
-    let preview = mentor::import::preview(&ctx.db, &sheets, &input.file.setup).await?;
-    if let Some(issue) = preview.issue {
-        return Err(CallError::invalid(issue));
-    }
     let result =
         mentor::import::import(&ctx.db, &sheets, &input.file.setup, &input.decisions, now())
             .await?;
@@ -2241,8 +2253,7 @@ mod table_tests {
 }
 
 #[cfg(test)]
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
+use test_fixtures::provider;
 
 #[cfg(test)]
 mod writing_tests {
@@ -2266,6 +2277,7 @@ mod writing_tests {
         .await
         .unwrap();
         let ctx = Context {
+            writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
             sender: Default::default(),
@@ -2282,12 +2294,14 @@ mod writing_tests {
             "<subject>申请</subject><body>旧地址的信</body>",
             "stop",
         )])
-        .await;
+        .await
+        .unwrap();
         let (new_address, new_received) = provider::scripted(vec![(
             "<subject>申请</subject><body>新地址的信</body>",
             "stop",
         )])
-        .await;
+        .await
+        .unwrap();
         let form = |address: &str| model::ModelForm {
             name: String::new(),
             provider: model::providers::CUSTOM.into(),
@@ -2376,6 +2390,7 @@ mod writing_tests {
         .await
         .unwrap();
         let ctx = Context {
+            writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
             sender: Default::default(),
@@ -2459,6 +2474,7 @@ mod reply_outcome_tests {
             ids.push(id);
         }
         let ctx = Context {
+            writes: db::Writes::default(),
             db,
             net: net::Net::new(vec![]).unwrap(),
             sender: Default::default(),

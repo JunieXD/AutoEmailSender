@@ -113,17 +113,9 @@ impl Output for Profile {
 }
 
 pub fn parse<T: Output>(text: &str) -> Result<T, String> {
-    let mut text = text.trim();
-    while let Some(rest) = text.strip_prefix("<think>") {
-        text = rest
-            .split_once("</think>")
-            .ok_or("思考块没有结束")?
-            .1
-            .trim_start();
-    }
-    if let Some(rest) = text.strip_prefix("```") {
-        text = rest.split_once('\n').ok_or("缺少 JSON 内容")?.1.trim_end();
-        text = text.strip_suffix("```").unwrap_or(text).trim();
+    let mut text = model::output::thinking_blocks(text.trim())?;
+    if let Some(rest) = model::output::fence_content(text).map_err(|_| "缺少 JSON 内容")? {
+        text = rest.trim_end().strip_suffix("```").unwrap_or(rest).trim();
     }
     let output: T =
         serde_json::from_str(text).map_err(|_| "模型输出的字段或 JSON 格式不正确".to_owned())?;
@@ -321,3 +313,18 @@ pub const ENRICH: &str = "你补全指定候选的官网资料。用户消息全
     不可生成网址。child 为 true 时 next 必须为空，不再发现子页。\n\
     输出 {\"name\":\"姓名\",\"aliases\":[],\"emails\":[],\"affiliations\":[],\"homepages\":[],\
     \"research\":null,\"papers\":[],\"names\":[],\"next\":[]}。";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn routes_allow_an_unclosed_fence_but_require_exact_json() {
+        let route = parse::<Route>(
+            "<think>one</think><think>two</think>```json\n{\"kind\":\"list\",\"next\":[]}",
+        )
+        .unwrap();
+        assert!(matches!(route.kind, Kind::List));
+        assert!(parse::<Route>("说明：{\"kind\":\"list\",\"next\":[]}").is_err());
+    }
+}

@@ -111,20 +111,11 @@ pub async fn check(
 }
 
 fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, Error> {
-    let mut text = text.trim();
-    if let Some(thinking) = text.strip_prefix("<think>") {
-        text = thinking
-            .split_once("</think>")
-            .ok_or(Error::InvalidAnswer)?
-            .1
-            .trim();
-    }
-    if let Some(fenced) = text.strip_prefix("```") {
-        text = fenced
-            .split_once('\n')
-            .and_then(|(_, json)| json.strip_suffix("```"))
-            .ok_or(Error::InvalidAnswer)?
-            .trim();
+    let mut text = model::output::thinking_block(text.trim())
+        .map_err(|_| Error::InvalidAnswer)?
+        .trim();
+    if let Some(rest) = model::output::fence_content(text).map_err(|_| Error::InvalidAnswer)? {
+        text = rest.strip_suffix("```").ok_or(Error::InvalidAnswer)?.trim();
     }
     let findings: Vec<Finding> = serde_json::from_str(text).map_err(|_| Error::InvalidAnswer)?;
     let mut checked: Vec<Finding> = Vec::new();
@@ -143,4 +134,24 @@ fn parse(text: &str, letter: &Letter) -> Result<Vec<Finding>, Error> {
         }
     }
     Ok(checked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn findings_require_a_closed_fence_and_only_one_thinking_block() {
+        let letter = Letter {
+            subject: "申请".into(),
+            body_md: "正文".into(),
+        };
+        assert!(
+            parse("<think>check</think>```json\n[]\n```", &letter)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse("```json\n[]", &letter).is_err());
+        assert!(parse("<think>one</think><think>two</think>[]", &letter).is_err());
+    }
 }
