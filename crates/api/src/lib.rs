@@ -283,7 +283,7 @@ operations! {
     "listPlaceholders" => list_placeholders(Nothing) -> &'static [&'static str];
     "listTemplates" => list_templates(Nothing) -> Vec<template::TemplateSummary>;
     "getTemplate" => get_template(TemplateId) -> template::Template;
-    "importWordTemplate" => import_word_template(UploadedFile) -> document::WordTemplate;
+    "importWordTemplate" => import_word_template(UploadedFile) -> WordFile;
     "addTemplate" => add_template(template::TemplateForm) -> TemplateId;
     "updateTemplate" => update_template(TemplateEdit) -> ();
     "deleteTemplate" => delete_template(TemplateId) -> ();
@@ -1258,14 +1258,41 @@ async fn add_template(
     Ok(TemplateId { id })
 }
 
-async fn import_word_template(
-    _: &Context,
-    input: UploadedFile,
-) -> Result<document::WordTemplate, CallError> {
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct WordFile {
+    pub name: String,
+    pub html: String,
+}
+
+async fn import_word_template(_: &Context, input: UploadedFile) -> Result<WordFile, CallError> {
     let data = uploaded_bytes(&input.data)?;
-    document::import_word_template(input.file_name.trim(), data)
-        .await
-        .map_err(CallError::invalid)
+    let Some((name, extension)) = input.file_name.trim().rsplit_once('.') else {
+        return Err(CallError::invalid("请选择 DOCX 或 DOC 文件。".into()));
+    };
+    if !extension.eq_ignore_ascii_case("docx") && !extension.eq_ignore_ascii_case("doc") {
+        return Err(CallError::invalid("请选择 DOCX 或 DOC 文件。".into()));
+    }
+    let unreadable = |detail: String| {
+        tracing::warn!("reading a Word template: {detail}");
+        CallError::invalid(
+            "未能读取 Word 文件：文件可能已损坏、设有密码或不是 Word 格式，请换一个文件。".into(),
+        )
+    };
+    // Parsing is slow work, and a library may panic on a damaged file.
+    let html = tokio::task::spawn_blocking(move || {
+        material::open_word(&data)
+            .map(|document| (!document.plain_text().trim().is_empty()).then(|| document.to_html()))
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| unreadable(error.to_string()))?
+    .map_err(unreadable)?
+    .ok_or_else(|| CallError::invalid("文件中没有可导入的文字，请换一个 Word 文件。".into()))?;
+    Ok(WordFile {
+        name: name.into(),
+        html,
+    })
 }
 
 async fn update_template(ctx: &Context, input: TemplateEdit) -> Result<(), CallError> {

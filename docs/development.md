@@ -16,7 +16,6 @@
 | `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
 | `crates/profile` | 个人资料和信件样式 |
 | `crates/material` | 材料：存文件、提取文字 |
-| `crates/document` | Word 文档读取、转换为邮件模板 |
 | `crates/template` | 模板和占位符 |
 | `crates/email` | 邮件：草稿和状态、回信结果、待办存取与本地提醒排期、持久的回信处理队列 |
 | `crates/send` | 发信：常驻的发信任务、邮箱轮转 |

@@ -13,7 +13,6 @@ api = { path = "crates/api" }
 crawl = { path = "crates/crawl" }
 check = { path = "crates/check" }
 db = { path = "crates/db" }
-document = { path = "crates/document" }
 email = { path = "crates/email" }
 fakemail = { path = "crates/fakemail" }
 mailbox = { path = "crates/mailbox" }

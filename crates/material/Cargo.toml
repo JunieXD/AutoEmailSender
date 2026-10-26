@@ -9,7 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-document.workspace = true
+office_oxide = "0.1"
 pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
 serde.workspace = true
 sqlx.workspace = true

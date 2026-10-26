@@ -678,7 +678,7 @@ export type Waiting = "time" | "mailbox_limit" | "mailbox_paused" | "task_paused
 
 export type Window = { dates: Array<string>, start: string, end: string, perWindow: number, };
 
-export type WordTemplate = { name: string, bodyMd: string, };
+export type WordFile = { name: string, html: string, };
 
 export type Writer = "ai" | "template";
 
@@ -800,7 +800,7 @@ export interface Operations {
   listPlaceholders: { input: Nothing; output: Array<string> };
   listTemplates: { input: Nothing; output: Array<TemplateSummary> };
   getTemplate: { input: TemplateId; output: Template };
-  importWordTemplate: { input: UploadedFile; output: WordTemplate };
+  importWordTemplate: { input: UploadedFile; output: WordFile };
   addTemplate: { input: TemplateForm; output: TemplateId };
   updateTemplate: { input: TemplateEdit; output: null };
   deleteTemplate: { input: TemplateId; output: null };
