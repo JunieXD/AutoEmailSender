@@ -1426,20 +1426,18 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
         .await?
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &current,
         &input.attachments,
-        at,
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::First,
         },
     )
-    .await?)
+    .await?;
+    Ok(writing::write(&ctx.db, &ctx.net, &prepared, &current, at).await?)
 }
 
 impl From<writing::Error> for CallError {
@@ -1788,21 +1786,26 @@ async fn write_follow_up(
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = task::history(&mut *ctx.db.acquire().await?, input.mentor_id).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &writing::Letter {
-            subject: String::new(),
-            body_md: input.body_md,
-        },
         &input.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::FollowUp(&previous),
         },
+    )
+    .await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        now(),
     )
     .await?)
 }
@@ -1826,21 +1829,26 @@ async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Le
         .ok_or(writing::Error::NoModel)?;
     let references = material::for_writing(&ctx.db).await?;
     let previous = writing::reply::history(&ctx.db, input.mentor_id, &input.reply_to).await?;
-    Ok(writing::write(
+    let prepared = writing::prepare(
         &ctx.db,
-        &ctx.net,
         input.mentor_id,
-        &writing::Letter {
-            subject: String::new(),
-            body_md: input.body_md,
-        },
         &input.attachments,
-        now(),
         writing::Basis {
             chosen: &chosen,
             references: &references,
             kind: writing::Kind::Reply(&previous),
         },
+    )
+    .await?;
+    Ok(writing::write(
+        &ctx.db,
+        &ctx.net,
+        &prepared,
+        &writing::Letter {
+            subject: String::new(),
+            body_md: input.body_md,
+        },
+        now(),
     )
     .await?)
 }
