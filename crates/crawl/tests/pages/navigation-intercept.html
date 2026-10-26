@@ -1,0 +1,27 @@
+<!doctype html><html><body>
+<p id="people">第一页：张三</p>
+<button onclick="navigation.navigate('/virtual-second').finished.catch(()=>{})">下一页</button>
+<script>
+const mode=new URLSearchParams(location.search).get('mode');
+navigation.addEventListener('navigate',event=>{
+    document.body.dataset.leavingAtStart=String(document.__aesCrawlLeaving);
+    if(mode==='cancel') {
+        event.preventDefault();
+        document.getElementById('people').textContent='导航已取消：张三';
+        return;
+    }
+    event.intercept({handler:async()=>{
+        await new Promise(resolve=>setTimeout(resolve,250));
+        if(mode==='error') {
+            document.getElementById('people').textContent='导航失败已处理：张三';
+            throw new Error('fixture navigation error');
+        }
+        document.getElementById('people').textContent='第二页：李四';
+    }});
+});
+for(const event of ['navigatesuccess','navigateerror']) {
+    navigation.addEventListener(event,()=>{
+        document.body.dataset.leavingAtEnd=String(document.__aesCrawlLeaving);
+    });
+}
+</script></body></html>

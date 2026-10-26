@@ -35,14 +35,7 @@ const PAGE_SNAPSHOT: &str = r#"({
         images: [...document.querySelectorAll('img[alt]')].map(element => element.getAttribute('alt')),
     },
 })"#;
-const WATCH_NAVIGATION: &str = r#"(() => {
-    if (document.__aesCrawlLeaving === undefined) {
-        document.__aesCrawlLeaving = false;
-        window.navigation?.addEventListener('navigate', event => {
-            if (!event.destination.sameDocument) document.__aesCrawlLeaving = true;
-        });
-    }
-})()"#;
+const WATCH_NAVIGATION: &str = include_str!("browser/navigation.js");
 const CLICK_CONTROL: &str = r#"(label => {
     const alternative = element => {
         const attributes = element.tagName === 'IMG' ? ['alt', 'title', 'aria-label'] : ['aria-label', 'title', 'alt'];
@@ -241,6 +234,7 @@ fn render(
         .visible(false)
         .focused(false)
         .incognito(true)
+        .initialization_script(WATCH_NAVIGATION)
         .on_navigation(move |url| {
             let mut navigation = nav_navigation
                 .lock()
@@ -307,10 +301,6 @@ fn render(
     wait(&window, state, None)?;
     for step in steps {
         let deadline = Instant::now() + TIMEOUT;
-        window.eval(WATCH_NAVIGATION).map_err(|error| {
-            tracing::debug!("watch crawl navigation: {error}");
-            failed("浏览器页面已关闭或无法读取，请重试")
-        })?;
         let before = evaluate(&window, state, PAGE_SNAPSHOT, deadline)?;
         let control =
             serde_json::to_string(&step.control).map_err(|_| failed("无法读取翻页步骤"))?;

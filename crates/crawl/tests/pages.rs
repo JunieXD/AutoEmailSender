@@ -918,3 +918,11 @@ fn numbered_replay_ignores_non_button_inputs_with_the_same_label() {
         vec![(Some(2), "2"), (Some(3), "3")]
     );
 }
+
+#[test]
+fn automatic_navigation_entry_needs_browser_without_replay_steps() {
+    let page = parse(&url(), include_str!("pages/auto-navigation.html")).unwrap();
+    assert_eq!(page.needs_browser, Some(BrowserReason::JavaScript));
+    assert!(page.pagination.buttons.is_empty());
+    assert!(page.pagination.urls.is_empty());
+}
