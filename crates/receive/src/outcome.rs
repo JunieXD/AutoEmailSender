@@ -48,14 +48,12 @@ enum Outcome {
     Gone,
 }
 
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-#[schemars(rename = "ReplyOutcomeAnswer")]
-struct Answer {
-    outcome: ReplyOutcome,
-}
-
 fn parse(text: &str) -> Result<ReplyOutcome, &'static str> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Answer {
+        outcome: ReplyOutcome,
+    }
     let text = json_text(text)?;
     serde_json::from_str::<Answer>(text)
         .map(|a| a.outcome)
@@ -90,11 +88,6 @@ async fn analyze(
         return Ok(Outcome::Gone);
     };
     let prompt = if todos { super::todos::SYSTEM } else { SYSTEM };
-    let structure = if todos {
-        model::output::Structure::of::<super::todos::Answer>()
-    } else {
-        model::output::Structure::of::<Answer>()
-    };
     let mut system = prompt.to_owned();
     for attempt in 0..2 {
         if let Some(at) = *cooldown.lock().await
@@ -110,19 +103,11 @@ async fn analyze(
         if !chosen.agreed {
             return Ok(Outcome::Pause(NOT_AGREED.into(), Guard::Model(chosen)));
         }
-        let answer = match model::ask(
-            net,
-            &chosen.access,
-            &chosen.model,
-            &system,
-            &message,
-            Some(&structure),
-        )
-        .await
-        {
-            Ok(answer) => answer,
-            Err(error) => return Ok(classify(error, chosen)),
-        };
+        let answer =
+            match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
+                Ok(answer) => answer,
+                Err(error) => return Ok(classify(error, chosen)),
+            };
         tracing::info!(
             message_id = claim.id,
             action = ?claim.action,

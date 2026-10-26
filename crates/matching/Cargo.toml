@@ -16,7 +16,6 @@ net.workspace = true
 profile.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
 sqlx.workspace = true
 tracing.workspace = true
 ts-rs.workspace = true

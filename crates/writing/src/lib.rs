@@ -132,7 +132,7 @@ pub async fn write<F: Future<Output = Result<(), sqlx::Error>>>(
     let current = (!blank).then_some(current);
     let system = system(me, kind);
     let message = message(me, references, attached, mentor, current, kind);
-    let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message, None)
+    let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message, false)
         .await
         .map_err(Error::Model)?;
     tracing::info!(

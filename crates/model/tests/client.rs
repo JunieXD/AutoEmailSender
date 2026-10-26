@@ -5,12 +5,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use model::providers::{NoThinking, Structured};
+use model::providers::NoThinking;
 use model::usage::Usage;
 use model::{Access, ModelError};
 use net::Net;
-use schemars::JsonSchema;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use test_fixtures::provider::{Provider, Response};
 
@@ -55,7 +53,7 @@ fn access(base_url: String, no_thinking: Option<NoThinking>) -> Access {
         base_url,
         api_key: Some("sk-test".into()),
         no_thinking,
-        structured: None,
+        json_mode: false,
     }
 }
 
@@ -104,7 +102,7 @@ async fn business_calls_disable_thinking_only_when_the_provider_supports_it() {
             "deepseek-chat",
             "规则",
             "资料",
-            None,
+            false,
         )
         .await
         .unwrap();
@@ -121,75 +119,37 @@ async fn business_calls_disable_thinking_only_when_the_provider_supports_it() {
 }
 
 #[tokio::test]
-async fn structured_requests_follow_provider_capabilities_and_leave_text_and_arrays_alone() {
-    #[derive(Deserialize, JsonSchema)]
-    struct Extracted {
-        count: i64,
-        items: Vec<Item>,
-    }
-    #[derive(Deserialize, JsonSchema)]
-    struct Item {
-        label: Option<String>,
-    }
-    let structure = model::output::Structure::of::<Extracted>();
-    let array = model::output::Structure::of::<Vec<Item>>();
+async fn json_mode_is_only_sent_for_objects_to_supporting_providers() {
     let net = Net::new(Vec::new()).unwrap();
-    for capability in [
-        Some(Structured::JsonSchema),
-        Some(Structured::JsonObject),
-        None,
-    ] {
+    for id in ["deepseek", "kimi", "qwen", "custom"] {
         let (address, received) = provider(
             200,
             concat!(
-                r#"data: {"choices":[{"delta":{"content":"{\"count\":1,\"items\":[{\"label\":null}]}"},"finish_reason":"stop"}]}"#,
+                r#"data: {"choices":[{"delta":{"content":"{}"},"finish_reason":"stop"}]}"#,
                 "\n\ndata: [DONE]\n\n",
             ),
         )
         .await;
-        let mut access = model::Source::check("custom", &address)
+        let mut access = model::Source::check(id, &address)
             .unwrap()
             .access(Some("sk-test".into()));
-        // No real provider currently guarantees schema support across all models.
-        if capability.is_some() {
-            access.structured = capability;
-        }
-        for description in [Some(&structure), None, Some(&array)] {
-            let answer = model::ask(&net, &access, "m", "只输出 JSON", "资料", description)
+        access.base_url = address;
+        for json in [true, false] {
+            model::ask(&net, &access, "m", "只输出 JSON", "资料", json)
                 .await
                 .unwrap();
-            let parsed: Extracted = serde_json::from_str(&answer.text).unwrap();
-            assert_eq!(parsed.count, 1);
-            assert!(parsed.items[0].label.is_none());
         }
+        model::test(&net, &access, "m").await.unwrap();
         let received = received.lock().unwrap();
-        let format = received[0].body.get("response_format");
-        match capability {
-            Some(Structured::JsonSchema) => {
-                let format = format.unwrap();
-                assert_eq!(format["type"], "json_schema");
-                assert_eq!(format["json_schema"]["name"], "Extracted");
-                assert_eq!(format["json_schema"]["strict"], true);
-                let schema = &format["json_schema"]["schema"];
-                assert_eq!(schema["required"], json!(["count", "items"]));
-                assert_eq!(schema["additionalProperties"], false);
-                let item = &schema["properties"]["items"]["items"];
-                assert_eq!(item["required"], json!(["label"]));
-                assert_eq!(item["additionalProperties"], false);
-                assert_eq!(
-                    item["properties"]["label"]["type"],
-                    json!(["string", "null"])
-                );
-                assert!(schema["properties"]["count"].get("format").is_none());
-            }
-            Some(Structured::JsonObject) => {
-                assert_eq!(format, Some(&json!({"type":"json_object"})))
-            }
-            None => assert!(format.is_none()),
-        }
-        for request in &received[1..] {
-            assert!(request.body.get("response_format").is_none());
-        }
+        let formats: Vec<_> = received
+            .iter()
+            .map(|r| r.body.get("response_format").cloned())
+            .collect();
+        let expected = match id {
+            "deepseek" | "kimi" => vec![Some(json!({"type":"json_object"})), None, None],
+            _ => vec![None, None, None],
+        };
+        assert_eq!(formats, expected, "{id}");
     }
 }
 
@@ -278,7 +238,7 @@ async fn an_answer_says_what_it_cost_however_the_provider_counts() {
     let net = Net::new(Vec::new()).unwrap();
     let ask = async |reply: &'static str| {
         let (address, received) = provider(200, reply).await;
-        let answer = model::ask(&net, &access(address, None), "m", "规则", "资料", None)
+        let answer = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
             .await
             .unwrap();
         let body = received.lock().unwrap()[0].body.clone();
@@ -335,7 +295,7 @@ async fn what_the_model_wrote_stays_out_of_errors() {
     )
     .await;
     let net = Net::new(Vec::new()).unwrap();
-    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", None)
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
         .await
         .unwrap_err();
     assert!(matches!(error, ModelError::Broken(_)), "{error:?}");
@@ -343,7 +303,7 @@ async fn what_the_model_wrote_stays_out_of_errors() {
     assert!(!error.message().contains("3.8"), "{error}");
     // As a gateway that answers in plain text.
     let (address, _) = provider(200, "我的绩点是 3.8").await;
-    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", None)
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
         .await
         .unwrap_err();
     assert!(!error.to_string().contains("3.8"), "{error}");
@@ -360,7 +320,7 @@ async fn an_answer_ends_where_the_stream_says_it_is_done() {
     )
     .await;
     let net = Net::new(Vec::new()).unwrap();
-    let answer = model::ask(&net, &access(address, None), "m", "规则", "资料", None)
+    let answer = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
         .await
         .unwrap();
     assert_eq!(answer.text, "好的");
@@ -374,7 +334,7 @@ async fn an_answer_ends_where_the_stream_says_it_is_done() {
         ),
     )
     .await;
-    let result = model::ask(&net, &access(address, None), "m", "规则", "资料", None).await;
+    let result = model::ask(&net, &access(address, None), "m", "规则", "资料", false).await;
     assert!(matches!(result, Err(ModelError::Broken(_))), "{result:?}");
 }
 

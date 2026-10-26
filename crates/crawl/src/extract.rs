@@ -31,7 +31,7 @@ pub const PROFILE: &str = "你整理一位导师的官网资料。用户消息�
     research 是研究方向原文或忠实整理；papers 是代表论文标题的字符串列表。空列表表示未找到，\
     不能猜测。";
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Entry,
@@ -39,12 +39,12 @@ pub enum Kind {
     Profile,
     Other,
 }
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct Route {
     pub kind: Kind,
     pub next: Vec<usize>,
 }
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct Listed {
     pub name: String,
     pub title: Option<String>,
@@ -52,11 +52,11 @@ pub struct Listed {
     pub emails: Vec<String>,
     pub research: Option<String>,
 }
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct People {
     pub people: Vec<Listed>,
 }
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct Profile {
     pub name: String,
     pub aliases: Vec<String>,
@@ -73,7 +73,7 @@ pub struct Person {
     pub profile: Option<PageUrl>,
 }
 
-pub trait Output: serde::de::DeserializeOwned + schemars::JsonSchema {
+pub trait Output: serde::de::DeserializeOwned {
     fn check(&self) -> Result<(), String>;
 }
 impl Output for Route {
@@ -271,7 +271,7 @@ pub fn profile(m: &Material, p: Profile) -> Result<Person, String> {
     })
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Deserialize)]
 pub struct Enriched {
     #[serde(flatten)]
     pub profile: Profile,

@@ -316,7 +316,6 @@ impl Reader<'_> {
         system: &str,
         data: serde_json::Value,
     ) -> Result<T, ReadError> {
-        let structure = model::output::Structure::of::<T>();
         let mut rules = system.to_owned();
         for attempt in 0..2 {
             let _permit = loop {
@@ -353,7 +352,7 @@ impl Reader<'_> {
                 &self.chosen.model,
                 &rules,
                 &data.to_string(),
-                Some(&structure),
+                true,
             )
             .await
             .map_err(|e| {

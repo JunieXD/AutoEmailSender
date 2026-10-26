@@ -110,13 +110,13 @@ impl Source {
                 base_url: p.base_url.into(),
                 api_key,
                 no_thinking: p.no_thinking,
-                structured: p.structured,
+                json_mode: p.json_mode,
             },
             Source::Custom(url) => Access {
                 base_url: url.clone(),
                 api_key,
                 no_thinking: None,
-                structured: None,
+                json_mode: false,
             },
         }
     }
