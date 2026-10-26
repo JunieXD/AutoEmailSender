@@ -29,5 +29,11 @@ task.workspace = true
 crawl.workspace = true
 tauri-plugin-autostart = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-registry = "0.6"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

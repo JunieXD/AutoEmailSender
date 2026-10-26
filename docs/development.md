@@ -59,9 +59,10 @@
 
 ### 桌面后台运行
 
-- `crates/app/src/background.rs` 管理 Tauri 自带的托盘、关闭窗口后的一次性通知和系统登录项；后台工作仍由核心运行。
-- 开机自启使用官方 `tauri-plugin-autostart`，macOS 使用默认的 LaunchAgent。登录项以应用标识命名，开发版与安装版分开；启动参数 `--autostart` 让主窗口保持隐藏。普通启动、再次启动和 macOS Dock 图标打开窗口。
+- `crates/app/src/background.rs` 管理 Tauri 自带的托盘和首次关窗的一次性说明对话框，`autostart.rs` 管理系统登录项；后台工作仍由核心运行。
+- 开机自启使用官方 `tauri-plugin-autostart`，macOS 使用默认的 LaunchAgent。登录项以应用标识命名，开发版与安装版分开；启动参数 `--autostart` 让主窗口保持隐藏。普通启动、再次启动、恢复备份后的启动和 macOS Dock 图标打开窗口。启动时读取现有登记命令，只在路径或参数改变时重新登记；macOS 的 App Translocation 临时路径不允许登记。
 - 界面通过 `ui/src/api/app.ts` 的 `autostartEnabled()` 和 `setAutostart(enabled)` 读写系统状态。插件只在 Rust 层使用，不增加界面的插件权限。
+- `crates/app/Info.plist` 设置 `NSAppSleepDisabled`，避免 macOS 在窗口隐藏后通过 App Nap 推迟定时发送和收信。
 
 ### 浏览器预览
 

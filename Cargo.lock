@@ -425,6 +425,7 @@ dependencies = [
  "api",
  "crawl",
  "matching",
+ "plist",
  "profile",
  "receive",
  "send",
@@ -442,6 +443,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "windows-registry",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 // Release builds on Windows run without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod background;
 mod backup;
 mod logs;
@@ -107,20 +108,24 @@ fn main() -> tauri::Result<()> {
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name(context.config().identifier.clone())
-                .arg(background::AUTOSTART_ARG)
+                .arg(autostart::ARG)
                 .build(),
         )
         .manage(backup::Commands::default())
         .setup(|app| {
             background::init(app.handle())?;
-            match tauri::async_runtime::block_on(start(app.handle())) {
-                Ok(ctx) => app.manage(ctx),
+            let restored = match tauri::async_runtime::block_on(start(app.handle())) {
+                Ok((ctx, restored)) => {
+                    app.manage(ctx);
+                    restored
+                }
                 Err(e) => {
                     tracing::error!("startup failed: {e}");
-                    app.manage(StartupFailure(e.message()))
+                    app.manage(StartupFailure(e.message()));
+                    false
                 }
             };
-            if !std::env::args_os().any(|arg| arg == background::AUTOSTART_ARG) {
+            if restored || !std::env::args_os().any(|arg| arg == autostart::ARG) {
                 show(app.handle());
             }
             Ok(())
@@ -137,8 +142,8 @@ fn main() -> tauri::Result<()> {
             backup::restore_backup,
             data_location,
             open_data_location,
-            background::autostart_enabled,
-            background::set_autostart
+            autostart::autostart_enabled,
+            autostart::set_autostart
         ])
         .build(context)?;
     app.run(|_app, _event| {
@@ -151,7 +156,7 @@ fn main() -> tauri::Result<()> {
 }
 
 /// Opens the data directory, the logs and the database.
-async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
+async fn start(app: &AppHandle) -> Result<(api::Context, bool), StartupError> {
     let dir = data_dir(app).map_err(|e| StartupError::DataDir(e.into()))?;
     let lock = match api::startup::DataLock::acquire(&dir) {
         Ok(lock) => lock,
@@ -167,7 +172,10 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let ctx = api::startup::open(&dir).await.map_err(StartupError::Core)?;
+    if let Err(e) = autostart::refresh(app) {
+        tracing::error!("refresh autostart: {e}");
+    }
+    let (ctx, restored) = api::startup::open(&dir).await.map_err(StartupError::Core)?;
     let api::Context {
         db,
         net,
@@ -276,7 +284,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
             });
         },
     ));
-    Ok(ctx)
+    Ok((ctx, restored))
 }
 
 async fn finish_crawl(
