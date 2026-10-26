@@ -13,7 +13,7 @@
 | `crates/crawl` | 抓取基础：网址边界、HTTP、页面材料、邮箱证据和归属核对、翻页和页面存取 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试、限流与暂停分类 |
 | `crates/stats` | 统计：联系进度、导师概览、Token 用量的本地查询 |
-| `crates/model` | 模型：服务商表、调用和测试、Token 用量；`output` 共用开头思考块和代码围栏的借用字符串处理，业务解析器决定块数、围栏闭合要求和字段规则 |
+| `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
 | `crates/profile` | 个人资料和信件样式 |
 | `crates/material` | 材料：存文件、提取文字 |
 | `crates/template` | 模板和占位符 |
@@ -25,8 +25,8 @@
 | `crates/task` | 首封和追问任务：固定输入、审核、草稿生成队列 |
 | `crates/writing` | AI 写信和核对：给模型的资料和规则，校验模型输出 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
-| `crates/test-fixtures` | 测试用的数据库夹具和本地模型 HTTP 服务器；`provider` 共用请求记录、连接生命周期和原始／结构化响应 |
-| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`，保留归档错误的原因链，输出端 I/O 错误按读写失败报告）；界面用的 TypeScript 类型从这里生成 |
+| `crates/test-fixtures` | 测试用的数据库夹具和本地模型 HTTP 服务器 |
+| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
 | `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
 | `ui` | 界面；`ui/src/api/types.ts` 是生成的 |

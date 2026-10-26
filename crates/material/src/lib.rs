@@ -231,7 +231,7 @@ pub async fn add(
 
 /// The text of a PDF or Word file, or None when it has none, such as a scan.
 fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
-    let text = if pdf {
+    let mut text = if pdf {
         pdf_oxide::PdfDocument::from_bytes(data.to_vec())
             .and_then(|d| d.extract_all_text())
             .map_err(|e| e.to_string())?
@@ -246,6 +246,8 @@ fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
             .map_err(|e| e.to_string())?
             .plain_text()
     };
+    // Extractors may emit NUL for symbol fonts; SQLite text functions stop at it.
+    text.retain(|c| c != '\0');
     Ok(tidy(&text))
 }
 

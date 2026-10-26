@@ -77,6 +77,25 @@ async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn word_symbols_do_not_cut_off_ai_reference_text(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    let id = add(&db, dir.path(), "简历.docx", fixture("symbol-nul.docx"), 1)
+        .await
+        .unwrap();
+    let expected = "林晓 个人简历\n南京大学 计算机科学与技术";
+    for references in [
+        material::for_writing(&db).await.unwrap(),
+        material::for_matching(&db).await.unwrap(),
+    ] {
+        assert_eq!(references[0].text, expected);
+    }
+    assert_eq!(
+        material::text(&db, id).await.unwrap(),
+        Some(Some(expected.into()))
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_scan_without_text_can_only_be_attached(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     let id = add(&db, dir.path(), "成绩单.pdf", fixture("scan.pdf"), 1)
