@@ -725,3 +725,357 @@ async fn storage_rejects_half_pauses_and_failed_work_without_a_reason(db: Sqlite
             .is_err()
     );
 }
+
+async fn todo_message(db: &SqlitePool, mentor: i64, at: i64, body: &str) -> i64 {
+    let id = message(db, mentor, "reply", at, body).await;
+    let mut tx = db.begin().await.unwrap();
+    email::todos::enqueue(&mut tx, id, at).await.unwrap();
+    tx.commit().await.unwrap();
+    id
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todos_switch_never_backfills_and_invalidates_old_claims(db: SqlitePool) {
+    let m = setup(&db).await;
+    let old = message(&db, m, "reply", 1, "旧回信").await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
+    let id = todo_message(&db, m, 2, "新回信").await;
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(claim.action, queue::Action::Todos);
+    assert_eq!(claim.id, id);
+    email::todos::set_enabled(&db, false).await.unwrap();
+    email::todos::set_enabled(&db, true).await.unwrap();
+    assert!(!queue::running(&db, claim).await.unwrap());
+    assert!(!email::todos::complete(&db, claim, &[], 3).await.unwrap());
+    assert!(!queue::fail(&db, claim, "旧错误").await.unwrap());
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
+    assert_eq!(outcome(&db, old).await, None);
+    assert!(email::todos::for_mentor(&db, m).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todos_share_limited_material_include_reply_date_and_record_separate_usage(db: SqlitePool) {
+    let m = setup(&db).await;
+    let email = test_fixtures::mail::first_email(&db, m, "sent", 1)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE email SET body_md='学生新写的内容', copy_message_id='<student@edu>' WHERE id=?",
+    )
+    .bind(email)
+    .execute(&db)
+    .await
+    .unwrap();
+    email::todos::set_enabled(&db, true).await.unwrap();
+    let id = todo_message(
+        &db,
+        m,
+        1_792_972_800_000,
+        "请周五前发成绩单。\n> 不该发送的旧引用",
+    )
+    .await;
+    sqlx::query("UPDATE message SET in_reply_to='<student@edu>' WHERE id=?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
+    queue::set_enabled(&db, true, 2).await.unwrap();
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let mut runner = Runner::start(&db, Default::default());
+    let mut materials = Vec::new();
+    for _ in 0..2 {
+        let req = request(&mut provider).await;
+        let data: Value =
+            serde_json::from_str(req.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+        assert_eq!(data["reply"]["text"], "请周五前发成绩单。");
+        assert_eq!(data["student"]["text"], "学生新写的内容");
+        assert!(!data.to_string().contains("不能发给模型"));
+        let answer = if !data["reply_date"].is_null() {
+            let (date, weekday) = email::todos::reply_date(1_792_972_800_000).unwrap();
+            assert_eq!(data["reply_date"], date);
+            assert_eq!(data["reply_weekday"], weekday);
+            r#"{"todos":[{"text":"  发成绩单  ","dueDate":null,"dueTime":"17:00"}]}"#
+        } else {
+            VALID
+        };
+        materials.push((data["reply"].clone(), data["student"].clone()));
+        req.respond.send(Response::answer(answer)).ok().unwrap();
+    }
+    runner.until(&db, |p| p.remaining == 0).await;
+    assert_eq!(materials[0], materials[1]);
+    let saved = email::todos::for_mentor(&db, m).await.unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].text, "发成绩单");
+    assert_eq!(saved[0].due_time, None);
+    assert_eq!(saved[0].message_id, Some(id));
+    let usage: Vec<(String, Option<i64>)> =
+        sqlx::query_as("SELECT purpose,email_id FROM usage ORDER BY purpose")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        usage,
+        [
+            ("reply_outcome".into(), Some(email)),
+            ("reply_todos".into(), Some(email))
+        ]
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todos_validate_dates_times_and_deduplicate_trimmed_text(db: SqlitePool) {
+    let m = setup(&db).await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    let id = todo_message(&db, m, 1_792_972_800_000, "做几件事").await;
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let mut runner = Runner::start(&db, Default::default());
+    let req = request(&mut provider).await;
+    let data: Value =
+        serde_json::from_str(req.body["messages"][1]["content"].as_str().unwrap()).unwrap();
+    let date = data["reply_date"].as_str().unwrap();
+    let answer = serde_json::json!({"todos":[
+        {"text":"  发成绩单 ","dueDate":date,"dueTime":"17:00"},
+        {"text":"发成绩单","dueDate":date,"dueTime":"17:00"},
+        {"text":"填表","dueDate":"2026-02-30","dueTime":"09:00"},
+        {"text":"回复","dueDate":"2040-01-01","dueTime":"10:00"},
+        {"text":"面谈","dueDate":date,"dueTime":"24:00"}
+    ]});
+    req.respond
+        .send(Response::answer(&answer.to_string()))
+        .ok()
+        .unwrap();
+    runner.until(&db, |p| p.remaining == 0).await;
+    let saved = email::todos::for_mentor(&db, m).await.unwrap();
+    assert_eq!(saved.len(), 4);
+    assert!(saved.iter().all(|todo| todo.message_id == Some(id)));
+    assert_eq!(saved[0].due_date.as_deref(), Some(date));
+    assert_eq!(saved[0].due_time.as_deref(), Some("17:00"));
+    for todo in &saved[1..3] {
+        assert_eq!(todo.due_date, None);
+        assert_eq!(todo.due_time, None);
+    }
+    assert_eq!(saved[3].due_date.as_deref(), Some(date));
+    assert_eq!(saved[3].due_time, None);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todos_bad_text_and_format_retry_once_fail_then_retry_without_duplicate_results(
+    db: SqlitePool,
+) {
+    let m = setup(&db).await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    let id = todo_message(&db, m, 1, "发材料").await;
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let mut runner = Runner::start(&db, Default::default());
+    let long =
+        serde_json::json!({"todos":[{"text":"学".repeat(101),"dueDate":null,"dueTime":null}]})
+            .to_string();
+    for answer in [&long, "invalid JSON"] {
+        request(&mut provider)
+            .await
+            .respond
+            .send(Response::answer(answer))
+            .ok()
+            .unwrap();
+    }
+    runner.until(&db, |p| p.failed == 1).await;
+    assert!(email::todos::for_mentor(&db, m).await.unwrap().is_empty());
+    assert!(matches!(
+        &receive::list(&db, m).await.unwrap()[0].kind,
+        receive::MessageKind::Reply {
+            todo_extraction: Some(email::todos::TodoExtraction::Failed { .. }),
+            ..
+        }
+    ));
+    queue::retry_action(&db, id, queue::Action::Todos, 2)
+        .await
+        .unwrap();
+    runner.processor.wake();
+    request(&mut provider)
+        .await
+        .respond
+        .send(Response::answer(
+            r#"{"todos":[{"text":"发材料","dueDate":null,"dueTime":null}]}"#,
+        ))
+        .ok()
+        .unwrap();
+    runner
+        .until(&db, |p| p.remaining == 0 && p.failed == 0)
+        .await;
+    assert_eq!(email::todos::for_mentor(&db, m).await.unwrap().len(), 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM usage WHERE purpose='reply_todos'")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        3
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn shared_reply_todos_choose_the_sender_address_then_lowest_mentor_id(db: SqlitePool) {
+    let low = setup(&db).await;
+    let high = mentor::create(
+        &db,
+        &MentorFields {
+            name: "实际发件人".into(),
+            emails: vec!["mentor@example.edu".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    email::todos::set_enabled(&db, true).await.unwrap();
+    for (at, owner) in [(1, high), (2, low)] {
+        let id = todo_message(&db, low, at, "发材料").await;
+        sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
+            .bind(high)
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
+        if at == 2 {
+            sqlx::query("UPDATE message SET from_address='unknown@example.edu' WHERE id=?")
+                .bind(id)
+                .execute(&db)
+                .await
+                .unwrap();
+        }
+        let claim = queue::next(&db).await.unwrap().unwrap();
+        let fields = email::todos::TodoForm {
+            text: "发材料".into(),
+            due_date: None,
+            due_time: None,
+        }
+        .check()
+        .unwrap();
+        assert!(
+            email::todos::complete(&db, claim, &[fields], 3)
+                .await
+                .unwrap()
+        );
+        assert!(!email::todos::complete(&db, claim, &[], 4).await.unwrap());
+        let actual: i64 = sqlx::query_scalar("SELECT mentor_id FROM todo WHERE message_id=?")
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(actual, owner);
+    }
+    mentor::merge::merge(&db, low, high, 5).await.unwrap();
+    assert_eq!(email::todos::for_mentor(&db, low).await.unwrap().len(), 2);
+    mentor::trash::trash(&db, &[low], 6).await.unwrap();
+    mentor::trash::delete(&db, &[low]).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM todo")
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todos_disabling_while_model_is_answering_discards_results_but_keeps_usage(db: SqlitePool) {
+    let m = setup(&db).await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    todo_message(&db, m, 1, "发材料").await;
+    let mut provider = Provider::start().await;
+    config(&db, &provider.address).await;
+    let mut runner = Runner::start(&db, Default::default());
+    let req = request(&mut provider).await;
+    email::todos::set_enabled(&db, false).await.unwrap();
+    email::todos::set_enabled(&db, true).await.unwrap();
+    req.respond
+        .send(Response::answer(
+            r#"{"todos":[{"text":"发材料","dueDate":null,"dueTime":null}]}"#,
+        ))
+        .ok()
+        .unwrap();
+    timeout(Duration::from_secs(10), async {
+        loop {
+            if sqlx::query_scalar::<_, i64>("SELECT count(*) FROM usage")
+                .fetch_one(&db)
+                .await
+                .unwrap()
+                == 1
+            {
+                break;
+            }
+            runner.changes.recv().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    runner.until(&db, |p| p.remaining == 0).await;
+    assert!(email::todos::for_mentor(&db, m).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todo_queue_recovers_trash_and_atomic_storage_failure_without_partial_todos(
+    db: SqlitePool,
+) {
+    let m = setup(&db).await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    todo_message(&db, m, 1, "发材料和报名").await;
+    let old = queue::next(&db).await.unwrap().unwrap();
+    queue::recover(&db).await.unwrap();
+    assert!(!email::todos::complete(&db, old, &[], 2).await.unwrap());
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    mentor::trash::trash(&db, &[m], 3).await.unwrap();
+    assert!(!email::todos::complete(&db, claim, &[], 4).await.unwrap());
+    assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
+    mentor::trash::restore(&db, &[m], 5).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let fields = |text: &str| {
+        email::todos::TodoForm {
+            text: text.into(),
+            due_date: None,
+            due_time: None,
+        }
+        .check()
+        .unwrap()
+    };
+    let items = [fields("发材料"), fields("报名")];
+    sqlx::query("CREATE TRIGGER fail_todo BEFORE INSERT ON todo WHEN NEW.text='报名' BEGIN SELECT RAISE(ABORT, 'disk failure fixture'); END").execute(&db).await.unwrap();
+    assert!(email::todos::complete(&db, claim, &items, 6).await.is_err());
+    assert!(email::todos::for_mentor(&db, m).await.unwrap().is_empty());
+    assert!(queue::running(&db, claim).await.unwrap());
+    sqlx::query("DROP TRIGGER fail_todo")
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(email::todos::complete(&db, claim, &items, 7).await.unwrap());
+    assert_eq!(email::todos::for_mentor(&db, m).await.unwrap().len(), 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn disabling_one_reply_action_preserves_the_other_actions_pause(db: SqlitePool) {
+    email::todos::set_enabled(&db, true).await.unwrap();
+    queue::set_enabled(&db, true, 1).await.unwrap();
+    let mut conn = db.acquire().await.unwrap();
+    queue::pause_if_unpaused(&mut conn, 2, "模型配置需要修正")
+        .await
+        .unwrap();
+    drop(conn);
+    queue::set_enabled(&db, false, 3).await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_some());
+    email::todos::set_enabled(&db, false).await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+    queue::set_enabled(&db, true, 4).await.unwrap();
+    email::todos::set_enabled(&db, true).await.unwrap();
+    let mut conn = db.acquire().await.unwrap();
+    queue::pause_if_unpaused(&mut conn, 5, "模型配置需要修正")
+        .await
+        .unwrap();
+    drop(conn);
+    email::todos::set_enabled(&db, false).await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_some());
+    queue::set_enabled(&db, false, 6).await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+}

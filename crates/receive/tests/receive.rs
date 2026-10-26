@@ -408,6 +408,7 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
                 &MessageKind::Reply {
                     outcome: None,
                     marking: None,
+                    todo_extraction: None,
                     unread: true,
                     can_reply: true
                 }
@@ -418,6 +419,7 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
                 &MessageKind::Reply {
                     outcome: None,
                     marking: None,
+                    todo_extraction: None,
                     unread: true,
                     can_reply: true
                 }
@@ -873,6 +875,7 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
                 &MessageKind::Reply {
                     outcome: None,
                     marking: None,
+                    todo_extraction: None,
                     unread: true,
                     can_reply: true
                 }
@@ -882,6 +885,7 @@ async fn a_copy_under_another_message_id_is_still_the_apps(db: SqlitePool) {
                 &MessageKind::Reply {
                     outcome: None,
                     marking: None,
+                    todo_extraction: None,
                     unread: true,
                     can_reply: true
                 }
@@ -1415,6 +1419,7 @@ async fn replies_without_a_message_id_are_readable_but_cannot_be_replied_to(db: 
         MessageKind::Reply {
             outcome: None,
             marking: None,
+            todo_extraction: None,
             unread: true,
             can_reply: false
         }
@@ -1424,6 +1429,7 @@ async fn replies_without_a_message_id_are_readable_but_cannot_be_replied_to(db: 
         MessageKind::Reply {
             outcome: None,
             marking: None,
+            todo_extraction: None,
             unread: true,
             can_reply: true
         }
@@ -1472,4 +1478,51 @@ async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePoo
     );
     round(&db, &net, T + 9 * MINUTE).await;
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn todo_extraction_only_enqueues_new_incremental_replies_after_enabling(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let m = mentor(&db, "李明", "li@pku.edu.cn").await;
+    store.deliver("INBOX", T, REPLY);
+    round(&db, &net, T + MINUTE).await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 0);
+    let new_reply = REPLY.replace("r1@pku.edu.cn", "r2@pku.edu.cn");
+    store.deliver("INBOX", T + 2 * MINUTE, &new_reply);
+    store.deliver(
+        "INBOX",
+        T + 2 * MINUTE,
+        "From: li@pku.edu.cn\nAuto-Submitted: auto-replied\nMessage-ID: <auto@edu>\n\n休假",
+    );
+    round(&db, &net, T + 3 * MINUTE).await;
+    assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 1);
+    store.deliver("INBOX", T + 4 * MINUTE, &new_reply);
+    store.deliver(
+        "INBOX",
+        T - 10 * DAY,
+        "From: old@pku.edu.cn\nMessage-ID: <old@edu>\n\n请发材料",
+    );
+    round(&db, &net, T + 5 * MINUTE).await;
+    mentor::add_email(&db, m, "old@pku.edu.cn", T + 6 * MINUTE)
+        .await
+        .unwrap();
+    round(&db, &net, T + 7 * MINUTE).await;
+    assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 1);
+    let queued: String = sqlx::query_scalar(
+        "SELECT m.message_id FROM reply_processing q JOIN message m ON m.id=q.message_id",
+    )
+    .fetch_one(&db)
+    .await
+    .unwrap();
+    assert_eq!(queued, "<r2@pku.edu.cn>");
+    email::todos::set_enabled(&db, false).await.unwrap();
+    store.deliver(
+        "INBOX",
+        T + 8 * MINUTE,
+        &REPLY.replace("r1@pku.edu.cn", "r3@pku.edu.cn"),
+    );
+    round(&db, &net, T + 9 * MINUTE).await;
+    email::todos::set_enabled(&db, true).await.unwrap();
+    assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 0);
 }

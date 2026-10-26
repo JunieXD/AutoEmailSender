@@ -169,6 +169,7 @@ const received: Entry = {
     canReply: true,
     outcome: null,
     marking: null,
+    todoExtraction: null,
   },
 };
 

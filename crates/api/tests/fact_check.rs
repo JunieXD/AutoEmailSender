@@ -18,6 +18,7 @@ fn context(db: SqlitePool) -> Context {
         generator: Default::default(),
         model_limit: Default::default(),
         reply_processor: Default::default(),
+        todo_reminders: Default::default(),
         materials: Default::default(),
     }
 }

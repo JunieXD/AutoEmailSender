@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET todo_reminders = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "ddc2cb51bf5ab04605c6cbde068add63e0a3d6ad8e8ae96860bcc83775991139"
+}

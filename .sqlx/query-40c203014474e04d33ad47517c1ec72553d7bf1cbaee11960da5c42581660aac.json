@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM reply_processing q\n        WHERE message_id = ? AND action = ? AND claim = ? AND state = 'running'\n          AND (SELECT reply_processing_paused_at IS NULL FROM profile)\n          AND EXISTS (SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id\n            WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL)) AS \"running!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "running!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "40c203014474e04d33ad47517c1ec72553d7bf1cbaee11960da5c42581660aac"
+}

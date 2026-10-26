@@ -18,6 +18,9 @@ use ts_rs::TS;
 mod mail;
 pub mod outcome;
 pub mod quote;
+pub mod reminders;
+mod reply_input;
+mod todos;
 
 const MINUTE: i64 = 60_000;
 /// How long to wait before receiving again.
@@ -660,6 +663,9 @@ impl Session<'_> {
         } else {
             None
         };
+        if reply.is_some() {
+            email::todos::enqueue(&mut tx, id, self.now).await?;
+        }
         tx.commit().await?;
         if let Some(reply) = reply {
             self.round.replies.push(reply);
@@ -831,6 +837,7 @@ pub enum MessageKind {
         can_reply: bool,
         outcome: Option<email::outcome::ReplyOutcome>,
         marking: Option<email::outcome::OutcomeMarking>,
+        todo_extraction: Option<email::todos::TodoExtraction>,
     },
     AutoReply,
     /// Sent to the mentor by the user from elsewhere, such as the mailbox's website.
@@ -841,12 +848,20 @@ pub enum MessageKind {
 
 /// The mail seen in the mailboxes with a mentor, oldest first.
 pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx::Error> {
+    list_in(&mut *db.acquire().await?, mentor_id).await
+}
+
+pub async fn list_in(
+    db: &mut sqlx::SqliteConnection,
+    mentor_id: i64,
+) -> Result<Vec<Message>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT m.id, m.kind AS "kind: Kind", m.from_address, m.subject, m.sent_at, m.read_at,
              mm.bounce_reason, m.body_text, m.message_id, m.truncated AS "truncated: bool",
-             m.outcome AS "outcome: email::outcome::ReplyOutcome", q.state, q.error
+             m.outcome AS "outcome: email::outcome::ReplyOutcome", q.state, q.error, t.state AS todo_state, t.error AS todo_error
            FROM message m JOIN message_mentor mm ON mm.message_id = m.id
            LEFT JOIN reply_processing q ON q.message_id = m.id AND q.action = 'outcome'
+           LEFT JOIN reply_processing t ON t.message_id = m.id AND t.action = 'todos'
            WHERE mm.mentor_id = ? ORDER BY m.sent_at, m.id"#,
         mentor_id
     )
@@ -870,6 +885,17 @@ pub async fn list(db: &SqlitePool, mentor_id: i64) -> Result<Vec<Message>, sqlx:
                         unread: r.read_at.is_none(),
                         can_reply: r.message_id.is_some(),
                         outcome: r.outcome,
+                        todo_extraction: match r.todo_state.as_deref() {
+                            Some("queued" | "running") => {
+                                Some(email::todos::TodoExtraction::Extracting)
+                            }
+                            Some("failed") => Some(email::todos::TodoExtraction::Failed {
+                                reason: r
+                                    .todo_error
+                                    .unwrap_or_else(|| unreachable!("failed work has an error")),
+                            }),
+                            _ => None,
+                        },
                         marking: match r.state.as_deref() {
                             Some("queued" | "running") => {
                                 Some(email::outcome::OutcomeMarking::Marking)

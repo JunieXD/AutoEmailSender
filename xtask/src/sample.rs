@@ -763,3 +763,43 @@ pub async fn fact_checks(db: &SqlitePool) -> Result {
     }
     Ok(())
 }
+
+pub async fn todos(db: &SqlitePool, now: i64) -> Result {
+    use chrono::{Days, Local, TimeZone};
+    let today = Local
+        .timestamp_millis_opt(now)
+        .single()
+        .ok_or("invalid sample date")?
+        .date_naive();
+    let replies: Vec<(i64, i64)> = sqlx::query_as("SELECT mm.mentor_id,m.id FROM message m JOIN message_mentor mm ON mm.message_id=m.id JOIN mentor t ON t.id=mm.mentor_id WHERE m.kind='reply' AND t.trashed_at IS NULL ORDER BY m.id LIMIT 7").fetch_all(db).await?;
+    for (i, (text, offset, time, done, manual)) in [
+        ("补发成绩单", Some(-2), Some("17:00"), false, false),
+        ("确认今天的面谈安排", Some(0), Some("18:00"), false, false),
+        ("把简历发给导师", Some(1), None, false, false),
+        ("完成报名表", Some(5), Some("17:00"), false, false),
+        ("整理研究计划", None, None, false, false),
+        ("发送本科成绩单", Some(-1), None, true, false),
+        ("准备面谈要问的问题", None, None, false, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (mentor, message) = replies[i % replies.len()];
+        let due = offset
+            .map(|offset: i32| {
+                if offset < 0 {
+                    today - Days::new((-offset) as u64)
+                } else {
+                    today + Days::new(offset as u64)
+                }
+            })
+            .map(|d| d.to_string());
+        sqlx::query("INSERT INTO todo(mentor_id,message_id,text,due_date,due_time,done_at,created_at,due_changed_at) VALUES(?,?,?,?,?,?,?,?)")
+            .bind(mentor).bind((!manual).then_some(message)).bind(text).bind(due).bind(time)
+            .bind(done.then_some(now-DAY)).bind(now-3*DAY+i as i64).bind(now-3*DAY).execute(db).await?;
+    }
+    sqlx::query("UPDATE profile SET ai_reply_todos=1,todo_reminders=1")
+        .execute(db)
+        .await?;
+    Ok(())
+}

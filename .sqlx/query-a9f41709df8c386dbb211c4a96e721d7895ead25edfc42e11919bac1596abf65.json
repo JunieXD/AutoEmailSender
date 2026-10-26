@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE todo SET text = ?2, due_date = ?3, due_time = ?4,\n        reminded_at = CASE WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN NULL ELSE reminded_at END,\n        due_changed_at = CASE WHEN due_date IS NOT ?3 OR due_time IS NOT ?4 THEN ?5 ELSE due_changed_at END\n        WHERE id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "a9f41709df8c386dbb211c4a96e721d7895ead25edfc42e11919bac1596abf65"
+}

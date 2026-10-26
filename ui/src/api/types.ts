@@ -10,6 +10,8 @@ export type AffiliationAddition = { before: Affiliation | null, added: Affiliati
 
 export type AiReplyOutcome = { enabled: boolean, };
 
+export type AiReplyTodos = { enabled: boolean, };
+
 export type ApprovalCandidate = { problems: number, factCheck: FactCheck | null, id: number, mentorId: number, subject: string, bodyMd: string, attachments: Array<number>, state: DraftState, error: string | null, cancelReason: string | null, plannedAt: number | null, latestAt: number | null, previous: PreviousPreview | null, };
 
 export type ApprovalPreview = { taskId: number, ids: Array<number>, };
@@ -130,7 +132,7 @@ export type EnrichSkipReason = "missing_profile" | "deleted_crawl" | "complete" 
 
 export type EnrichState = "none" | "queued" | "running" | "done" | "failed";
 
-export type Entry = { "email": Email } | { "message": Message };
+export type Entry = { "email": Email } | { "message": Message } | { "todo": Todo };
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "needs_agreement" | "internal";
 
@@ -347,7 +349,7 @@ quote: string | null,
 /**
  * Only its start was read, which may leave out some of the text.
  */
-truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, outcome: ReplyOutcome | null, marking: OutcomeMarking | null, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
+truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, outcome: ReplyOutcome | null, marking: OutcomeMarking | null, todoExtraction: TodoExtraction | null, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
@@ -439,9 +441,13 @@ export type NewTag = { mentorIds: Array<number>, name: string, color: string, };
 
 export type NewTask = { sourceTaskId: number | null, kind: Kind, name: string, schedule: Schedule, ids: Array<number>, writer: Writer, templateId: number | null, templateSourceId: number | null, modelConfigId: number | null, references: Array<number>, attachments: Array<number>, };
 
+export type NewTodo = { mentorId: number, text: string, dueDate: string | null, dueTime: string | null, };
+
 export type Nothing = Record<symbol, never>;
 
 export type NotificationSetting = { on: boolean, };
+
+export type OpenTodo = { mentorId: number, mentorName: string, id: number, text: string, dueDate: string | null, dueTime: string | null, done: boolean, messageId: number | null, createdAt: number, };
 
 export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
 
@@ -630,6 +636,20 @@ isDefault: boolean, };
 
 export type TestLetter = { templateName: string, subject: string, bodyMd: string, attachments: Array<number>, };
 
+export type Todo = { id: number, text: string, dueDate: string | null, dueTime: string | null, done: boolean, messageId: number | null, createdAt: number, };
+
+export type TodoDone = { id: number, done: boolean, };
+
+export type TodoEdit = { id: number, text: string, dueDate: string | null, dueTime: string | null, };
+
+export type TodoExtraction = { "state": "extracting" } | { "state": "failed", reason: string, };
+
+export type TodoId = { id: number, };
+
+export type TodoPage = { todos: Array<OpenTodo>, total: number, };
+
+export type TodoQuery = { page: number, };
+
 export type TokenTotals = { input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
 
 export type TokenUsage = { purposes: Array<PurposeUsage>, total: TokenTotals, };
@@ -796,6 +816,16 @@ export interface Operations {
   writeLetter: { input: FirstDraftEdit; output: Letter };
   checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
+  getAiReplyTodos: { input: Nothing; output: boolean };
+  setAiReplyTodos: { input: AiReplyTodos; output: null };
+  getTodoReminders: { input: Nothing; output: boolean };
+  setTodoReminders: { input: NotificationSetting; output: null };
+  addTodo: { input: NewTodo; output: number };
+  updateTodo: { input: TodoEdit; output: null };
+  setTodoDone: { input: TodoDone; output: null };
+  deleteTodo: { input: TodoId; output: null };
+  listTodos: { input: TodoQuery; output: TodoPage };
+  retryReplyTodos: { input: ReplyMessage; output: null };
   getAiReplyOutcome: { input: Nothing; output: boolean };
   setAiReplyOutcome: { input: AiReplyOutcome; output: null };
   setReplyOutcome: { input: ReplyOutcomeEdit; output: null };

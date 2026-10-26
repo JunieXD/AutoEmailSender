@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mm.mentor_id FROM message_mentor mm\n        JOIN message msg ON msg.id = mm.message_id WHERE mm.message_id = ?\n        ORDER BY EXISTS (SELECT 1 FROM mentor_email e WHERE e.mentor_id = mm.mentor_id\n            AND e.address = msg.from_address COLLATE NOCASE) DESC, mm.mentor_id LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message_mentor",
+            "name": "mentor_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "8a77ce4d547a83713bfa61f7e070dd601c9688b6649be7bbcdb6f5416d115c19"
+}

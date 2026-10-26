@@ -154,6 +154,7 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         receiver,
         matcher,
         reply_processor,
+        todo_reminders,
         crawler,
         generator,
         model_limit,
@@ -195,14 +196,37 @@ async fn start(app: &AppHandle) -> Result<api::Context, StartupError> {
         },
     ));
     let ui = app.clone();
+    let changed_todos = todo_reminders.clone();
     tauri::async_runtime::spawn(receive::outcome::run(
         db.clone(),
         net.clone(),
         reply_processor.clone(),
         model_limit.clone(),
         move || {
+            changed_todos.wake();
             if let Err(e) = ui.emit("reply-processing-changed", ()) {
                 tracing::warn!("refresh reply processing: {e}");
+            }
+        },
+    ));
+    let (ui, notifications) = (app.clone(), app.clone());
+    tauri::async_runtime::spawn(receive::reminders::run(
+        db.clone(),
+        todo_reminders.clone(),
+        move || {
+            if let Err(e) = ui.emit("todos-changed", ()) {
+                tracing::warn!("refresh todos: {e}");
+            }
+        },
+        move |message| {
+            if let Err(e) = notifications
+                .notification()
+                .builder()
+                .title("待办提醒")
+                .body(message)
+                .show()
+            {
+                tracing::warn!("todo notification: {e}");
             }
         },
     ));

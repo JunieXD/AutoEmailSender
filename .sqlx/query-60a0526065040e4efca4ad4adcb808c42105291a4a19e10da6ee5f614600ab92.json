@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT subject, body_text, in_reply_to, refs FROM message WHERE id = ? AND kind = 'reply'",
+  "query": "SELECT subject, body_text, in_reply_to, refs, sent_at FROM message WHERE id = ? AND kind = 'reply'",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,17 @@
             "name": "refs"
           }
         }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -55,8 +66,9 @@
       true,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "c11a6e3e2bc8a38d62295d6a2e50e2a3e7aab7d6526a09e109190bd17b607f8a"
+  "hash": "60a0526065040e4efca4ad4adcb808c42105291a4a19e10da6ee5f614600ab92"
 }

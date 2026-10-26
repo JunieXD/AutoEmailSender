@@ -2,8 +2,8 @@
 
 use email::outcome::{self as queue, ReplyOutcome};
 use model::{Chosen, ModelError};
-use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, types::Json};
+use serde::Deserialize;
+use sqlx::SqlitePool;
 use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, Notify},
@@ -40,85 +40,11 @@ enum Guard {
 
 enum Outcome {
     Done(ReplyOutcome),
+    Todos(Vec<email::todos::Fields>),
     Failed(String),
     Pause(String, Guard),
     RateLimit(Duration),
     Gone,
-}
-
-#[derive(Serialize)]
-struct Letter {
-    subject: String,
-    text: String,
-}
-
-#[derive(Serialize)]
-struct Input {
-    reply: Letter,
-    student: Option<Letter>,
-}
-
-fn take(text: &str, remaining: &mut usize) -> String {
-    let result: String = text.chars().take(*remaining).collect();
-    *remaining -= result.chars().count();
-    result
-}
-
-async fn input(db: &SqlitePool, id: i64) -> Result<Option<(String, Option<i64>)>, sqlx::Error> {
-    let mut tx = db.begin().await?;
-    let Some(reply) = sqlx::query!(
-        "SELECT subject, body_text, in_reply_to, refs FROM message WHERE id = ? AND kind = 'reply'",
-        id
-    )
-    .fetch_optional(&mut *tx)
-    .await?
-    else {
-        return Ok(None);
-    };
-    let mut ids: Vec<&str> = reply.in_reply_to.iter().map(String::as_str).collect();
-    ids.extend(
-        reply
-            .refs
-            .as_deref()
-            .unwrap_or_default()
-            .split_whitespace()
-            .rev(),
-    );
-    let parent = sqlx::query!(r#"SELECT email_id AS "email_id?: i64", subject AS "subject?: String", body AS "body?: String" FROM (
-        SELECT e.id AS email_id, e.subject, e.body_md AS body, r.key AS priority, 1 AS source
-        FROM json_each(?1) r JOIN email e ON e.message_id = r.value OR e.copy_message_id = r.value
-        WHERE e.sent_at IS NOT NULL
-        UNION ALL
-        SELECT NULL, m.subject, m.body_text, r.key, 0
-        FROM json_each(?1) r JOIN message m ON m.message_id = r.value WHERE m.kind = 'sent'
-        ) ORDER BY priority, source DESC LIMIT 1"#, Json(ids))
-        .fetch_optional(&mut *tx).await?;
-    let mut remaining = 6000;
-    let reply = Letter {
-        subject: take(reply.subject.as_deref().unwrap_or_default(), &mut remaining),
-        text: take(
-            super::quote::split(reply.body_text.as_deref().unwrap_or_default()).0,
-            &mut remaining,
-        ),
-    };
-    let email_id = parent.as_ref().and_then(|p| p.email_id);
-    let student = parent.map(|p| {
-        let body = p.body.as_deref().unwrap_or_default();
-        // Application drafts already exclude the quote appended when sending.
-        let text = if p.email_id.is_some() {
-            body
-        } else {
-            super::quote::split(body).0
-        };
-        Letter {
-            subject: take(p.subject.as_deref().unwrap_or_default(), &mut remaining),
-            text: take(text, &mut remaining),
-        }
-    });
-    // All fields are strings; serializing this closed shape is infallible.
-    let message = serde_json::to_string(&Input { reply, student })
-        .unwrap_or_else(|_| unreachable!("string fields"));
-    Ok(Some((message, email_id)))
 }
 
 fn parse(text: &str) -> Result<ReplyOutcome, &'static str> {
@@ -127,6 +53,15 @@ fn parse(text: &str) -> Result<ReplyOutcome, &'static str> {
     struct Answer {
         outcome: ReplyOutcome,
     }
+    let text = json_text(text)?;
+    serde_json::from_str::<Answer>(text)
+        .map(|a| a.outcome)
+        .map_err(
+            |_| "只接受含 outcome 字段的 JSON 对象，值为 interested、no_slot、declined 或 unclear",
+        )
+}
+
+pub(crate) fn json_text(text: &str) -> Result<&str, &'static str> {
     let mut text = text.trim();
     while let Some(rest) = text.strip_prefix("<think>") {
         text = rest
@@ -143,11 +78,7 @@ fn parse(text: &str) -> Result<ReplyOutcome, &'static str> {
             .ok_or("代码围栏没有结束")?
             .trim();
     }
-    serde_json::from_str::<Answer>(text)
-        .map(|a| a.outcome)
-        .map_err(
-            |_| "只接受含 outcome 字段的 JSON 对象，值为 interested、no_slot、declined 或 unclear",
-        )
+    Ok(text)
 }
 
 async fn analyze(
@@ -156,10 +87,14 @@ async fn analyze(
     claim: queue::Claim,
     cooldown: &Mutex<Option<Instant>>,
 ) -> Result<Outcome, sqlx::Error> {
-    let Some((message, email_id)) = input(db, claim.id).await? else {
+    let todos = claim.action == queue::Action::Todos;
+    let Some((message, email_id, reply_date)) =
+        super::reply_input::input(db, claim.id, todos).await?
+    else {
         return Ok(Outcome::Gone);
     };
-    let mut system = SYSTEM.to_owned();
+    let prompt = if todos { super::todos::SYSTEM } else { SYSTEM };
+    let mut system = prompt.to_owned();
     for attempt in 0..2 {
         if let Some(at) = *cooldown.lock().await
             && at > Instant::now()
@@ -178,35 +113,53 @@ async fn analyze(
             Ok(answer) => answer,
             Err(error) => return Ok(classify(error, chosen)),
         };
-        tracing::info!(message_id = claim.id, model = chosen.model, usage = ?answer.usage, finish_reason = answer.finish_reason, "reply outcome model answered");
+        tracing::info!(message_id = claim.id, action = ?claim.action, model = chosen.model, usage = ?answer.usage, finish_reason = answer.finish_reason, "reply processing model answered");
         if let Some(usage) = answer.usage {
             let at = now();
             while let Err(error) = model::usage::record_for_email(
                 db,
                 chosen.id,
                 &chosen.model,
-                model::usage::Purpose::ReplyOutcome,
+                if todos {
+                    model::usage::Purpose::ReplyTodos
+                } else {
+                    model::usage::Purpose::ReplyOutcome
+                },
                 email_id,
                 usage,
                 at,
             )
             .await
             {
-                tracing::error!("record reply outcome usage: {error}");
+                tracing::error!("record reply processing usage: {error}");
                 tokio::time::sleep(RETRY).await;
             }
         }
-        match parse(&answer.text) {
-            Ok(outcome) => return Ok(Outcome::Done(outcome)),
+        let parsed = if let Some(date) = &reply_date {
+            super::todos::parse(&answer.text, date).map(Outcome::Todos)
+        } else {
+            parse(&answer.text).map(Outcome::Done)
+        };
+        match parsed {
+            Ok(outcome) => return Ok(outcome),
             Err(error) if attempt == 0 => {
                 if !queue::running(db, claim).await? {
                     return Ok(Outcome::Gone);
                 }
                 system = format!(
-                    "{SYSTEM}\n上一次回答的校验错误：{error}。请重新输出完整的 JSON 对象。"
+                    "{prompt}\n上一次回答的校验错误：{error}。请重新输出完整的 JSON 对象。"
                 );
             }
-            Err(_) => return Ok(Outcome::Failed(INVALID.into())),
+            Err(_) => {
+                return Ok(Outcome::Failed(
+                    if todos {
+                        super::todos::INVALID
+                    } else {
+                        INVALID
+                    }
+                    .into(),
+                ));
+            }
         }
     }
     unreachable!("both attempts return")
@@ -258,7 +211,7 @@ pub async fn run(
     changed: impl Fn() + Send + 'static,
 ) {
     while let Err(e) = queue::recover(&db).await {
-        tracing::error!("recover reply outcome queue: {e}");
+        tracing::error!("recover reply processing queue: {e}");
         tokio::time::sleep(RETRY).await;
     }
     let cooldown = Arc::new(Mutex::new(None));
@@ -269,7 +222,7 @@ pub async fn run(
         let progress = match queue::progress(&db).await {
             Ok(p) => p,
             Err(e) => {
-                tracing::error!("reply outcome progress: {e}");
+                tracing::error!("reply processing progress: {e}");
                 tokio::time::sleep(RETRY).await;
                 continue;
             }
@@ -295,7 +248,7 @@ pub async fn run(
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::error!("claim reply outcome: {e}");
+                    tracing::error!("claim reply processing: {e}");
                     tokio::time::sleep(RETRY).await;
                     continue;
                 }
@@ -309,12 +262,13 @@ pub async fn run(
                         let id = claim.id;
                         let outcome = match result {
                             Ok(o) => o,
-                            Err(e) => { tracing::error!(message_id = id, "reply outcome database: {e}"); Outcome::Pause("回信处理的数据暂时无法读取，请重试；仍然出错时，导出日志发给开发者。".into(), Guard::Local) }
+                            Err(e) => { tracing::error!(message_id = id, "reply processing database: {e}"); Outcome::Pause("回信处理的数据暂时无法读取，请重试；仍然出错时，导出日志发给开发者。".into(), Guard::Local) }
                         };
                         let completed_at = now();
                         let applied = loop {
                             let saved = match &outcome {
                                 Outcome::Done(answer) => queue::complete(&db, claim, *answer).await,
+                                Outcome::Todos(todos) => email::todos::complete(&db, claim, todos, completed_at).await,
                                 Outcome::Failed(reason) => queue::fail(&db, claim, reason).await,
                                 Outcome::Pause(reason, model) => requeue(&db, claim, Some((completed_at, reason)), Some(model)).await,
                                 Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
@@ -322,7 +276,7 @@ pub async fn run(
                             };
                             match saved {
                                 Ok(applied) => break applied,
-                                Err(e) => { tracing::error!(message_id = id, "save reply outcome: {e}"); tokio::time::sleep(RETRY).await; }
+                                Err(e) => { tracing::error!(message_id = id, "save reply processing: {e}"); tokio::time::sleep(RETRY).await; }
                             }
                         };
                         if applied && let Outcome::RateLimit(wait) = outcome {
@@ -333,7 +287,7 @@ pub async fn run(
                         changed();
                     }
                     Err(e) => {
-                        tracing::error!("reply outcome worker: {e}");
+                        tracing::error!("reply processing worker: {e}");
                         if let Some(claim) = claims.remove(&e.id()) {
                             while let Err(e) = requeue(&db, claim, Some((now(), "回信处理意外中断，请继续或重启应用；仍然出错时，导出日志发给开发者。")), Some(&Guard::Local)).await {
                                 tracing::error!(message_id = claim.id, "recover worker: {e}");
@@ -350,7 +304,7 @@ pub async fn run(
     }
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)

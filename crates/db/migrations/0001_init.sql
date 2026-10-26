@@ -77,6 +77,7 @@ CREATE TABLE profile (
   reply_processing_paused_at INTEGER,
   reply_processing_pause_reason TEXT,
   reply_processing_claim INTEGER NOT NULL DEFAULT 0 CHECK (reply_processing_claim >= 0),
+  todo_reminders INTEGER NOT NULL DEFAULT 1 CHECK (todo_reminders IN (0, 1)),
   background_notifications INTEGER NOT NULL DEFAULT 1 CHECK (background_notifications IN (0, 1)),
   CHECK (match_paused_at IS NOT NULL OR match_pause_reason IS NULL),
   CHECK ((reply_processing_paused_at IS NULL) = (reply_processing_pause_reason IS NULL)),
@@ -360,7 +361,7 @@ CREATE INDEX message_mentor_message ON message_mentor (message_id);
 
 CREATE TABLE reply_processing (
   message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
-  action TEXT NOT NULL CHECK (action IN ('outcome')),
+  action TEXT NOT NULL CHECK (action IN ('outcome', 'todos')),
   queued_at INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'failed')),
   claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0),
@@ -374,16 +375,22 @@ CREATE TABLE todo (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   mentor_id INTEGER NOT NULL REFERENCES mentor(id) ON DELETE CASCADE,
   message_id INTEGER REFERENCES message(id) ON DELETE SET NULL,
-  text TEXT NOT NULL,
-  due_date TEXT,
-  due_time TEXT,
+  text TEXT NOT NULL CHECK (length(trim(text)) BETWEEN 1 AND 100 AND text = trim(text)),
+  due_date TEXT CHECK (due_date IS NULL OR
+    (length(due_date) = 10 AND due_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+     AND date(due_date, '+0 days') IS due_date)),
+  due_time TEXT CHECK (due_time IS NULL OR
+    (length(due_time) = 5 AND due_time GLOB '[0-2][0-9]:[0-5][0-9]' AND due_time < '24:00')),
   done_at INTEGER,
   reminded_at INTEGER,
   created_at INTEGER NOT NULL,
-  CHECK (due_time IS NULL OR due_date IS NOT NULL)
+  due_changed_at INTEGER NOT NULL,
+  CHECK (due_time IS NULL OR due_date IS NOT NULL),
+  CHECK (reminded_at IS NULL OR due_date IS NOT NULL)
 ) STRICT;
-CREATE INDEX todo_open ON todo (due_date) WHERE done_at IS NULL;
-CREATE INDEX todo_mentor ON todo (mentor_id);
+CREATE INDEX todo_open ON todo (due_date IS NULL, due_date, coalesce(due_time, '24:00'), id) WHERE done_at IS NULL;
+CREATE INDEX todo_reminder ON todo (due_date) WHERE done_at IS NULL AND reminded_at IS NULL AND due_date IS NOT NULL;
+CREATE INDEX todo_mentor ON todo (mentor_id, created_at, id);
 
 CREATE TABLE usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

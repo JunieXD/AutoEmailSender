@@ -45,6 +45,7 @@ pub async fn open(dir: &Path) -> Result<Context, Error> {
         receiver: Default::default(),
         matcher: Default::default(),
         reply_processor: Default::default(),
+        todo_reminders: Default::default(),
         crawler: Default::default(),
         generator: Default::default(),
         model_limit: Default::default(),

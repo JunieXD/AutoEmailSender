@@ -206,3 +206,16 @@ pub async fn set_ai_fact_check(db: &SqlitePool, on: bool) -> Result<(), sqlx::Er
         .await?;
     Ok(())
 }
+
+pub async fn todo_reminders(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT todo_reminders AS "on: bool" FROM profile"#)
+        .fetch_one(db)
+        .await
+}
+
+pub async fn set_todo_reminders(db: &SqlitePool, on: bool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET todo_reminders = ?", on)
+        .execute(db)
+        .await?;
+    Ok(())
+}

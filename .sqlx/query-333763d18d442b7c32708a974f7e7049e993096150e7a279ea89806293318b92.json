@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM reply_processing WHERE message_id = ? AND action = 'todos'\n        AND claim = ? AND state = 'running' AND EXISTS (\n            SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id\n            WHERE mm.message_id = reply_processing.message_id AND m.trashed_at IS NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "333763d18d442b7c32708a974f7e7049e993096150e7a279ea89806293318b92"
+}
