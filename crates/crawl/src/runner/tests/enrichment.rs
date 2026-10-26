@@ -73,7 +73,7 @@ async fn enrichment_personal_page_fills_only_empty_fields(db: SqlitePool) {
         "/p",
         "<title>张三</title><p>张三 a@example.edu 机器学习</p>",
     );
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/p").await;
     sqlx::query(
@@ -155,7 +155,7 @@ async fn enrichment_children_validate_links_limit_and_email_ownership(db: Sqlite
     );
     site.page("/research", "<p>张三 机器学习</p>");
     site.page("/papers", "<p>张三 论文</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (_, id) = candidate(&db, &site, "/p").await;
     enrich::start(&db, &[id], 2).await.unwrap();
@@ -255,7 +255,7 @@ async fn enrichment_skip_groups_are_rechecked_when_starting(db: SqlitePool) {
 async fn enrichment_pause_restart_cancel_and_late_review_results(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三 a@example.edu</p><a href='/child'>联系</a>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/p").await;
     enrich::start(&db, &[id], 2).await.unwrap();
@@ -321,7 +321,7 @@ async fn enrichment_pause_restart_cancel_and_late_review_results(db: SqlitePool)
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_failure_reasons_and_single_page_retry(db: SqlitePool) {
     let site = Site::new().await;
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/missing").await;
     enrich::start(&db, &[id], 2).await.unwrap();
@@ -409,8 +409,8 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
     let site = Site::new().await;
     site.page("/p", "<p>张三 a@example.edu</p>");
     for mode in ["delete", "edit", "default", "consent"] {
-        let mut old = Provider::start().await;
-        let mut new = Provider::start().await;
+        let mut old = Provider::start().await.unwrap();
+        let mut new = Provider::start().await.unwrap();
         let old_id = config(&db, &old.address).await;
         let new_id = config(&db, &new.address).await;
         sqlx::query("UPDATE profile SET default_model_config_id=?")
@@ -533,7 +533,7 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/a", "<p>张三 a@example.edu</p>");
     site.page("/b", "<p>张三 a@example.edu</p>");
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     for path in ["/a", "/b"] {
         let (_, id) = candidate(&db, &site, path).await;
@@ -644,7 +644,7 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_results(db: SqlitePool) {
     let site = Site::new().await;
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
     for (path, destination, name, aliases, success) in [
         ("/slash", "/slash/", "Zhang San", json!([]), true),
@@ -770,7 +770,7 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
 ) {
     let site = Site::new().await;
     site.page("/active", "<p>张三 a@example.edu</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/active").await;
     enrich::start(&db, &[id], 2).await.unwrap();
@@ -854,7 +854,7 @@ fn empty_answer(next: Value) -> Value {
 async fn enrichment_child_checks_identity_before_filling_any_field(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三</p><a href='/child'>实验室成员</a>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     for (html, name, aliases, success) in [
         (
@@ -918,7 +918,7 @@ async fn enrichment_child_checks_identity_before_filling_any_field(db: SqlitePoo
 async fn enrichment_child_accepts_identity_in_page_title(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三</p><a href='/papers'>代表论文</a>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     for (title, success) in [("张三的代表论文", true), ("李四的代表论文", false)] {
         site.page(
@@ -964,7 +964,7 @@ async fn enrichment_child_accepts_identity_in_page_title(db: SqlitePool) {
 async fn enrichment_child_treats_bilingual_names_as_one_person(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三（Zhang San）</p><a href='/contact'>联系</a>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     for html in [
         "<h1>张三（Zhang San）</h1><p>电子邮箱：a@example.edu</p>",
@@ -1005,7 +1005,7 @@ async fn enrichment_child_treats_bilingual_names_as_one_person(db: SqlitePool) {
 async fn enrichment_child_with_same_names_requires_unique_email_evidence(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三</p><a href='/contacts'>联系方式</a>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     for (school, multiple) in [
         ("计算机学院", true),
@@ -1055,7 +1055,7 @@ async fn enrichment_child_with_same_names_requires_unique_email_evidence(db: Sql
 async fn enrichment_affiliations_fill_only_unique_pairs(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三 甲大学计算机学院教授；兼任甲大学医学院</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let affiliation = |school: Option<&str>, title: Option<&str>| {
         json!({
@@ -1194,7 +1194,7 @@ async fn enrichment_review_removes_unfinished_pages_without_failures(db: SqliteP
     let site = Site::new().await;
     site.page("/p", "<p>张三 a@example.edu</p><a href='/child'>联系</a>");
     site.page("/child", "<p>张三 b@example.edu</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     for action in ["accept", "reject", "cancel"] {
         for stage in ["queued", "fetched", "child"] {
@@ -1285,7 +1285,7 @@ async fn enrichment_profile_retry_keeps_first_children(db: SqlitePool) {
     for path in ["/a", "/b", "/c", "/d", "/e", "/f"] {
         site.page(path, "<p>张三</p>");
     }
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/p").await;
     enrich::start(&db, &[id], 2).await.unwrap();
@@ -1338,7 +1338,7 @@ async fn enrichment_profile_retry_keeps_first_children(db: SqlitePool) {
 async fn enrichment_cancel_discards_fetched_but_unfinished_page(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三 a@example.edu</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/p").await;
     enrich::start(&db, &[id], 2).await.unwrap();
@@ -1482,7 +1482,7 @@ async fn enrichment_completion_includes_work_before_pause(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/first", "<p>张三 机器学习</p>");
     site.page("/second", "<p>张三</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, first) = candidate(&db, &site, "/first").await;
     let (other, second) = candidate(&db, &site, "/second").await;
@@ -1527,7 +1527,7 @@ async fn enrichment_completion_includes_work_before_pause(db: SqlitePool) {
 async fn enrichment_completion_survives_restart_after_final_save(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三 机器学习</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (_, id) = candidate(&db, &site, "/p").await;
     enrich::start(&db, &[id], 10).await.unwrap();
@@ -1552,7 +1552,7 @@ async fn enrichment_completion_survives_restart_after_final_save(db: SqlitePool)
 async fn enrichment_completion_retry_does_not_claim_previous_changes(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三 机器学习</p><button>下一页</button>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (crawl, id) = candidate(&db, &site, "/p").await;
     enrich::start(&db, &[id], 10).await.unwrap();
@@ -1600,7 +1600,7 @@ async fn enrichment_completion_retry_does_not_claim_previous_changes(db: SqliteP
 async fn enrichment_model_receives_existing_affiliations(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/p", "<p>张三 a@example.edu</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (_, id) = candidate(&db, &site, "/p").await;
     let affiliations =

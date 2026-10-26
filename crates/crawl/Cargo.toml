@@ -33,5 +33,6 @@ email.workspace = true
 matching.workspace = true
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring"] }
 task.workspace = true
+test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "test-util"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }

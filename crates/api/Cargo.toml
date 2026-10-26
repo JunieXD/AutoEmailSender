@@ -39,3 +39,4 @@ tempfile = "3.27.0"
 
 [dev-dependencies]
 fakemail.workspace = true
+test-fixtures = { path = "../test-fixtures" }

@@ -266,7 +266,7 @@ operations! {
     "testReceiving" => test_receiving(MailboxTest) -> ();
     "sendTestMail" => send_test_mail(MailboxId) -> ();
     "getProfile" => get_profile(Nothing) -> profile::Profile;
-    "updateProfile" => update_profile(profile::ProfileForm) -> ();
+    "updateProfile" => update_profile(profile::ProfileForm) -> profile::Profile;
     "finishOnboarding" => finish_onboarding(Nothing) -> ();
     "testLetter" => test_letter(Nothing) -> Option<TestLetter>;
     "sendTestLetter" => send_test_letter(SendTestLetter) -> ();
@@ -1085,7 +1085,10 @@ async fn get_profile(ctx: &Context, _: Nothing) -> Result<profile::Profile, Call
     Ok(profile::get(&ctx.db).await?)
 }
 
-async fn update_profile(ctx: &Context, form: profile::ProfileForm) -> Result<(), CallError> {
+async fn update_profile(
+    ctx: &Context,
+    form: profile::ProfileForm,
+) -> Result<profile::Profile, CallError> {
     Ok(profile::update(&ctx.db, &form, now()).await?)
 }
 
@@ -1312,19 +1315,10 @@ async fn fill(
 ) -> Result<FilledTemplate, CallError> {
     let m = get_mentor(ctx, MentorId { id: mentor_id }).await?;
     let me = profile::get(&ctx.db).await?;
-    let main = m.affiliations.first().cloned().unwrap_or_default();
-    let fill = template::Fill {
-        mentor_name: &m.name,
-        mentor_title: main.title.as_deref(),
-        university: main.university.as_deref(),
-        school: main.school.as_deref(),
-        department: main.department.as_deref(),
-        research: m.research.as_deref(),
-        my_name: me.name.as_deref(),
-    };
+    let filled = task::fill(&t.subject, &t.body_md, &m, me.name.as_deref());
     Ok(FilledTemplate {
-        subject: fill.subject(&t.subject),
-        body_md: fill.body(&t.body_md),
+        subject: filled.subject,
+        body_md: filled.body_md,
     })
 }
 
@@ -2147,15 +2141,20 @@ async fn preview_import(
     )
     .await?)
 }
+impl From<mentor::import::Error> for CallError {
+    fn from(error: mentor::import::Error) -> Self {
+        match error {
+            mentor::import::Error::Invalid(reason) => Self::invalid(reason),
+            mentor::import::Error::Database(error) => error.into(),
+        }
+    }
+}
+
 async fn import_mentors(
     ctx: &Context,
     input: ImportMentors,
 ) -> Result<mentor::import::Imported, CallError> {
     let sheets = read_import(&input.file).await?;
-    let preview = mentor::import::preview(&ctx.db, &sheets, &input.file.setup).await?;
-    if let Some(issue) = preview.issue {
-        return Err(CallError::invalid(issue));
-    }
     let result =
         mentor::import::import(&ctx.db, &sheets, &input.file.setup, &input.decisions, now())
             .await?;
@@ -2249,8 +2248,7 @@ mod table_tests {
 }
 
 #[cfg(test)]
-#[path = "../../model/tests/common/provider.rs"]
-mod provider;
+use test_fixtures::provider;
 
 #[cfg(test)]
 mod writing_tests {
@@ -2290,12 +2288,14 @@ mod writing_tests {
             "<subject>申请</subject><body>旧地址的信</body>",
             "stop",
         )])
-        .await;
+        .await
+        .unwrap();
         let (new_address, new_received) = provider::scripted(vec![(
             "<subject>申请</subject><body>新地址的信</body>",
             "stop",
         )])
-        .await;
+        .await
+        .unwrap();
         let form = |address: &str| model::ModelForm {
             name: String::new(),
             provider: model::providers::CUSTOM.into(),

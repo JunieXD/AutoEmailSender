@@ -337,13 +337,9 @@ async fn invalid_archives_are_rejected_and_cleaned_up(db: SqlitePool) {
         .unwrap();
     let target = dir.path().join("bad.zip");
     fs::write(&target, b"not zip").unwrap();
-    assert!(
-        backup::prepare(dir.path(), &target)
-            .await
-            .unwrap_err()
-            .message()
-            .contains("zip")
-    );
+    let error = backup::prepare(dir.path(), &target).await.unwrap_err();
+    assert!(error.message().contains("zip"));
+    assert!(std::error::Error::source(&error).is_some());
     let normal = serde_json::to_vec(&manifest()).unwrap();
     let mut foreign = manifest();
     foreign["application"] = json!("another.app");
@@ -480,11 +476,11 @@ async fn failed_export_preserves_the_previous_file_and_cleans_temporary_files(db
     let target = dir.path().join("backup.zip");
     fs::write(&target, b"previous complete backup").unwrap();
     fs::remove_file(dir.path().join("materials/1")).unwrap();
-    assert!(
-        backup::export(&db, &dir.path().join("materials"), &target, NOW)
-            .await
-            .is_err()
-    );
+    let error = backup::export(&db, &dir.path().join("materials"), &target, NOW)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, backup::Error::Io { .. }));
+    assert!(std::error::Error::source(&error).is_some());
     assert_eq!(fs::read(target).unwrap(), b"previous complete backup");
     let names: Vec<_> = fs::read_dir(dir.path())
         .unwrap()

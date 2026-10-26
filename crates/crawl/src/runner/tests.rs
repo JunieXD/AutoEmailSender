@@ -4,16 +4,15 @@ use crate::{
     review::{CandidateFilter, CandidateQuery, ReviewInput},
 };
 use mentor::{MentorFields, import::Decisions};
+use provider::{Provider, Response};
 use serde_json::{Value, json};
 use std::sync::Mutex;
+use test_fixtures::provider;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
     sync::mpsc,
 };
-#[path = "../../../model/tests/common/provider.rs"]
-mod provider;
-use provider::{Provider, Response};
 struct Site {
     port: u16,
     pages: Arc<Mutex<HashMap<String, (u16, String)>>>,
@@ -239,7 +238,7 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
         "/browser",
         "<div id='app'></div><script type='module' src='app.js'></script>",
     );
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let id = config(&db, &provider.address).await;
     let model = tokio::spawn(async move {
         while let Some(r) = provider.requests.recv().await {
@@ -396,7 +395,7 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let config = config(&db, &provider.address).await;
     let site = Site::new().await;
     site.page("/", "<title>张三</title><p>张三 a@school.example.edu</p>");
@@ -706,7 +705,7 @@ fn segments_preserve_blocks_and_external_output_is_checked() {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool) {
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     let site = Site::new().await;
     site.page(
@@ -858,7 +857,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
 async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/", include_str!("../../tests/pages/toronto.html"));
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     let id = queue::start(&db, &[site.url("/")], config, 1)
         .await
@@ -1426,7 +1425,7 @@ async fn review_fixture(db: &SqlitePool) -> (Site, Claim) {
     (site, claim)
 }
 async fn profile_fixture(db: &SqlitePool, site: &Site) -> (Claim, tokio::task::JoinHandle<()>) {
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let model = config(db, &provider.address).await;
     queue::start(db, &[site.url("/")], model, 1).await.unwrap();
     let root = queue::next(db).await.unwrap().unwrap();
@@ -1763,7 +1762,7 @@ async fn b3_redirect_external_is_rejected(db: SqlitePool) {
             .as_str(),
     );
     site.page("/external", "<title>张三</title><p>张三</p>");
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let model = config(&db, &provider.address).await;
     queue::start(&db, &[site.url("/")], model, 1).await.unwrap();
     let root = queue::next(&db).await.unwrap().unwrap();
@@ -1934,7 +1933,7 @@ async fn profile_from_list(
         "/list",
         &format!("<title>教师名单</title><a href='/profile'>{name}</a>"),
     );
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let model = config(db, &provider.address).await;
     let list = json!({"people":[listed(name, Some(1), vec![])]});
     let server = tokio::spawn(async move {
@@ -2153,7 +2152,7 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
         "/canonical",
         "<title>张三</title><p>张三</p><a href='/other'>其他主页</a>",
     );
-    let mut provider = Provider::start().await;
+    let mut provider = Provider::start().await.unwrap();
     let model = config(db, &provider.address).await;
     queue::start(db, &[site.url("/")], model, 1).await.unwrap();
     let root = queue::next(db).await.unwrap().unwrap();
@@ -2599,7 +2598,7 @@ async fn regression_profile_scalars_replace_list_snippets_and_reopen_accepted_re
 async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/", "<title>教师名单</title><p>张三 z@example.edu</p>");
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     for correct in [false, true] {
         let id = queue::start(&db, &[site.url("/")], config, 1)
@@ -2667,7 +2666,7 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
         server.abort();
         // A fresh fixture isolates the second run from the first server's lifetime.
         if !correct {
-            p = Provider::start().await;
+            p = Provider::start().await.unwrap();
             sqlx::query("UPDATE model_config SET base_url=? WHERE id=?")
                 .bind(&p.address)
                 .bind(config)
@@ -2687,8 +2686,8 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
     site.page("/", "<title>学院</title><p>教师名单</p>");
     let fetcher = Pages::local(site.port);
     for deleted in [true, false] {
-        let mut old_provider = Provider::start().await;
-        let mut new_provider = Provider::start().await;
+        let mut old_provider = Provider::start().await.unwrap();
+        let mut new_provider = Provider::start().await.unwrap();
         let old_id = config(&db, &old_provider.address).await;
         let fallback = config(&db, &new_provider.address).await;
         sqlx::query("UPDATE model_config SET agreed=0 WHERE id=?")
@@ -2858,7 +2857,7 @@ async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePoo
     for path in ["/a", "/b"] {
         site.page(path, "<title>教师名单</title><p>张三 z@example.edu</p>");
     }
-    let mut p = Provider::start().await;
+    let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     queue::start(&db, &[site.url("/a"), site.url("/b")], config, 1)
         .await

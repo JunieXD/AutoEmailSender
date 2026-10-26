@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_name, substr(extracted_text, 1, ?) AS \"text!: String\"\n        FROM material\n        WHERE for_writing = 1\n        ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "text!: String",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "81f59068c5ce0e7cd04b2528b9951c390df8bd5df836ad2803d78fe8b2e5562a"
+}

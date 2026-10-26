@@ -8,6 +8,7 @@ use ts_rs::TS;
 pub mod background;
 mod client;
 mod error;
+pub mod output;
 pub mod providers;
 pub mod usage;
 

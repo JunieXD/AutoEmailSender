@@ -1405,3 +1405,37 @@ async fn candidate_index_matches_aliases_and_checks_school_and_email(db: SqliteP
     );
     assert_eq!(p.created, 3);
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn import_rejects_invalid_structure_without_writing(db: SqlitePool) {
+    let sheets = table(&[&["姓名", "研究方向"], &["王明", "人工智能"]]);
+    for setup in [
+        Setup {
+            sheet: Some(9),
+            columns: None,
+        },
+        Setup {
+            sheet: None,
+            columns: Some(vec![Some(Field::Research), None]),
+        },
+        Setup {
+            sheet: None,
+            columns: Some(vec![Some(Field::Name), Some(Field::Name)]),
+        },
+    ] {
+        let issue = import::preview(&db, &sheets, &setup)
+            .await
+            .unwrap()
+            .issue
+            .unwrap();
+        let error = import::import(&db, &sheets, &setup, &Decisions::default(), 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, import::Error::Invalid(reason) if reason == issue));
+    }
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM mentor")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
