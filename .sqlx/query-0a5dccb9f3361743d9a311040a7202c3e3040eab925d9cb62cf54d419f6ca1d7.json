@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE reply_processing SET state = 'failed', error = ?\n        WHERE message_id = ? AND action = ? AND claim = ? AND state = 'running'\n          AND EXISTS (SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id\n            WHERE mm.message_id = reply_processing.message_id AND m.trashed_at IS NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "0a5dccb9f3361743d9a311040a7202c3e3040eab925d9cb62cf54d419f6ca1d7"
+}

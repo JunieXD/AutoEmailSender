@@ -25,6 +25,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 uuid = { version = "1.29.0", features = ["v4"] }
 serde.workspace = true
+email.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }

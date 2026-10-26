@@ -74,7 +74,7 @@ pub async fn set_enabled(db: &SqlitePool, enabled: bool, now: i64) -> Result<(),
         sqlx::query!("DELETE FROM reply_processing WHERE action = 'outcome'")
             .execute(&mut *tx)
             .await?;
-        sqlx::query!("UPDATE profile SET reply_processing_paused_at = NULL, reply_processing_pause_reason = NULL")
+        sqlx::query!("UPDATE profile SET reply_processing_paused_at = NULL, reply_processing_pause_reason = NULL WHERE NOT ai_reply_todos")
             .execute(&mut *tx).await?;
     }
     tx.commit().await
@@ -104,11 +104,21 @@ pub async fn set(db: &SqlitePool, id: i64, outcome: ReplyOutcome) -> Result<bool
 }
 
 pub async fn retry(db: &SqlitePool, id: i64, now: i64) -> Result<bool, sqlx::Error> {
+    retry_action(db, id, Action::Outcome, now).await
+}
+
+pub async fn retry_action(
+    db: &SqlitePool,
+    id: i64,
+    action: Action,
+    now: i64,
+) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query!(
         "UPDATE reply_processing SET state = 'queued', error = NULL, queued_at = ?
-        WHERE message_id = ? AND action = 'outcome' AND state = 'failed'",
+        WHERE message_id = ? AND action = ? AND state = 'failed'",
         now,
-        id
+        id,
+        action
     )
     .execute(db)
     .await?;
@@ -121,7 +131,7 @@ pub async fn progress(db: &SqlitePool) -> Result<ReplyProcessing, sqlx::Error> {
         r#"SELECT
         coalesce(sum(state IN ('queued', 'running')), 0) AS "remaining!: i64",
         coalesce(sum(state = 'failed'), 0) AS "failed!: i64"
-        FROM reply_processing q WHERE action = 'outcome' AND EXISTS (
+        FROM reply_processing q WHERE EXISTS (
             SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
             WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL)"#
     )
@@ -150,8 +160,16 @@ pub async fn resume(db: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(rename_all = "snake_case")]
+pub enum Action {
+    Outcome,
+    Todos,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Claim {
+    pub action: Action,
     pub id: i64,
     pub claim: i64,
 }
@@ -166,14 +184,14 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
         Claim,
         r#"UPDATE reply_processing SET state = 'running',
         claim = (SELECT reply_processing_claim FROM profile)
-        WHERE action = 'outcome' AND message_id = (
-            SELECT q.message_id FROM reply_processing q JOIN message msg ON msg.id = q.message_id
-            WHERE q.action = 'outcome' AND q.state = 'queued' AND EXISTS (
+        WHERE (message_id, action) = (
+            SELECT q.message_id, q.action FROM reply_processing q JOIN message msg ON msg.id = q.message_id
+            WHERE q.state = 'queued' AND EXISTS (
                 SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
                 WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL)
-            ORDER BY msg.sent_at DESC, msg.id DESC LIMIT 1)
-          AND (SELECT ai_reply_outcome AND reply_processing_paused_at IS NULL FROM profile)
-        RETURNING message_id AS "id!", claim AS "claim!""#
+            ORDER BY msg.sent_at DESC, msg.id DESC, q.action LIMIT 1)
+          AND (SELECT reply_processing_paused_at IS NULL FROM profile)
+        RETURNING message_id AS "id!", action AS "action!: Action", claim AS "claim!""#
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -191,11 +209,12 @@ pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
 pub async fn running(db: &SqlitePool, claim: Claim) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS (SELECT 1 FROM reply_processing q
-        WHERE message_id = ? AND action = 'outcome' AND claim = ? AND state = 'running'
-          AND (SELECT ai_reply_outcome AND reply_processing_paused_at IS NULL FROM profile)
+        WHERE message_id = ? AND action = ? AND claim = ? AND state = 'running'
+          AND (SELECT reply_processing_paused_at IS NULL FROM profile)
           AND EXISTS (SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
             WHERE mm.message_id = q.message_id AND m.trashed_at IS NULL)) AS "running!: bool""#,
         claim.id,
+        claim.action,
         claim.claim
     )
     .fetch_one(db)
@@ -205,8 +224,9 @@ pub async fn running(db: &SqlitePool, claim: Claim) -> Result<bool, sqlx::Error>
 pub async fn requeue(db: &mut SqliteConnection, claim: Claim) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query!(
         "UPDATE reply_processing SET state = 'queued' WHERE message_id = ?
-        AND action = 'outcome' AND claim = ? AND state = 'running'",
+        AND action = ? AND claim = ? AND state = 'running'",
         claim.id,
+        claim.action,
         claim.claim
     )
     .execute(db)
@@ -267,11 +287,12 @@ pub async fn fail(db: &SqlitePool, claim: Claim, reason: &str) -> Result<bool, s
     let mut tx = db.begin().await?;
     let updated = sqlx::query!(
         "UPDATE reply_processing SET state = 'failed', error = ?
-        WHERE message_id = ? AND action = 'outcome' AND claim = ? AND state = 'running'
+        WHERE message_id = ? AND action = ? AND claim = ? AND state = 'running'
           AND EXISTS (SELECT 1 FROM message_mentor mm JOIN mentor m ON m.id = mm.mentor_id
             WHERE mm.message_id = reply_processing.message_id AND m.trashed_at IS NULL)",
         reason,
         claim.id,
+        claim.action,
         claim.claim
     )
     .execute(&mut *tx)

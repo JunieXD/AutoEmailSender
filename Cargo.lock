@@ -7827,6 +7827,7 @@ dependencies = [
  "chrono",
  "crawl",
  "db",
+ "email",
  "fastrand",
  "mentor",
  "send",

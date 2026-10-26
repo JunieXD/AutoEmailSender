@@ -165,6 +165,12 @@ export function NotificationsSection() {
         label="后台工作做完时通知"
         description="应用不在前台时，匹配分析等后台工作完成后弹出系统通知；在前台时在内容页提醒。"
       />
+      <Toggle
+        get="getTodoReminders"
+        set="setTodoReminders"
+        label="待办提醒"
+        description="有截止日期的待办，在截止前一天上午 9:00 弹出系统通知。"
+      />
     </Section>
   );
 }
@@ -200,8 +206,8 @@ function Toggle({
   label,
   description,
 }: {
-  get: "getReplyNotifications" | "getBackgroundNotifications" | "getAiFactCheck";
-  set: "setReplyNotifications" | "setBackgroundNotifications" | "setAiFactCheck";
+  get: "getReplyNotifications" | "getBackgroundNotifications" | "getTodoReminders" | "getAiFactCheck";
+  set: "setReplyNotifications" | "setBackgroundNotifications" | "setTodoReminders" | "setAiFactCheck";
   label: string;
   description: string;
 }) {
@@ -258,42 +264,66 @@ function SwitchButton({
   );
 }
 
-/** Replies the AI reads as they come (docs/ui.md#交互); turning it on asks the provider consent first. */
+/** Replies the AI reads as they come (docs/ui.md#交互); turning either on asks the provider consent first. */
 export function ReplyProcessingSection() {
+  return (
+    <Section title="回信处理">
+      <AiSwitch
+        get="getAiReplyOutcome"
+        set="setAiReplyOutcome"
+        label="AI 标记回信结果"
+        description="开启后，导师的回信（包括已经收到的）会发给默认模型的服务商，标出有意向、无名额、拒绝或无法判断。不开也可以在往来里自己标。"
+      />
+      <AiSwitch
+        get="getAiReplyTodos"
+        set="setAiReplyTodos"
+        label="回信待办"
+        description="开启后，新收到的导师回信会发给默认模型的服务商，找出导师要你做的事和截止时间，列进待办；以前收到的不找。不开也可以在往来里自己添加待办。"
+      />
+    </Section>
+  );
+}
+
+function AiSwitch({
+  get,
+  set,
+  label,
+  description,
+}: {
+  get: "getAiReplyOutcome" | "getAiReplyTodos";
+  set: "setAiReplyOutcome" | "setAiReplyTodos";
+  label: string;
+  description: string;
+}) {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: ["getAiReplyOutcome"], queryFn: () => call("getAiReplyOutcome", {}) });
+  const query = useQuery({ queryKey: [get], queryFn: () => call(get, {}) });
   const save = useMutation({
-    mutationFn: (enabled: boolean) => call("setAiReplyOutcome", { enabled }),
+    mutationFn: (enabled: boolean) => call(set, { enabled }),
     onSuccess: async (_, enabled) => {
-      await queryClient.cancelQueries({ queryKey: ["getAiReplyOutcome"] });
-      queryClient.setQueryData(["getAiReplyOutcome"], enabled);
+      await queryClient.cancelQueries({ queryKey: [get] });
+      queryClient.setQueryData([get], enabled);
       refreshReplyOutcomes(queryClient);
     },
   });
-  const label = "AI 标记回信结果";
   const busy = query.data === undefined || save.isPending;
   return (
-    <Section title="回信处理">
-      <div>
-        <div className="flex items-center justify-between gap-4">
-          <span>{label}</span>
-          {query.data ? (
-            <SwitchButton label={label} checked disabled={busy} onClick={() => save.mutate(false)} />
-          ) : (
-            <ModelAction
-              disabled={busy}
-              onWrite={() => save.mutate(true)}
-              renderTrigger={(props) => <SwitchButton label={label} checked={false} {...props} />}
-            />
-          )}
-        </div>
-        <p className="mt-2 text-sm text-muted-foreground">
-          开启后，导师的回信（包括已经收到的）会发给默认模型的服务商，标出有意向、无名额、拒绝或无法判断。不开也可以在往来里自己标。
-        </p>
-        {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
-        {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
+    <div>
+      <div className="flex items-center justify-between gap-4">
+        <span>{label}</span>
+        {query.data ? (
+          <SwitchButton label={label} checked disabled={busy} onClick={() => save.mutate(false)} />
+        ) : (
+          <ModelAction
+            disabled={busy}
+            onWrite={() => save.mutate(true)}
+            renderTrigger={(props) => <SwitchButton label={label} checked={false} {...props} />}
+          />
+        )}
       </div>
-    </Section>
+      <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+      {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
+      {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
+    </div>
   );
 }
 

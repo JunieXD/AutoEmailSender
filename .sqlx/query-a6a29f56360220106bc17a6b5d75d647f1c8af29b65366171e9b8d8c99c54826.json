@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, text, due_time FROM todo\n            WHERE done_at IS NULL AND reminded_at IS NULL AND due_date = ? AND due_changed_at < ?\n              AND mentor_id NOT IN (SELECT id FROM mentor WHERE trashed_at IS NOT NULL)\n            ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "todo",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "text",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "todo",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "name": "due_time",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "todo",
+            "name": "due_time"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "a6a29f56360220106bc17a6b5d75d647f1c8af29b65366171e9b8d8c99c54826"
+}

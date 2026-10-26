@@ -8,10 +8,12 @@ use fact_check::*;
 pub mod startup;
 mod statistics;
 mod tasks;
+mod todos;
 use crawling::*;
 use statistics::*;
 use std::collections::BTreeMap;
 use tasks::*;
+use todos::*;
 
 use base64::prelude::{BASE64_STANDARD, Engine};
 use serde::{Deserialize, Serialize};
@@ -25,6 +27,7 @@ pub struct Context {
     pub receiver: receive::Receiver,
     pub matcher: matching::Matcher,
     pub reply_processor: receive::outcome::Processor,
+    pub todo_reminders: receive::reminders::Scheduler,
     pub crawler: crawl::runner::Crawler,
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
@@ -282,6 +285,16 @@ operations! {
     "writeLetter" => write_letter(FirstDraftEdit) -> writing::Letter;
     "checkMailDomain" => check_mail_domain(MailAddress) -> Option<check::Problem>;
     "approveFirstEmail" => approve_first_email(FirstEmail) -> ();
+    "getAiReplyTodos" => get_ai_reply_todos(Nothing) -> bool;
+    "setAiReplyTodos" => set_ai_reply_todos(AiReplyTodos) -> ();
+    "getTodoReminders" => get_todo_reminders(Nothing) -> bool;
+    "setTodoReminders" => set_todo_reminders(NotificationSetting) -> ();
+    "addTodo" => add_todo(NewTodo) -> i64;
+    "updateTodo" => update_todo(TodoEdit) -> ();
+    "setTodoDone" => set_todo_done(TodoDone) -> ();
+    "deleteTodo" => delete_todo(TodoId) -> ();
+    "listTodos" => list_todos(email::todos::TodoQuery) -> email::todos::TodoPage;
+    "retryReplyTodos" => retry_reply_todos(ReplyMessage) -> ();
     "getAiReplyOutcome" => get_ai_reply_outcome(Nothing) -> bool;
     "setAiReplyOutcome" => set_ai_reply_outcome(AiReplyOutcome) -> ();
     "setReplyOutcome" => set_reply_outcome(ReplyOutcomeEdit) -> ();
@@ -510,6 +523,7 @@ async fn preview_merge(
 async fn merge_mentors(ctx: &Context, input: MentorMerge) -> Result<(), CallError> {
     mentor::merge::merge(&ctx.db, input.keep, input.other, now()).await?;
     ctx.reply_processor.wake();
+    ctx.todo_reminders.wake();
     Ok(())
 }
 
@@ -529,17 +543,22 @@ async fn list_trash(
 }
 
 async fn trash_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
-    Ok(mentor::trash::trash(&ctx.db, &input.ids, now()).await?)
+    mentor::trash::trash(&ctx.db, &input.ids, now()).await?;
+    ctx.todo_reminders.wake();
+    Ok(())
 }
 
 async fn restore_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
     mentor::trash::restore(&ctx.db, &input.ids, now()).await?;
     ctx.reply_processor.wake();
+    ctx.todo_reminders.wake();
     Ok(())
 }
 
 async fn delete_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
-    Ok(mentor::trash::delete(&ctx.db, &input.ids).await?)
+    mentor::trash::delete(&ctx.db, &input.ids).await?;
+    ctx.todo_reminders.wake();
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -1867,12 +1886,14 @@ async fn resume_reply_processing(ctx: &Context, _: Nothing) -> Result<(), CallEr
 pub enum Entry {
     Email(email::Email),
     Message(receive::Message),
+    Todo(email::todos::Todo),
 }
 
 /// The correspondence with a mentor, oldest first; emails still to go out come last.
 async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry>, CallError> {
-    let emails = email::list(&ctx.db, input.id).await?;
-    let messages = receive::list(&ctx.db, input.id).await?;
+    let mut tx = ctx.db.begin().await?;
+    let emails = email::list_in(&mut tx, input.id).await?;
+    let messages = receive::list_in(&mut tx, input.id).await?;
     let mut entries: Vec<(i64, Entry)> = emails
         .into_iter()
         .map(|e| {
@@ -1889,8 +1910,28 @@ async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry
         })
         .chain(messages.into_iter().map(|m| (m.sent_at, Entry::Message(m))))
         .collect();
+    let todos = email::todos::for_mentor(&mut *tx, input.id).await?;
+    let mut from_replies: BTreeMap<i64, Vec<email::todos::Todo>> = BTreeMap::new();
+    for todo in todos {
+        if let Some(id) = todo.message_id {
+            from_replies.entry(id).or_default().push(todo);
+        } else {
+            entries.push((todo.created_at, Entry::Todo(todo)));
+        }
+    }
     entries.sort_by_key(|(at, _)| *at);
-    Ok(entries.into_iter().map(|(_, e)| e).collect())
+    let mut result = Vec::new();
+    for (_, entry) in entries {
+        let message = match &entry {
+            Entry::Message(m) => Some(m.id),
+            _ => None,
+        };
+        result.push(entry);
+        if let Some(todos) = message.and_then(|id| from_replies.remove(&id)) {
+            result.extend(todos.into_iter().map(Entry::Todo));
+        }
+    }
+    Ok(result)
 }
 
 async fn mark_read(ctx: &Context, input: MentorId) -> Result<(), CallError> {
@@ -2204,6 +2245,7 @@ mod writing_tests {
             receiver: Default::default(),
             matcher: Default::default(),
             reply_processor: Default::default(),
+            todo_reminders: Default::default(),
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
@@ -2313,6 +2355,7 @@ mod writing_tests {
             receiver: Default::default(),
             matcher: Default::default(),
             reply_processor: Default::default(),
+            todo_reminders: Default::default(),
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
@@ -2376,6 +2419,7 @@ mod reply_outcome_tests {
             receiver: Default::default(),
             matcher: Default::default(),
             reply_processor: Default::default(),
+            todo_reminders: Default::default(),
             crawler: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),

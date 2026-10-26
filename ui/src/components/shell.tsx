@@ -13,6 +13,7 @@ import { refreshTasks } from "@/pages/tasks";
 import { scheduledAt } from "@/components/schedule";
 import { ModelAction } from "@/components/ai-writing";
 import { refreshMentors, refreshReplyOutcomes } from "@/components/mentor";
+import { refreshTodos } from "@/components/todos";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
@@ -54,6 +55,7 @@ export function Shell() {
     const sendingChanged = listen("sending-changed", () => refreshMentors(queryClient));
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
     const repliesChanged = listen("reply-processing-changed", () => refreshReplyOutcomes(queryClient));
+    const todosChanged = listen("todos-changed", () => refreshTodos(queryClient));
     const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
       refreshTasks(queryClient);
       setCompleted(`任务“${p.name}”的草稿写好了：${p.generated} 封，失败 ${p.failed} 封`);
@@ -64,6 +66,7 @@ export function Shell() {
       void sendingChanged.then((f) => f());
       void tasksChanged.then((f) => f());
       void repliesChanged.then((f) => f());
+      void todosChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());
       void done.then((f) => f());
@@ -360,7 +363,7 @@ function Background({ className }: { className?: string }) {
             )}
             {work.marking > 0 && (
               <Link to="/conversations" className={ITEM}>
-                <Entry title="标记回信结果" detail={`还剩 ${work.marking} 封`} />
+                <Entry title="处理回信" detail={`还剩 ${work.marking} 项`} />
               </Link>
             )}
           </Group>
