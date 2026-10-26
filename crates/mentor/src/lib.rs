@@ -11,6 +11,7 @@ use ts_rs::TS;
 
 pub mod conversations;
 pub mod export;
+pub mod filters;
 pub mod import;
 pub mod intake;
 pub mod matching;
@@ -49,16 +50,9 @@ pub enum ReplyOutcomeFilter {
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct MentorQuery {
-    /// All mentors when absent.
-    #[ts(optional)]
-    pub status: Option<ContactStatus>,
-    /// Only applied with status = replied; ignored for other contact states.
-    #[ts(optional)]
-    pub reply_outcome: Option<ReplyOutcomeFilter>,
-    #[ts(optional)]
-    pub keyword: Option<String>,
-    #[ts(optional)]
-    pub unanswered_days: Option<NonZeroU32>,
+    #[serde(flatten)]
+    #[ts(flatten)]
+    pub filter: filters::MentorFilter,
     /// Starts at 1.
     pub page: NonZeroU32,
 }
@@ -213,47 +207,145 @@ fn match_state(
 /// The filters test only the mentor row: each `IN` set is built once per query, whereas joining the
 /// contact summary for every mentor made counting 100 000 mentors ten times slower. For the same
 /// reason the page is cut before `rows` joins anything, so skipped rows are never joined.
+/// Score and university narrow the scan before secondary affiliations probe their covering index,
+/// avoiding full secondary sets when only a few mentors can match. CASE keeps disabled correlated
+/// probes unevaluated; AND/OR expressions do not guarantee lazy evaluation in SQLite.
 pub async fn list(
     db: &SqlitePool,
     query: &MentorQuery,
     now: i64,
 ) -> Result<MentorPage, sqlx::Error> {
-    let before = query
-        .unanswered_days
-        .map(|days| now - i64::from(days.get()) * 86_400_000);
-    let keyword = query.keyword.as_deref().and_then(keyword);
     // One snapshot for the page, the total and the rows; read only, so it simply ends when dropped.
     let mut tx = db.begin().await?;
+    let filter = &query.filter;
     let ids = filtered_ids(
         &mut tx,
-        query.status,
-        query.reply_outcome,
-        keyword.as_deref(),
+        filter,
+        now,
         i64::from(PAGE_SIZE),
         offset(query.page),
-        before,
     )
     .await?;
+    let before = filter.unanswered_before(now);
+    let keyword = filter.keyword.as_deref().and_then(keyword);
+    let (minimum, unanalyzed) = filter.match_score();
+    let (universities, university_missing) = selections(&filter.universities);
+    let (schools, school_missing) = selections(&filter.schools);
+    let (departments, department_missing) = selections(&filter.departments);
+    let (titles, title_missing) = selections(&filter.titles);
+    let (tags, untagged) = selections(&filter.tags);
     let total = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!: i64"
         FROM mentor m
-        WHERE m.trashed_at IS NULL AND (?1 IS NULL OR (?1 = 'none'
-        AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-        AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE
-            mentor_search MATCH ?2)) AND (?3 IS NULL OR m.id IN (
-            SELECT mentor_id
-            FROM mentor_contact
+        WHERE m.trashed_at IS NULL
+        AND (?5 IS NULL OR m.match_score >= ?5)
+        AND (NOT ?6 OR m.match_score IS NULL)
+        AND CASE
+            WHEN ?7 IS NULL THEN CASE WHEN ?8 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.university IS NOT NULL
+                ) ELSE 1 END
+            WHEN m.id IN (
+                SELECT mentor_id FROM mentor_affiliation
+                WHERE university IN (SELECT value FROM json_each(?7))
+            ) THEN 1
+            WHEN ?8 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.university IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?9 IS NULL THEN CASE WHEN ?10 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.school IS NOT NULL
+                ) ELSE 1 END
+            WHEN EXISTS (
+                SELECT 1 FROM mentor_affiliation a
+                WHERE a.mentor_id = m.id
+                    AND a.school IN (SELECT value FROM json_each(?9))
+            ) THEN 1
+            WHEN ?10 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.school IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?11 IS NULL THEN CASE WHEN ?12 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.department IS NOT NULL
+                ) ELSE 1 END
+            WHEN EXISTS (
+                SELECT 1 FROM mentor_affiliation a
+                WHERE a.mentor_id = m.id
+                    AND a.department IN (SELECT value FROM json_each(?11))
+            ) THEN 1
+            WHEN ?12 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.department IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?13 IS NULL THEN CASE WHEN ?14 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.title IS NOT NULL
+                ) ELSE 1 END
+            WHEN EXISTS (
+                SELECT 1 FROM mentor_affiliation a
+                WHERE a.mentor_id = m.id
+                    AND a.title IN (SELECT value FROM json_each(?13))
+            ) THEN 1
+            WHEN ?14 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.title IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?15 IS NULL THEN CASE WHEN ?16 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_tag mt WHERE mt.mentor_id = m.id
+                ) ELSE 1 END
+            WHEN m.id IN (
+                SELECT mentor_id FROM mentor_tag
+                WHERE tag_id IN (SELECT value FROM json_each(?15))
+            ) THEN 1
+            WHEN ?16 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_tag mt WHERE mt.mentor_id = m.id
+                )
+            ELSE 0
+        END
+        AND (?1 IS NULL OR (?1 = 'none'
+            AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+            OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+        AND (?3 IS NULL OR m.id IN (
+            SELECT mentor_id FROM mentor_contact
             WHERE status = 'contacted' AND last_out_at < ?3
-        )) AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (
-            SELECT mentor_id
-            FROM mentor_contact
+        ))
+        AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (
+            SELECT mentor_id FROM mentor_contact
             WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4
+        ))
+        AND (?2 IS NULL OR m.id IN (
+            SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2
         ))"#,
-        query.status,
+        filter.status,
         keyword,
         before,
-        query.reply_outcome,
+        filter.reply_outcome,
+        minimum,
+        unanalyzed,
+        universities,
+        university_missing,
+        schools,
+        school_missing,
+        departments,
+        department_missing,
+        titles,
+        title_missing,
+        tags,
+        untagged,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -265,41 +357,148 @@ pub async fn list(
 
 async fn filtered_ids(
     conn: &mut SqliteConnection,
-    status: Option<ContactStatus>,
-    reply_outcome: Option<ReplyOutcomeFilter>,
-    keyword: Option<&str>,
+    filter: &filters::MentorFilter,
+    now: i64,
     limit: i64,
     skip: i64,
-    before: Option<i64>,
 ) -> Result<Vec<i64>, sqlx::Error> {
+    let before = filter.unanswered_before(now);
+    let keyword = filter.keyword.as_deref().and_then(keyword);
+    let (minimum, unanalyzed) = filter.match_score();
+    let (universities, university_missing) = selections(&filter.universities);
+    let (schools, school_missing) = selections(&filter.schools);
+    let (departments, department_missing) = selections(&filter.departments);
+    let (titles, title_missing) = selections(&filter.titles);
+    let (tags, untagged) = selections(&filter.tags);
     sqlx::query_scalar!(
         r#"SELECT m.id
         FROM mentor m
-        WHERE m.trashed_at IS NULL AND (?1 IS NULL OR (?1 = 'none'
-        AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
-        OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
-        AND (?2 IS NULL OR m.id IN (SELECT rowid FROM mentor_search WHERE
-            mentor_search MATCH ?2)) AND (?5 IS NULL OR m.id IN (
-            SELECT mentor_id
-            FROM mentor_contact
-            WHERE status = 'contacted' AND last_out_at < ?5
-        )) AND (?1 IS NOT 'replied' OR ?6 IS NULL OR m.id IN (
-            SELECT mentor_id
-            FROM mentor_contact
-            WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?6
+        WHERE m.trashed_at IS NULL
+        AND (?5 IS NULL OR m.match_score >= ?5)
+        AND (NOT ?6 OR m.match_score IS NULL)
+        AND CASE
+            WHEN ?7 IS NULL THEN CASE WHEN ?8 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.university IS NOT NULL
+                ) ELSE 1 END
+            WHEN m.id IN (
+                SELECT mentor_id FROM mentor_affiliation
+                WHERE university IN (SELECT value FROM json_each(?7))
+            ) THEN 1
+            WHEN ?8 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.university IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?9 IS NULL THEN CASE WHEN ?10 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.school IS NOT NULL
+                ) ELSE 1 END
+            WHEN EXISTS (
+                SELECT 1 FROM mentor_affiliation a
+                WHERE a.mentor_id = m.id
+                    AND a.school IN (SELECT value FROM json_each(?9))
+            ) THEN 1
+            WHEN ?10 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.school IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?11 IS NULL THEN CASE WHEN ?12 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.department IS NOT NULL
+                ) ELSE 1 END
+            WHEN EXISTS (
+                SELECT 1 FROM mentor_affiliation a
+                WHERE a.mentor_id = m.id
+                    AND a.department IN (SELECT value FROM json_each(?11))
+            ) THEN 1
+            WHEN ?12 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.department IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?13 IS NULL THEN CASE WHEN ?14 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.title IS NOT NULL
+                ) ELSE 1 END
+            WHEN EXISTS (
+                SELECT 1 FROM mentor_affiliation a
+                WHERE a.mentor_id = m.id
+                    AND a.title IN (SELECT value FROM json_each(?13))
+            ) THEN 1
+            WHEN ?14 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_affiliation a
+                    WHERE a.mentor_id = m.id AND a.title IS NOT NULL
+                )
+            ELSE 0
+        END
+        AND CASE
+            WHEN ?15 IS NULL THEN CASE WHEN ?16 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_tag mt WHERE mt.mentor_id = m.id
+                ) ELSE 1 END
+            WHEN m.id IN (
+                SELECT mentor_id FROM mentor_tag
+                WHERE tag_id IN (SELECT value FROM json_each(?15))
+            ) THEN 1
+            WHEN ?16 THEN NOT EXISTS (
+                    SELECT 1 FROM mentor_tag mt WHERE mt.mentor_id = m.id
+                )
+            ELSE 0
+        END
+        AND (?1 IS NULL OR (?1 = 'none'
+            AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))
+            OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))
+        AND (?3 IS NULL OR m.id IN (
+            SELECT mentor_id FROM mentor_contact
+            WHERE status = 'contacted' AND last_out_at < ?3
+        ))
+        AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (
+            SELECT mentor_id FROM mentor_contact
+            WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4
+        ))
+        AND (?2 IS NULL OR m.id IN (
+            SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2
         ))
         ORDER BY m.match_score DESC, m.id
-        LIMIT ?3
-        OFFSET ?4"#,
-        status,
+        LIMIT ?17
+        OFFSET ?18"#,
+        filter.status,
         keyword,
+        before,
+        filter.reply_outcome,
+        minimum,
+        unanalyzed,
+        universities,
+        university_missing,
+        schools,
+        school_missing,
+        departments,
+        department_missing,
+        titles,
+        title_missing,
+        tags,
+        untagged,
         limit,
         skip,
-        before,
-        reply_outcome,
     )
     .fetch_all(conn)
     .await
+}
+
+/// Separate missing choices before binding, so SQL can skip value probes without parsing JSON.
+fn selections<T>(choices: &[Option<T>]) -> (Option<Json<Vec<&T>>>, bool) {
+    let values: Vec<_> = choices.iter().flatten().collect();
+    (
+        (!values.is_empty()).then_some(Json(values)),
+        choices.iter().any(Option::is_none),
+    )
 }
 
 fn offset(page: NonZeroU32) -> i64 {

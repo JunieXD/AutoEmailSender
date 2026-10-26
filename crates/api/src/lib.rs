@@ -240,6 +240,7 @@ operations! {
     "previewImport" => preview_import(PreviewImport) -> mentor::import::Preview;
     "importMentors" => import_mentors(ImportMentors) -> mentor::import::Imported;
     "listMentors" => list_mentors(mentor::MentorQuery) -> mentor::MentorPage;
+    "mentorFilterOptions" => mentor_filter_options(Nothing) -> mentor::filters::MentorFilterOptions;
     "getMentor" => get_mentor(MentorId) -> mentor::MentorDetail;
     "setMentorNote" => set_mentor_note(MentorNote) -> ();
     "addMentor" => add_mentor(mentor::MentorForm) -> MentorId;
@@ -465,9 +466,17 @@ pub struct MentorNote {
 
 async fn list_mentors(
     ctx: &Context,
-    query: mentor::MentorQuery,
+    mut query: mentor::MentorQuery,
 ) -> Result<mentor::MentorPage, CallError> {
+    query.filter.check().map_err(CallError::invalid)?;
     Ok(mentor::list(&ctx.db, &query, now()).await?)
+}
+
+async fn mentor_filter_options(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<mentor::filters::MentorFilterOptions, CallError> {
+    Ok(mentor::filters::options(&ctx.db).await?)
 }
 
 async fn get_mentor(ctx: &Context, input: MentorId) -> Result<mentor::MentorDetail, CallError> {
@@ -2228,7 +2237,10 @@ pub struct ExportMentors {
     pub note: bool,
 }
 
-pub async fn export_mentors(ctx: &Context, input: ExportMentors) -> Result<Vec<u8>, CallError> {
+pub async fn export_mentors(ctx: &Context, mut input: ExportMentors) -> Result<Vec<u8>, CallError> {
+    if let mentor::export::Scope::Filter(filter) = &mut input.scope {
+        filter.check().map_err(CallError::invalid)?;
+    }
     let rows = mentor::export::export(&ctx.db, &input.scope, input.note, now()).await?;
     tokio::task::spawn_blocking(move || write_table(rows, input.format))
         .await

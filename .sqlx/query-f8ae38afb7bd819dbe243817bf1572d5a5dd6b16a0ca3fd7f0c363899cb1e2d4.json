@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id\n        FROM mentor m\n        WHERE m.trashed_at IS NULL\n        AND (?5 IS NULL OR m.match_score >= ?5)\n        AND (NOT ?6 OR m.match_score IS NULL)\n        AND CASE\n            WHEN ?7 IS NULL THEN CASE WHEN ?8 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.university IS NOT NULL\n                ) ELSE 1 END\n            WHEN m.id IN (\n                SELECT mentor_id FROM mentor_affiliation\n                WHERE university IN (SELECT value FROM json_each(?7))\n            ) THEN 1\n            WHEN ?8 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.university IS NOT NULL\n                )\n            ELSE 0\n        END\n        AND CASE\n            WHEN ?9 IS NULL THEN CASE WHEN ?10 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.school IS NOT NULL\n                ) ELSE 1 END\n            WHEN EXISTS (\n                SELECT 1 FROM mentor_affiliation a\n                WHERE a.mentor_id = m.id\n                    AND a.school IN (SELECT value FROM json_each(?9))\n            ) THEN 1\n            WHEN ?10 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.school IS NOT NULL\n                )\n            ELSE 0\n        END\n        AND CASE\n            WHEN ?11 IS NULL THEN CASE WHEN ?12 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.department IS NOT NULL\n                ) ELSE 1 END\n            WHEN EXISTS (\n                SELECT 1 FROM mentor_affiliation a\n                WHERE a.mentor_id = m.id\n                    AND a.department IN (SELECT value FROM json_each(?11))\n            ) THEN 1\n            WHEN ?12 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.department IS NOT NULL\n                )\n            ELSE 0\n        END\n        AND CASE\n            WHEN ?13 IS NULL THEN CASE WHEN ?14 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.title IS NOT NULL\n                ) ELSE 1 END\n            WHEN EXISTS (\n                SELECT 1 FROM mentor_affiliation a\n                WHERE a.mentor_id = m.id\n                    AND a.title IN (SELECT value FROM json_each(?13))\n            ) THEN 1\n            WHEN ?14 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_affiliation a\n                    WHERE a.mentor_id = m.id AND a.title IS NOT NULL\n                )\n            ELSE 0\n        END\n        AND CASE\n            WHEN ?15 IS NULL THEN CASE WHEN ?16 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_tag mt WHERE mt.mentor_id = m.id\n                ) ELSE 1 END\n            WHEN m.id IN (\n                SELECT mentor_id FROM mentor_tag\n                WHERE tag_id IN (SELECT value FROM json_each(?15))\n            ) THEN 1\n            WHEN ?16 THEN NOT EXISTS (\n                    SELECT 1 FROM mentor_tag mt WHERE mt.mentor_id = m.id\n                )\n            ELSE 0\n        END\n        AND (?1 IS NULL OR (?1 = 'none'\n            AND m.id NOT IN (SELECT mentor_id FROM mentor_contact))\n            OR m.id IN (SELECT mentor_id FROM mentor_contact WHERE status = ?1))\n        AND (?3 IS NULL OR m.id IN (\n            SELECT mentor_id FROM mentor_contact\n            WHERE status = 'contacted' AND last_out_at < ?3\n        ))\n        AND (?1 IS NOT 'replied' OR ?4 IS NULL OR m.id IN (\n            SELECT mentor_id FROM mentor_contact\n            WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4\n        ))\n        AND (?2 IS NULL OR m.id IN (\n            SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2\n        ))\n        ORDER BY m.match_score DESC, m.id\n        LIMIT ?17\n        OFFSET ?18",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 18
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f8ae38afb7bd819dbe243817bf1572d5a5dd6b16a0ca3fd7f0c363899cb1e2d4"
+}

@@ -12,10 +12,11 @@ use test_fixtures::mail::first_email;
 
 fn query(status: Option<ContactStatus>, keyword: Option<&str>, page: u32) -> MentorQuery {
     MentorQuery {
-        reply_outcome: None,
-        unanswered_days: None,
-        status,
-        keyword: keyword.map(Into::into),
+        filter: mentor::filters::MentorFilter {
+            status,
+            keyword: keyword.map(Into::into),
+            ..Default::default()
+        },
         page: NonZeroU32::new(page).unwrap(),
     }
 }
@@ -115,7 +116,7 @@ async fn unanswered_filter_uses_latest_sent_time_and_ignores_automatic_replies(d
             .unwrap();
     }
     let mut q = query(Some(ContactStatus::Contacted), None, 1);
-    q.unanswered_days = NonZeroU32::new(7);
+    q.filter.unanswered_days = NonZeroU32::new(7);
     let found = mentor::list(&db, &q, now).await.unwrap();
     assert_eq!(found.total, 3);
     let actual: std::collections::BTreeSet<_> = found.mentors.iter().map(|m| m.id).collect();
@@ -126,11 +127,10 @@ async fn unanswered_filter_uses_latest_sent_time_and_ignores_automatic_replies(d
     assert_eq!(found.total, 2);
     let rows = mentor::export::export(
         &db,
-        &mentor::export::Scope::Filter(mentor::export::Filter {
-            reply_outcome: None,
-            status: q.status,
-            keyword: None,
-            unanswered_days: q.unanswered_days,
+        &mentor::export::Scope::Filter(mentor::filters::MentorFilter {
+            status: q.filter.status,
+            unanswered_days: q.filter.unanswered_days,
+            ..Default::default()
         }),
         false,
         now,
