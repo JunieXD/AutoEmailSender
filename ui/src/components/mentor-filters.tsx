@@ -47,7 +47,7 @@ function texts(v: unknown) {
 /** Anything unexpected in the URL is dropped, as for the other filters. */
 export function filterSearch(search: Record<string, unknown>): FilterSearch {
   const tags = Array.isArray(search.tag)
-    ? search.tag.filter((x): x is number | null => x === null || Number.isInteger(x))
+    ? search.tag.filter((x): x is number | null => x === null || Number.isSafeInteger(x))
     : [];
   return {
     match: MATCHES.find(([m]) => m !== undefined && m === search.match)?.[0],
@@ -94,7 +94,7 @@ export function MentorFilters({ search, onChange }: { search: FilterSearch; onCh
   const options = useQuery({ queryKey: ["mentorFilterOptions"], queryFn: () => call("mentorFilterOptions", {}) });
   const o = options.data;
   return (
-    <div className="flex items-center gap-2 px-7 pb-3 phone:overflow-x-auto phone:px-4 phone:pb-2.5 phone:[scrollbar-width:none]">
+    <div className="flex flex-wrap items-center gap-2 px-7 pb-3 phone:flex-nowrap phone:overflow-x-auto phone:px-4 phone:pb-2.5 phone:[scrollbar-width:none]">
       <Menu
         label="匹配度"
         shown={search.match === undefined ? undefined : MATCHES.find(([m]) => m === search.match)?.[1]}
@@ -157,7 +157,7 @@ function Menu({ label, shown, children }: { label: string; shown?: string; child
           />
         }
       >
-        {shown ? `${label}：${shown}` : label}
+        <span className="max-w-60 truncate">{shown ? `${label}：${shown}` : label}</span>
         <ChevronDownIcon className="size-3.5" strokeWidth={1.6} />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-1.5">
@@ -191,7 +191,11 @@ function Choices<T extends string | number>({
   const shown =
     first === undefined ? undefined : selected.length > 1 ? `${name(first)} 等 ${selected.length} 个` : name(first);
   const toggle = (v: T | null) => onChange(selected.includes(v) ? selected.filter((s) => s !== v) : [...selected, v]);
-  const listed = choices.filter((c) => c.label.includes(text.trim()));
+  // A chosen value nobody has any more (all moved to the bin, say) stays listed, so that it can be unticked.
+  const gone = selected.flatMap((v) =>
+    v === null || choices.some((c) => c.value === v) ? [] : [{ value: v, label: String(v), count: 0 }],
+  );
+  const listed = [...choices, ...gone].filter((c) => c.label.includes(text.trim()));
   return (
     <Menu label={label} shown={shown}>
       {choices.length > 8 && (
