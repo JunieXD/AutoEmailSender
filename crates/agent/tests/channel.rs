@@ -64,12 +64,13 @@ async fn authentication_permissions_cli_and_switch_share_the_real_local_channel(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        for path in [
-            agent::token_path(dir.path()),
-            agent::socket_path(dir.path()),
-        ] {
-            assert_eq!(std::fs::metadata(path)?.permissions().mode() & 0o777, 0o600);
-        }
+        assert_eq!(
+            std::fs::metadata(agent::token_path(dir.path()))?
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 
     let mut wrong = agent::connect(dir.path(), &first).await?;

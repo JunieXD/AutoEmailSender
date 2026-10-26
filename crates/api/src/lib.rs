@@ -192,32 +192,6 @@ macro_rules! operations {
     };
 }
 
-/// These operations require the user's confirmation in the app before an Agent can run them.
-const AGENT_CONFIRMATION_REQUIRED: &[&str] = &[
-    "approveTaskEmails",
-    "approveFirstEmail",
-    "approveFollowUp",
-    "approveReply",
-    "sendEmailNow",
-    "resendEmail",
-    "retryEmail",
-    "resumeTask",
-    "resumeMailbox",
-    "changeTaskSchedule",
-    "rescheduleEmail",
-    "deleteMentors",
-    "deleteTask",
-    "deleteTemplate",
-    "deleteMailbox",
-    "deleteMaterial",
-    "deleteCrawl",
-    "deleteTag",
-    "deleteTodo",
-    "deleteModelConfig",
-    "mergeMentors",
-    "agreeModel",
-];
-
 pub async fn call_agent(
     ctx: &Context,
     op: &str,
@@ -229,7 +203,7 @@ pub async fn call_agent(
         "getAgentAccess" | "setAgentAccess" => {
             Err(CallError::invalid("这个操作只供应用界面使用".into()))
         }
-        _ if AGENT_CONFIRMATION_REQUIRED.contains(&op) => Err(CallError::invalid(
+        _ if agent::requires_confirmation(ctx, op, &input).await? => Err(CallError::invalid(
             "这个操作要你在应用里确认，下一版支持".into(),
         )),
         _ => call(ctx, op, input).await,

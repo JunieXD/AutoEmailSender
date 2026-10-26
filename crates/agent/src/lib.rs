@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-const TOKEN_FILE: &str = "agent.token";
-
 #[derive(Deserialize, Serialize)]
 pub struct Credentials {
     pub token: String,
@@ -26,7 +24,30 @@ impl Credentials {
 }
 
 pub fn token_path(dir: &Path) -> PathBuf {
-    dir.join(TOKEN_FILE)
+    directory(dir).join("token")
+}
+
+pub fn directory(dir: &Path) -> PathBuf {
+    dir.join("agent")
+}
+
+fn prepare_directory(dir: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        match std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(directory(dir))
+        {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                std::fs::set_permissions(directory(dir), std::fs::Permissions::from_mode(0o700))
+            }
+            Err(error) => Err(error),
+        }
+    }
+    #[cfg(windows)]
+    std::fs::create_dir_all(directory(dir))
 }
 
 #[cfg(unix)]
@@ -36,17 +57,24 @@ pub type Listener = tokio::net::UnixListener;
 
 #[cfg(unix)]
 pub fn socket_path(dir: &Path) -> PathBuf {
-    dir.join("agent.sock")
+    directory(dir).join("sock")
 }
 
 #[cfg(unix)]
 pub fn listen(dir: &Path, _credentials: &Credentials) -> io::Result<Listener> {
-    use std::os::unix::fs::PermissionsExt;
+    prepare_directory(dir)?;
     let path = socket_path(dir);
     remove_if_present(&path)?;
-    let listener = Listener::bind(&path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(listener)
+    Listener::bind(&path).map_err(|error| {
+        #[cfg(target_os = "macos")]
+        if path.as_os_str().as_encoded_bytes().len() > 103 {
+            return io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Agent 连接路径超过 macOS 的 103 字节上限，请缩短数据目录路径后重试。",
+            );
+        }
+        error
+    })
 }
 
 #[cfg(unix)]
@@ -69,8 +97,9 @@ pub struct Listener {
 }
 
 #[cfg(windows)]
-pub fn listen(_dir: &Path, credentials: &Credentials) -> io::Result<Listener> {
+pub fn listen(dir: &Path, credentials: &Credentials) -> io::Result<Listener> {
     use tokio::net::windows::named_pipe::ServerOptions;
+    prepare_directory(dir)?;
     let name = credentials.pipe.clone();
     let next = ServerOptions::new()
         .reject_remote_clients(true)

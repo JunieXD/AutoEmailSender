@@ -464,7 +464,7 @@ pub async fn import(
     Ok(result)
 }
 
-async fn calculate(
+pub async fn calculate(
     conn: &mut SqliteConnection,
     sheets: &[Sheet],
     setup: &Setup,

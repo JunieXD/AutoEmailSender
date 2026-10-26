@@ -1067,7 +1067,7 @@ pub fn is_school(address: &str) -> bool {
 
 /// Where an address the app adds goes among the mentor's: a school's before the first that is not,
 /// else last (docs/data-model.md#导师).
-fn place(addresses: &[String], address: &str) -> usize {
+pub fn place(addresses: &[String], address: &str) -> usize {
     addresses
         .iter()
         .position(|a| is_school(address) && !is_school(a))
