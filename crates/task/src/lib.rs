@@ -367,24 +367,8 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
             )));
         }
     }
-    let writer = match form.writer {
-        Writer::Ai => "ai",
-        Writer::Template => "template",
-    };
-    let mut tx = db.begin().await?;
-    // Take the write lock before reading template content or checking membership.
-    let id = sqlx::query_scalar!(
-        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
-        VALUES (?, ?, 'ai', 'now', 'active', ?)
-        RETURNING id AS "id!""#,
-        form.name.trim(),
-        form.kind,
-        now
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     validate_source(&mut tx, form).await?;
-    email::schedule::save(&mut tx, id, &schedule).await?;
     let template = template_content(&mut tx, form).await?;
     let writing_template = match form.writer {
         Writer::Template => Some(
@@ -413,18 +397,6 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
         }
     }
     let model_config_id = chosen.as_ref().map(|c| c.id);
-    sqlx::query!(
-        "UPDATE task SET writer = ?, template_id = ?, template_subject = ?,
-           template_body_md = ?, model_config_id = ? WHERE id = ?",
-        writer,
-        template_id,
-        subject,
-        body,
-        model_config_id,
-        id
-    )
-    .execute(&mut *tx)
-    .await?;
     if let Some(source) = form.source_task_id {
         let failures = sqlx::query_scalar!(
             r#"SELECT id
@@ -459,11 +431,12 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
             "有导师无法加入任务，请重新核对导师列表。".into(),
         ));
     }
-    for (role, materials) in [
+    let materials = [
         ("reference", &form.references),
         ("attachment", &form.attachments),
-    ] {
-        for material in materials {
+    ];
+    for (role, ids) in materials {
+        for material in ids {
             let valid = sqlx::query_scalar!(
                 r#"SELECT id
                 FROM material
@@ -479,6 +452,40 @@ pub async fn create(db: &SqlitePool, form: &NewTask, now: i64) -> Result<i64> {
                     "所选材料已被删除或没有可供写信的文字，请重新选择。".into(),
                 ));
             }
+        }
+    }
+    let (schedule_kind, window) = match &form.schedule {
+        email::schedule::Schedule::Now => ("now", None),
+        email::schedule::Schedule::Window(window) => ("window", Some(window)),
+    };
+    let dates = window.map(|w| Json(&w.dates));
+    let start = window.map(|w| w.start.as_str());
+    let end = window.map(|w| w.end.as_str());
+    let per_window = window.map(|w| i64::from(w.per_window));
+    let id = sqlx::query_scalar!(
+        r#"INSERT INTO task (name, kind, writer, schedule, window_dates, window_start,
+            window_end, per_window, template_id, template_subject, template_body_md,
+            model_config_id, state, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        RETURNING id AS "id!""#,
+        form.name.trim(),
+        form.kind,
+        form.writer,
+        schedule_kind,
+        dates,
+        start,
+        end,
+        per_window,
+        template_id,
+        subject,
+        body,
+        model_config_id,
+        now
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    for (role, ids) in materials {
+        for material in ids {
             sqlx::query!(
                 r#"INSERT INTO task_material (task_id, material_id, role)
                 VALUES (?, ?, ?)
@@ -575,11 +582,7 @@ pub async fn stop(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
     Ok(())
 }
 pub async fn delete(db: &SqlitePool, id: i64) -> Result<()> {
-    let mut tx = db.begin().await?;
-    // Acquire the write lock before checking again; no handover can slip through this transaction.
-    sqlx::query!("UPDATE task SET name = name WHERE id = ?", id)
-        .execute(&mut *tx)
-        .await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     if sqlx::query_scalar!(
         "SELECT id FROM email WHERE task_id = ? AND state IN ('sending','cloud') LIMIT 1",
         id
@@ -612,17 +615,15 @@ pub async fn change_schedule(db: &SqlitePool, edit: &ScheduleEdit, now: i64) -> 
         .schedule
         .validate()
         .map_err(|s| Error::Invalid(s.into()))?;
-    let mut tx = db.begin().await?;
-    if sqlx::query!(
-        r#"UPDATE task SET name = name
-           WHERE id = ?
-             AND state <> 'stopped'"#,
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    if sqlx::query_scalar!(
+        r#"SELECT id FROM task
+        WHERE id = ? AND state <> 'stopped'"#,
         edit.id
     )
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?
-    .rows_affected()
-        == 0
+    .is_none()
     {
         return Err(Error::Invalid("任务已停止或已删除。".into()));
     }

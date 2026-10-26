@@ -742,11 +742,7 @@ pub async fn approve_in_zone<T: chrono::TimeZone>(
 where
     T::Offset: std::fmt::Display,
 {
-    let mut tx = db.begin().await?;
-    // First statement takes a write lock. Approval always uses the latest human draft.
-    sqlx::query!("UPDATE task SET name = name WHERE id = ?", request.task_id)
-        .execute(&mut *tx)
-        .await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let mut approved = 0;
     for r in &request.emails {
         let current = sqlx::query!(
@@ -819,10 +815,7 @@ pub async fn regenerate(
     Ok(emails::regenerate(&mut *db.acquire().await?, task, id, failed_only, now).await?)
 }
 pub async fn reapply(db: &SqlitePool, key: &TaskEmail, now: i64) -> Result<()> {
-    let mut tx = db.begin().await?;
-    sqlx::query!("UPDATE task SET name = name WHERE id = ?", key.task_id)
-        .execute(&mut *tx)
-        .await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let template = sqlx::query_as!(
         TemplateContent,
         r#"SELECT template_id, template_subject AS "subject!: String",
