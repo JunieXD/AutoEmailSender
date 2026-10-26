@@ -13,6 +13,7 @@ import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
 import { MatchButton } from "@/components/matching";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
 import { day } from "@/format";
 
@@ -246,6 +247,7 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
             </div>
           ))}
         </dd>
+        <SendingMailbox mentor={m} />
         {/* The main one heads the page. */}
         {m.affiliations.length > 1 && (
           <>
@@ -278,6 +280,46 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
         )}
       </dl>
     </Section>
+  );
+}
+
+/** docs/ui.md#交互: which of the user's mailboxes writes to this mentor, once there is a choice. */
+function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
+  const queryClient = useQueryClient();
+  const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
+  const save = useMutation({
+    mutationFn: (mailboxId: number | null) => call("setMentorMailbox", { id: m.id, mailboxId }),
+    onSuccess: async (saved) => {
+      await queryClient.cancelQueries({ queryKey: ["getMentor", m.id] });
+      queryClient.setQueryData(["getMentor", m.id], saved);
+    },
+    // The mailbox may have been deleted since the list was loaded.
+    onError: () => queryClient.invalidateQueries({ queryKey: ["listMailboxes"] }),
+  });
+  if (!mailboxes.data || mailboxes.data.length < 2) return null;
+  return (
+    <>
+      <dt>发件邮箱</dt>
+      <dd>
+        <NativeSelect
+          aria-label="发件邮箱"
+          value={m.mailboxId ?? ""}
+          disabled={save.isPending}
+          onChange={(e) => save.mutate(e.target.value ? Number(e.target.value) : null)}
+        >
+          <NativeSelectOption value="">自动</NativeSelectOption>
+          {mailboxes.data.map((b) => (
+            <NativeSelectOption key={b.id} value={b.id}>
+              {b.address}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        {m.contact.status !== "none" && (
+          <p className="mt-1 text-xs text-muted-foreground">换了邮箱后，导师看到的发件地址会变。</p>
+        )}
+        {save.error && <p className="mt-1 text-xs text-destructive">{errorMessage(save.error)}</p>}
+      </dd>
+    </>
   );
 }
 
