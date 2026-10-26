@@ -14,21 +14,7 @@ const LETTER: &str = "<subject>申请</subject><body>王老师：您好，我希
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn today_work_counts_generated_drafts_retained_matches_and_confirmed_sends(db: SqlitePool) {
-    let ctx = Context {
-        writes: db::Writes::default(),
-        db,
-        net: net::Net::new(vec![]).unwrap(),
-        materials: Default::default(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        mail_domains: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-    };
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
     let (address, _) = provider::scripted(vec![(LETTER, "stop"); 2]).await.unwrap();
     sqlx::query(
         r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed, created_at)

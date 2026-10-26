@@ -121,21 +121,7 @@ mod tests {
 
     #[sqlx::test(migrator = "db::MIGRATOR")]
     async fn known_mail_domains_count_in_task_lists_and_bulk_review(db: SqlitePool) {
-        let ctx = Context {
-            db,
-            net: net::Net::new(vec![]).unwrap(),
-            writes: Default::default(),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            crawler: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            mail_domains: Default::default(),
-            materials: Default::default(),
-        };
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
         // Keep the unknown domain in flight so this test never starts a real DNS lookup.
         let (_answer, waiting) = watch::channel(false);
         ctx.mail_domains.results().extend([

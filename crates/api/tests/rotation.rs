@@ -22,21 +22,7 @@ async fn a_deleted_mailbox_is_rejected_without_changing_the_responsible_mailbox(
     mentor::assign_mailbox(&mut db.acquire().await.unwrap(), mentor, 1)
         .await
         .unwrap();
-    let ctx = Context {
-        writes: db::Writes::default(),
-        db,
-        net: net::Net::new(vec![]).unwrap(),
-        materials: Default::default(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        mail_domains: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-    };
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
     let mailbox = call(
         &ctx,
         "addMailbox",

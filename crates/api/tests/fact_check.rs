@@ -7,21 +7,7 @@ use test_fixtures::provider;
 const T: i64 = 1_800_000_000_000;
 
 fn context(db: SqlitePool) -> Context {
-    Context {
-        writes: db::Writes::default(),
-        db,
-        net: net::Net::new(vec![]).unwrap(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        mail_domains: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-        materials: Default::default(),
-    }
+    Context::new(db, net::Net::new(vec![]).unwrap(), Default::default())
 }
 async fn config(db: &SqlitePool, address: &str) -> i64 {
     sqlx::query_scalar(

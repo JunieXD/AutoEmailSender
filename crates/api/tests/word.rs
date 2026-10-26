@@ -12,20 +12,11 @@ use sqlx::SqlitePool;
 use std::io::Cursor;
 
 fn context() -> Context {
-    Context {
-        writes: db::Writes::default(),
-        db: SqlitePool::connect_lazy("sqlite::memory:").unwrap(),
-        net: net::Net::new(vec![]).unwrap(),
-        materials: Default::default(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-    }
+    Context::new(
+        SqlitePool::connect_lazy("sqlite::memory:").unwrap(),
+        net::Net::new(vec![]).unwrap(),
+        Default::default(),
+    )
 }
 
 #[tokio::test]

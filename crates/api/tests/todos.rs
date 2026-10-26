@@ -5,21 +5,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 fn context(db: SqlitePool) -> Context {
-    Context {
-        writes: db::Writes::default(),
-        db,
-        net: net::Net::new(vec![]).unwrap(),
-        sender: Default::default(),
-        receiver: Default::default(),
-        matcher: Default::default(),
-        reply_processor: Default::default(),
-        todo_reminders: Default::default(),
-        crawler: Default::default(),
-        generator: Default::default(),
-        model_limit: Default::default(),
-        mail_domains: Default::default(),
-        materials: Default::default(),
-    }
+    Context::new(db, net::Net::new(vec![]).unwrap(), Default::default())
 }
 
 async fn mentor(db: &SqlitePool) -> i64 {

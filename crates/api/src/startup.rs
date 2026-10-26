@@ -38,25 +38,7 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
         .await
         .map_err(Error::Database)?;
     let net = net::Net::new(Vec::new()).map_err(Error::Net)?;
-    let writes = db::Writes::default();
-    Ok((
-        Context {
-            crawler: crawl::runner::Crawler::new(writes.clone()),
-            writes,
-            db,
-            net,
-            materials: dir.join("materials"),
-            sender: Default::default(),
-            receiver: Default::default(),
-            matcher: Default::default(),
-            reply_processor: Default::default(),
-            todo_reminders: Default::default(),
-            generator: Default::default(),
-            model_limit: Default::default(),
-            mail_domains: Default::default(),
-        },
-        restored,
-    ))
+    Ok((Context::new(db, net, dir.join("materials")), restored))
 }
 
 #[derive(Debug)]
