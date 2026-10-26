@@ -65,6 +65,8 @@ export function TemplateDialog({
       setBodyEdited(true);
     },
   });
+  // A save while importing would keep the old body and drop the import.
+  const busy = save.isPending || importWord.isPending;
   const picker = useRef<HTMLInputElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const dirty = form.name !== initial.name || form.subject !== initial.subject || bodyEdited;
@@ -81,7 +83,7 @@ export function TemplateDialog({
         >
           <DialogHeader>{template ? "编辑模板" : "添加模板"}</DialogHeader>
           <DialogBody>
-            <fieldset disabled={save.isPending} className="flex min-w-0 flex-col gap-3.5">
+            <fieldset disabled={busy} className="flex min-w-0 flex-col gap-3.5">
               <Field label="名称" id="template-name">
                 <Input
                   ref={nameRef}
@@ -137,7 +139,7 @@ export function TemplateDialog({
                   id="template-body"
                   markdown={loaded.bodyMd}
                   placeholders={placeholders}
-                  disabled={save.isPending}
+                  disabled={busy}
                   onChange={(bodyMd) => {
                     setForm((f) => ({ ...f, bodyMd }));
                     setBodyEdited(true);
@@ -157,7 +159,7 @@ export function TemplateDialog({
               {save.isError && errorMessage(save.error)}
             </p>
             <DialogClose render={<Button variant="ghost" />}>取消</DialogClose>
-            <Button type="submit" disabled={save.isPending || !complete}>
+            <Button type="submit" disabled={busy || !complete}>
               {template ? "保存" : "添加"}
             </Button>
           </DialogFooter>
