@@ -83,13 +83,13 @@ export function TaskLetter({
   const approving = useMutationState({ filters: { mutationKey: approveKey, status: "pending" } }).length > 0;
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const mailboxes = useQuery({ queryKey: ["listMailboxes"], queryFn: () => call("listMailboxes", {}) });
+  const address = mentor.emails.at(0);
   const checks = useQuery({
-    queryKey: ["checkTaskDraft", letter, mentor.name, mentor.aliases, mentor.emails.at(0)],
+    queryKey: ["checkTaskDraft", letter, mentor.name, mentor.aliases, address],
     queryFn: () => call("checkTaskDraft", letter),
     placeholderData: keepPreviousData,
     gcTime: 0,
   });
-  const address = mentor.emails.at(0);
   const problems = checks.data ?? [];
   async function saved() {
     await waitForSaves(client, ["uploadLetterMaterial", mentor.id], false);
