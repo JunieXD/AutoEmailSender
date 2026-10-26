@@ -363,7 +363,6 @@ CREATE INDEX message_mentor_message ON message_mentor (message_id);
 CREATE TABLE reply_processing (
   message_id INTEGER NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   action TEXT NOT NULL CHECK (action IN ('outcome', 'todos')),
-  queued_at INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'failed')),
   claim INTEGER NOT NULL DEFAULT 0 CHECK (claim >= 0),
   error TEXT,

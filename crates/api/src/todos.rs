@@ -119,13 +119,8 @@ pub async fn list_todos(
 
 pub async fn retry_reply_todos(ctx: &Context, input: ReplyMessage) -> Result<(), CallError> {
     require_applied(
-        email::outcome::retry_action(
-            &ctx.db,
-            input.message_id,
-            email::outcome::Action::Todos,
-            now(),
-        )
-        .await?,
+        email::outcome::retry_action(&ctx.db, input.message_id, email::outcome::Action::Todos)
+            .await?,
         "这封回信没有提取失败的待办可重试。",
     )?;
     ctx.reply_processor.wake();

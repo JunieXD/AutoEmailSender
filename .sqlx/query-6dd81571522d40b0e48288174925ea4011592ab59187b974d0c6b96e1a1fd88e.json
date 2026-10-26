@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO reply_processing (message_id, action, state)\n        SELECT id, 'outcome', 'queued' FROM message\n        WHERE id = ? AND kind = 'reply' AND outcome IS NULL\n          AND (SELECT ai_reply_outcome FROM profile)\n        ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "6dd81571522d40b0e48288174925ea4011592ab59187b974d0c6b96e1a1fd88e"
+}

@@ -1874,7 +1874,7 @@ async fn get_ai_reply_outcome(ctx: &Context, _: Nothing) -> Result<bool, CallErr
     Ok(email::outcome::enabled(&ctx.db).await?)
 }
 async fn set_ai_reply_outcome(ctx: &Context, input: AiReplyOutcome) -> Result<(), CallError> {
-    email::outcome::set_enabled(&ctx.db, input.enabled, now()).await?;
+    email::outcome::set_enabled(&ctx.db, input.enabled).await?;
     ctx.reply_processor.wake();
     Ok(())
 }
@@ -1889,7 +1889,7 @@ async fn set_reply_outcome(ctx: &Context, input: ReplyOutcomeEdit) -> Result<(),
 }
 async fn retry_reply_outcome(ctx: &Context, input: ReplyMessage) -> Result<(), CallError> {
     require_applied(
-        email::outcome::retry(&ctx.db, input.message_id, now()).await?,
+        email::outcome::retry(&ctx.db, input.message_id).await?,
         "这封回信没有标记失败的结果可重试。",
     )?;
     ctx.reply_processor.wake();
