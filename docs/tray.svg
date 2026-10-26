@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="3.1 1.2 26.4 26.4">
+  <!-- The app icon's envelope and stars without the square, for the macOS menu bar, which tints it. -->
+  <g fill="none" stroke="#000" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18.02 11.5H7.9A2.4 2.4 0 0 0 5.5 13.9V23.1A2.4 2.4 0 0 0 7.9 25.5H21.6A2.4 2.4 0 0 0 24 23.1V18"/>
+    <path d="M21.58 14.95 16.65 17.5Q14.75 18.8 12.85 17.5L5.5 13.7"/>
+  </g>
+  <g fill="#000">
+    <path d="M24 4.6Q24.67 9.3 28.2 10.2 24.67 11.1 24 15.8 23.33 11.1 19.8 10.2 23.33 9.3 24 4.6Z"/>
+    <path d="M18.6 2.1Q18.96 4.1 20.4 4.6 18.96 5.1 18.6 7.1 18.24 5.1 16.8 4.6 18.24 4.1 18.6 2.1Z"/>
+  </g>
+</svg>

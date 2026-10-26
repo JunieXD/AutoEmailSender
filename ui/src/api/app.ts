@@ -28,6 +28,16 @@ export function exportMentors(input: ExportMentors, fileName: string): Promise<b
   return invoke<boolean>("export_mentors", { input, fileName });
 }
 
+/** Reads the system's login item, including changes made outside the app. */
+export function autostartEnabled(): Promise<boolean> {
+  return invoke<boolean>("autostart_enabled");
+}
+
+/** Updates the system's login item; login launches stay in the background. */
+export function setAutostart(enabled: boolean): Promise<void> {
+  return invoke<void>("set_autostart", { enabled });
+}
+
 /** Saves a backup where the user chooses; false when canceled. */
 export function exportBackup(): Promise<boolean> {
   return invoke<boolean>("export_backup");

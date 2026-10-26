@@ -3,7 +3,7 @@ import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-rout
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
-import { dataLocation, exportLogs, openDataLocation } from "@/api/app";
+import { autostartEnabled, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import { Button } from "@/components/ui/button";
 
@@ -30,6 +30,7 @@ const GROUPS = [
     label: "应用",
     sections: [
       { to: "/settings/notifications", label: "通知" },
+      { to: "/settings/background", label: "后台运行" },
       { to: "/settings/backup", label: "备份" },
       { to: "/settings/about", label: "关于和日志" },
     ],
@@ -212,23 +213,70 @@ function Toggle({
   });
   return (
     <div>
-      <label className="flex items-center justify-between gap-4">
-        <span>{label}</span>
-        <button
-          type="button"
-          role="switch"
-          aria-label={label}
-          aria-checked={query.data ?? false}
-          disabled={query.data === undefined || save.isPending}
-          onClick={() => save.mutate(!query.data)}
-          className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
-        >
-          <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
-        </button>
-      </label>
+      <Switch label={label} checked={query.data} disabled={save.isPending} onChange={(on) => save.mutate(on)} />
       <p className="mt-2 text-sm text-muted-foreground">{description}</p>
       {query.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(query.error)}</p>}
       {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
     </div>
+  );
+}
+
+/** A labelled on/off switch, disabled until its state is known. */
+function Switch({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean | undefined;
+  disabled: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-4">
+      <span>{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-label={label}
+        aria-checked={checked ?? false}
+        disabled={checked === undefined || disabled}
+        onClick={() => onChange(!checked)}
+        className="group flex h-6 w-10 shrink-0 items-center rounded-full bg-input p-0.5 aria-checked:bg-primary disabled:opacity-50"
+      >
+        <span className="size-5 rounded-full bg-white shadow-sm transition-transform group-aria-checked:translate-x-4" />
+      </button>
+    </label>
+  );
+}
+
+/** Whether the app starts with the computer; the system's login items keep it (docs/ui.md#交互). */
+export function BackgroundSection() {
+  const queryClient = useQueryClient();
+  const query = useQuery({ queryKey: ["autostartEnabled"], queryFn: autostartEnabled });
+  const save = useMutation({
+    mutationFn: setAutostart,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["autostartEnabled"] }),
+  });
+  return (
+    <Section title="后台运行">
+      <div>
+        <Switch
+          label="开机时自动启动"
+          checked={query.data}
+          disabled={save.isPending}
+          onChange={(on) => save.mutate(on)}
+        />
+        <p className="mt-2 text-sm text-muted-foreground">开机后在后台运行，不打开窗口，定时发送和收信照常进行。</p>
+        {query.error && (
+          <p className="mt-2 text-sm text-destructive">开机启动的设置未能读取：{errorMessage(query.error)}</p>
+        )}
+        {save.error && <p className="mt-2 text-sm text-destructive">{errorMessage(save.error)}</p>}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        关闭窗口后，应用也留在后台继续工作，可以从托盘或菜单栏里的图标打开或退出。
+      </p>
+    </Section>
   );
 }

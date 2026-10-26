@@ -123,8 +123,12 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
             .exists()
     );
     assert!(backup::cancel(dir.path()).is_err());
-    backup::apply_pending(dir.path()).unwrap();
-    backup::apply_pending(dir.path()).unwrap();
+    let (restored_context, restored_this_start) = api::startup::open(dir.path()).await.unwrap();
+    assert!(restored_this_start);
+    restored_context.db.close().await;
+    let (reopened, restored_this_start) = api::startup::open(dir.path()).await.unwrap();
+    assert!(!restored_this_start);
+    reopened.db.close().await;
     assert!(!dir.path().join("restore.pending").exists());
     assert!(!dir.path().join("restore-old").exists());
     assert!(!dir.path().join("app.db-wal").exists());
@@ -280,7 +284,8 @@ async fn older_database_is_upgraded_during_prepare_and_starts_after_confirmation
         .await
         .unwrap();
     current.close().await;
-    let restored = api::startup::open(dir.path()).await.unwrap();
+    let (restored, restored_this_start) = api::startup::open(dir.path()).await.unwrap();
+    assert!(restored_this_start);
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT name FROM mentor")
             .fetch_one(&restored.db)

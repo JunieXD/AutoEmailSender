@@ -14,7 +14,7 @@ import { MaterialsSection } from "./pages/materials";
 import { ProfileSection } from "./pages/profile";
 import { TemplatesSection } from "./pages/templates";
 import { LetterStyleSection } from "./pages/letter-style";
-import { AboutSection, ChecksSection, NotificationsSection, SettingsPage } from "./pages/settings";
+import { AboutSection, BackgroundSection, ChecksSection, NotificationsSection, SettingsPage } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 import { BackupSection } from "./pages/backup";
 import { WelcomePage } from "./pages/welcome";
@@ -159,6 +159,12 @@ const notificationsRoute = createRoute({
   component: NotificationsSection,
 });
 
+const backgroundRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "background",
+  component: BackgroundSection,
+});
+
 const backupRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "backup",
@@ -195,6 +201,7 @@ export const router = createRouter({
       checksRoute,
       modelsRoute,
       notificationsRoute,
+      backgroundRoute,
       backupRoute,
       aboutRoute,
     ]),
