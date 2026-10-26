@@ -37,6 +37,8 @@ const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
  * sidebar becomes a tab bar under the page (docs/ui.md#布局).
  */
 const focusSearch = () => document.getElementById("mentor-search")?.focus();
+// macOS keeps Ctrl+K for deleting to the end of the line; Windows takes Win+K for itself.
+const SEARCH_KEY = navigator.userAgent.includes("Mac") ? "metaKey" : "ctrlKey";
 
 export function Shell() {
   const failure = useQuery({ queryKey: ["startupFailure"], queryFn: startupFailure, staleTime: Infinity });
@@ -47,7 +49,9 @@ export function Shell() {
   // docs/ui.md#快捷键: ⌘K (Ctrl+K on Windows) searches mentors from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "k") return;
+      if (!e[SEARCH_KEY] || e.key.toLowerCase() !== "k" || e.defaultPrevented) return;
+      // Leaving the page would close the dialog and lose what was typed in it.
+      if (document.querySelector('[role="dialog"]')) return;
       e.preventDefault();
       if (pathname === "/mentors") focusSearch();
       else void navigate({ to: "/mentors" }).then(focusSearch);

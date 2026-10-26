@@ -313,7 +313,11 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
   const remove = useMutation({
     mutationFn: () => call("deleteCrawl", { id }),
     onSuccess: () => {
-      void navigate({ search: (s) => ({ ...s, detail: undefined }) });
+      // The candidates may be filtered by this crawl, which is gone now.
+      void navigate({
+        search: (s) =>
+          s.crawl === id ? { ...s, detail: undefined, crawl: undefined, page: 1 } : { ...s, detail: undefined },
+      });
       refreshCrawls(client);
     },
   });
@@ -389,7 +393,8 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
               action="删除"
               onConfirm={() => remove.mutate()}
             />
-            <ErrorText error={exported.error ?? remove.error} />
+            <ErrorText error={exported.error} />
+            <ErrorText error={remove.error} />
           </div>
         </>
       )}
