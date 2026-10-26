@@ -3,6 +3,7 @@ target/
 /.dev-data/
 /ui/dist/
 /crates/app/gen/schemas/
+/crates/app/binaries/
 .env
 .DS_Store
 .worktrees/

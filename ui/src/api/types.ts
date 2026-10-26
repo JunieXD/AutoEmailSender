@@ -12,6 +12,16 @@ export type AgentAccess = { enabled: boolean, };
 
 export type AgentAnswer = { id: number, allow: boolean, };
 
+export type AgentCli = { installed: boolean, command: string,
+/**
+ * Absolute executable path, also used by MCP clients.
+ */
+path: string,
+/**
+ * Symlink on macOS, directory added to the user PATH on Windows.
+ */
+location: string, };
+
 export type AgentRequest = { id: number, op: string, description: Description, createdAt: number, };
 
 export type AiReplyOutcome = { enabled: boolean, };
@@ -286,6 +296,20 @@ export type MaterialId = { id: number, };
 export type MaterialPurpose = { id: number, purpose: Purpose, on: boolean, };
 
 export type MaybeSame = { row: number, rows: Array<number>, incoming: ImportProfile, candidates: Array<ImportCandidate>, selected: number | null, };
+
+export type McpClient = "claudeDesktop" | "claudeCode" | "cursor";
+
+export type McpConfigPreview = { path: string,
+/**
+ * Complete named entry, suitable for displaying without exposing other services.
+ */
+server: string, exists: boolean,
+/**
+ * Claude Code owns its file; display the exact CLI invocation as well.
+ */
+commands: Array<Array<string>>, };
+
+export type McpConfigQuery = { client: McpClient, };
 
 export type MentorAddress = { id: number, address: string, };
 
@@ -739,6 +763,12 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
+  getAgentCli: { input: Nothing; output: AgentCli };
+  installAgentCli: { input: Nothing; output: AgentCli };
+  uninstallAgentCli: { input: Nothing; output: AgentCli };
+  previewMcpConfig: { input: McpConfigQuery; output: McpConfigPreview };
+  writeMcpConfig: { input: McpConfigQuery; output: null };
+  mcpConfigText: { input: Nothing; output: string };
   getAgentAccess: { input: Nothing; output: boolean };
   setAgentAccess: { input: AgentAccess; output: null };
   listAgentRequests: { input: Nothing; output: Array<AgentRequest> };
