@@ -11,7 +11,7 @@ use std::{
 };
 
 use crawl::{
-    PageTarget,
+    CrawlError, PageTarget, PageUrl,
     browser::{Browser as Render, BrowserError, RenderedPage},
     store::PageStep,
 };
@@ -161,6 +161,18 @@ fn failed(message: &str) -> BrowserError {
     BrowserError::Failed(message.into())
 }
 
+fn navigation_url(
+    target: &PageTarget,
+    current: &PageUrl,
+    url: &str,
+) -> Result<Option<PageUrl>, CrawlError> {
+    // These documents stay in memory and must not replace the last network URL.
+    if matches!(url, "about:blank" | "about:srcdoc") {
+        return Ok(None);
+    }
+    target.redirect(current, url).map(Some)
+}
+
 fn render(
     app: &AppHandle,
     label: &str,
@@ -191,7 +203,10 @@ fn render(
                 .lock()
                 .unwrap_or_else(|_| unreachable!("navigation updates cannot panic"));
             let (current, started) = &mut *navigation;
-            let result = target.redirect(current, url.as_str()).and_then(|next| {
+            let result = navigation_url(&target, current, url.as_str()).and_then(|next| {
+                let Some(next) = next else {
+                    return Ok(());
+                };
                 if *started
                     && nav_redirects.fetch_add(1, Ordering::Relaxed)
                         >= crawl::fetch::MAX_REDIRECTS as u64
@@ -373,5 +388,46 @@ pub fn close_all(app: &AppHandle) {
         {
             tracing::warn!("close crawl browser on exit: {error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_allows_only_exact_in_memory_documents_without_relaxing_network_scope() {
+        let url = PageUrl::parse("https://school.example.edu/list").unwrap();
+        let target = crawl::Scope::new(&url).page(url.clone()).unwrap();
+        for document in ["about:blank", "about:srcdoc"] {
+            assert_eq!(navigation_url(&target, &url, document).unwrap(), None);
+        }
+        for blocked in [
+            "about:blank#fragment",
+            "about:blank?query",
+            "about:srcdoc#fragment",
+            "about:srcdoc?query",
+            "about:blank/",
+            "about:config",
+            "javascript:void(0)",
+            "data:text/html,hello",
+            "file:///tmp/page.html",
+            "http://127.0.0.1/",
+            "http://192.168.1.1/",
+        ] {
+            assert!(
+                matches!(navigation_url(&target, &url, blocked), Err(CrawlError::Url)),
+                "{blocked}"
+            );
+        }
+        assert!(matches!(
+            navigation_url(&target, &url, "https://other.example.org/"),
+            Err(CrawlError::OutsideSite)
+        ));
+        let next = url.join("/teachers").unwrap();
+        assert_eq!(
+            navigation_url(&target, &url, next.as_str()).unwrap(),
+            Some(next)
+        );
     }
 }
