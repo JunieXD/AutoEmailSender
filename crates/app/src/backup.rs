@@ -32,7 +32,7 @@ fn failure(e: api::backup::Error) -> String {
 #[tauri::command]
 pub async fn export_backup(
     app: AppHandle,
-    ctx: tauri::State<'_, api::Context>,
+    ctx: tauri::State<'_, std::sync::Arc<api::Context>>,
 ) -> Result<bool, String> {
     let (db, materials) = (ctx.db.clone(), ctx.materials.clone());
     blocking(app, move |app| {
@@ -101,7 +101,7 @@ pub async fn cancel_restore(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn restore_backup(
     app: AppHandle,
-    ctx: tauri::State<'_, api::Context>,
+    ctx: tauri::State<'_, std::sync::Arc<api::Context>>,
 ) -> Result<(), String> {
     let db = ctx.db.clone();
     blocking(app.clone(), move |app| {

@@ -1,6 +1,8 @@
 //! The operations the UI, the phone and agents call, and the one dispatcher that runs them all
 //! (docs/design.md#桌面端). Input is validated here, when it is deserialized.
 
+pub mod agent;
+use agent::{get_agent_access, set_agent_access};
 pub mod backup;
 mod crawling;
 mod fact_check;
@@ -23,6 +25,7 @@ use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
+    pub agent_access: agent::Access,
     pub writes: db::Writes,
     pub db: SqlitePool,
     pub net: net::Net,
@@ -43,6 +46,7 @@ impl Context {
     pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
         let writes = db::Writes::default();
         Self {
+            agent_access: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
             writes,
             db,
@@ -188,7 +192,41 @@ macro_rules! operations {
     };
 }
 
+pub async fn call_agent(
+    ctx: &Context,
+    op: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, CallError> {
+    let mut log = AgentCallLog { op, success: false };
+    let result = match op {
+        // An agent does not decide whether agents may connect.
+        "getAgentAccess" | "setAgentAccess" => {
+            Err(CallError::invalid("这个操作只供应用界面使用".into()))
+        }
+        _ if agent::requires_confirmation(ctx, op, &input).await? => Err(CallError::invalid(
+            "这个操作要你在应用里确认，下一版支持".into(),
+        )),
+        _ => call(ctx, op, input).await,
+    };
+    log.success = result.is_ok();
+    result
+}
+
+// Dropping an in-flight call when access is disabled must also record its failure.
+struct AgentCallLog<'a> {
+    op: &'a str,
+    success: bool,
+}
+
+impl Drop for AgentCallLog<'_> {
+    fn drop(&mut self) {
+        tracing::info!(op = self.op, success = self.success, "agent call");
+    }
+}
+
 operations! {
+    "getAgentAccess" => get_agent_access(Nothing) -> bool;
+    "setAgentAccess" => set_agent_access(agent::AgentAccess) -> ();
     "storageFailure" => storage_failure(Nothing) -> Option<String>;
     "contactStats" => contact_stats(StatsQuery) -> stats::ContactProgress;
     "mentorStats" => mentor_stats(Nothing) -> stats::MentorOverview;

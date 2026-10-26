@@ -23,6 +23,19 @@ pub struct Change {
     rows: Vec<u32>,
 }
 impl Change {
+    pub fn changed_recipient(&self) -> Option<i64> {
+        let before = self.before.as_ref()?;
+        let same = match (
+            before.fields.emails.first(),
+            self.after.fields.emails.first(),
+        ) {
+            (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+            (None, None) => true,
+            _ => false,
+        };
+        (!same).then_some(before.id)
+    }
+
     fn changed(&self) -> bool {
         self.restore || self.before.as_ref() != Some(&self.after)
     }

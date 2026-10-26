@@ -208,14 +208,34 @@ pub async fn detail(db: &SqlitePool, id: i64) -> Result<Option<CandidateDetail>,
     }))
 }
 
-pub async fn preview(db: &SqlitePool, input: &ReviewInput) -> Result<Preview, sqlx::Error> {
-    let mut tx = db.begin().await?;
+pub struct ReviewPlan {
+    pub preview: Preview,
+    pub changes: Vec<intake::Change>,
+    ids: Vec<i64>,
+    pending: u32,
+}
+
+pub async fn plan(
+    conn: &mut SqliteConnection,
+    input: &ReviewInput,
+) -> Result<ReviewPlan, sqlx::Error> {
     let mut ids = input.ids.clone();
     ids.sort_unstable();
     ids.dedup();
-    let candidates = read(&mut tx, &ids).await?;
-    let rows = rows(&mut tx, &candidates, &ids).await?;
-    Ok(intake::calculate(&mut tx, rows, &input.decisions).await?.0)
+    let candidates = read(conn, &ids).await?;
+    let rows = rows(conn, &candidates, &ids).await?;
+    let (preview, changes) = intake::calculate(conn, rows, &input.decisions).await?;
+    Ok(ReviewPlan {
+        preview,
+        changes,
+        ids,
+        pending: candidates.iter().filter(|c| c.review == "pending").count() as u32,
+    })
+}
+
+pub async fn preview(db: &SqlitePool, input: &ReviewInput) -> Result<Preview, sqlx::Error> {
+    let mut tx = db.begin().await?;
+    Ok(plan(&mut tx, input).await?.preview)
 }
 pub async fn accept(
     db: &SqlitePool,
@@ -223,15 +243,10 @@ pub async fn accept(
     at: i64,
 ) -> Result<Reviewed, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let mut ids = input.ids.clone();
-    ids.sort_unstable();
-    ids.dedup();
-    let candidates = read(&mut tx, &ids).await?;
-    let rows = rows(&mut tx, &candidates, &ids).await?;
-    let (_, changes) = intake::calculate(&mut tx, rows, &input.decisions).await?;
-    let (_, accepted) = intake::apply(&mut tx, changes, at).await?;
+    let plan = plan(&mut tx, input).await?;
+    let (_, accepted) = intake::apply(&mut tx, plan.changes, at).await?;
     for (row, id) in &accepted {
-        let candidate = ids[(*row - 1) as usize];
+        let candidate = plan.ids[(*row - 1) as usize];
         sqlx::query!(
             r#"UPDATE candidate
             SET review = 'accepted', mentor_id = ?
@@ -246,8 +261,7 @@ pub async fn accept(
     tx.commit().await?;
     Ok(Reviewed {
         accepted: accepted.len() as u32,
-        skipped: candidates.iter().filter(|c| c.review == "pending").count() as u32
-            - accepted.len() as u32,
+        skipped: plan.pending - accepted.len() as u32,
     })
 }
 pub async fn reject(db: &SqlitePool, ids: &[i64]) -> Result<u64, sqlx::Error> {

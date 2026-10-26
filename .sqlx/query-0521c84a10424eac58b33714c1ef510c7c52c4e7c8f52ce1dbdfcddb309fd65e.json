@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (\n                    SELECT 1 FROM mailbox WHERE id = ? AND paused_until > ?\n                ) AS \"paused!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "paused!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0521c84a10424eac58b33714c1ef510c7c52c4e7c8f52ce1dbdfcddb309fd65e"
+}

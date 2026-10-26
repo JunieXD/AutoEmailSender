@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET agent_access = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "1ec3095aa53b4c2c04e6dc3c67296a19278ec6255cda7338c1a8835cfa794d2c"
+}

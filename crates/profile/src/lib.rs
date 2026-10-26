@@ -242,3 +242,17 @@ pub async fn set_todo_reminders(db: &SqlitePool, on: bool) -> Result<(), sqlx::E
         .await?;
     Ok(())
 }
+
+/// Local Agent access is enabled only by the desktop user.
+pub async fn agent_access(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT agent_access AS "enabled!: bool" FROM profile"#)
+        .fetch_one(db)
+        .await
+}
+
+pub async fn set_agent_access(db: &SqlitePool, enabled: bool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET agent_access = ?", enabled)
+        .execute(db)
+        .await?;
+    Ok(())
+}
