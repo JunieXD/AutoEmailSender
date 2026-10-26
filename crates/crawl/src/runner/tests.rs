@@ -234,6 +234,10 @@ async fn changed_until(
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: SqlitePool) {
+    // SQLx's DELETE journal makes concurrent readers block writes; the app uses WAL.
+    let path = db.connect_options().get_filename().to_path_buf();
+    db.close().await;
+    let db = db::open(&path).await.unwrap();
     let site = Site::new().await;
     site.page(
         "/",
@@ -429,6 +433,7 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end(db: S
     );
     task.abort();
     model.abort();
+    db.close().await;
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
@@ -742,6 +747,10 @@ fn segments_preserve_blocks_and_external_output_is_checked() {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool) {
+    // SQLx's DELETE journal makes concurrent readers block writes; the app uses WAL.
+    let path = db.connect_options().get_filename().to_path_buf();
+    db.close().await;
+    let db = db::open(&path).await.unwrap();
     let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     let site = Site::new().await;
@@ -890,6 +899,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls(db: SqlitePool)
     for worker in [crawl, matching, writing] {
         assert!(worker.await.unwrap_err().is_cancelled());
     }
+    db.close().await;
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
