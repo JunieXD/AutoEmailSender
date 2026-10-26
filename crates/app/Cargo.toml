@@ -29,6 +29,7 @@ task.workspace = true
 crawl.workspace = true
 tauri-plugin-autostart = "2"
 tokio = { workspace = true, features = ["sync"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"

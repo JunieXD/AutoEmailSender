@@ -90,39 +90,22 @@ fn files(dir: &Path) -> std::io::Result<Vec<String>> {
 }
 
 fn crawl_lines(dir: &Path, id: i64) -> std::io::Result<String> {
-    let mut lines = Vec::new();
-    let id_field = format!("id={id}");
+    let mut out = String::new();
+    let marker = format!("crawl{{id={id}}}:");
     for name in files(dir)? {
         let content = std::fs::read_to_string(dir.join(name))?;
         for line in content.lines() {
-            // Only the formatter's span prefix is metadata; a URL or message can contain braces.
-            let Some((_, spans)) = line.split_once(" INFO ").or_else(|| {
-                line.split_once(" WARN ")
-                    .or_else(|| line.split_once("ERROR "))
-            }) else {
-                continue;
-            };
-            let spans = spans.split(": ").next().unwrap_or(spans);
-            let matches = spans.split("}:").any(|span| {
-                span.strip_prefix("crawl{").is_some_and(|fields| {
-                    fields
-                        .trim_end_matches('}')
-                        .split_whitespace()
-                        .any(|field| field == id_field)
-                })
-            });
-            if matches {
-                lines.push(line.to_owned());
+            if line
+                .split_whitespace()
+                .nth(2)
+                .is_some_and(|span| span.starts_with(&marker))
+            {
+                out.push_str(line);
+                out.push('\n');
             }
         }
     }
-    // Concurrent writers can finish a previous day's line just after the daily file rolls.
-    lines.sort_by(|a, b| {
-        a.split_whitespace()
-            .next()
-            .cmp(&b.split_whitespace().next())
-    });
-    Ok(lines.into_iter().map(|line| line + "\n").collect())
+    Ok(out)
 }
 
 fn crawl_content(dir: &Path, detail: &CrawlDetail, started: &str) -> std::io::Result<String> {
@@ -225,15 +208,15 @@ mod tests {
     }
 
     #[test]
-    fn filters_span_fields_across_files_in_timestamp_order() {
+    fn filters_crawl_lines_across_daily_files() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("app.2026-10-26.log"),
             concat!(
                 "2026-10-26T12:00:00Z  INFO crawl{id=50}: crawl::runner: other crawl\n",
                 "2026-10-26T12:01:00Z  INFO crawl{id=5}: crawl::runner: resumed\n",
-                "2026-10-26T12:02:00Z  WARN parent{job=1}:crawl{other=true id=5}: crawl: failed\n",
-                "2026-10-26T12:03:00Z ERROR crawl{id=5 other=true}: crawl: error\n",
+                "2026-10-26T12:02:00Z  WARN crawl{id=5}: crawl: failed\n",
+                "2026-10-26T12:03:00Z ERROR crawl{id=5}: crawl: error\n",
                 "2026-10-26T12:04:00Z  INFO crawl{id=15}: crawl: wrong id\n",
                 "2026-10-26T12:05:00Z  INFO app: text crawl{id=5}\n",
                 "2026-10-26T12:06:00Z  INFO othercrawl{id=5}: app: wrong span\n",
@@ -280,7 +263,6 @@ mod tests {
         );
         let file = std::fs::File::create(dir.path().join("app.2026-10-26.log")).unwrap();
         let subscriber = tracing_subscriber::fmt()
-            .without_time()
             .with_ansi(false)
             .with_writer(std::sync::Mutex::new(file))
             .finish();

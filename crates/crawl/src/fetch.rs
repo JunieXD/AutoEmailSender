@@ -93,8 +93,12 @@ impl Fetcher {
                 "page fetched"
             ),
             Err(error) => tracing::info!(
-                url = target.url().as_str(), method = "http", %error,
-                elapsed_ms = started.elapsed().as_millis(), result = "failed", "page fetched"
+                url = target.url().as_str(),
+                method = "http",
+                %error,
+                elapsed_ms = started.elapsed().as_millis(),
+                result = "failed",
+                "page fetched"
             ),
         }
         result
@@ -117,13 +121,6 @@ impl Fetcher {
                 result => result?,
             };
             let status = response.status();
-            if !status.is_success() && !status.is_redirection() {
-                tracing::info!(
-                    url = url.as_str(),
-                    status = status.as_u16(),
-                    "HTTP response"
-                );
-            }
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
                 if redirects == MAX_REDIRECTS {
                     return Err(CrawlError::Redirect);

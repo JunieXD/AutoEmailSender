@@ -306,85 +306,17 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn page_failures_and_browser_takeover_log_the_crawl_without_private_content(db: SqlitePool) {
-    use tracing::{
-        Event, Metadata, Subscriber,
-        field::{Field, Visit},
-        span::{Attributes, Id, Record},
-    };
-
-    #[derive(Default)]
-    struct Fields {
-        text: String,
-        crawl: Option<i64>,
-    }
-    impl Visit for Fields {
-        fn record_i64(&mut self, field: &Field, value: i64) {
-            if field.name() == "id" {
-                self.crawl = Some(value);
-            }
-            self.record_debug(field, &value);
-        }
-        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            self.text.push_str(&format!("{}={value:?} ", field.name()));
-        }
-    }
-    #[derive(Default)]
-    struct Captured {
-        spans: Vec<Option<i64>>,
-        active: HashMap<std::thread::ThreadId, Vec<Id>>,
-        events: Vec<(Option<i64>, String)>,
-    }
-    struct Capture {
-        captured: Arc<Mutex<Captured>>,
-        url: String,
-        thread: std::thread::ThreadId,
-    }
-    impl Subscriber for Capture {
-        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-            metadata.target().starts_with("crawl") && *metadata.level() <= tracing::Level::INFO
-        }
-        fn new_span(&self, attributes: &Attributes<'_>) -> Id {
-            let mut fields = Fields::default();
-            attributes.record(&mut fields);
-            let mut captured = self.captured.lock().unwrap();
-            captured.spans.push(fields.crawl);
-            Id::from_u64(captured.spans.len() as u64)
-        }
-        fn record(&self, _: &Id, _: &Record<'_>) {}
-        fn record_follows_from(&self, _: &Id, _: &Id) {}
-        fn enter(&self, id: &Id) {
-            self.captured
-                .lock()
-                .unwrap()
-                .active
-                .entry(std::thread::current().id())
-                .or_default()
-                .push(id.clone());
-        }
-        fn exit(&self, _: &Id) {
-            self.captured
-                .lock()
-                .unwrap()
-                .active
-                .get_mut(&std::thread::current().id())
-                .unwrap()
-                .pop();
-        }
-        fn event(&self, event: &Event<'_>) {
-            let mut fields = Fields::default();
-            event.record(&mut fields);
-            if std::thread::current().id() != self.thread && !fields.text.contains(&self.url) {
-                return;
-            }
-            let mut captured = self.captured.lock().unwrap();
-            let crawl = captured
-                .active
-                .get(&std::thread::current().id())
-                .and_then(|stack| stack.last())
-                .and_then(|id| captured.spans[id.into_u64() as usize - 1]);
-            captured.events.push((crawl, fields.text));
-        }
-    }
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = dir.path().join("crawl.log");
+    let file = std::fs::File::create(&log_path).unwrap();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .with_writer(Mutex::new(file))
+        .finish();
+    // Two scoped dispatchers avoid tracing-core caching callsites from unsubscribed test threads.
+    let _quiet = tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::default());
+    let guard = tracing::subscriber::set_default(subscriber);
 
     let site = Site::new().await;
     let provider = Provider::start().await;
@@ -404,18 +336,16 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
     };
     let net = net::Net::new(vec![]).unwrap();
     let limit = Limit::default();
-    let captured = Arc::new(Mutex::new(Captured::default()));
-    // Parallel runner tests share callsites; the subscriber stays registered for the process.
-    tracing::subscriber::set_global_default(Capture {
-        captured: captured.clone(),
-        url: site.url("/missing").as_str().to_owned(),
-        thread: std::thread::current().id(),
-    })
-    .unwrap();
     for challenge in [false, true] {
         if challenge {
-            site.pages.lock().unwrap().insert("/missing".into(), (412,
-                "<p>PRIVATE PAGE 张三 secret@school.example.edu</p><script>challenge()</script>".into()));
+            site.pages.lock().unwrap().insert(
+                "/missing".into(),
+                (
+                    412,
+                    "<p>PRIVATE PAGE 张三 secret@school.example.edu</p><script>challenge()</script>"
+                        .into(),
+                ),
+            );
             queue::retry(&db, id, None, 2).await.unwrap();
         }
         let claim = queue::next(&db).await.unwrap().unwrap();
@@ -425,25 +355,22 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
         assert!(matches!(outcome, Outcome::Failed(_)));
         save(&db, &claim, &outcome).await.unwrap();
     }
-    let captured = captured.lock().unwrap();
+    drop(guard);
+    let log = std::fs::read_to_string(log_path).unwrap();
+    let marker = format!("crawl{{id={id}}}:");
     for diagnostic in ["page returned HTTP 404", "Challenge", "crawl pages retried"] {
         assert!(
-            captured
-                .events
-                .iter()
-                .any(|(crawl, text)| *crawl == Some(id) && text.contains(diagnostic)),
-            "missing crawl-scoped {diagnostic}: {:?}",
-            captured.events
+            log.lines()
+                .any(|line| line.contains(&marker) && line.contains(diagnostic)),
+            "missing crawl-scoped {diagnostic}: {log}"
         );
     }
-    for (_, text) in &captured.events {
-        for private in [
-            "PRIVATE PAGE",
-            "张三",
-            "secret@school.example.edu",
-            "fixture",
-        ] {
-            assert!(!text.contains(private));
-        }
+    for private in [
+        "PRIVATE PAGE",
+        "张三",
+        "secret@school.example.edu",
+        "fixture",
+    ] {
+        assert!(!log.contains(private));
     }
 }

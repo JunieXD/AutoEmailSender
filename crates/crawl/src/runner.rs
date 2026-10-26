@@ -22,7 +22,6 @@ use std::{
     time::Duration,
 };
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
-use tracing::Instrument;
 use ts_rs::TS;
 const RETRY: Duration = Duration::from_secs(5);
 const READ_FAILED: &str = "抓取数据暂时无法读取，请继续或重启应用。";
@@ -179,7 +178,10 @@ impl Pages {
             result = invalidated => return result,
         };
         let url = target.redirect(target.url(), &rendered.url).map_err(|e| {
-            tracing::info!(error = %e, "browser result URL rejected");
+            tracing::info!(
+                error = %e,
+                "browser result URL rejected"
+            );
             ReadError::Failed(e.message())
         })?;
         if rendered.html.len() > crate::fetch::MAX_PAGE_BYTES {
@@ -440,7 +442,11 @@ async fn process(
     c: &Claim,
     cooldown: &Cooldown,
 ) -> Result<Outcome, sqlx::Error> {
-    tracing::info!(url = c.url.as_str(), kind = ?c.kind, "page started");
+    tracing::info!(
+        url = c.url.as_str(),
+        kind = ?c.kind,
+        "page started"
+    );
     let Some(chosen) = model::selected(db, c.model_id).await? else {
         tracing::info!(reason = "missing_model", "crawl cannot continue");
         return Ok(Outcome::Pause(
@@ -464,7 +470,11 @@ async fn process(
                 operation,
                 reason,
             }) => {
-                tracing::error!(operation, error = %source, "crawl database");
+                tracing::error!(
+                    operation,
+                    error = %source,
+                    "crawl database"
+                );
                 Outcome::Pause(reason.into(), Some(chosen))
             }
             Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
@@ -760,7 +770,6 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     } else {
         outcome
     };
-    let mut paused = false;
     match outcome {
         Outcome::Done(p) => {
             let text = p.material.text();
@@ -917,7 +926,6 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     .as_ref()
                     .is_some_and(|m| model::background::same_config(m, e))
             }) {
-                paused = true;
                 sqlx::query!(
                     r#"UPDATE crawl
                     SET state = 'paused', error = ?
@@ -958,14 +966,20 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
     }
     tx.commit().await?;
     match outcome {
-        Outcome::Done(p) => tracing::info!(url = c.url.as_str(), kind = ?p.kind,
-            people = p.people.len(), next_pages = p.next.len(),
-            needs_browser = p.material.needs_browser.is_some(), "page completed"),
-        Outcome::Failed(_) => tracing::info!(url = c.url.as_str(), kind = ?c.kind, "page failed"),
-        Outcome::Pause(_, _) if paused => {
-            tracing::info!(reason = "model_or_storage", "crawl paused")
-        }
-        Outcome::Pause(_, _) => {}
+        Outcome::Done(p) => tracing::info!(
+            url = c.url.as_str(),
+            kind = ?p.kind,
+            people = p.people.len(),
+            next_pages = p.next.len(),
+            needs_browser = p.material.needs_browser.is_some(),
+            "page completed"
+        ),
+        Outcome::Failed(_) => tracing::info!(
+            url = c.url.as_str(),
+            kind = ?c.kind,
+            "page failed"
+        ),
+        Outcome::Pause(_, _) => tracing::info!("crawl paused"),
         Outcome::RateLimit => {}
         Outcome::Gone => tracing::info!(url = c.url.as_str(), "page claim invalidated"),
     }
@@ -1064,9 +1078,13 @@ async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Er
     for summary in summaries {
         crate::span(summary.id).in_scope(|| {
             tracing::info!(
-                state = ?summary.state, candidates = summary.candidates, pages = summary.pages,
-                failed = summary.failed, usage_known = summary.tokens.is_some(),
-                tokens = summary.tokens, "crawl finished"
+                state = ?summary.state,
+                candidates = summary.candidates,
+                pages = summary.pages,
+                failed = summary.failed,
+                usage_known = summary.tokens.is_some(),
+                tokens = summary.tokens,
+                "crawl finished"
             )
         });
     }
@@ -1175,19 +1193,15 @@ async fn run_with_pages(
                         )
                     }
                 };
-                async {
-                    loop {
-                        match save(&db, &c, &outcome).await {
-                            Ok(_) => break,
-                            Err(e) => {
-                                tracing::error!("save crawl: {e}");
-                                tokio::time::sleep(RETRY).await;
-                            }
+                loop {
+                    match save(&db, &c, &outcome).await {
+                        Ok(_) => break,
+                        Err(e) => {
+                            crate::span(c.crawl).in_scope(|| tracing::error!("save crawl: {e}"));
+                            tokio::time::sleep(RETRY).await;
                         }
                     }
                 }
-                .instrument(crate::span(c.crawl))
-                .await;
                 changed();
             },
             () = crawler.0.notified() => {},

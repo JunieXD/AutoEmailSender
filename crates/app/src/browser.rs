@@ -245,7 +245,11 @@ fn render(
                     return Err(crawl::CrawlError::Redirect);
                 }
                 if *current != next {
-                    tracing::info!(from = current.as_str(), to = next.as_str(), "browser navigation");
+                    tracing::info!(
+                        from = current.as_str(),
+                        to = next.as_str(),
+                        "browser navigation"
+                    );
                 }
                 *started = true;
                 *current = next;
@@ -254,22 +258,37 @@ fn render(
             match result {
                 Ok(()) => true,
                 Err(error) => {
-                    tracing::info!(url = public_url(url), scheme = url.scheme(), %error, "browser navigation blocked");
+                    tracing::info!(
+                        url = public_url(url),
+                        scheme = url.scheme(),
+                        %error,
+                        "browser navigation blocked"
+                    );
                     nav_state.fail(error.message());
                     false
                 }
             }
         })
         .on_new_window(move |url, _| {
-            popup_span.in_scope(|| tracing::info!(url = public_url(&url), scheme = url.scheme(), "browser popup blocked"));
+            popup_span.in_scope(|| {
+                tracing::info!(
+                    url = public_url(&url),
+                    scheme = url.scheme(),
+                    "browser popup blocked"
+                );
+            });
             popup_state.fail("网页尝试打开新窗口，已阻止，请改用具体的名单网址".into());
             NewWindowResponse::Deny
         })
         .on_download(move |_, event| {
             download_span.in_scope(|| {
                 if let DownloadEvent::Requested { url, .. } = event {
-                    tracing::info!(page = download_page, url = public_url(&url),
-                        scheme = url.scheme(), "browser download blocked");
+                    tracing::info!(
+                        page = download_page,
+                        url = public_url(&url),
+                        scheme = url.scheme(),
+                        "browser download blocked"
+                    );
                 }
             });
             download_state.fail("网页尝试下载文件，已阻止，请改用网页地址".into());
