@@ -12,6 +12,7 @@ workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 fastrand = "2.5.0"
 serde.workspace = true
+schemars.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true
 

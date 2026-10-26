@@ -159,6 +159,72 @@ async fn config(db: &SqlitePool, address: &str) -> i64 {
     model::agree(db, id, "custom", Some(address)).await.unwrap();
     id
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn extraction_sends_its_parsed_type_as_a_schema_and_retries_invalid_fields(db: SqlitePool) {
+    let mut provider = Provider::start().await.unwrap();
+    let id = config(&db, &provider.address).await;
+    let url = PageUrl::parse("https://school.example.edu/teacher").unwrap();
+    queue::start(&db, &[url], id, 1).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let mut chosen = model::selected(&db, Some(id)).await.unwrap().unwrap();
+    chosen.access.structured = Some(model::providers::Structured::JsonSchema);
+    let net = net::Net::new(vec![]).unwrap();
+    let limit = Limit::default();
+    let cooldown = Cooldown::default();
+    let writes = db::Writes::default();
+    let reader = Reader {
+        writes: &writes,
+        db: &db,
+        net: &net,
+        limit: &limit,
+        claim: &claim,
+        chosen: &chosen,
+        cooldown: &cooldown,
+    };
+    let ask = reader.ask::<extract::Enriched>("enrich", extract::ENRICH, json!({}));
+    let respond = async {
+        let mut formats = vec![];
+        for text in [
+            r#"{"name":42}"#,
+            r#"{
+                "name":"张三", "aliases":[], "emails":[],
+                "affiliations":[{
+                    "university":null, "school":null, "department":null, "title":null
+                }],
+                "homepages":[], "research":null, "papers":[], "next":[], "names":[]
+            }"#,
+        ] {
+            let request = provider.requests.recv().await.unwrap();
+            formats.push(request.body["response_format"].clone());
+            request.respond.send(Response::answer(text)).unwrap();
+        }
+        formats
+    };
+    let (result, formats) = tokio::join!(ask, respond);
+    assert_eq!(result.unwrap().profile.name, "张三");
+    assert_eq!(formats[0], formats[1]);
+    assert_eq!(formats[0]["json_schema"]["name"], "Enriched");
+    let schema = &formats[0]["json_schema"]["schema"];
+    assert_eq!(schema["type"], "object");
+    assert_eq!(schema["additionalProperties"], false);
+    let properties = schema["properties"].as_object().unwrap();
+    assert!(properties.contains_key("name"));
+    assert!(properties.contains_key("next"));
+    assert!(properties.contains_key("names"));
+    assert_eq!(
+        schema["required"].as_array().unwrap().len(),
+        properties.len()
+    );
+    let affiliation = &properties["affiliations"]["items"];
+    assert_eq!(affiliation["additionalProperties"], false);
+    assert_eq!(affiliation["required"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        affiliation["properties"]["title"]["type"],
+        json!(["string", "null"])
+    );
+}
+
 fn listed(name: &str, profile: Option<usize>, emails: Vec<&str>) -> Value {
     json!({"name":name,"title":"教授","profile":profile,"emails":emails,"research":null})
 }

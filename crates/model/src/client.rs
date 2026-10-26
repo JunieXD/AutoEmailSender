@@ -8,7 +8,8 @@ use serde_json::{Value, json};
 use tokio::time::timeout;
 
 use crate::ModelError;
-use crate::providers::NoThinking;
+use crate::output::Structure;
+use crate::providers::{NoThinking, Structured};
 use crate::usage::Usage;
 
 /// Where and how to call a provider.
@@ -18,6 +19,7 @@ pub struct Access {
     pub base_url: String,
     pub api_key: Option<String>,
     pub no_thinking: Option<NoThinking>,
+    pub structured: Option<Structured>,
 }
 
 /// The names of the models the provider offers, sorted.
@@ -65,7 +67,7 @@ pub async fn test(net: &Net, access: &Access, model: &str) -> Result<(), ModelEr
         "messages": [{"role": "user", "content": "请只回复一个字：好"}],
         "stream": true,
     });
-    let answer = chat(net, access, body).await?;
+    let answer = chat(net, access, body, None).await?;
     if answer.text.trim().is_empty() {
         return Err(ModelError::NoAnswer {
             finish_reason: answer.finish_reason,
@@ -81,6 +83,7 @@ pub async fn ask(
     model: &str,
     system: &str,
     user: &str,
+    structure: Option<&Structure>,
 ) -> Result<Answer, ModelError> {
     let body = json!({
         "model": model,
@@ -92,13 +95,18 @@ pub async fn ask(
         // A streamed reply leaves out the tokens it took unless asked.
         "stream_options": {"include_usage": true},
     });
-    chat(net, access, body).await
+    chat(net, access, body, structure).await
 }
 
 /// Sends a chat request and puts the answer together. Streamed, as some models only think that
 /// way and not all can stop thinking. What the provider wrote stays out of the errors, which go to
 /// the log: it may be the user's letter.
-async fn chat(net: &Net, access: &Access, mut body: Value) -> Result<Answer, ModelError> {
+async fn chat(
+    net: &Net,
+    access: &Access,
+    mut body: Value,
+    structure: Option<&Structure>,
+) -> Result<Answer, ModelError> {
     #[derive(Deserialize)]
     struct Chunk {
         #[serde(default)]
@@ -140,6 +148,9 @@ async fn chat(net: &Net, access: &Access, mut body: Value) -> Result<Answer, Mod
     }
     if let Some(no_thinking) = access.no_thinking {
         no_thinking.apply(&mut body);
+    }
+    if let (Some(capability), Some(structure)) = (access.structured, structure) {
+        structure.apply(capability, &mut body);
     }
     let request = net
         .http()

@@ -23,6 +23,16 @@ pub struct Provider {
     #[serde(skip)]
     #[ts(skip)]
     pub no_thinking: Option<NoThinking>,
+    #[serde(skip)]
+    #[ts(skip)]
+    pub structured: Option<Structured>,
+}
+
+/// The response format documented across a provider's models.
+#[derive(Debug, Clone, Copy)]
+pub enum Structured {
+    JsonSchema,
+    JsonObject,
 }
 
 /// How a provider is told not to think, where one way works for all its models. Most providers
@@ -53,6 +63,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://platform.deepseek.com/api_keys",
         base_url: "https://api.deepseek.com",
         no_thinking: Some(NoThinking::ThinkingDisabled),
+        // The JSON Output guide documents json_object without model restrictions.
+        structured: Some(Structured::JsonObject),
     },
     Provider {
         id: "qwen",
@@ -60,6 +72,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://bailian.console.aliyun.com",
         base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         no_thinking: None,
+        // The structured-output guide limits both modes by model and thinking mode.
+        structured: None,
     },
     Provider {
         id: "glm",
@@ -67,6 +81,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
         base_url: "https://open.bigmodel.cn/api/paas/v4",
         no_thinking: None,
+        // The Chat API reference restricts response_format to text models.
+        structured: None,
     },
     Provider {
         id: "doubao",
@@ -74,6 +90,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
         base_url: "https://ark.cn-beijing.volces.com/api/v3",
         no_thinking: None,
+        // The structured-output guide lists separate supported models for both modes.
+        structured: None,
     },
     Provider {
         id: "kimi",
@@ -81,6 +99,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://platform.moonshot.cn/console/api-keys",
         base_url: "https://api.moonshot.cn/v1",
         no_thinking: None,
+        // The JSON Mode guide documents json_object across Kimi models, including K3.1 Pro.
+        structured: Some(Structured::JsonObject),
     },
     Provider {
         id: "siliconflow",
@@ -88,6 +108,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://cloud.siliconflow.cn/account/ak",
         base_url: "https://api.siliconflow.cn/v1",
         no_thinking: None,
+        // The JSON Mode guide excludes VL models, so even json_object is not universal.
+        structured: None,
     },
     Provider {
         id: "openai",
@@ -95,6 +117,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://platform.openai.com/api-keys",
         base_url: "https://api.openai.com/v1",
         no_thinking: None,
+        // The structured-output guide's compatibility table does not cover all Chat models.
+        structured: None,
     },
     Provider {
         id: "gemini",
@@ -102,6 +126,8 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://aistudio.google.com/apikey",
         base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
         no_thinking: None,
+        // The compatibility guide supports schemas; image model cards exclude structured output.
+        structured: None,
     },
     Provider {
         id: "openrouter",
@@ -109,5 +135,7 @@ pub static PROVIDERS: &[Provider] = &[
         key_url: "https://openrouter.ai/keys",
         base_url: "https://openrouter.ai/api/v1",
         no_thinking: None,
+        // The structured-output guide makes support depend on each model and provider endpoint.
+        structured: None,
     },
 ];

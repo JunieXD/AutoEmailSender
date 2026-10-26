@@ -113,7 +113,7 @@ async fn missing_key_is_distinct_from_a_keyless_model_and_pauses_background_work
     assert!(model::list(&db).await.unwrap()[0].needs_api_key);
     let chosen = model::chosen(&db).await.unwrap().unwrap();
     let net = net::Net::new(vec![]).unwrap();
-    let error = model::ask(&net, &chosen.access, &chosen.model, "system", "user")
+    let error = model::ask(&net, &chosen.access, &chosen.model, "system", "user", None)
         .await
         .unwrap_err();
     assert!(matches!(error, model::ModelError::MissingKey));

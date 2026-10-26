@@ -1,4 +1,59 @@
-//! Borrowed provider wrappers; business parsers decide how many blocks and which fences to accept.
+//! Typed response shapes and provider wrappers; business parsers decide which wrappers to accept.
+
+use schemars::{
+    JsonSchema, Schema,
+    generate::SchemaSettings,
+    transform::{RecursiveTransform, RestrictFormats},
+};
+use serde_json::{Value, json};
+
+use crate::providers::Structured;
+
+/// A response shape derived from the same type that deserializes the answer.
+pub struct Structure {
+    name: String,
+    schema: Schema,
+}
+
+impl Structure {
+    pub fn of<T: JsonSchema>() -> Self {
+        let mut schema = SchemaSettings::draft2020_12()
+            .with(|settings| {
+                settings.inline_subschemas = true;
+            })
+            // Rust integer formats are not standard JSON Schema formats.
+            .with_transform(RestrictFormats::default())
+            .with_transform(RecursiveTransform(|schema: &mut Schema| {
+                if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+                    let required = properties.keys().cloned().collect::<Vec<_>>();
+                    // Strict providers require every field, including nullable Option fields.
+                    schema.insert("required".into(), json!(required));
+                    schema.insert("additionalProperties".into(), json!(false));
+                }
+            }))
+            .into_generator()
+            .into_root_schema_for::<T>();
+        schema.remove("$schema");
+        Self {
+            name: T::schema_name().into_owned(),
+            schema,
+        }
+    }
+
+    pub(crate) fn apply(&self, capability: Structured, body: &mut Value) {
+        // Kimi JSON mode and OpenAI strict schemas require an object, but fact checks use arrays.
+        if self.schema.get("type").is_none_or(|t| t != "object") {
+            return;
+        }
+        body["response_format"] = match capability {
+            Structured::JsonSchema => json!({
+                "type": "json_schema",
+                "json_schema": {"name": self.name, "strict": true, "schema": self.schema},
+            }),
+            Structured::JsonObject => json!({"type": "json_object"}),
+        };
+    }
+}
 
 /// Removes one leading thinking block, leaving any further blocks for the caller.
 pub fn thinking_block(text: &str) -> Result<&str, &'static str> {

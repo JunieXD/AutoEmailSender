@@ -134,7 +134,9 @@ pub enum Contact {
 }
 
 /// Where a mentor works, and as what there (docs/data-model.md#导师). At least one is filled in.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, TS, schemars::JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct Affiliation {
     pub university: Option<String>,

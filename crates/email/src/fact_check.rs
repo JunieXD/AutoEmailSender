@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, types::Json};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, TS, schemars::JsonSchema)]
 pub struct Finding {
     pub quote: String,
     pub reason: String,

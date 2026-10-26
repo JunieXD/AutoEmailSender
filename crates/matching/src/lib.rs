@@ -120,17 +120,19 @@ fn message(
     format!("{{\"学生\":{student},\"导师\":{teacher}}}")
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "MatchAnswer")]
+struct Answer {
+    score: i64,
+    reason: String,
+    directions: Vec<String>,
+    highlights: Vec<String>,
+    risks: Vec<String>,
+}
+
 /// Only errors about the output shape go back to the model; never quote untrusted answer text as
 /// rules.
 fn parse(text: &str) -> Result<queue::MatchAnswer, String> {
-    #[derive(Deserialize)]
-    struct Answer {
-        score: i64,
-        reason: String,
-        directions: Vec<String>,
-        highlights: Vec<String>,
-        risks: Vec<String>,
-    }
     let mut text = model::output::thinking_blocks(text.trim())?;
     if let Some(rest) = model::output::fence_content(text)? {
         text = rest.trim_end().strip_suffix("```").unwrap_or(rest).trim();
@@ -225,9 +227,19 @@ async fn analyze(
         return Ok(Outcome::Pause(NO_BASIS.into(), None));
     }
     let message = message(&me, &references, &mentor);
+    let structure = model::output::Structure::of::<Answer>();
     let mut system = SYSTEM.to_owned();
     for attempt in 0..2 {
-        let answer = match model::ask(net, &chosen.access, &chosen.model, &system, &message).await {
+        let answer = match model::ask(
+            net,
+            &chosen.access,
+            &chosen.model,
+            &system,
+            &message,
+            Some(&structure),
+        )
+        .await
+        {
             Ok(a) => a,
             Err(e) => return Ok(classify(e, chosen)),
         };

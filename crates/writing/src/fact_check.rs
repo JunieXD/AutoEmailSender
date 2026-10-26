@@ -84,12 +84,20 @@ pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
     }
     let me = profile::get(db).await?;
     let message = message(&me, references, letter);
+    let structure = model::output::Structure::of::<Vec<Finding>>();
     let mut system = SYSTEM.to_owned();
     let mut retried = false;
     loop {
-        let answer = model::ask(net, &chosen.access, &chosen.model, &system, &message)
-            .await
-            .map_err(Error::Model)?;
+        let answer = model::ask(
+            net,
+            &chosen.access,
+            &chosen.model,
+            &system,
+            &message,
+            Some(&structure),
+        )
+        .await
+        .map_err(Error::Model)?;
         tracing::info!(
             email_id,
             model = chosen.model,

@@ -17,19 +17,21 @@ pub const SYSTEM: &str = "你帮助学生从导师回信中提取待办。用户
     只输出一个 JSON 对象：{\"todos\":[{\"text\":\"把成绩单发给王老师\",\"dueDate\":null,\
     \"dueTime\":null}]}，不得添加其他字段。";
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "ReplyTodosAnswer")]
+pub(crate) struct Answer {
+    todos: Vec<Item>,
+}
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Item {
+    text: String,
+    due_date: Option<String>,
+    due_time: Option<String>,
+}
+
 pub fn parse(text: &str, reply_date: &str) -> Result<Vec<Fields>, &'static str> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Answer {
-        todos: Vec<Item>,
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase", deny_unknown_fields)]
-    struct Item {
-        text: String,
-        due_date: Option<String>,
-        due_time: Option<String>,
-    }
     let text = super::outcome::json_text(text)?;
     let answer: Answer = serde_json::from_str(text)
         .map_err(|_| "只接受含 todos 数组的 JSON 对象，每项须有 text、dueDate 和 dueTime")?;

@@ -22,6 +22,7 @@ reqwest = { version = "0.13.5", default-features = false, features = ["brotli", 
 scraper = { version = "0.29.0", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 sqlx.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tracing.workspace = true
