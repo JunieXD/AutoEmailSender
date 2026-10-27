@@ -147,7 +147,7 @@ pub(crate) async fn confirmation(
             let action = if op == "resumeTask" {
                 "恢复 1 个任务的发信"
             } else {
-                "永久删除 1 个任务及其中的草稿"
+                "永久删除 1 个任务和其中没发出的邮件（包括已批准的）"
             };
             object(action, target)
         }

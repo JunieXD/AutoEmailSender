@@ -433,13 +433,13 @@ operations! {
             -> Vec<task::ApprovalCandidate>;
         /// 批准选中的任务邮件，按各自发送时间发出。
         "approveTaskEmails" [confirm] => approve_task_emails(task::TaskApprovals) -> u64;
-        /// 暂停指定任务的发信。
+        /// 暂停指定任务：不再生成草稿，已批准的邮件也先不发，仍可以审核和批准。
         "pauseTask" [none] => pause_task(TaskId) -> ();
-        /// 恢复指定任务的发信。
+        /// 恢复指定任务：接着生成排队的草稿（会调用模型、产生用量），并发出已批准的邮件。
         "resumeTask" [confirm] => resume_task(TaskId) -> ();
-        /// 停止指定任务。
+        /// 停止指定任务：没发出的邮件全部取消（记录保留），任务不能再继续。
         "stopTask" [none] => stop_task(TaskId) -> ();
-        /// 永久删除指定任务及其中的草稿。
+        /// 永久删除指定任务和其中没发出的邮件（包括已批准的），发出过的留在导师的往来里。
         "deleteTask" [confirm] => delete_task(TaskId) -> ();
         /// 从任务中移除指定邮件。
         "removeTaskEmail" [none] => remove_task_email(task::TaskEmail) -> ();
