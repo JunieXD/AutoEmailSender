@@ -452,7 +452,6 @@ dependencies = [
  "profile",
  "receive",
  "send",
- "serde",
  "serde_json",
  "sqlx",
  "task",
@@ -469,7 +468,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "ts-rs",
  "windows-registry",
 ]
 
@@ -8028,7 +8026,6 @@ dependencies = [
  "task",
  "tokio",
  "tower",
- "ts-rs",
  "uuid",
 ]
 

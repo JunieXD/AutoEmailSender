@@ -26,7 +26,7 @@
 | `crates/writing` | AI 写信和核对：给模型的资料和规则，校验模型输出 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具和本地模型 HTTP 服务器 |
-| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的操作类型从这里生成 |
+| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
 | `crates/agent` | Agent 本机通道和 `autoemail` 命令行 |
 | `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、自动更新、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
@@ -99,10 +99,8 @@
 
 ### 自动更新
 
-- 使用官方 `tauri-plugin-updater`，只从 Rust 检查、下载和安装，不开放插件的界面权限。`updater.rs` 在核心启动成功后立即检查，之后每 6 小时检查；debug 构建不启动检查，手动查询始终返回 `current`。自动检查失败只记日志，不发失败事件。
+- 更新检查和下载留在 Rust 应用进程：应用可能在后台运行数天而不开窗口，不能依赖界面计时；不开放更新插件的界面权限。debug 构建不访问更新服务。自动检查失败只记日志，不发失败事件。
 - 通过 `configure_client` 把检查和下载的 HTTP builder 交给 `net::Net::configure_http`，复用系统代理（含 SOCKS 和本机地址直连）与系统信任的 TLS 配置；每次新连接重新读取代理，不另做检测。插件固定在 2.14 小版本范围，因为这个回调的 reqwest 类型可能随插件的小版本变化。检查超时 30 秒，下载超时 30 分钟。
-- `ui/src/api/app.ts` 提供 `updateStatus()`、`checkUpdate()`、`downloadUpdate()`、`restartUpdate()`，对应同名 snake_case Tauri 命令，无参数。状态由 Rust 的 `update_status.rs` 定义，`cargo xtask types` 同时生成应用层状态类型和核心操作类型。
-- 状态为 `current`、`available { update, error }`、`downloading { update, downloaded, total }`、`ready { update }`。`update` 含 `version`、`published_at`（Unix 毫秒，可空）、`notes`（可空）；下载大小单位为字节，未知总大小为 `null`。`error` 是上次下载失败原因，可重试。事件 `update-changed` 不带内容，界面收到后重读状态；进度事件最多每 250 毫秒一次，开始、失败、完成立即通知。
 - 检查、下载和安装互斥；已有下载好的包时检查保留该包。下载由插件校验签名后才进入 `ready`，包只留在内存，退出后需重新下载。安装入口再次由插件校验。macOS 替换 `.app` 后调用 Tauri `restart()`；Windows 使用 NSIS passive 模式，由安装器重开应用。Windows 插件直接退出进程，`on_before_exit` 与正常退出共用 `before_exit`，关闭抓取窗口；发送中的邮件沿用启动恢复逻辑标为可能已发出。
 - 正式更新公钥和 GitHub `latest.json` 地址在 `tauri.conf.json`，打包生成更新包与 `.sig`；macOS 的 `signingIdentity: "-"` 为整包加 ad-hoc 签名，不做公证。
 

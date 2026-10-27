@@ -7,7 +7,6 @@ mod backup;
 mod browser;
 mod logs;
 mod save;
-mod update_status;
 mod updater;
 
 use std::error::Error;

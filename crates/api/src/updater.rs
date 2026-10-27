@@ -1,9 +1,10 @@
-//! Desktop update data shared with the TypeScript generator, without the Tauri runtime.
+//! Desktop update state returned by the application commands.
 
 use serde::Serialize;
 use ts_rs::TS;
 
 #[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub version: String,
     /// Unix milliseconds, or null when the release has no publication date.
@@ -12,7 +13,7 @@ pub struct UpdateInfo {
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum UpdateStatus {
     Current,
     Available {

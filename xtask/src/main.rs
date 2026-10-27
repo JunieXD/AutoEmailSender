@@ -2,8 +2,6 @@
 
 mod bench;
 mod sample;
-#[path = "../../crates/app/src/update_status.rs"]
-pub mod update_status;
 mod web;
 
 use std::path::{Path, PathBuf};
@@ -46,20 +44,7 @@ fn root() -> PathBuf {
 
 fn types(check: bool) -> Result {
     let path = root().join("ui/src/api/types.ts");
-    let mut generated = api::typescript();
-    let cfg = ts_rs::Config::new().with_large_int("number");
-    for decl in [
-        <update_status::UpdateInfo as ts_rs::TS>::decl(&cfg),
-        <update_status::UpdateStatus as ts_rs::TS>::decl(&cfg),
-    ] {
-        generated.push_str(&format!("\nexport {decl}\n"));
-    }
-    let generated = generated
-        .lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
+    let generated = api::typescript();
     if !check {
         return Ok(std::fs::write(&path, generated)?);
     }

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::update_status::{UpdateInfo, UpdateStatus};
+use api::updater::{UpdateInfo, UpdateStatus};
 
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
@@ -72,19 +72,19 @@ impl<U: Clone> Phase<U> {
 }
 
 impl Updater {
-    fn phase(&self) -> Result<MutexGuard<'_, Phase<Update>>, String> {
-        self.phase
-            .lock()
-            .map_err(|_| "更新处理已中断，请重启应用后重试。".into())
+    fn phase(&self) -> MutexGuard<'_, Phase<Update>> {
+        self.phase.lock().unwrap_or_else(|_| {
+            unreachable!("update state changes cannot panic while holding the lock")
+        })
     }
 
-    fn status(&self) -> Result<UpdateStatus, String> {
+    fn status(&self) -> UpdateStatus {
         let info = |update: &Update| UpdateInfo {
             version: update.version.clone(),
             published_at: update.date.map(|date| date.unix_timestamp() * 1000),
             notes: update.body.clone(),
         };
-        Ok(match &*self.phase()? {
+        match &*self.phase() {
             Phase::Current => UpdateStatus::Current,
             Phase::Available { update, error } => UpdateStatus::Available {
                 update: info(update),
@@ -102,7 +102,7 @@ impl Updater {
             Phase::Ready { update, .. } => UpdateStatus::Ready {
                 update: info(update),
             },
-        })
+        }
     }
 }
 
@@ -133,7 +133,7 @@ async fn schedule(mut check: impl AsyncFnMut()) {
 }
 
 #[tauri::command]
-pub fn update_status(app: AppHandle) -> Result<UpdateStatus, String> {
+pub fn update_status(app: AppHandle) -> UpdateStatus {
     app.state::<Updater>().status()
 }
 
@@ -145,14 +145,14 @@ pub async fn check_update(app: AppHandle) -> Result<UpdateStatus, String> {
 async fn check(app: &AppHandle) -> Result<UpdateStatus, String> {
     let state = app.state::<Updater>();
     if cfg!(debug_assertions) {
-        return state.status();
+        return Ok(state.status());
     }
     let Ok(_operation) = state.operation.try_lock() else {
         return Err("正在检查、下载或安装更新，请稍后再试。".into());
     };
     // Keep a downloaded package and its release together until the user installs it.
-    if matches!(*state.phase()?, Phase::Ready { .. }) {
-        return state.status();
+    if matches!(*state.phase(), Phase::Ready { .. }) {
+        return Ok(state.status());
     }
     let net = app
         .try_state::<Arc<api::Context>>()
@@ -170,7 +170,7 @@ async fn check(app: &AppHandle) -> Result<UpdateStatus, String> {
         .check()
         .await
         .map_err(check_error)?;
-    *state.phase()? = match result {
+    *state.phase() = match result {
         Some(update) => Phase::Available {
             update,
             error: None,
@@ -178,7 +178,7 @@ async fn check(app: &AppHandle) -> Result<UpdateStatus, String> {
         None => Phase::Current,
     };
     changed(app);
-    state.status()
+    Ok(state.status())
 }
 
 // Plugin errors can include remote JSON strings; only log the category and safe HTTP details.
@@ -208,7 +208,7 @@ pub async fn download_update(app: AppHandle) -> Result<(), String> {
         .operation
         .try_lock()
         .map_err(|_| "正在检查、下载或安装更新，请稍后再试。".to_owned())?;
-    let mut update = state.phase()?.begin_download()?;
+    let mut update = state.phase().begin_download()?;
     update.timeout = Some(Duration::from_secs(30 * 60));
     changed(&app);
     let mut downloaded = 0;
@@ -217,19 +217,14 @@ pub async fn download_update(app: AppHandle) -> Result<(), String> {
         .download(
             |chunk, total| {
                 downloaded += chunk as u64;
-                match state.phase() {
-                    Ok(mut phase) => {
-                        if let Phase::Downloading {
-                            downloaded: current,
-                            total: size,
-                            ..
-                        } = &mut *phase
-                        {
-                            *current = downloaded;
-                            *size = total;
-                        }
-                    }
-                    Err(error) => tracing::error!("update progress: {error}"),
+                if let Phase::Downloading {
+                    downloaded: current,
+                    total: size,
+                    ..
+                } = &mut *state.phase()
+                {
+                    *current = downloaded;
+                    *size = total;
                 }
                 if last_event.elapsed() >= PROGRESS_INTERVAL {
                     changed(&app);
@@ -241,7 +236,7 @@ pub async fn download_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(download_error);
     let response = result.as_ref().map(|_| ()).map_err(Clone::clone);
-    state.phase()?.finish_download(update, result);
+    state.phase().finish_download(update, result);
     changed(&app);
     response
 }
@@ -278,7 +273,7 @@ pub async fn restart_update(app: AppHandle) -> Result<(), String> {
             .operation
             .try_lock()
             .map_err(|_| "正在检查、下载或安装更新，请稍后再试。".to_owned())?;
-        let (update, bytes) = state.phase()?.installation()?;
+        let (update, bytes) = state.phase().installation()?;
         update.install(&*bytes).map_err(|error| {
             tracing::error!("update installation failed: {error}");
             "更新未能安装，请检查应用所在目录的权限后重试。".to_owned()
