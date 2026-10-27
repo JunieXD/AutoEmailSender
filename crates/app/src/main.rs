@@ -253,6 +253,7 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
     .await
     .map_err(StartupError::Agent)?;
     app.manage(agent);
+    tauri::async_runtime::spawn(api::libraries::run(ctx.clone()));
     let api::Context {
         writes,
         db,

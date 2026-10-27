@@ -262,7 +262,11 @@ async fn verified(
 async fn save_session(db: &SqlitePool, session: Session) -> Result<State, Error> {
     sqlx::query!(
         r#"INSERT INTO account (id, email, token) VALUES (1, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET email = excluded.email, token = excluded.token"#,
+        ON CONFLICT (id) DO UPDATE SET email = excluded.email, token = excluded.token,
+            library_revision = CASE WHEN account.email = excluded.email
+                THEN account.library_revision ELSE 0 END,
+            library_checked_at = CASE WHEN account.email = excluded.email
+                THEN account.library_checked_at ELSE NULL END"#,
         session.account.email,
         session.token
     )

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO library_update (library_id, field, university, school, department, original, incoming)\n        SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7\n        WHERE ?8 OR EXISTS (SELECT 1 FROM library_update\n            WHERE library_id = ?1 AND field = ?2 AND university = ?3\n                AND school = ?4 AND department = ?5)\n        ON CONFLICT (library_id, field, university, school, department)\n        DO UPDATE SET incoming = excluded.incoming",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "5a094c34f8daf7cf23e4afae51dc7113f8894ef1e9142df79e7c18986b9d6258"
+}

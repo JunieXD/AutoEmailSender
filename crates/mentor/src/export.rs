@@ -26,7 +26,7 @@ pub struct Profile {
     pub trashed: bool,
 }
 
-pub(crate) async fn profiles(
+pub async fn profiles(
     conn: &mut SqliteConnection,
     ids: &[i64],
 ) -> Result<BTreeMap<i64, Profile>, sqlx::Error> {

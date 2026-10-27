@@ -40,6 +40,8 @@ db.workspace = true
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 tempfile = "3.27.0"
 agent = { version = "3.0.0-alpha.0", path = "../agent" }
+library.workspace = true
+cloud-api = { workspace = true, features = ["ts-rs"] }
 
 [dev-dependencies]
 fakemail.workspace = true

@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryStatus"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -12,6 +14,8 @@ pub enum Status {
     Removed,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryOrg"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Org {
@@ -21,11 +25,15 @@ pub struct Org {
     pub count: u32,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryOrgs"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Orgs {
     pub orgs: Vec<Org>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryUnit"))]
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unit {
     pub university: Option<String>,
@@ -34,14 +42,20 @@ pub struct Unit {
     pub title: Option<String>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryListRequest"))]
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListRequest {
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub org: Option<String>,
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub q: Option<String>,
     pub page: u32,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibrarySummary"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
@@ -55,12 +69,16 @@ pub struct Summary {
     pub fetched: bool,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryList"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct List {
     pub total: u32,
     pub mentors: Vec<Summary>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryPreview"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Preview {
@@ -73,6 +91,8 @@ pub struct Preview {
     pub verified_at: Option<i64>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryRecord"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     #[serde(flatten)]
@@ -81,17 +101,23 @@ pub struct Record {
     pub revision: i64,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryQuota"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Quota {
     pub remaining: Option<u32>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryFetchRequest"))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FetchRequest {
     pub ids: Vec<String>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryFetched"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Fetched {
     pub records: Vec<Record>,
@@ -99,12 +125,16 @@ pub struct Fetched {
     pub remaining: Option<u32>,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryChangesRequest"))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChangesRequest {
     pub after: i64,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryChangeData"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", content = "record", rename_all = "snake_case")]
 pub enum ChangeData {
@@ -137,6 +167,8 @@ impl ChangeData {
     }
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryChange"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Change {
     pub id: String,
@@ -145,6 +177,8 @@ pub struct Change {
     pub data: ChangeData,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(rename = "LibraryChanges"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Changes {
     pub changes: Vec<Change>,

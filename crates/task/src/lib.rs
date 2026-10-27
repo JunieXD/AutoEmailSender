@@ -59,6 +59,7 @@ pub struct Candidate {
     pub reason: Option<String>,
     pub contact_count: i64,
     pub last_contact_at: Option<i64>,
+    pub library_status: Option<cloud_api::library::Status>,
     pub previous: Option<PreviousLetter>,
 }
 #[derive(Debug, Serialize, TS)]
@@ -125,7 +126,11 @@ async fn candidates(
                  THEN '还有一封没发出的首封或追问'
                ELSE NULL END AS "reason: String",
              coalesce(c.contact_count, 0) AS "contact_count!: i64",
-             c.last_out_at AS last_contact_at
+             c.last_out_at AS last_contact_at,
+             (SELECT json_quote(status) FROM mentor_library WHERE mentor_id = m.id
+                AND status IN ('retired', 'departed', 'deceased')
+                ORDER BY CASE status WHEN 'deceased' THEN 0 WHEN 'departed' THEN 1 ELSE 2 END,
+                    library_id LIMIT 1) AS "library_status?: Json<cloud_api::library::Status>"
            FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
            WHERE m.id IN (SELECT value FROM json_each(?1))
            ORDER BY m.name, m.id"#,
@@ -148,6 +153,7 @@ async fn candidates(
             reason,
             contact_count: row.contact_count,
             last_contact_at: row.last_contact_at,
+            library_status: row.library_status.map(|s| s.0),
             previous: previous.map(|p| PreviousLetter {
                 subject: p.subject,
                 sent_at: p.sent_at,

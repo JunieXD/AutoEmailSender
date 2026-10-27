@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mentor_library SET status = ?, record = ? WHERE library_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "480c66358d8e223c3adad89d5be3a04a7e295c9e8030bbeb86f152ea8e552ff0"
+}

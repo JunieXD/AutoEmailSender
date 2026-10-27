@@ -229,7 +229,7 @@ pub(super) async fn get_candidate(
 pub(super) async fn preview_candidates(
     ctx: &Context,
     input: review::ReviewInput,
-) -> Result<mentor::import::Preview, CallError> {
+) -> Result<mentor::intake::Preview, CallError> {
     Ok(review::preview(&ctx.db, &input).await?)
 }
 pub(super) async fn accept_candidates(

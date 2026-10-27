@@ -3,7 +3,7 @@ use crate::{PageUrl, extract::Person, queue, store::PageKind};
 use mentor::{
     MentorFields,
     export::Profile,
-    import::{Decisions, Preview},
+    import::Decisions,
     intake::{self, Row},
 };
 use serde::{Deserialize, Serialize};
@@ -209,6 +209,8 @@ pub async fn detail(db: &SqlitePool, id: i64) -> Result<Option<CandidateDetail>,
         evidence,
     }))
 }
+
+use mentor::intake::Preview;
 
 pub struct ReviewPlan {
     pub preview: Preview,

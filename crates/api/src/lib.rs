@@ -9,6 +9,8 @@ use agent::{
 };
 use agent_settings::*;
 mod accounts;
+pub mod libraries;
+use libraries::*;
 pub mod backup;
 use accounts::*;
 mod crawling;
@@ -34,6 +36,7 @@ use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
     pub account: account::Client,
+    pub library: library::sync::Synchronizer,
     pub agent_settings: agent_settings::Settings,
     pub agent_access: agent::Access,
     pub writes: db::Writes,
@@ -57,6 +60,7 @@ impl Context {
         let writes = db::Writes::default();
         Self {
             account: account::Client::new(&net),
+            library: Default::default(),
             agent_settings: Default::default(),
             agent_access: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
@@ -365,6 +369,30 @@ operations! {
         /// 输入邮箱和密码注销账号，删除服务器上的全部账号数据，本机数据保留。
         "deleteAccount" [confirm] => delete_account(AccountCredentials) -> ();
     }
+    "导师库" {
+        /// 读取导师库的机构和人数。
+        "getLibraryOrgs" [none] => library_orgs(Nothing) -> cloud_api::library::Orgs;
+        /// 按机构、关键词和页码读取导师库，每页 50 位，带本机标记。
+        "listLibraryMentors" [none] => library_mentors(cloud_api::library::ListRequest) -> library::Mentors;
+        /// 预览导师库记录，不含邮箱，带本机标记。
+        "previewLibraryMentor" [none] => library_preview(LibraryId) -> library::Preview;
+        /// 查询今天还能添加多少位，赞助者为 null。
+        "getLibraryQuota" [none] => library_quota(Nothing) -> cloud_api::library::Quota;
+        /// 取得完整资料并预览添加结果；第一次取得记录会计入今天的数量。
+        "previewLibraryAdd" [none] => library_add_preview(library::add::Selection) -> library::add::Preview;
+        /// 按预览中的决定添加导师，再次取得记录不重复计数。
+        "addLibraryMentors" [confirm_if "添加会更改已批准邮件的收件地址时"] =>
+            library_add(library::add::Selection) -> library::add::Added;
+        /// 按项分组读取导师库的待处理资料更新，take 为默认选择。
+        "listLibraryUpdates" [none] => library_updates(Nothing) -> Vec<library::updates::Group>;
+        /// 应用逐行选择并清除处理过的更新，返回修改的导师数。
+        "applyLibraryUpdates" [confirm_if "更新会更改已批准邮件的收件地址时"] =>
+            library_apply(library::updates::Choices) -> u32;
+        /// 查询有待处理资料更新的导师数，不含回收站。
+        "libraryUpdateCount" [none] => library_update_count(Nothing) -> i64;
+        /// 立即从同步进度检查导师库更新，返回处理的变化数。
+        "syncLibrary" [none] => library_sync(Nothing) -> u32;
+    }
     "Agent 连接" {
         /// 读取命令行工具的安装状态、命令名和绝对路径。
         "getAgentCli" [none] => get_agent_cli(Nothing) -> AgentCli;
@@ -442,7 +470,7 @@ operations! {
         "getCandidate" [none] => get_candidate(CrawlId) -> crawl::review::CandidateDetail;
         /// 预览候选导师入库，包含可能重复的导师。
         "previewCandidates" [none] => preview_candidates(crawl::review::ReviewInput)
-            -> mentor::import::Preview;
+            -> mentor::intake::Preview;
         /// 按审核决定将候选导师保存到导师库。
         "acceptCandidates" [confirm_if "候选入库会更改已批准邮件的收件地址时"] =>
             accept_candidates(crawl::review::ReviewInput) -> crawl::review::Reviewed;

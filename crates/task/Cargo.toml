@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 check.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+cloud-api = { workspace = true, features = ["ts-rs"] }
 db.workspace = true
 email.workspace = true
 fastrand = "2.5.0"

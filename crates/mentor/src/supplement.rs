@@ -15,7 +15,7 @@ pub fn comparable(value: &str) -> String {
         .collect()
 }
 
-pub(crate) fn same(a: &str, b: &str) -> bool {
+pub fn same(a: &str, b: &str) -> bool {
     comparable(a) == comparable(b)
 }
 
@@ -32,13 +32,13 @@ pub(crate) fn same_affiliation(a: &Affiliation, b: &Affiliation) -> bool {
     })
 }
 
-pub(crate) struct TitleDifference {
+pub struct TitleDifference {
     pub position: usize,
     pub local: String,
     pub incoming: String,
 }
 
-pub(crate) fn add_missing(
+pub fn add_missing(
     fields: &mut MentorFields,
     papers: &mut Vec<String>,
     incoming: &MentorFields,
@@ -108,7 +108,7 @@ pub(crate) fn add_missing(
     differences
 }
 
-pub(crate) fn append(local: &mut Vec<String>, incoming: &[String]) {
+pub fn append(local: &mut Vec<String>, incoming: &[String]) {
     for value in incoming {
         if !local.iter().any(|v| same(v, value)) {
             local.push(value.clone());

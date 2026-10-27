@@ -109,6 +109,73 @@ pub async fn run(path: &Path) -> Result {
         );
     }
 
+    let library_rows = sqlx::query!(
+        r#"SELECT m.id, m.name, a.university, a.school, a.department, a.title
+        FROM mentor m LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id AND a.position = 0
+        WHERE m.trashed_at IS NULL ORDER BY m.id LIMIT 50"#
+    )
+    .fetch_all(&db)
+    .await?;
+    let summaries: Vec<_> = library_rows
+        .iter()
+        .map(|r| cloud_api::library::Summary {
+            id: format!("mentor_bench{}", r.id),
+            name: r.name.clone(),
+            aliases: vec![],
+            unit: cloud_api::library::Unit {
+                university: r.university.clone(),
+                school: r.school.clone(),
+                department: r.department.clone(),
+                title: r.title.clone(),
+            },
+            research: None,
+            email_count: 0,
+            fetched: false,
+        })
+        .collect();
+    for (r, summary) in library_rows.iter().zip(&summaries).take(10) {
+        let record = cloud_api::library::Record {
+            preview: cloud_api::library::Preview {
+                summary: summary.clone(),
+                units: vec![summary.unit.clone()],
+                papers: vec![],
+                homepages: vec![],
+                source_url: None,
+                verified_at: None,
+            },
+            emails: vec![],
+            revision: 1,
+        };
+        sqlx::query(
+            r#"INSERT INTO mentor_library (library_id, mentor_id, status, record)
+            VALUES (?, ?, 'active', ?)"#,
+        )
+        .bind(&summary.id)
+        .bind(r.id)
+        .bind(sqlx::types::Json(record))
+        .execute(&db)
+        .await?;
+        sqlx::query(
+            r#"INSERT INTO library_update (library_id, field, original, incoming)
+            VALUES (?, 'research', ?, ?)"#,
+        )
+        .bind(&summary.id)
+        .bind(sqlx::types::Json("旧研究方向"))
+        .bind(sqlx::types::Json("新研究方向"))
+        .execute(&db)
+        .await?;
+    }
+    report(
+        "导师库，本页 50 位的本机标记",
+        median(async || library::local(&db, &summaries).await.map(drop)).await?,
+        home,
+    );
+    report(
+        "导师库，有待处理更新的导师数",
+        median(async || library::updates::count(&db).await.map(drop)).await?,
+        home,
+    );
+
     let mut university = page(None, None, 1);
     university.filter.universities = vec![Some("清华大学".into())];
     let mut school = page(None, None, 1);
@@ -581,6 +648,7 @@ pub async fn run(path: &Path) -> Result {
     let decisions = mentor::import::Decisions {
         take: mentor::import::preview(&db, &sheets, &setup)
             .await?
+            .intake
             .differences,
         ..Default::default()
     };
@@ -639,7 +707,7 @@ pub async fn run(path: &Path) -> Result {
         "导入 5000 行，预览（无邮箱、姓名有候选但学校不符）",
         median(async || {
             let preview = mentor::import::preview(&db, &sheets, &setup).await?;
-            if preview.created != 5000 || !preview.maybe_same.is_empty() {
+            if preview.intake.created != 5000 || !preview.intake.maybe_same.is_empty() {
                 return Err(sqlx::Error::Protocol("无邮箱基准应新增 5000 位".into()));
             }
             Ok(())

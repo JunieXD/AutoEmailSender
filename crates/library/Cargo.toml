@@ -1,0 +1,27 @@
+[package]
+name = "library"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+account.workspace = true
+cloud-api = { workspace = true, features = ["ts-rs"] }
+db.workspace = true
+mentor.workspace = true
+reqwest = { version = "0.13", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio = { workspace = true, features = ["time", "sync"] }
+tracing.workspace = true
+ts-rs.workspace = true
+url = "2.5.8"
+
+[dev-dependencies]
+net.workspace = true
+test-fixtures = { path = "../test-fixtures" }

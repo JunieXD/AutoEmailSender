@@ -1,0 +1,49 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH doomed AS (SELECT value AS id FROM json_each(?1))\n                SELECT\n                    (SELECT count(*) FROM email WHERE mentor_id IN doomed) AS \"emails!: i64\",\n                    (SELECT count(*) FROM todo WHERE mentor_id IN doomed) AS \"todos!: i64\",\n                    (SELECT count(*) FROM mentor_tag WHERE mentor_id IN doomed) AS \"tags!: i64\",\n                    (SELECT count(*) FROM library_update WHERE library_id IN\n                        (SELECT library_id FROM mentor_library WHERE mentor_id IN doomed)) AS \"updates!: i64\",\n                    (SELECT count(*) FROM message\n                        WHERE id IN (SELECT message_id FROM message_mentor WHERE mentor_id IN doomed)\n                        AND NOT EXISTS (SELECT 1 FROM message_mentor mm\n                            WHERE mm.message_id = message.id AND mm.mentor_id NOT IN doomed))\n                        AS \"messages!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "emails!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "todos!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "tags!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "updates!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "messages!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "27f24f76d65e3b306d221bfc64761656e2b912b547992db1c5ebef67d1470743"
+}

@@ -1,0 +1,59 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH page AS (\n            SELECT CAST(key AS INTEGER) AS position, json_extract(value, '$[0]') AS library_id,\n                value FROM json_each(?)\n        )\n        SELECT page.position AS \"position!: i64\", m.id AS \"id!\", m.name AS \"name!\",\n            m.trashed_at IS NOT NULL AS \"trashed!: bool\", 1 AS \"linked!: bool\"\n        FROM page JOIN mentor_library l ON l.library_id = page.library_id\n        JOIN mentor m ON m.id = l.mentor_id\n        UNION ALL\n        SELECT DISTINCT page.position AS \"position!: i64\", m.id AS \"id!\", m.name AS \"name!\",\n            0 AS \"trashed!: bool\", 0 AS \"linked!: bool\"\n        FROM page CROSS JOIN mentor_name n ON n.name IN (SELECT value FROM json_each(page.value, '$[1]'))\n        CROSS JOIN mentor m ON m.id = n.mentor_id\n        WHERE m.trashed_at IS NULL\n            AND NOT EXISTS (SELECT 1 FROM mentor_library WHERE library_id = page.library_id)\n            AND EXISTS (SELECT 1 FROM mentor_affiliation WHERE mentor_id = m.id\n                AND university_match = json_extract(page.value, '$[2]'))\n        ORDER BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "name": "position!: i64",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "id!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name!",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "trashed!: bool",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "linked!: bool",
+        "ordinal": 4,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      null,
+      null,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "39e91718f12fe97ab4b9f421df4a58735d56dde3d11bd17ab39ee6aff5dd9104"
+}

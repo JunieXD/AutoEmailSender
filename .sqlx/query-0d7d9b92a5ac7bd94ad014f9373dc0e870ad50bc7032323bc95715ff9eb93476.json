@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT email, library_revision, library_checked_at\n            FROM account WHERE token IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "email",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "library_revision",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "library_revision"
+          }
+        }
+      },
+      {
+        "name": "library_checked_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "library_checked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "0d7d9b92a5ac7bd94ad014f9373dc0e870ad50bc7032323bc95715ff9eb93476"
+}

@@ -1,4 +1,4 @@
-import type { Decisions, Preview, ImportProfile, Addition } from "@/api/types";
+import type { Decisions, IntakePreview, ImportProfile, Addition } from "@/api/types";
 import { Differences } from "@/components/differences";
 import { placeOf } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ export function IntakeChoices({
   onChange,
   source = "表格",
 }: {
-  preview: Preview;
+  preview: IntakePreview;
   decisions: Decisions;
   onChange: (next: Decisions | ((previous: Decisions) => Decisions)) => void;
   source?: string;

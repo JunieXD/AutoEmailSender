@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO mentor_library (library_id, mentor_id, status, record)\n            VALUES (?, ?, 'active', ?)\n            ON CONFLICT (library_id) DO UPDATE SET status = excluded.status, record = excluded.record",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "a651a654f274c84f4979060d176b7540b5e851ba76d8a6191e4398c8a5ff8691"
+}

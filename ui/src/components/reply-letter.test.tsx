@@ -140,6 +140,7 @@ const mentor: MentorDetail = {
   contact: { status: "replied", count: 1, lastOutAt: 0, lastReplyAt: 1, unread: false },
   tags: [],
   trashed: false,
+  library: [],
 };
 
 const firstEmail: Email = {
