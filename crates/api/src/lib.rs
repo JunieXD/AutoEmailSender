@@ -346,7 +346,7 @@ impl Drop for AgentCallLog<'_> {
 
 operations! {
     "账号" {
-        /// 读取账号状态；已登录时从服务器读取邮箱和赞助到期时间。
+        /// 从本机读取账号状态和邮箱，不连接服务器。
         "getAccount" [none] => get_account(Nothing) -> account::State;
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
         "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();

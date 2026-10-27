@@ -6,7 +6,7 @@ export type AccountLogin = { email: string, password: string, };
 
 export type AccountPassword = { password: string, };
 
-export type AccountState = { "kind": "loggedOut" } | { "kind": "loggedIn", email: string, sponsorUntil: number | null, } | { "kind": "expired", email: string, };
+export type AccountState = { "kind": "loggedOut" } | { "kind": "loggedIn", email: string, } | { "kind": "expired", email: string, };
 
 export type AccountVerification = { email: string, code: string, password: string, };
 

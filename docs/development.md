@@ -66,8 +66,8 @@
 - `crates/account` 经 `net` 的系统代理和系统证书访问服务器，保留连接池但禁止重定向，避免把凭据转交给别的地址。默认地址常量为 `http://127.0.0.1:8787`，构造客户端时读取环境变量 `AUTOEMAIL_SERVER_URL`，存在时使用该值，否则使用默认地址。正式服务地址还未确定，部署时替换常量。
 - 邮箱去首尾空白、折叠全角英文字母／数字／`＠`／`．` 后转小写。`cloud_api::normalize_email` 是桌面与服务端的同一份规则；规范化结果也用于密码盐。
 - 密码不上传、不保存、不记日志。Argon2id v19，`m = 65,536 KiB`、`t = 3`、`p = 4`，盐为 UTF-8 的 `auto-email-sender:` 加规范化邮箱，输出 32 字节主钥匙；HKDF-SHA256 使用空盐（`None`）、info 的 UTF-8 字节 `login`，输出 32 字节登录钥匙，以无填充 base64url 上传。上述参数和规范化规则改变时必须迁移。
-- 本机 `account` 表最多一行，令牌只在单独的 `token` 列中。`State`（生成的 TypeScript 类型为 `AccountState`）是 `loggedOut`、`loggedIn { email, sponsorUntil }`、`expired { email }`，到期时间是 UTC 毫秒或 `null`。读已登录状态会请求服务器，不把网络故障误报为退出。恢复备份清掉令牌，保留邮箱，状态为 `expired`。
-- `Client::authenticated` 是官方服务共用的带令牌请求入口。服务器返回 `session_expired` 时只清掉本次使用的令牌，保留邮箱并返回 `SignedOut`，不自动重放请求。账号变更在同一个客户端内串行执行，避免旧登录覆盖新状态。
+- 本机 `account` 表最多一行，令牌只在单独的 `token` 列中。`State`（生成的 TypeScript 类型为 `AccountState`）是 `loggedOut`、`loggedIn { email }`、`expired { email }`。`account::state` 只读本机邮箱和令牌是否存在，不连接服务器、不获取账号变更锁，断网时也能显示邮箱。恢复备份清掉令牌，保留邮箱，状态为 `expired`。
+- `Client::authenticated` 是官方服务共用的带令牌请求入口。实际访问服务器时发现 `session_expired`，只清掉本次使用的令牌，保留邮箱并返回 `SignedOut`，随后读取本机状态得到 `expired`；不自动重放请求。账号变更在同一个客户端内串行执行，避免旧登录覆盖新状态。
 - 操作组“账号”：`getAccount {}`、`sendRegistrationCode { email }`、`registerAccount { email, code, password }`、`loginAccount { email, password }`、`sendPasswordResetCode { email }`、`resetAccountPassword { email, code, password }`、`logoutAccount {}`、`deleteAccount { password }`。注册和登录返回 `State`，其余写操作返回 `null`。Agent 注销必须确认，说明只含账号邮箱和删除效果，不含密码。
 - 重置密码后所有设备会话失效；本机正是该邮箱时立即清令牌。退出登录只有服务器撤销会话成功或确认会话已失效后才清本机记录，网络失败会明确报错。注销成功只删除本机账号记录，不动导师、邮件等本机数据。错误中文由 `account::Error::message` 统一提供。
 

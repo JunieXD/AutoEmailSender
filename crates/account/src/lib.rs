@@ -5,7 +5,7 @@ pub use key::login_key;
 
 use std::time::Duration;
 
-use cloud_api::{Account, ApiError, Empty, ErrorCode, Session, path};
+use cloud_api::{ApiError, Empty, ErrorCode, Session, path};
 use reqwest::{Method, RequestBuilder};
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::SqlitePool;
@@ -24,13 +24,22 @@ const SERVER_URL: &str = "http://127.0.0.1:8787";
 #[ts(rename = "AccountState")]
 pub enum State {
     LoggedOut,
-    LoggedIn {
-        email: String,
-        sponsor_until: Option<i64>,
-    },
-    Expired {
-        email: String,
-    },
+    LoggedIn { email: String },
+    Expired { email: String },
+}
+
+pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"SELECT email, token IS NOT NULL AS "logged_in!: bool"
+        FROM account"#,
+    )
+    .fetch_optional(db)
+    .await?;
+    Ok(match row {
+        None => State::LoggedOut,
+        Some(row) if row.logged_in => State::LoggedIn { email: row.email },
+        Some(row) => State::Expired { email: row.email },
+    })
 }
 
 pub struct Client {
@@ -50,6 +59,7 @@ impl Client {
 
     pub fn with_address(net: &net::Net, address: String) -> Self {
         // Net already built this TLS configuration; disabling redirects cannot invalidate it.
+        // A redirect must never forward a login key or verification code to a different service.
         let http = net.page_http_builder().build().unwrap_or_else(|_| {
             unreachable!("validated network settings must build an account HTTP client")
         });
@@ -61,32 +71,9 @@ impl Client {
     }
 
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
-        // A redirect must never forward a login key or verification code to a different service.
         self.http
             .request(method, format!("{}{path}", self.address))
             .timeout(Duration::from_secs(30))
-    }
-
-    pub async fn state(&self, db: &SqlitePool) -> Result<State, Error> {
-        let _guard = self.change.lock().await;
-        let row = sqlx::query!("SELECT email, token FROM account")
-            .fetch_optional(db)
-            .await?;
-        match row {
-            None => Ok(State::LoggedOut),
-            Some(row) if row.token.is_none() => Ok(State::Expired { email: row.email }),
-            Some(row) => match self
-                .authenticated::<Account>(db, Method::GET, path::ACCOUNT, None::<&Empty>)
-                .await
-            {
-                Ok(account) => Ok(State::LoggedIn {
-                    email: account.email,
-                    sponsor_until: account.sponsor_until,
-                }),
-                Err(Error::SignedOut) => Ok(State::Expired { email: row.email }),
-                Err(error) => Err(error),
-            },
-        }
     }
 
     pub async fn send_code(&self, email: &str, reset: bool) -> Result<(), Error> {
@@ -273,7 +260,6 @@ async fn save_session(db: &SqlitePool, session: Session) -> Result<State, Error>
     .await?;
     Ok(State::LoggedIn {
         email: session.account.email,
-        sponsor_until: session.account.sponsor_until,
     })
 }
 

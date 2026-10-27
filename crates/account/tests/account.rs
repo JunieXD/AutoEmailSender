@@ -23,7 +23,10 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
     let net = net::Net::new(vec![]).unwrap();
     let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     let calls = async {
-        assert!(matches!(client.state(&db).await.unwrap(), State::LoggedOut));
+        assert!(matches!(
+            account::state(&db).await.unwrap(),
+            State::LoggedOut
+        ));
         let state = client
             .login(
                 &db,
@@ -35,13 +38,18 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         let public = serde_json::to_value(&state).unwrap();
         assert_eq!(
             public,
-            json!({"kind":"loggedIn", "email":"student@example.invalid", "sponsorUntil":1234})
+            json!({"kind":"loggedIn", "email":"student@example.invalid"})
         );
         assert!(matches!(
-            client.state(&db).await.unwrap(),
+            account::state(&db).await.unwrap(),
             State::LoggedIn { .. }
         ));
-        let expired = client.state(&db).await.unwrap();
+        let error = client
+            .delete(&db, "fixed-password-123".into())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::SignedOut));
+        let expired = account::state(&db).await.unwrap();
         assert!(matches!(expired, State::Expired { email } if email == "student@example.invalid"));
         let (email, token): (String, Option<String>) =
             sqlx::query_as("SELECT email, token FROM account")
@@ -51,11 +59,14 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         assert_eq!(email, "student@example.invalid");
         assert!(token.is_none());
         assert!(matches!(
-            client.state(&db).await.unwrap(),
+            account::state(&db).await.unwrap(),
             State::Expired { .. }
         ));
         client.logout(&db).await.unwrap();
-        assert!(matches!(client.state(&db).await.unwrap(), State::LoggedOut));
+        assert!(matches!(
+            account::state(&db).await.unwrap(),
+            State::LoggedOut
+        ));
     };
     let replies = async {
         let request = server.requests.recv().await.unwrap();
@@ -79,40 +90,29 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
             .respond
             .send(Response::Raw {
                 status: 200,
-                content: body.clone(),
+                content: body,
             })
             .unwrap();
         request.completed.await.unwrap();
-        for (status, body) in [
-            (
-                200,
-                serde_json::to_string(&Account {
-                    email: "student@example.invalid".into(),
-                    sponsor_until: None,
-                })
-                .unwrap(),
-            ),
-            (
-                401,
-                serde_json::to_string(&ApiError {
+        let request = server.requests.recv().await.unwrap();
+        assert!(
+            request
+                .line
+                .starts_with(&format!("DELETE {} ", path::ACCOUNT))
+        );
+        assert!(request.authorization == "Bearer test-session-token");
+        request
+            .respond
+            .send(Response::Raw {
+                status: 401,
+                content: serde_json::to_string(&ApiError {
                     code: ErrorCode::SessionExpired,
                     retry_after_seconds: None,
                 })
                 .unwrap(),
-            ),
-        ] {
-            let request = server.requests.recv().await.unwrap();
-            assert!(request.line.starts_with(&format!("GET {} ", path::ACCOUNT)));
-            assert!(request.authorization == "Bearer test-session-token");
-            request
-                .respond
-                .send(Response::Raw {
-                    status,
-                    content: body,
-                })
-                .unwrap();
-            request.completed.await.unwrap();
-        }
+            })
+            .unwrap();
+        request.completed.await.unwrap();
     };
     tokio::join!(calls, replies);
 }

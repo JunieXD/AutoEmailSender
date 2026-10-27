@@ -27,7 +27,7 @@ pub struct AccountPassword {
 }
 
 pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {
-    Ok(ctx.account.state(&ctx.db).await?)
+    Ok(account::state(&ctx.db).await?)
 }
 
 pub async fn send_registration_code(ctx: &Context, input: AccountEmail) -> Result<(), CallError> {
