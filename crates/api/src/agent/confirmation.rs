@@ -807,7 +807,7 @@ async fn describe(
             // saved time as shown.
             let rows = sqlx::query!(
                 r#"SELECT m.name, e.subject, e.body_md, e.updated_at, (
-                    SELECT group_concat(file_name, '、')
+                    SELECT group_concat('附件：' || file_name || '（' || size || ' 字节）', char(10))
                     FROM email_attachment
                     WHERE email_id = e.id
                 ) AS "attachments?: String"
@@ -829,9 +829,10 @@ async fn describe(
                 .into_iter()
                 .map(|row| {
                     let subject = row.subject.as_deref().unwrap_or("（无主题）");
-                    let attachments = row.attachments.as_deref().unwrap_or("无");
+                    // One attachment a line: a file name may hold any separator.
+                    let attachments = row.attachments.as_deref().unwrap_or("附件：无");
                     format!(
-                        "{}的{kind}草稿《{subject}》，{} 保存，附件：{attachments}\n{}",
+                        "{}的{kind}草稿《{subject}》，{} 保存\n{attachments}\n{}",
                         row.name,
                         display_time(row.updated_at),
                         row.body_md.as_deref().unwrap_or_default()

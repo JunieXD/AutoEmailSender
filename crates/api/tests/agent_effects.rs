@@ -105,6 +105,50 @@ async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool)
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn empty_save_does_not_delete_a_draft_whose_attachment_was_swapped(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let material = |size: i64| {
+        sqlx::query_scalar::<_, i64>(
+            r#"INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at)
+            VALUES ('简历.pdf', ?, 0, 0, 0, 0) RETURNING id"#,
+        )
+        .bind(size)
+        .fetch_one(&ctx.db)
+    };
+    let (old, new) = (material(3).await.unwrap(), material(5).await.unwrap());
+    email::save_first_draft(&ctx.db, mentor, "申请", "草稿", &[old], 0)
+        .await
+        .unwrap();
+    let result = allow_after_change(
+        &ctx,
+        "saveFirstDraft",
+        json!({"mentorId":mentor, "subject":"", "bodyMd":"", "attachments":[]}),
+        async {
+            // Same name, subject, body and saved time: only the attachment differs.
+            email::save_first_draft(&ctx.db, mentor, "申请", "草稿", &[new], 0)
+                .await
+                .unwrap();
+        },
+    )
+    .await;
+    assert!(result.is_err());
+    let saved = call(&ctx, "getFirstDraft", json!({"id":mentor}))
+        .await
+        .unwrap();
+    assert_eq!(saved["bodyMd"], "草稿");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn resume_task_rechecks_the_pending_recipient_address(db: SqlitePool) {
     let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
     let mentor = mentor::create(

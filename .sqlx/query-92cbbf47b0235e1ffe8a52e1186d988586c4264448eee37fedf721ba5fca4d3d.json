@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.name, e.subject, e.body_md, e.updated_at, (\n                    SELECT group_concat(file_name, '、')\n                    FROM email_attachment\n                    WHERE email_id = e.id\n                ) AS \"attachments?: String\"\n                FROM email e JOIN mentor m ON m.id = e.mentor_id\n                WHERE e.mentor_id = ? AND e.kind = ? AND e.state = 'review'\n                    AND (? <> 'first' OR e.task_id IS NULL)\n                ORDER BY e.id",
+  "query": "SELECT m.name, e.subject, e.body_md, e.updated_at, (\n                    SELECT group_concat('附件：' || file_name || '（' || size || ' 字节）', char(10))\n                    FROM email_attachment\n                    WHERE email_id = e.id\n                ) AS \"attachments?: String\"\n                FROM email e JOIN mentor m ON m.id = e.mentor_id\n                WHERE e.mentor_id = ? AND e.kind = ? AND e.state = 'review'\n                    AND (? <> 'first' OR e.task_id IS NULL)\n                ORDER BY e.id",
   "describe": {
     "columns": [
       {
@@ -50,7 +50,7 @@
       {
         "name": "attachments?: String",
         "ordinal": 4,
-        "type_info": "Integer",
+        "type_info": "Text",
         "origin": "Expression"
       }
     ],
@@ -65,5 +65,5 @@
       true
     ]
   },
-  "hash": "63134889eb8e0ce18cfd840f4a44fdf882787936d77ae5718fa9191dd0cf3229"
+  "hash": "92cbbf47b0235e1ffe8a52e1186d988586c4264448eee37fedf721ba5fca4d3d"
 }
