@@ -187,7 +187,7 @@ fn display_time(at: i64) -> String {
     chrono::DateTime::from_timestamp_millis(at)
         .map(|at| {
             at.with_timezone(&chrono::Local)
-                .format("%Y年%-m月%-d日 %H:%M:%S%.3f %:z")
+                .format("%Y年%-m月%-d日 %H:%M")
                 .to_string()
         })
         .unwrap_or_else(|| format!("无法识别的时间：{at}"))
