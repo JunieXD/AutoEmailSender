@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { AgentRequest, ConfirmationLetter, SendAt } from "@/api/types";
-import { LetterBody } from "@/components/correspondence";
+import { openLinks } from "@/components/correspondence";
 import { scheduledAt, scheduleText } from "@/components/schedule";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -35,14 +35,14 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
   const queryClient = useQueryClient();
   const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
   const { action, targets, letters } = request.description;
+  // What goes out is exactly the letter shown here, rendered as the app renders every letter.
+  const rendered = useMemo(() => {
+    const s = style.data;
+    return s && letters.map((l) => ({ html: letterHtml(l.bodyMd, s), text: letterText(l.bodyMd) }));
+  }, [letters, style.data]);
   const answer = useMutation({
-    mutationFn: (allow: boolean) => {
-      const s = style.data;
-      // What goes out is the letter shown here, rendered as the app renders every letter.
-      const rendered =
-        allow && s ? letters.map((l) => ({ html: letterHtml(l.bodyMd, s), text: letterText(l.bodyMd) })) : undefined;
-      return call("answerAgentRequest", { id: request.id, allow, rendered });
-    },
+    mutationFn: (allow: boolean) =>
+      call("answerAgentRequest", { id: request.id, allow, rendered: allow ? rendered : undefined }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listAgentRequests"] }),
   });
   // An answered request stays on screen until the list comes back without it.
@@ -74,7 +74,7 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
               )}
             </ul>
           )}
-          {letters.length === 1 && first && <Letter letter={first} time />}
+          {letters.length === 1 && first && <Letter letter={first} html={rendered?.[0]?.html} time />}
           {letters.length > 1 && (
             <div className="space-y-2">
               {sharedTime && <p className="text-sm">{sharedTime}</p>}
@@ -86,7 +86,7 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
                         {l.mentorName}：{l.subject}
                       </summary>
                       <div className="px-3 pb-3">
-                        <Letter letter={l} time={!sharedTime} />
+                        <Letter letter={l} html={rendered?.[i]?.html} time={!sharedTime} />
                       </div>
                     </details>
                   </li>
@@ -105,7 +105,7 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
           <Button variant="ghost" onClick={() => answer.mutate(false)} disabled={busy}>
             拒绝
           </Button>
-          <Button onClick={() => answer.mutate(true)} disabled={busy || (letters.length > 0 && !style.data)}>
+          <Button onClick={() => answer.mutate(true)} disabled={busy || (letters.length > 0 && !rendered)}>
             允许
           </Button>
         </DialogFooter>
@@ -121,7 +121,7 @@ function sendText(at: SendAt): string {
 }
 
 /** A letter as it will go out; everything in it came from the Agent or the data. */
-function Letter({ letter: l, time }: { letter: ConfirmationLetter; time: boolean }) {
+function Letter({ letter: l, html, time }: { letter: ConfirmationLetter; html?: string; time: boolean }) {
   return (
     <div className="space-y-2 text-sm">
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -152,9 +152,14 @@ function Letter({ letter: l, time }: { letter: ConfirmationLetter; time: boolean
           </>
         )}
       </dl>
-      <div className="max-h-64 overflow-y-auto rounded-lg border border-border px-4 py-3">
-        <LetterBody markdown={l.bodyMd} />
-      </div>
+      {/* In the letter style, as sent; the app's own styles would show it otherwise. */}
+      {html && (
+        <div
+          className="max-h-64 overflow-y-auto rounded-lg border border-border px-4 py-3 [&_a]:text-brand-text [&_a]:underline"
+          dangerouslySetInnerHTML={{ __html: html }}
+          onClick={openLinks}
+        />
+      )}
       {l.previous && (
         <p className="text-muted-foreground">
           正文后附上 {l.previous.fromName ?? l.previous.fromAddress} {scheduledAt(l.previous.sentAt)} 来信的引用。
