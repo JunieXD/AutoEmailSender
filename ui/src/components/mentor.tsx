@@ -122,6 +122,9 @@ export function refreshMentors(queryClient: QueryClient) {
     ["listConversations"],
     ["listTodos"],
     ["unreadCount"],
+    // Edited, trashed and merged mentors change which library updates still differ.
+    ["listLibraryUpdates"],
+    ["libraryUpdateCount"],
   ]) {
     void queryClient.invalidateQueries({ queryKey });
   }

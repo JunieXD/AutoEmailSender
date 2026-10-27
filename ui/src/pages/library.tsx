@@ -1,11 +1,11 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { LibraryAddPreview, LibraryAdded, LibraryMentor, LibraryOrg } from "@/api/types";
 import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
-import { addedMessage, LibraryAddDialog, needsChoices, refreshLibrary } from "@/components/library";
+import { addedMessage, LibraryAddDialog, needsChoices, refreshLibrary, useAccountRecheck } from "@/components/library";
 import { ExternalLink, Missing, placeOf } from "@/components/mentor";
 import { Pager, useLastPage } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
@@ -75,17 +75,14 @@ function Library() {
   const add = useMutation({
     mutationFn: async (ids: string[]) => {
       const preview = await call("previewLibraryAdd", { ids });
+      // Reading the records for the preview already used up today's number for them.
+      setSelected(new Map(ids.map((id) => [id, true])));
       return needsChoices(preview) ? { ids, preview } : { added: await call("addLibraryMentors", { ids }) };
     },
     onSuccess: (r) => (r.added ? done(r.added) : setChoosing(r)),
-    // Reading the records for the preview already uses up today's number.
     onSettled: () => refreshLibrary(client),
   });
-  const failed = orgs.error ?? list.error ?? quota.error ?? add.error;
-  useEffect(() => {
-    // A session the server no longer accepts turns this tab back to logging in.
-    if (failed) void client.invalidateQueries({ queryKey: ["getAccount"] });
-  }, [failed, client]);
+  useAccountRecheck(orgs.error ?? list.error ?? quota.error ?? add.error);
   useLastPage(list.isSuccess && !list.isFetching ? list.data.total : undefined, s.page, (page) =>
     navigate({ search: (old) => ({ ...old, page }), replace: true }),
   );
@@ -94,6 +91,8 @@ function Library() {
   const items = list.data?.mentors ?? [];
   const counted = [...selected.values()].filter((fetched) => !fetched).length;
   const remaining = quota.data?.remaining;
+  // Rows of the previous page stay on screen until the next arrives, and must not be ticked meanwhile.
+  const waiting = list.isPlaceholderData;
   const selectable = items.filter((m) => m.local?.kind !== "added" && m.local?.kind !== "trashed");
   const tick = (ms: LibraryMentor[], on: boolean) =>
     setSelected((old) => {
@@ -157,6 +156,7 @@ function Library() {
             {selectable.length > 0 && (
               <label className="flex min-h-10 items-center gap-3 px-3 text-sm">
                 <Checkbox
+                  disabled={waiting}
                   checked={selectable.every((m) => selected.has(m.id))}
                   onCheckedChange={(checked) => tick(selectable, checked)}
                 />
@@ -172,7 +172,7 @@ function Library() {
                   mentor={m}
                   university={path[0]?.name}
                   selected={selected.has(m.id)}
-                  full={selected.size >= LIMIT}
+                  disabled={waiting || (selected.size >= LIMIT && !selected.has(m.id))}
                   expanded={expanded === m.id}
                   onTick={(on) => tick([m], on)}
                   onExpand={() => setExpanded(expanded === m.id ? null : m.id)}
@@ -340,7 +340,7 @@ function Row({
   mentor: m,
   university,
   selected,
-  full,
+  disabled,
   expanded,
   onTick,
   onExpand,
@@ -349,7 +349,7 @@ function Row({
   /** The school chosen on the left, which goes without saying on each row. */
   university: string | undefined;
   selected: boolean;
-  full: boolean;
+  disabled: boolean;
   expanded: boolean;
   onTick: (on: boolean) => void;
   onExpand: () => void;
@@ -365,7 +365,7 @@ function Row({
         <Checkbox
           aria-label={`选择${m.name}`}
           checked={selected}
-          disabled={blocked || (full && !selected)}
+          disabled={blocked || disabled}
           onCheckedChange={onTick}
         />
       </label>
@@ -395,6 +395,7 @@ function Preview({ id }: { id: string }) {
     queryKey: ["previewLibraryMentor", id],
     queryFn: () => call("previewLibraryMentor", { id }),
   });
+  useAccountRecheck(preview.error);
   if (preview.error) return <Retry error={preview.error} onRetry={() => void preview.refetch()} />;
   const p = preview.data;
   if (!p) return null;

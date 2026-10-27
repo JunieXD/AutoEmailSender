@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type {
   Decisions,
@@ -36,15 +36,17 @@ const UPDATE_FIELDS: Record<LibraryUpdateField, string> = {
 const EMPTY: Decisions = { take: [], matches: [], restore: [] };
 
 export function refreshLibrary(client: QueryClient) {
-  for (const key of [
-    "listLibraryMentors",
-    "previewLibraryMentor",
-    "getLibraryQuota",
-    "listLibraryUpdates",
-    "libraryUpdateCount",
-  ])
+  for (const key of ["getLibraryOrgs", "listLibraryMentors", "previewLibraryMentor", "getLibraryQuota"])
     void client.invalidateQueries({ queryKey: [key] });
   refreshMentors(client);
+}
+
+/** A session the server no longer accepts turns the library tab back to logging in. */
+export function useAccountRecheck(error: unknown) {
+  const client = useQueryClient();
+  useEffect(() => {
+    if (error) void client.invalidateQueries({ queryKey: ["getAccount"] });
+  }, [error, client]);
 }
 
 /** Whether adding these needs the user's choices first, as importing a table would. */
@@ -90,6 +92,7 @@ export function LibraryAddDialog({
     mutationFn: () => call("addLibraryMentors", { ids, decisions: decisions ?? undefined }),
     onSuccess: onDone,
   });
+  useAccountRecheck(again.error ?? add.error);
   const differenceIds = new Set(preview.differences.map((d) => d.id));
   const possible = preview.created + preview.updated + preview.unchanged > 0;
   return (
@@ -142,7 +145,10 @@ export function LibraryAddDialog({
             {(again.error ?? add.error) && errorMessage(again.error ?? add.error)}
           </p>
           <DialogClose render={<Button variant="ghost" disabled={add.isPending} />}>取消</DialogClose>
-          <Button disabled={add.isPending || again.isFetching || !possible} onClick={() => add.mutate()}>
+          <Button
+            disabled={add.isPending || again.isFetching || again.isError || !possible}
+            onClick={() => add.mutate()}
+          >
             {add.isPending
               ? "正在添加…"
               : `添加${possible ? `（新增 ${preview.created} 位，更新 ${preview.updated} 位）` : ""}`}

@@ -261,7 +261,8 @@ function useBackground() {
   const library = useQuery({
     queryKey: ["libraryUpdateCount"],
     queryFn: () => call("libraryUpdateCount", {}),
-    refetchInterval: 3000,
+    // Only a synchronization, at most hourly, adds to it; changes the user makes refresh it directly.
+    refetchInterval: 60_000,
   });
   const storage = useQuery({
     queryKey: ["storageFailure"],
