@@ -39,6 +39,7 @@ const GROUPS = [
       { to: "/settings/background", label: "后台运行" },
       { to: "/settings/backup", label: "备份" },
       { to: "/settings/agent", label: "Agent" },
+      { to: "/settings/account", label: "账号和赞助" },
       { to: "/settings/about", label: "关于和日志" },
     ],
   },
