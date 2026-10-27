@@ -13,6 +13,7 @@ name = "autoemail"
 path = "src/main.rs"
 
 [dependencies]
+rmcp = { version = "3.7.0", default-features = false, features = ["server", "transport-io"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "time"] }
@@ -24,4 +25,4 @@ api.workspace = true
 profile.workspace = true
 sqlx.workspace = true
 tempfile = "3.27.0"
-tokio = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true, features = ["process", "test-util"] }

@@ -491,6 +491,14 @@ export type NotificationSetting = { on: boolean, };
 
 export type OpenTodo = { mentorId: number, mentorName: string, id: number, text: string, dueDate: string | null, dueTime: string | null, done: boolean, messageId: number | null, createdAt: number, };
 
+export type OperationConfirmation = { "kind": "none" } | { "kind": "always" } | { "kind": "conditional", "condition": string };
+
+export type OperationDescription = { name: string, summary: string, details: string | null, confirmation: OperationConfirmation, typescript: string, };
+
+export type OperationName = { name: string, };
+
+export type OperationSummary = { name: string, summary: string, group: string, confirmation: OperationConfirmation, };
+
 export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
 
 export type PageKind = "entry" | "list" | "profile" | "enrich_profile" | "enrich_child";
@@ -735,13 +743,15 @@ export interface Operations {
   setAgentAccess: { input: AgentAccess; output: null };
   listAgentRequests: { input: Nothing; output: Array<AgentRequest> };
   answerAgentRequest: { input: AgentAnswer; output: null };
+  listOperations: { input: Nothing; output: Array<OperationSummary> };
+  describeOperation: { input: OperationName; output: OperationDescription };
   storageFailure: { input: Nothing; output: string | null };
   contactStats: { input: StatsQuery; output: ContactProgress };
   mentorStats: { input: Nothing; output: MentorOverview };
   tokenStats: { input: StatsPeriod; output: TokenUsage };
+  todayWork: { input: TodayWorkQuery; output: TodayWork };
   checkCrawlUrls: { input: CrawlUrls; output: Array<string> };
   crawlWork: { input: CrawlWorkQuery; output: Array<CrawlSummary> };
-  todayWork: { input: TodayWorkQuery; output: TodayWork };
   startCrawl: { input: CrawlStart; output: CrawlId };
   listCrawls: { input: CrawlQuery; output: CrawlList };
   crawlOptions: { input: Nothing; output: Array<CrawlOption> };
@@ -786,6 +796,7 @@ export interface Operations {
   regenerateTaskEmail: { input: TaskEmail; output: number };
   reapplyTaskTemplate: { input: TaskEmail; output: null };
   retryTaskGeneration: { input: TaskRetry; output: number };
+  restartTask: { input: TaskId; output: NewTask };
   listConversations: { input: ConversationQuery; output: ConversationPage };
   unreadCount: { input: Nothing; output: number };
   receiveNow: { input: Nothing; output: ReceiveStatus };
@@ -868,11 +879,10 @@ export interface Operations {
   discardFollowUpDraft: { input: EmailId; output: null };
   approveFollowUp: { input: ReplyEmail; output: null };
   writeFollowUp: { input: FirstDraftEdit; output: Letter };
-  restartTask: { input: TaskId; output: NewTask };
+  checkFollowUpDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   getReplyDraft: { input: MentorId; output: ReplyDraft | null };
   getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
-  checkFollowUpDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   approveReply: { input: ReplyEmail; output: null };
   writeReply: { input: ReplyDraftEdit; output: Letter };

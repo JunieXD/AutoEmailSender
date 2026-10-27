@@ -147,7 +147,7 @@ pub(crate) async fn confirmation(
             let action = if op == "resumeTask" {
                 "恢复 1 个任务的发信"
             } else {
-                "永久删除 1 个任务及其中的草稿"
+                "永久删除 1 个任务和其中没发出的邮件（包括已批准的）"
             };
             object(action, target)
         }
@@ -504,4 +504,66 @@ async fn imported_recipients(
         })
         .collect();
     Ok(Some(Description::new(action, targets)))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use crate::agent::OperationConfirmation;
+
+    #[test]
+    fn catalog_confirmation_names_match_fixed_and_effect_based_rules() {
+        let catalog = crate::operation_catalog();
+        let always: BTreeSet<_> = catalog
+            .iter()
+            .filter(|op| matches!(op.confirmation, OperationConfirmation::Always))
+            .map(|op| op.name.as_str())
+            .collect();
+        // These sets track the fixed and effect-based branches of `confirmation` above.
+        assert_eq!(
+            always,
+            BTreeSet::from([
+                "agreeModel",
+                "approveFirstEmail",
+                "approveFollowUp",
+                "approveReply",
+                "approveTaskEmails",
+                "changeTaskSchedule",
+                "deleteCrawl",
+                "deleteMailbox",
+                "deleteMaterial",
+                "deleteMentors",
+                "deleteModelConfig",
+                "deleteTag",
+                "deleteTask",
+                "deleteTemplate",
+                "deleteTodo",
+                "mergeMentors",
+                "rescheduleEmail",
+                "resendEmail",
+                "resumeMailbox",
+                "resumeTask",
+                "retryEmail",
+                "sendEmailNow",
+            ])
+        );
+        let conditional: BTreeSet<_> = catalog
+            .iter()
+            .filter(|op| matches!(op.confirmation, OperationConfirmation::Conditional(_)))
+            .map(|op| op.name.as_str())
+            .collect();
+        assert_eq!(
+            conditional,
+            BTreeSet::from([
+                "acceptCandidates",
+                "addMentorEmail",
+                "importMentors",
+                "saveFirstDraft",
+                "saveReplyDraft",
+                "updateMailbox",
+                "updateMentor",
+            ])
+        );
+    }
 }

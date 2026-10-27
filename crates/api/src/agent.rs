@@ -24,6 +24,54 @@ pub(crate) use confirmation::confirmation;
 
 const CONFIRM_FOR: Duration = Duration::from_secs(5 * 60);
 
+pub(crate) fn visible(op: &str) -> bool {
+    !matches!(
+        op,
+        "getAgentAccess" | "setAgentAccess" | "listAgentRequests" | "answerAgentRequest"
+    )
+}
+
+#[derive(serde::Serialize, TS)]
+#[serde(tag = "kind", content = "condition", rename_all = "camelCase")]
+pub enum OperationConfirmation {
+    None,
+    Always,
+    Conditional(String),
+}
+
+#[derive(serde::Serialize, TS)]
+pub struct OperationSummary {
+    pub name: String,
+    pub summary: String,
+    pub group: String,
+    pub confirmation: OperationConfirmation,
+}
+
+#[derive(Deserialize, TS)]
+pub struct OperationName {
+    pub name: String,
+}
+
+#[derive(serde::Serialize, TS)]
+pub struct OperationDescription {
+    pub name: String,
+    pub summary: String,
+    pub details: Option<String>,
+    pub confirmation: OperationConfirmation,
+    pub typescript: String,
+}
+
+pub async fn list_operations(_: &Context, _: Nothing) -> Result<Vec<OperationSummary>, CallError> {
+    Ok(crate::operation_catalog())
+}
+
+pub async fn describe_operation(
+    _: &Context,
+    input: OperationName,
+) -> Result<OperationDescription, CallError> {
+    crate::operation_description(&input.name)
+}
+
 pub enum Event {
     Requested(Description),
     RequestsChanged,

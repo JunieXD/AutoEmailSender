@@ -1,11 +1,22 @@
-use std::io::{self, Write};
-use std::path::PathBuf;
+mod client;
+mod mcp;
+
 use std::process::ExitCode;
 
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use serde_json::{Value, json};
 
-const OPEN_APP: &str = "请先打开 Auto Email Sender，并在设置里允许 Agent 连接";
+const USAGE: &str = "Auto Email Sender：联系导师的本机 Agent 接口
+
+用法：
+  autoemail list                       按组列出操作及确认方式
+  autoemail help <操作名>               查看操作说明及输入输出类型
+  autoemail call <操作名> [JSON 输入]   调用操作，省略输入时为 {}
+  autoemail mcp                        启动标准输入输出 MCP 服务器
+  autoemail --help                     显示帮助
+  autoemail --version                  显示命令行版本
+
+先 list，再 help 查看输入，最后 call。需要确认时请在应用里回答，最多等 5 分钟。
+使用 list、help 和 call 前，请打开应用并在设置里允许 Agent 连接。";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -21,93 +32,84 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<bool, String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let [command, op, rest @ ..] = args.as_slice() else {
-        return Err("用法：autoemail call <操作名> [JSON 输入]".into());
-    };
-    if command != "call" || rest.len() > 1 {
-        return Err("用法：autoemail call <操作名> [JSON 输入]".into());
-    }
-    let input = match rest.first() {
-        Some(input) => serde_json::from_str::<Value>(input)
-            .map_err(|error| format!("JSON 输入不正确：{error}"))?,
-        None => serde_json::json!({}),
-    };
-    let dir = data_dir()?;
-    let file = std::fs::read(agent::token_path(&dir))
-        .map_err(|error| connection_error("读取连接令牌", error))?;
-    let credentials: agent::Credentials = serde_json::from_slice(&file)
-        .map_err(|_| "连接令牌文件不正确，请在设置中关闭 Agent 连接后重新开启".to_owned())?;
-    #[cfg(windows)]
-    if !credentials.pipe.starts_with(r"\\.\pipe\autoemail-") {
-        return Err("连接令牌文件不正确，请在设置中关闭 Agent 连接后重新开启".into());
-    }
-    let mut stream = agent::connect(&dir, &credentials)
-        .await
-        .map_err(|error| connection_error("连接应用", error))?;
-    let request = serde_json::json!({"op": op, "input": input});
-    stream
-        .write_all(format!("{}\n{request}\n", credentials.token).as_bytes())
-        .await
-        .map_err(|error| connection_error("发送请求", error))?;
-    let mut reader = BufReader::new(stream);
-    loop {
-        let mut response = String::new();
-        reader
-            .read_line(&mut response)
-            .await
-            .map_err(|error| connection_error("读取结果", error))?;
-        if response.is_empty() {
-            return Err(OPEN_APP.into());
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    // Rust writes Unicode directly to Windows consoles; redirected output remains UTF-8.
+    match args.as_slice() {
+        ["--help"] => println!("{USAGE}"),
+        ["--version"] => println!("autoemail {}", env!("CARGO_PKG_VERSION")),
+        ["mcp"] => mcp::run().await?,
+        ["call", op, rest @ ..] if rest.len() <= 1 => {
+            let input = match rest.first() {
+                Some(input) => serde_json::from_str::<Value>(input)
+                    .map_err(|error| format!("JSON 输入不正确：{error}"))?,
+                None => json!({}),
+            };
+            let result = call(op, input).await?;
+            println!("{result}");
+            return Ok(result.get("error").is_none());
         }
-        let result: Value = serde_json::from_str(&response)
-            .map_err(|error| format!("应用返回的 JSON 不正确：{error}"))?;
-        if let Some(waiting) = result.get("waiting") {
-            let action = waiting
-                .get("action")
-                .and_then(Value::as_str)
-                .ok_or("应用返回的确认说明不正确")?;
-            eprintln!("等你在 Auto Email Sender 里确认：{action}");
-            continue;
+        ["list"] => {
+            let result = call("listOperations", json!({})).await?;
+            let operations = output(&result)?.as_array().ok_or("应用返回的目录不正确")?;
+            let mut group = "";
+            for operation in operations {
+                let next_group = text(operation, "group")?;
+                if group != next_group {
+                    println!("\n{next_group}");
+                    group = next_group;
+                }
+                println!(
+                    "  {}{}  {}",
+                    text(operation, "name")?,
+                    confirmation(&operation["confirmation"])?,
+                    text(operation, "summary")?,
+                );
+            }
         }
-        // Rust writes Unicode directly to Windows consoles; redirected output remains UTF-8.
-        io::stdout()
-            .write_all(response.as_bytes())
-            .map_err(|error| format!("无法输出结果：{error}"))?;
-        return Ok(result.get("error").is_none());
+        ["help", name] => {
+            let result = call("describeOperation", json!({"name": name})).await?;
+            let operation = output(&result)?;
+            println!(
+                "{}{}\n{}",
+                text(operation, "name")?,
+                confirmation(&operation["confirmation"])?,
+                text(operation, "summary")?,
+            );
+            if let Some(details) = operation["details"].as_str() {
+                println!("\n{details}");
+            }
+            println!("\n{}", text(operation, "typescript")?);
+        }
+        _ => return Err(USAGE.into()),
     }
+    Ok(true)
 }
 
-fn connection_error(action: &str, error: io::Error) -> String {
-    match error.kind() {
-        io::ErrorKind::NotFound
-        | io::ErrorKind::ConnectionRefused
-        | io::ErrorKind::BrokenPipe
-        | io::ErrorKind::ConnectionReset => OPEN_APP.into(),
-        _ => format!("{action}失败：{error}"),
-    }
+async fn call(op: &str, input: Value) -> Result<Value, String> {
+    client::call(op, input, |action| {
+        eprintln!("等你在 Auto Email Sender 里确认：{action}");
+    })
+    .await
 }
 
-fn data_dir() -> Result<PathBuf, String> {
-    if let Some(dir) = std::env::var_os("AUTOEMAIL_DATA_DIR") {
-        return Ok(dir.into());
+fn output(result: &Value) -> Result<&Value, String> {
+    if let Some(error) = result.get("error") {
+        return Err(text(error, "message")?.into());
     }
-    if cfg!(debug_assertions) {
-        return Ok(PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(".dev-data"));
-    }
-    let config: Value = serde_json::from_str(include_str!("../../app/tauri.conf.json"))
-        .map_err(|error| format!("应用目录配置不正确：{error}"))?;
-    let identifier = config["identifier"]
+    result.get("ok").ok_or("应用返回的结果不正确".into())
+}
+
+fn text<'a>(value: &'a Value, field: &str) -> Result<&'a str, String> {
+    value[field]
         .as_str()
-        .ok_or("应用目录配置缺少应用标识")?;
-    #[cfg(windows)]
-    let base = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .ok_or("无法找到应用数据目录：APPDATA 未设置")?;
-    #[cfg(unix)]
-    let base = std::env::var_os("HOME")
-        .map(|home| PathBuf::from(home).join("Library/Application Support"))
-        .ok_or("无法找到应用数据目录：HOME 未设置")?;
-    Ok(base.join(identifier))
+        .ok_or_else(|| format!("应用返回的 {field} 不正确"))
+}
+
+fn confirmation(value: &Value) -> Result<String, String> {
+    match text(value, "kind")? {
+        "none" => Ok(String::new()),
+        "always" => Ok("（需在应用里确认）".into()),
+        "conditional" => Ok(format!("（{}，需确认）", text(value, "condition")?)),
+        _ => Err("应用返回的确认方式不正确".into()),
+    }
 }
