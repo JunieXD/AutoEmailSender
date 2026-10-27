@@ -30,7 +30,7 @@ impl Net {
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
-        let http = http_builder()
+        let http = http_builder(reqwest::Client::builder())
             .tls_backend_preconfigured(tls.clone())
             .build()?;
         Ok(Net {
@@ -54,9 +54,14 @@ impl Net {
         &self.http
     }
 
+    /// Applies the same proxy and TLS policy to libraries that build their own HTTP client.
+    pub fn configure_http(&self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+        http_builder(builder).tls_backend_preconfigured((*self.tls).clone())
+    }
+
     /// Crawlers must check every redirect before following it.
     pub fn page_http_builder(&self) -> reqwest::ClientBuilder {
-        http_builder()
+        http_builder(reqwest::Client::builder())
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_preconfigured((*self.tls).clone())
     }
@@ -66,14 +71,14 @@ impl Net {
         let mut tls = (*self.tls).clone();
         tls.dangerous()
             .set_certificate_verifier(Arc::new(PageCertificate));
-        http_builder()
+        http_builder(reqwest::Client::builder())
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_preconfigured(tls)
     }
 }
 
-fn http_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+fn http_builder(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+    builder
         // Asked for each new connection, so changed system settings apply from the next one.
         .proxy(reqwest::Proxy::custom(|url| {
             proxy::for_host(url.host_str()?).map(|p| p.url())

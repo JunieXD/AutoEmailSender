@@ -1,0 +1,94 @@
+name: 构建发布草稿
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已存在的版本标签，例如 v3.0.0
+        required: true
+        type: string
+      notes:
+        description: 更新说明（Markdown，同时用于 Release 和应用内更新提示）
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: 核对标签与工作区版本
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("Cargo.toml").read_text())["workspace"]["package"]["version"]
+          tag = os.environ["RELEASE_TAG"]
+          if tag != f"v{version}":
+              raise SystemExit(f"标签 {tag} 与工作区版本 {version} 不一致")
+          print(f"已核对 {tag}")
+          PY
+
+  bundle:
+    needs: version
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # Both runs merge their platform into latest.json in the same draft.
+      max-parallel: 1
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app,dmg
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ inputs.tag }}
+          releaseName: Auto Email Sender ${{ inputs.tag }}
+          releaseBody: ${{ inputs.notes }}
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true
+          tauriScript: pnpm exec tauri
+          args: --config crates/app/tauri.agent.conf.json --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+      - name: 验证 macOS 整包签名
+        if: runner.os == 'macOS'
+        run: codesign --verify --deep --strict --verbose=2 "target/${{ matrix.target }}/release/bundle/macos/Auto Email Sender.app"

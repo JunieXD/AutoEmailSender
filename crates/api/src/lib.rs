@@ -18,6 +18,7 @@ pub mod startup;
 mod statistics;
 mod tasks;
 mod todos;
+pub mod updater;
 use crawling::*;
 use statistics::*;
 use std::collections::BTreeMap;
@@ -238,6 +239,7 @@ macro_rules! operations {
             collect::<task::generation::DraftsFinished>(&cfg, &mut decls);
             collect::<ExportMentors>(&cfg, &mut decls);
             collect::<backup::RestoreInfo>(&cfg, &mut decls);
+            collect::<updater::UpdateStatus>(&cfg, &mut decls);
             $($(
                 collect::<$input>(&cfg, &mut decls);
                 collect::<$output>(&cfg, &mut decls);

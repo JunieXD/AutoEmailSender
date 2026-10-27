@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
 import { AgentRequests } from "@/components/agent-requests";
+import { UpdateEntry } from "@/components/update";
 import { useResume } from "@/pages/mailboxes";
 import { useReceive } from "@/pages/conversations";
 
@@ -77,6 +78,7 @@ export function Shell() {
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
     const repliesChanged = listen("reply-processing-changed", () => refreshReplyOutcomes(queryClient));
     const todosChanged = listen("todos-changed", () => refreshTodos(queryClient));
+    const updateChanged = listen("update-changed", () => queryClient.invalidateQueries({ queryKey: ["updateStatus"] }));
     const draftsDone = listen<DraftsFinished>("drafts-finished", ({ payload: p }) => {
       refreshTasks(queryClient);
       setCompleted(`任务“${p.name}”的草稿写好了：${p.generated} 封，失败 ${p.failed} 封`);
@@ -88,6 +90,7 @@ export function Shell() {
       void tasksChanged.then((f) => f());
       void repliesChanged.then((f) => f());
       void todosChanged.then((f) => f());
+      void updateChanged.then((f) => f());
       void draftsDone.then((f) => f());
       void stop.then((f) => f());
       void done.then((f) => f());
@@ -138,6 +141,7 @@ export function Shell() {
           ))}
         </nav>
         <div className="grow" />
+        <UpdateEntry />
         <Background />
         <NavLink {...SETTINGS} />
       </aside>

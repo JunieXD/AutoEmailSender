@@ -782,6 +782,14 @@ export type Trashed = { rows: Array<number>, id: number, name: string, };
 
 export type Trend = { date: string, sent: number, replies: number, };
 
+export type UpdateInfo = { version: string,
+/**
+ * Unix milliseconds, or null when the release has no publication date.
+ */
+publishedAt: number | null, notes: string | null, };
+
+export type UpdateStatus = { "kind": "current" } | { "kind": "available", update: UpdateInfo, error: string | null, } | { "kind": "downloading", update: UpdateInfo, downloaded: number, total: number | null, } | { "kind": "ready", update: UpdateInfo, };
+
 export type UploadedFile = { fileName: string, data: string, };
 
 export type UsagePurpose = "crawl" | "match" | "draft" | "rewrite" | "fact_check" | "reply_outcome" | "reply_todos";
