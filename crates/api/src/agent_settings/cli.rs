@@ -16,7 +16,7 @@ use windows as platform;
 
 #[derive(Serialize, TS)]
 pub struct AgentCli {
-    pub installed: bool,
+    pub state: AgentCliState,
     pub command: String,
     /// Absolute executable path, also used by MCP clients.
     pub path: String,
@@ -24,9 +24,18 @@ pub struct AgentCli {
     pub location: String,
 }
 
+#[derive(Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AgentCliState {
+    NotInstalled,
+    Installed,
+    OldLocation { target: String },
+    Occupied,
+}
+
 pub(super) fn status(executable: &Path) -> Result<AgentCli, CallError> {
     Ok(AgentCli {
-        installed: platform::installed(executable)?,
+        state: platform::state(executable)?,
         command: "autoemail".into(),
         path: executable.display().to_string(),
         location: platform::location(executable)?.display().to_string(),

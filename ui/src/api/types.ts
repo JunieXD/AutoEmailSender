@@ -12,7 +12,7 @@ export type AgentAccess = { enabled: boolean, };
 
 export type AgentAnswer = { id: number, allow: boolean, };
 
-export type AgentCli = { installed: boolean, command: string,
+export type AgentCli = { state: AgentCliState, command: string,
 /**
  * Absolute executable path, also used by MCP clients.
  */
@@ -21,6 +21,8 @@ path: string,
  * Symlink on macOS, directory added to the user PATH on Windows.
  */
 location: string, };
+
+export type AgentCliState = { "kind": "notInstalled" } | { "kind": "installed" } | { "kind": "oldLocation", target: string, } | { "kind": "occupied" };
 
 export type AgentRequest = { id: number, op: string, description: Description, createdAt: number, };
 
@@ -305,9 +307,9 @@ export type McpConfigPreview = { path: string,
  */
 server: string, exists: boolean,
 /**
- * Claude Code owns its file; display the exact CLI invocation as well.
+ * Ready to copy into the platform's default shell.
  */
-commands: Array<Array<string>>, };
+commands: Array<string>, writeUnavailable: string | null, };
 
 export type McpConfigQuery = { client: McpClient, };
 

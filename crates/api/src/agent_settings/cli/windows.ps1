@@ -22,15 +22,23 @@ try {
     }
     $entries = [System.Collections.Generic.List[string]]::new()
     if ($path.Length -gt 0) { $entries.AddRange([string[]]$path.Split(';')) }
+    function NormalizeDirectory([string]$entry) {
+        $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"')).Replace('/', '\')
+        if ($expanded.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) {
+            $expanded = '\\' + $expanded.Substring(8)
+        } elseif ($expanded.StartsWith('\\?\', [StringComparison]::OrdinalIgnoreCase)) {
+            $expanded = $expanded.Substring(4)
+        }
+        return $expanded.TrimEnd([char[]]'\')
+    }
     function SameDirectory([string]$entry) {
-        $expanded = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"')).TrimEnd([char[]]'\/')
-        return [String]::Equals($expanded, $directory.TrimEnd([char[]]'\/'), [StringComparison]::OrdinalIgnoreCase)
+        return [String]::Equals((NormalizeDirectory $entry), (NormalizeDirectory $directory), [StringComparison]::OrdinalIgnoreCase)
     }
     $installed = @($entries | Where-Object { SameDirectory $_ }).Count -gt 0
     if ($action -ne 'status') {
         $marker = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\AutoEmailSender')
         $owned = $marker.GetValue('CliPath', $null)
-        if ($null -ne $owned -and ($action -eq 'uninstall' -or $owned -ne $directory)) {
+        if ($null -ne $owned -and ($action -eq 'uninstall' -or -not (SameDirectory $owned))) {
             # Remove only the single exact entry we recorded, preserving every other entry.
             $index = $entries.IndexOf($owned)
             if ($index -ge 0) { $entries.RemoveAt($index) }

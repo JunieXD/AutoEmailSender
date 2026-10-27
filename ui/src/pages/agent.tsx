@@ -126,11 +126,11 @@ function McpDialog({ client, onClose, onWritten }: { client: McpClient; onClose:
             <>
               {p.commands.length > 0 ? (
                 <>
-                  <p>会用 Claude Code 自己的命令添加，它把配置存在：</p>
+                  <p>{p.writeUnavailable ?? "会用 Claude Code 自己的命令添加，它把配置存在："}</p>
                   <p className="break-all text-muted-foreground">{p.path}</p>
                   <p>运行的命令：</p>
                   <pre className="rounded-lg bg-muted px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
-                    {p.commands.map(shellLine).join("\n")}
+                    {p.commands.join("\n")}
                   </pre>
                 </>
               ) : (
@@ -153,18 +153,13 @@ function McpDialog({ client, onClose, onWritten }: { client: McpClient; onClose:
           <Button variant="ghost" onClick={onClose} disabled={write.isPending}>
             取消
           </Button>
-          <Button onClick={() => write.mutate()} disabled={!p || write.isPending}>
+          <Button onClick={() => write.mutate()} disabled={!p || p.writeUnavailable !== null || write.isPending}>
             写入
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
-}
-
-/** A command as one could type it, quoting the arguments that need it. */
-function shellLine(args: string[]): string {
-  return args.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `"${a.replaceAll('"', '\\"')}"`)).join(" ");
 }
 
 function CliRow() {
@@ -177,7 +172,7 @@ function CliRow() {
   const failed = install.error ?? uninstall.error;
   return (
     <Row label="命令行">
-      {cli.data?.installed ? (
+      {cli.data?.state.kind === "installed" ? (
         <>
           <p className="text-sm text-muted-foreground">
             已安装，在终端里输入 <code>{cli.data.command}</code> 使用，比如 <code>{cli.data.command} list</code>{" "}

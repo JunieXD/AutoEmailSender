@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::AgentCliState;
 use crate::CallError;
 
 pub(in crate::agent_settings) fn location(executable: &Path) -> Result<PathBuf, CallError> {
@@ -10,8 +11,12 @@ pub(in crate::agent_settings) fn location(executable: &Path) -> Result<PathBuf, 
         .ok_or_else(|| CallError::internal("CLI has no parent directory"))
 }
 
-pub(in crate::agent_settings) fn installed(executable: &Path) -> Result<bool, CallError> {
-    run(executable, "status")
+pub(in crate::agent_settings) fn state(executable: &Path) -> Result<AgentCliState, CallError> {
+    Ok(if run(executable, "status")? {
+        AgentCliState::Installed
+    } else {
+        AgentCliState::NotInstalled
+    })
 }
 
 pub(in crate::agent_settings) fn install(executable: &Path) -> Result<(), CallError> {

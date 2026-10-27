@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, value::RawValue};
 use ts_rs::TS;
 
+use super::{paths::plain_path, shell::command_line};
 use crate::CallError;
+
+const CLAUDE_UNAVAILABLE: &str = "找不到 claude 命令，请在终端里运行下面的命令。";
 
 #[derive(Clone, Copy, PartialEq, Eq, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -30,13 +33,15 @@ pub struct McpConfigPreview {
     /// Complete named entry, suitable for displaying without exposing other services.
     pub server: String,
     pub exists: bool,
-    /// Claude Code owns its file; display the exact CLI invocation as well.
-    pub commands: Vec<Vec<String>>,
+    /// Ready to copy into the platform's default shell.
+    pub commands: Vec<String>,
+    pub write_unavailable: Option<String>,
 }
 
 #[derive(Clone)]
 pub(super) struct Plan {
     pub client: McpClient,
+    logical_path: PathBuf,
     path: PathBuf,
     original: Option<String>,
     updated: String,
@@ -64,7 +69,7 @@ impl Plan {
             McpClient::Cursor => home.join(".cursor/mcp.json"),
         };
         let claude = if client == McpClient::ClaudeCode {
-            Some(find_claude(&home)?)
+            find_claude(&home)?
         } else {
             None
         };
@@ -77,12 +82,8 @@ impl Plan {
         executable: &Path,
         claude: Option<PathBuf>,
     ) -> Result<Self, CallError> {
-        // Follow an existing configuration symlink rather than replacing the user's link.
-        let path = match path.canonicalize() {
-            Ok(path) => path,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => path,
-            Err(e) => return Err(file_error(e)),
-        };
+        let logical_path = plain_path(std::path::absolute(path).map_err(file_error)?);
+        let path = resolve(&logical_path)?;
         let original = read(&path)?;
         let source = original.as_deref().unwrap_or("{}");
         let root = object(source)?;
@@ -101,6 +102,7 @@ impl Plan {
         };
         Ok(Self {
             client,
+            logical_path,
             path,
             original,
             updated,
@@ -113,22 +115,31 @@ impl Plan {
 
     pub fn preview(&self) -> McpConfigPreview {
         let mut commands = Vec::new();
-        if let Some(claude) = &self.claude {
+        if self.client == McpClient::ClaudeCode {
+            let claude = self
+                .claude
+                .as_deref()
+                .unwrap_or_else(|| Path::new("claude"));
             if self.previous.is_some() {
-                commands.push(remove_args(claude));
+                commands.push(command_line(&remove_args(claude)));
             }
-            commands.push(add_args(claude, &self.executable));
+            commands.push(command_line(&add_args(claude, &self.executable)));
         }
         McpConfigPreview {
             path: self.path.display().to_string(),
             server: self.server.clone(),
             exists: self.previous.is_some(),
             commands,
+            write_unavailable: (self.client == McpClient::ClaudeCode && self.claude.is_none())
+                .then(|| CLAUDE_UNAVAILABLE.into()),
         }
     }
 
     pub fn write(&self) -> Result<(), CallError> {
-        let current = read(&self.path)?;
+        if self.client == McpClient::ClaudeCode && self.claude.is_none() {
+            return Err(CallError::invalid(CLAUDE_UNAVAILABLE.into()));
+        }
+        let current = self.current()?;
         if current.as_deref() == Some(&self.updated) {
             return Ok(());
         }
@@ -187,13 +198,47 @@ impl Plan {
             .map_err(file_error)?;
         temporary.as_file().sync_all().map_err(file_error)?;
         // A second check narrows the interval in which another editor could change the file.
-        if read(&self.path)? != self.original {
+        if self.current()? != self.original {
             return Err(CallError::invalid("配置已变化，请重新预览并确认。".into()));
         }
         temporary
             .persist(&self.path)
             .map_err(|e| file_error(e.error))?;
         Ok(())
+    }
+
+    fn current(&self) -> Result<Option<String>, CallError> {
+        if resolve(&self.logical_path)? != self.path {
+            return Err(CallError::invalid(
+                "配置文件的链接指向已变化，请重新预览并确认。".into(),
+            ));
+        }
+        read(&self.path)
+    }
+}
+
+fn resolve(path: &Path) -> Result<PathBuf, CallError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => path.canonicalize().map(plain_path).map_err(|e| {
+            if metadata.file_type().is_symlink() && e.kind() == io::ErrorKind::NotFound {
+                CallError::invalid(format!(
+                    "MCP 配置的符号链接已失效，请先修复链接：{}",
+                    path.display()
+                ))
+            } else {
+                file_error(e)
+            }
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| CallError::internal("config path has no parent"))?;
+            let name = path
+                .file_name()
+                .ok_or_else(|| CallError::internal("config path has no file name"))?;
+            Ok(resolve(parent)?.join(name))
+        }
+        Err(e) => Err(file_error(e)),
     }
 }
 
@@ -273,13 +318,32 @@ fn home() -> Result<PathBuf, CallError> {
     env_path(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
 }
 
-fn find_claude(home: &Path) -> Result<PathBuf, CallError> {
+fn find_claude(home: &Path) -> Result<Option<PathBuf>, CallError> {
     let mut directories: Vec<PathBuf> = match std::env::var_os("PATH") {
         Some(path) => std::env::split_paths(&path).collect(),
         None => Vec::new(),
     };
-    // Native Claude Code installs here; a Finder-launched app may have a minimal PATH.
+    // GUI-launched applications may not inherit the terminal's PATH.
     directories.push(home.join(".local/bin"));
+    #[cfg(not(windows))]
+    directories.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]);
+    #[cfg(windows)]
+    for (variable, suffix) in [
+        ("LOCALAPPDATA", "Microsoft/WinGet/Links"),
+        ("ProgramFiles", "WinGet/Links"),
+        ("APPDATA", "npm"),
+    ] {
+        if let Some(base) = std::env::var_os(variable) {
+            directories.push(PathBuf::from(base).join(suffix));
+        }
+    }
+    find_claude_in(directories)
+}
+
+fn find_claude_in(directories: Vec<PathBuf>) -> Result<Option<PathBuf>, CallError> {
     for directory in directories {
         let names: &[&str] = if cfg!(windows) {
             &["claude.exe", "claude.cmd"]
@@ -297,7 +361,10 @@ fn find_claude(home: &Path) -> Result<PathBuf, CallError> {
                             continue;
                         }
                     }
-                    return path.canonicalize().map_err(file_error);
+                    return std::path::absolute(path)
+                        .map(plain_path)
+                        .map(Some)
+                        .map_err(file_error);
                 }
                 Ok(_) => {}
                 Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -305,9 +372,7 @@ fn find_claude(home: &Path) -> Result<PathBuf, CallError> {
             }
         }
     }
-    Err(CallError::invalid(
-        "找不到 claude 命令。请先安装 Claude Code，并确认终端里能运行 claude，再重试。".into(),
-    ))
+    Ok(None)
 }
 
 fn remove_args(claude: &Path) -> Vec<String> {
@@ -451,6 +516,95 @@ mod tests {
         fs::write(&path, "{\"new\":true}")?;
         assert!(preview.write().is_err());
         assert_eq!(fs::read_to_string(&path)?, "{\"new\":true}");
+        Ok(())
+    }
+
+    #[test]
+    fn missing_claude_still_previews_commands_and_cannot_write() -> Result {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(".claude.json");
+        let executable = dir.path().join("应用 $USER 'quoted'/autoemail");
+        let claude = find_claude_in(vec![dir.path().join("missing-bin")]).map_err(|e| e.message)?;
+        assert!(claude.is_none());
+        let plan = Plan::at(McpClient::ClaudeCode, path.clone(), &executable, claude)
+            .map_err(|e| e.message)?;
+        let preview = plan.preview();
+        assert_eq!(preview.commands.len(), 1);
+        assert!(preview.write_unavailable.is_some());
+        let server: Value = serde_json::from_str(&preview.server)?;
+        assert_eq!(server["autoemail"]["command"], json!(executable));
+        assert!(plan.write().is_err());
+        assert!(!path.try_exists()?);
+        Ok(())
+    }
+
+    #[test]
+    fn searches_other_install_directories_after_a_minimal_path() -> Result {
+        let dir = tempfile::tempdir()?;
+        let install = dir.path().join("install/bin");
+        fs::create_dir_all(&install)?;
+        let executable = install.join(if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        });
+        fs::write(&executable, "fixture")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))?;
+        }
+        assert_eq!(
+            find_claude_in(vec![dir.path().join("minimal-path"), install]).map_err(|e| e.message)?,
+            Some(executable)
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn config_link_remains_a_link_when_writing_its_target() -> Result {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("mcp.json");
+        let target = dir.path().join("target.json");
+        fs::write(&target, "{}")?;
+        std::os::unix::fs::symlink(&target, &path)?;
+        plan(&path)?.write().map_err(|e| e.message)?;
+        assert_eq!(fs::read_link(&path)?, target);
+        let actual: Value = serde_json::from_str(&fs::read_to_string(&target)?)?;
+        assert!(actual["mcpServers"]["autoemail"].is_object());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn broken_config_link_is_rejected_and_kept() -> Result {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("mcp.json");
+        let missing = dir.path().join("missing.json");
+        std::os::unix::fs::symlink(&missing, &path)?;
+        assert!(plan(&path).is_err());
+        assert_eq!(fs::read_link(&path)?, missing);
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn changed_config_link_does_not_write_either_target() -> Result {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("mcp.json");
+        let first = dir.path().join("first.json");
+        let second = dir.path().join("second.json");
+        fs::write(&first, "{}")?;
+        fs::write(&second, "{}")?;
+        std::os::unix::fs::symlink(&first, &path)?;
+        let preview = plan(&path)?;
+        fs::remove_file(&path)?;
+        std::os::unix::fs::symlink(&second, &path)?;
+        assert!(preview.write().is_err());
+        assert_eq!(fs::read_link(&path)?, second);
+        assert_eq!(fs::read_to_string(&first)?, "{}");
+        assert_eq!(fs::read_to_string(&second)?, "{}");
         Ok(())
     }
 

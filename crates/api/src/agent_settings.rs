@@ -2,13 +2,15 @@
 
 mod cli;
 mod mcp;
+mod paths;
+mod shell;
 
 use std::path::PathBuf;
 
 use tokio::sync::Mutex;
 
 use crate::{CallError, Context, Nothing};
-pub use cli::AgentCli;
+pub use cli::{AgentCli, AgentCliState};
 pub use mcp::{McpClient, McpConfigPreview, McpConfigQuery};
 
 #[derive(Default)]
@@ -27,11 +29,12 @@ fn executable() -> Result<PathBuf, CallError> {
     } else {
         "autoemail"
     });
-    path.canonicalize().map_err(|e| {
+    std::fs::metadata(&path).map_err(|e| {
         CallError::invalid(format!(
             "找不到应用附带的命令行工具：{e}。开发版请用 pnpm dev 启动，安装版请重新安装应用。"
         ))
-    })
+    })?;
+    Ok(paths::plain_path(path))
 }
 
 async fn blocking<T: Send + 'static>(

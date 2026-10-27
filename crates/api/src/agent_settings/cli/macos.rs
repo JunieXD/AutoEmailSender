@@ -4,28 +4,37 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::AgentCliState;
 use crate::CallError;
+use crate::agent_settings::shell::quote;
+
+const APPLICATION_CLI: &str = "Auto Email Sender.app/Contents/MacOS/autoemail";
 
 pub(in crate::agent_settings) fn location(_: &Path) -> Result<PathBuf, CallError> {
     Ok(PathBuf::from("/usr/local/bin/autoemail"))
 }
 
-pub(in crate::agent_settings) fn installed(executable: &Path) -> Result<bool, CallError> {
-    matches(&location(executable)?, executable)
+pub(in crate::agent_settings) fn state(executable: &Path) -> Result<AgentCliState, CallError> {
+    state_at(executable, &location(executable)?).map_err(error)
 }
 
-fn matches(link: &Path, executable: &Path) -> Result<bool, CallError> {
-    match fs::read_link(link) {
-        Ok(target) => Ok(target == executable),
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::InvalidInput
-            ) =>
-        {
-            Ok(false)
-        }
-        Err(e) => Err(error(e)),
+fn state_at(executable: &Path, link: &Path) -> io::Result<AgentCliState> {
+    match fs::symlink_metadata(link) {
+        Ok(metadata) if !metadata.file_type().is_symlink() => return Ok(AgentCliState::Occupied),
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(AgentCliState::NotInstalled),
+        Err(e) => return Err(e),
+    }
+    let target = fs::read_link(link)?;
+    let target = std::path::absolute(link.parent().unwrap_or_else(|| Path::new(".")).join(target))?;
+    if target == executable {
+        Ok(AgentCliState::Installed)
+    } else if !target.try_exists()? || target.ends_with(APPLICATION_CLI) {
+        Ok(AgentCliState::OldLocation {
+            target: target.display().to_string(),
+        })
+    } else {
+        Ok(AgentCliState::Occupied)
     }
 }
 
@@ -53,58 +62,66 @@ fn needs_authorization(e: &io::Error) -> bool {
 }
 
 fn install_at(executable: &Path, link: &Path) -> io::Result<()> {
-    match symlink(executable, link) {
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => match fs::read_link(link) {
-            Ok(target) if target == executable => Ok(()),
-            Ok(_) => Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "同名位置已被其他文件或链接占用，未覆盖",
-            )),
-            Err(error) if error.kind() == io::ErrorKind::InvalidInput => Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "同名位置已被其他文件占用，未覆盖",
-            )),
-            Err(error) => Err(error),
-        },
-        result => result,
+    let state = state_at(executable, link)?;
+    match state {
+        AgentCliState::Installed => Ok(()),
+        AgentCliState::NotInstalled => symlink(executable, link),
+        AgentCliState::Occupied => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "同名位置已被其他文件或链接占用，未覆盖",
+        )),
+        AgentCliState::OldLocation { .. } => {
+            let parent = link.parent().unwrap_or_else(|| Path::new("."));
+            let temporary = tempfile::Builder::new()
+                .prefix(".autoemail-")
+                .tempdir_in(parent)?;
+            let replacement = temporary.path().join("autoemail");
+            symlink(executable, &replacement)?;
+            if state_at(executable, link)? != state {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "链接已变化，请重新安装",
+                ));
+            }
+            fs::rename(replacement, link)
+        }
     }
 }
 
 fn uninstall_at(executable: &Path, link: &Path) -> io::Result<()> {
-    match fs::read_link(link) {
-        Ok(target) if target == executable => fs::remove_file(link),
-        Ok(_) => Ok(()),
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::NotFound | io::ErrorKind::InvalidInput
-            ) =>
-        {
-            Ok(())
-        }
-        Err(e) => Err(e),
+    match state_at(executable, link)? {
+        AgentCliState::Installed | AgentCliState::OldLocation { .. } => fs::remove_file(link),
+        AgentCliState::NotInstalled | AgentCliState::Occupied => Ok(()),
     }
 }
 
-fn quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
-}
-
 fn authorize(executable: &Path, link: &Path, install: bool) -> Result<(), CallError> {
-    let target = quote(executable);
-    let link = quote(link);
+    let target = quote(&executable.to_string_lossy());
+    let link = quote(&link.to_string_lossy());
+    let application = quote(APPLICATION_CLI);
     // Recheck ownership after authorization: the filesystem may have changed while waiting.
+    let ownership = format!(
+        r#"application={application}
+        owned() {{
+            [ -L {link} ] || return 1
+            [ ! -e {link} ] && return 0
+            previous="$(/usr/bin/readlink {link})" || return 1
+            [ "$previous" = {target} ] && return 0
+            case "$previous" in
+                "$application"|*"/$application") return 0 ;;
+                *) return 1 ;;
+            esac
+        }}"#
+    );
     let command = if install {
         format!(
-            "if [ -e {link} ] || [ -L {link} ]; then \
-            [ -L {link} ] && [ \"$(/usr/bin/readlink {link})\" = {target} ] || exit 17; \
+            "{ownership}\n\
+            if [ -e {link} ] || [ -L {link} ]; then \
+            owned || exit 17; /bin/ln -sfn {target} {link}; \
             else /bin/mkdir -p /usr/local/bin && /bin/ln -s {target} {link}; fi"
         )
     } else {
-        format!(
-            "if [ -L {link} ] && [ \"$(/usr/bin/readlink {link})\" = {target} ]; \
-            then /usr/bin/unlink {link}; fi"
-        )
+        format!("{ownership}\nif owned; then /usr/bin/unlink {link}; fi")
     };
     let output = Command::new("/usr/bin/osascript")
         .args([
@@ -142,6 +159,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn repairs_old_application_locations_and_dangling_links()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let current = dir
+            .path()
+            .join("current/Auto Email Sender.app/Contents/MacOS/autoemail");
+        let old = dir
+            .path()
+            .join("old/Auto Email Sender.app/Contents/MacOS/autoemail");
+        for executable in [&current, &old] {
+            fs::create_dir_all(executable.parent().ok_or("missing parent")?)?;
+            fs::write(executable, "binary")?;
+        }
+        let link = dir.path().join("autoemail");
+        symlink(&old, &link)?;
+        assert!(matches!(
+            state_at(&current, &link)?,
+            AgentCliState::OldLocation { .. }
+        ));
+        install_at(&current, &link)?;
+        assert_eq!(state_at(&current, &link)?, AgentCliState::Installed);
+        assert_eq!(fs::read_link(&link)?, current);
+        fs::remove_file(&link)?;
+        symlink(&old, &link)?;
+        uninstall_at(&current, &link)?;
+        assert_eq!(state_at(&current, &link)?, AgentCliState::NotInstalled);
+        assert!(!link.try_exists()?);
+        symlink("missing binary", &link)?;
+        assert!(matches!(
+            state_at(&current, &link)?,
+            AgentCliState::OldLocation { .. }
+        ));
+        install_at(&current, &link)?;
+        assert_eq!(fs::read_link(&link)?, current);
+        fs::remove_file(&link)?;
+        symlink("missing binary", &link)?;
+        uninstall_at(&current, &link)?;
+        assert!(fs::symlink_metadata(&link).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn install_and_uninstall_only_our_link() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let executable = dir.path().join("应用 ' 中文/autoemail");
@@ -150,19 +209,23 @@ mod tests {
         let link = dir.path().join("autoemail");
         install_at(&executable, &link)?;
         install_at(&executable, &link)?;
-        assert!(matches(&link, &executable).map_err(|e| e.message)?);
+        assert_eq!(state_at(&executable, &link)?, AgentCliState::Installed);
         uninstall_at(&executable, &link)?;
         uninstall_at(&executable, &link)?;
         assert!(!link.try_exists()?);
         fs::write(&link, "someone else's command")?;
+        assert_eq!(state_at(&executable, &link)?, AgentCliState::Occupied);
         assert!(install_at(&executable, &link).is_err());
         uninstall_at(&executable, &link)?;
         assert_eq!(fs::read_to_string(&link)?, "someone else's command");
         fs::remove_file(&link)?;
-        symlink("another tool", &link)?;
+        let other = dir.path().join("another tool");
+        fs::write(&other, "another tool")?;
+        symlink(&other, &link)?;
+        assert_eq!(state_at(&executable, &link)?, AgentCliState::Occupied);
         assert!(install_at(&executable, &link).is_err());
         uninstall_at(&executable, &link)?;
-        assert_eq!(fs::read_link(&link)?, Path::new("another tool"));
+        assert_eq!(fs::read_link(&link)?, other);
         Ok(())
     }
 }
