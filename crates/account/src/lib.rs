@@ -333,6 +333,7 @@ impl Error {
                 ErrorCode::SessionExpired => "登录已失效，请重新登录。".into(),
                 ErrorCode::MailUnavailable => "验证码暂时无法发送，请稍后重试。".into(),
                 ErrorCode::Internal => "服务器暂时无法处理，请稍后重试。".into(),
+                ErrorCode::QuotaExceeded => "今天还能添加的数量不够了，少选几位或明天再来。".into(),
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()
                 }
