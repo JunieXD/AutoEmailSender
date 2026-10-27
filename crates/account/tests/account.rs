@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use account::{Client, Error, State, login_key};
 use cloud_api::{Account, ApiError, ErrorCode, LoginRequest, Session, path};
 use serde_json::json;
@@ -22,17 +20,13 @@ async fn derivation_matches_an_independent_argon2_and_hkdf_vector_and_normalizes
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePool) {
     let mut server = Provider::start().await.unwrap();
-    let client = Client::new(server.address.strip_suffix("/v1").unwrap().into());
     let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     let calls = async {
-        assert!(matches!(
-            client.state(&db, &net).await.unwrap(),
-            State::LoggedOut
-        ));
+        assert!(matches!(client.state(&db).await.unwrap(), State::LoggedOut));
         let state = client
             .login(
                 &db,
-                &net,
                 " Student@example.invalid ",
                 "fixed-password-123".into(),
             )
@@ -44,10 +38,10 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
             json!({"kind":"loggedIn", "email":"student@example.invalid", "sponsorUntil":1234})
         );
         assert!(matches!(
-            client.state(&db, &net).await.unwrap(),
+            client.state(&db).await.unwrap(),
             State::LoggedIn { .. }
         ));
-        let expired = client.state(&db, &net).await.unwrap();
+        let expired = client.state(&db).await.unwrap();
         assert!(matches!(expired, State::Expired { email } if email == "student@example.invalid"));
         let (email, token): (String, Option<String>) =
             sqlx::query_as("SELECT email, token FROM account")
@@ -57,14 +51,11 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         assert_eq!(email, "student@example.invalid");
         assert!(token.is_none());
         assert!(matches!(
-            client.state(&db, &net).await.unwrap(),
+            client.state(&db).await.unwrap(),
             State::Expired { .. }
         ));
-        client.logout(&db, &net).await.unwrap();
-        assert!(matches!(
-            client.state(&db, &net).await.unwrap(),
-            State::LoggedOut
-        ));
+        client.logout(&db).await.unwrap();
+        assert!(matches!(client.state(&db).await.unwrap(), State::LoggedOut));
     };
     let replies = async {
         let request = server.requests.recv().await.unwrap();
@@ -128,21 +119,22 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
 
 #[tokio::test]
 async fn wire_errors_become_actionable_messages() {
+    const CODES: [ErrorCode; 7] = [
+        ErrorCode::EmailRegistered,
+        ErrorCode::EmailNotRegistered,
+        ErrorCode::InvalidCode,
+        ErrorCode::InvalidCredentials,
+        ErrorCode::RateLimited,
+        ErrorCode::MailUnavailable,
+        ErrorCode::Internal,
+    ];
     let mut server = Provider::start().await.unwrap();
-    let client = Client::new(server.address.strip_suffix("/v1").unwrap().into());
     let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     let calls = async {
-        for code in [
-            ErrorCode::EmailRegistered,
-            ErrorCode::EmailNotRegistered,
-            ErrorCode::InvalidCode,
-            ErrorCode::InvalidCredentials,
-            ErrorCode::RateLimited,
-            ErrorCode::MailUnavailable,
-            ErrorCode::Internal,
-        ] {
+        for code in CODES {
             let error = client
-                .send_code(&net, "student@example.invalid", false)
+                .send_code("student@example.invalid", false)
                 .await
                 .unwrap_err();
             assert!(matches!(&error, Error::Server(error) if error.code == code));
@@ -153,15 +145,7 @@ async fn wire_errors_become_actionable_messages() {
         }
     };
     let replies = async {
-        for code in [
-            ErrorCode::EmailRegistered,
-            ErrorCode::EmailNotRegistered,
-            ErrorCode::InvalidCode,
-            ErrorCode::InvalidCredentials,
-            ErrorCode::RateLimited,
-            ErrorCode::MailUnavailable,
-            ErrorCode::Internal,
-        ] {
+        for code in CODES {
             let request = server.requests.recv().await.unwrap();
             request
                 .respond
@@ -181,7 +165,7 @@ async fn wire_errors_become_actionable_messages() {
     drop(server);
     assert!(matches!(
         client
-            .send_code(&net, "student@example.invalid", false)
+            .send_code("student@example.invalid", false)
             .await
             .unwrap_err(),
         Error::Network(_)
@@ -192,9 +176,9 @@ async fn wire_errors_become_actionable_messages() {
 async fn redirects_cannot_forward_account_credentials() {
     let mut origin = Provider::start().await.unwrap();
     let mut target = Provider::start().await.unwrap();
-    let client = Client::new(origin.address.strip_suffix("/v1").unwrap().into());
     let net = net::Net::new(vec![]).unwrap();
-    let calling = client.send_code(&net, "student@example.invalid", false);
+    let client = Client::with_address(&net, origin.address.strip_suffix("/v1").unwrap().into());
+    let calling = client.send_code("student@example.invalid", false);
     let redirect = async {
         let request = origin.requests.recv().await.unwrap();
         request

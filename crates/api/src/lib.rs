@@ -55,7 +55,7 @@ impl Context {
     pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
         let writes = db::Writes::default();
         Self {
-            account: Default::default(),
+            account: account::Client::new(&net),
             agent_settings: Default::default(),
             agent_access: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
@@ -356,7 +356,7 @@ operations! {
         "loginAccount" [none] => login_account(AccountLogin) -> account::State;
         /// 向已注册的邮箱发送重置密码验证码。
         "sendPasswordResetCode" [none] => send_password_reset_code(AccountEmail) -> ();
-        /// 用验证码重置密码，所有设备的旧会话失效；旧云端备份无法解密。
+        /// 用验证码重置密码，所有设备的旧会话失效。
         "resetAccountPassword" [none] => reset_account_password(AccountVerification) -> ();
         /// 撤销当前设备的会话并退出登录。
         "logoutAccount" [none] => logout_account(Nothing) -> ();

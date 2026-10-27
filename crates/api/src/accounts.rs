@@ -27,11 +27,11 @@ pub struct AccountPassword {
 }
 
 pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {
-    Ok(ctx.account.state(&ctx.db, &ctx.net).await?)
+    Ok(ctx.account.state(&ctx.db).await?)
 }
 
 pub async fn send_registration_code(ctx: &Context, input: AccountEmail) -> Result<(), CallError> {
-    Ok(ctx.account.send_code(&ctx.net, &input.email, false).await?)
+    Ok(ctx.account.send_code(&input.email, false).await?)
 }
 
 pub async fn register_account(
@@ -40,7 +40,7 @@ pub async fn register_account(
 ) -> Result<account::State, CallError> {
     Ok(ctx
         .account
-        .register(&ctx.db, &ctx.net, &input.email, &input.code, input.password)
+        .register(&ctx.db, &input.email, &input.code, input.password)
         .await?)
 }
 
@@ -50,12 +50,12 @@ pub async fn login_account(
 ) -> Result<account::State, CallError> {
     Ok(ctx
         .account
-        .login(&ctx.db, &ctx.net, &input.email, input.password)
+        .login(&ctx.db, &input.email, input.password)
         .await?)
 }
 
 pub async fn send_password_reset_code(ctx: &Context, input: AccountEmail) -> Result<(), CallError> {
-    Ok(ctx.account.send_code(&ctx.net, &input.email, true).await?)
+    Ok(ctx.account.send_code(&input.email, true).await?)
 }
 
 pub async fn reset_account_password(
@@ -64,19 +64,16 @@ pub async fn reset_account_password(
 ) -> Result<(), CallError> {
     Ok(ctx
         .account
-        .reset_password(&ctx.db, &ctx.net, &input.email, &input.code, input.password)
+        .reset_password(&ctx.db, &input.email, &input.code, input.password)
         .await?)
 }
 
 pub async fn logout_account(ctx: &Context, _: Nothing) -> Result<(), CallError> {
-    Ok(ctx.account.logout(&ctx.db, &ctx.net).await?)
+    Ok(ctx.account.logout(&ctx.db).await?)
 }
 
 pub async fn delete_account(ctx: &Context, input: AccountPassword) -> Result<(), CallError> {
-    Ok(ctx
-        .account
-        .delete(&ctx.db, &ctx.net, input.password)
-        .await?)
+    Ok(ctx.account.delete(&ctx.db, input.password).await?)
 }
 
 impl From<account::Error> for CallError {
@@ -84,9 +81,7 @@ impl From<account::Error> for CallError {
         tracing::warn!(error = %error, "account operation failed");
         let code = match error {
             account::Error::Invalid(_) => ErrorCode::Invalid,
-            account::Error::Database(_) | account::Error::Worker(_) | account::Error::Key => {
-                ErrorCode::Internal
-            }
+            account::Error::Database(_) | account::Error::Worker(_) => ErrorCode::Internal,
             _ => ErrorCode::External,
         };
         Self {

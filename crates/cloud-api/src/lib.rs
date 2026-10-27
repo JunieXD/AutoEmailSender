@@ -81,7 +81,7 @@ pub struct ApiError {
     pub retry_after_seconds: Option<u64>,
 }
 
-/// Account identity and the password salt must use exactly the same spelling on both sides.
+/// This is part of the key derivation protocol; changing it would lock existing accounts out.
 pub fn normalize_email(value: &str) -> String {
     value
         .trim()

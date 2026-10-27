@@ -6,6 +6,8 @@ export type AccountLogin = { email: string, password: string, };
 
 export type AccountPassword = { password: string, };
 
+export type AccountState = { "kind": "loggedOut" } | { "kind": "loggedIn", email: string, sponsorUntil: number | null, } | { "kind": "expired", email: string, };
+
 export type AccountVerification = { email: string, code: string, password: string, };
 
 export type AddedFields = { aliases: Array<string>, emails: Array<string>, affiliations: Array<AffiliationAddition>, homepages: Array<string>, research: string | null, };
@@ -682,8 +684,6 @@ steps: Array<string>,
  */
 url: string, } | { "kind": "unsupported", reason: string, };
 
-export type State = { "kind": "loggedOut" } | { "kind": "loggedIn", email: string, sponsorUntil: number | null, } | { "kind": "expired", email: string, };
-
 export type StatsPeriod = { range: Range, timezone: string, now: number, };
 
 export type StatsQuery = { page: number, range: Range, timezone: string, now: number, };
@@ -807,10 +807,10 @@ export type Writer = "ai" | "template";
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
-  getAccount: { input: Nothing; output: State };
+  getAccount: { input: Nothing; output: AccountState };
   sendRegistrationCode: { input: AccountEmail; output: null };
-  registerAccount: { input: AccountVerification; output: State };
-  loginAccount: { input: AccountLogin; output: State };
+  registerAccount: { input: AccountVerification; output: AccountState };
+  loginAccount: { input: AccountLogin; output: AccountState };
   sendPasswordResetCode: { input: AccountEmail; output: null };
   resetAccountPassword: { input: AccountVerification; output: null };
   logoutAccount: { input: Nothing; output: null };
