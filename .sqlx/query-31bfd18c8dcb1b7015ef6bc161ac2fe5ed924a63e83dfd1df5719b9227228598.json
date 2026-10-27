@@ -1,0 +1,100 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_name, size, created_at, for_matching, for_writing, attach_by_default,\n                    (SELECT count(*) FROM email_attachment WHERE material_id = material.id) AS \"emails!: i64\",\n                    (SELECT count(*) FROM task_material WHERE material_id = material.id) AS \"tasks!: i64\"\n                FROM material WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "size",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "size"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "for_matching",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "for_matching"
+          }
+        }
+      },
+      {
+        "name": "for_writing",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "for_writing"
+          }
+        }
+      },
+      {
+        "name": "attach_by_default",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "attach_by_default"
+          }
+        }
+      },
+      {
+        "name": "emails!: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "tasks!: i64",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "31bfd18c8dcb1b7015ef6bc161ac2fe5ed924a63e83dfd1df5719b9227228598"
+}

@@ -30,7 +30,8 @@ const SHOWN = 5;
 function RequestDialog({ request, queued }: { request: AgentRequest; queued: number }) {
   const queryClient = useQueryClient();
   const answer = useMutation({
-    mutationFn: (allow: boolean) => call("answerAgentRequest", { id: request.id, allow }),
+    mutationFn: (allow: boolean) =>
+      call("answerAgentRequest", { id: request.id, allow, rendered: allow ? [] : undefined }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listAgentRequests"] }),
   });
   // An answered request stays on screen until the list comes back without it.

@@ -1,0 +1,85 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT updated_at, trashed_at, mailbox_id,\n                        (SELECT count(*) FROM email WHERE mentor_id = mentor.id) AS \"emails!: i64\",\n                        (SELECT count(*) FROM message_mentor WHERE mentor_id = mentor.id) AS \"messages!: i64\",\n                        (SELECT count(*) FROM todo WHERE mentor_id = mentor.id) AS \"todos!: i64\",\n                        (SELECT count(*) FROM mentor_tag WHERE mentor_id = mentor.id) AS \"tags!: i64\",\n                        (SELECT count(*) FROM library_update WHERE mentor_id = mentor.id) AS \"updates!: i64\"\n                    FROM mentor WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "updated_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "name": "trashed_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "trashed_at"
+          }
+        }
+      },
+      {
+        "name": "mailbox_id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "mailbox_id"
+          }
+        }
+      },
+      {
+        "name": "emails!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "messages!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "todos!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "tags!: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "updates!: i64",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9729d6352bb9634cd245319706631327420495a9a9fc43bcff1c4c7aa0e7780f"
+}

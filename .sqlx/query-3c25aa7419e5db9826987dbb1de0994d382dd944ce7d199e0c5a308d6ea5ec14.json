@@ -1,0 +1,49 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n                        (SELECT count(*) FROM message WHERE mailbox_id = ?1) AS \"messages!: i64\",\n                        (SELECT count(*) FROM reply_processing WHERE message_id IN\n                            (SELECT id FROM message WHERE mailbox_id = ?1)) AS \"processing!: i64\",\n                        (SELECT count(*) FROM mailbox_folder WHERE mailbox_id = ?1) AS \"folders!: i64\",\n                        (SELECT count(*) FROM mentor_scan WHERE mailbox_id = ?1) AS \"scans!: i64\",\n                        (SELECT count(*) FROM mentor WHERE mailbox_id = ?1) AS \"mentors!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "messages!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "processing!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "folders!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "scans!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "mentors!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3c25aa7419e5db9826987dbb1de0994d382dd944ce7d199e0c5a308d6ea5ec14"
+}

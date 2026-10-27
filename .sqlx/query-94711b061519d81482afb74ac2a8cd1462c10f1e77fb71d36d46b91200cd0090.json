@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH doomed AS (SELECT id FROM mentor\n                        WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL)\n                    SELECT count(*) AS \"count!: i64\" FROM message\n                    WHERE id IN (SELECT message_id FROM message_mentor WHERE mentor_id IN doomed)\n                        AND NOT EXISTS (SELECT 1 FROM message_mentor mm\n                            WHERE mm.message_id = message.id AND mm.mentor_id NOT IN doomed)",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "94711b061519d81482afb74ac2a8cd1462c10f1e77fb71d36d46b91200cd0090"
+}

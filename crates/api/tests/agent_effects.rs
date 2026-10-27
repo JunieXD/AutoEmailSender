@@ -32,6 +32,640 @@ async fn refused(ctx: &Context, op: &str, input: Value) {
     assert!(error.message.contains("在应用里拒绝"));
 }
 
+async fn allow_after_change(
+    ctx: &Context,
+    op: &str,
+    input: Value,
+    change: impl std::future::Future<Output = ()>,
+) -> Result<Value, api::CallError> {
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        ctx,
+        op,
+        input,
+        |_| {
+            let _ = registered.send(());
+        },
+        pending(),
+    );
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(ctx, "listAgentRequests", json!({})).await.unwrap();
+        change.await;
+        call(
+            ctx,
+            "answerAgentRequest",
+            json!({"id":requests[0]["id"], "allow":true}),
+        )
+        .await
+        .unwrap();
+    };
+    tokio::join!(calling, answer).0
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let draft =
+        |body: &str| json!({"mentorId":mentor, "subject":"申请", "bodyMd":body, "attachments":[]});
+    call(&ctx, "saveFirstDraft", draft("旧草稿")).await.unwrap();
+    let result = allow_after_change(
+        &ctx,
+        "saveFirstDraft",
+        json!({"mentorId":mentor, "subject":"", "bodyMd":"", "attachments":[]}),
+        async {
+            call(&ctx, "saveFirstDraft", draft("新草稿")).await.unwrap();
+        },
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(api::CallError {
+            code: ErrorCode::Invalid,
+            ..
+        })
+    ));
+    let saved = call(&ctx, "getFirstDraft", json!({"id":mentor}))
+        .await
+        .unwrap();
+    assert_eq!(saved["bodyMd"], "新草稿");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn resume_task_rechecks_the_pending_recipient_address(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec!["old@example.invalid".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let task = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+        VALUES ('申请', 'first', 'ai', 'now', 'paused', 0)
+        RETURNING id"#,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    let email = test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 0)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE email SET task_id = ? WHERE id = ?")
+        .bind(task)
+        .bind(email)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    let result = allow_after_change(&ctx, "resumeTask", json!({"id":task}), async {
+        call(
+            &ctx,
+            "updateMentor",
+            json!({"id":mentor, "name":"王伟", "emails":["new@example.invalid"],
+                "aliases":[], "affiliations":[], "homepages":[], "research":""}),
+        )
+        .await
+        .unwrap();
+    })
+    .await;
+    assert!(matches!(
+        result,
+        Err(api::CallError {
+            code: ErrorCode::Invalid,
+            ..
+        })
+    ));
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT state FROM task WHERE id = ?")
+            .bind(task)
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        "paused"
+    );
+}
+
+async fn mailbox_change_is_confirmed(db: SqlitePool, automatic: bool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let other = call(
+        &ctx,
+        "addMailbox",
+        json!({
+            "address":"available@example.invalid", "senderName":"学生", "provider":"custom",
+            "smtp":{"host":"localhost", "port":1, "security":"tls"},
+            "imap":{"host":"localhost", "port":1, "security":"tls"},
+            "dailyLimit":50, "minIntervalS":60, "secret":"fixture"
+        }),
+    )
+    .await
+    .unwrap()["id"]
+        .clone();
+    sqlx::query("UPDATE mailbox SET paused_until = ?, pause_reason = 'fixture' WHERE id = 1")
+        .bind(i64::MAX)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec!["mentor@example.invalid".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    call(
+        &ctx,
+        "setMentorMailbox",
+        json!({"id":mentor, "mailboxId":1}),
+    )
+    .await
+    .unwrap();
+    test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 0)
+        .await
+        .unwrap();
+    refused(
+        &ctx,
+        "setMentorMailbox",
+        json!({"id":mentor, "mailboxId":if automatic { Value::Null } else { other }}),
+    )
+    .await;
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT mailbox_id FROM mentor WHERE id = ?")
+            .bind(mentor)
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        Some(1)
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn changing_from_a_paused_mailbox_to_an_available_one_requires_confirmation(db: SqlitePool) {
+    mailbox_change_is_confirmed(db, false).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn changing_from_a_paused_mailbox_to_automatic_requires_confirmation(db: SqlitePool) {
+    mailbox_change_is_confirmed(db, true).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn first_approval_previews_the_whole_letter_and_sends_the_dialog_rendering(db: SqlitePool) {
+    const AT: i64 = 4_000_000_000_000;
+    let dir = tempfile::tempdir().unwrap();
+    let pki = fakemail::pki();
+    let (port, inbox) = fakemail::smtp(&pki, false).await;
+    let ctx = Context::new(
+        db,
+        net::Net::new(vec![pki.root]).unwrap(),
+        dir.path().into(),
+    );
+    call(
+        &ctx,
+        "addMailbox",
+        json!({
+            "address":fakemail::ADDRESS, "senderName":"学生", "provider":"custom",
+            "smtp":{"host":"localhost", "port":port, "security":"tls"},
+            "imap":{"host":"localhost", "port":993, "security":"tls"},
+            "dailyLimit":50, "minIntervalS":60, "secret":fakemail::SECRET
+        }),
+    )
+    .await
+    .unwrap();
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec!["mentor@example.invalid".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let material = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at)
+        VALUES ('简历.pdf', 3, 0, 0, 0, 0) RETURNING id"#,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    std::fs::write(material::file(dir.path(), material), b"pdf").unwrap();
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        &ctx,
+        "approveFirstEmail",
+        json!({
+            "mentorId":mentor, "subject":"申请", "bodyMd":"老师**您好**", "attachments":[material],
+            "plannedAt":AT
+        }),
+        |_| {
+            let _ = registered.send(());
+        },
+        pending(),
+    );
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+        let letters = requests[0]["description"]["letters"].as_array().unwrap();
+        assert_eq!(letters.len(), 1);
+        let letter = &letters[0];
+        assert_eq!(letter["mentorId"], mentor);
+        assert_eq!(letter["mentorName"], "王伟");
+        assert_eq!(letter["address"], "mentor@example.invalid");
+        assert_eq!(letter["sendAt"], json!({"kind":"at", "at":AT}));
+        assert_eq!(letter["subject"], "申请");
+        assert_eq!(letter["bodyMd"], "老师**您好**");
+        assert_eq!(letter["attachments"][0]["fileName"], "简历.pdf");
+        call(
+            &ctx,
+            "answerAgentRequest",
+            json!({
+                "id":requests[0]["id"], "allow":true,
+                "rendered":[{"html":"<p>dialog HTML</p>", "text":"dialog text"}]
+            }),
+        )
+        .await
+        .unwrap();
+    };
+    tokio::join!(calling, answer).0.unwrap();
+    send::step(&ctx.db, &ctx.writes, &ctx.net, dir.path(), || AT)
+        .await
+        .unwrap();
+    let mail = inbox.lock().unwrap();
+    assert_eq!(mail.len(), 1);
+    assert!(mail[0].contains("<p>dialog HTML</p>"));
+    assert!(mail[0].contains("dialog text"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn missing_or_mismatched_rendering_cannot_approve_a_letter(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec!["mentor@example.invalid".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        &ctx,
+        "approveFirstEmail",
+        json!({
+            "mentorId":mentor, "subject":"申请", "bodyMd":"信", "attachments":[],
+            "html":"untrusted", "text":"untrusted"
+        }),
+        |_| {
+            let _ = registered.send(());
+        },
+        pending(),
+    );
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+        for rendered in [
+            Value::Null,
+            json!([]),
+            json!([
+                {"html":"one", "text":"one"}, {"html":"two", "text":"two"}
+            ]),
+        ] {
+            let mut input = json!({"id":requests[0]["id"], "allow":true});
+            if !rendered.is_null() {
+                input["rendered"] = rendered;
+            }
+            assert!(matches!(
+                call(&ctx, "answerAgentRequest", input)
+                    .await
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Invalid
+            ));
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM email WHERE state = 'approved'")
+                    .fetch_one(&ctx.db)
+                    .await
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                call(&ctx, "listAgentRequests", json!({}))
+                    .await
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        call(
+            &ctx,
+            "answerAgentRequest",
+            json!({"id":requests[0]["id"], "allow":false}),
+        )
+        .await
+        .unwrap();
+    };
+    assert!(tokio::join!(calling, answer).0.is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn task_approval_keeps_input_order_and_exposes_the_full_sending_window(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let task = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO task (name, kind, writer, schedule, window_dates, window_start,
+            window_end, per_window, state, created_at)
+        VALUES ('申请', 'first', 'ai', 'window', '["2096-01-01"]', '09:00', '11:00', 10, 'active', 0)
+        RETURNING id"#,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for name in ["甲", "乙"] {
+        let mentor = mentor::create(
+            &ctx.db,
+            &mentor::MentorFields {
+                name: name.into(),
+                emails: vec![format!("mentor{}@example.invalid", ids.len())],
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        let id = test_fixtures::mail::first_email(&ctx.db, mentor, "review", 0)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE email SET task_id = ? WHERE id = ?")
+            .bind(task)
+            .bind(id)
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    ids.reverse();
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        &ctx,
+        "approveTaskEmails",
+        json!({"taskId":task, "emails":ids.iter().map(|id|
+        json!({"id":id, "subject":"申请", "bodyMd":"信", "attachments":[]})
+    ).collect::<Vec<_>>()}),
+        |_| {
+            let _ = registered.send(());
+        },
+        pending(),
+    );
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+        let letters = requests[0]["description"]["letters"].as_array().unwrap();
+        assert_eq!(letters.len(), 2);
+        assert_eq!(letters[0]["mentorName"], "乙");
+        assert_eq!(letters[1]["mentorName"], "甲");
+        for letter in letters {
+            assert_eq!(
+                letter["sendAt"],
+                json!({"kind":"task", "taskId":task,
+                "schedule":{"kind":"window", "dates":["2096-01-01"], "start":"09:00", "end":"11:00", "perWindow":10}})
+            );
+        }
+        call(
+            &ctx,
+            "answerAgentRequest",
+            json!({"id":requests[0]["id"], "allow":true, "rendered":[
+                {"html":"<p>second</p>", "text":"second"}, {"html":"<p>first</p>", "text":"first"}
+            ]}),
+        )
+        .await
+        .unwrap();
+    };
+    assert_eq!(tokio::join!(calling, answer).0.unwrap(), 2);
+    for (id, text) in ids.into_iter().zip(["second", "first"]) {
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT text FROM email WHERE id = ?")
+                .bind(id)
+                .fetch_one(&ctx.db)
+                .await
+                .unwrap(),
+            text
+        );
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn reply_and_follow_up_preview_the_subject_and_quote_and_use_dialog_rendering(
+    db: SqlitePool,
+) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    for follow_up in [false, true] {
+        let mentor = mentor::create(
+            &ctx.db,
+            &mentor::MentorFields {
+                name: "王伟".into(),
+                emails: vec![format!("mentor{follow_up}@example.invalid")],
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        let (draft, op) = if follow_up {
+            test_fixtures::mail::first_email(&ctx.db, mentor, "sent", 0)
+                .await
+                .unwrap();
+            (
+                call(&ctx, "createFollowUpDraft", json!({"id":mentor}))
+                    .await
+                    .unwrap(),
+                "approveFollowUp",
+            )
+        } else {
+            let message = sqlx::query_scalar::<_, i64>(
+                r#"INSERT INTO message (mailbox_id, folder, uidvalidity, uid, kind, message_id,
+                    sent_at, from_address, subject, body_text, truncated)
+                VALUES (1, 'INBOX', 1, 1, 'reply', '<reply@example.invalid>', 0,
+                    'mentor@example.invalid', '申请', '收到', 0) RETURNING id"#,
+            )
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap();
+            sqlx::query("INSERT INTO message_mentor (message_id, mentor_id) VALUES (?, ?)")
+                .bind(message)
+                .bind(mentor)
+                .execute(&ctx.db)
+                .await
+                .unwrap();
+            (
+                call(
+                    &ctx,
+                    "saveReplyDraft",
+                    json!({"mentorId":mentor, "replyTo":"<reply@example.invalid>",
+                "bodyMd":"感谢", "attachments":[]}),
+                )
+                .await
+                .unwrap(),
+                "approveReply",
+            )
+        };
+        let (registered, waiting) = tokio::sync::oneshot::channel();
+        let calling = call_agent(
+            &ctx,
+            op,
+            json!({"mentorId":mentor, "draftId":draft["id"],
+            "replyTo":draft["replyTo"], "bodyMd":"感谢", "attachments":[]}),
+            |_| {
+                let _ = registered.send(());
+            },
+            pending(),
+        );
+        let answer = async {
+            waiting.await.unwrap();
+            let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+            let letter = &requests[0]["description"]["letters"][0];
+            assert_eq!(letter["subject"], "Re: 申请");
+            assert_eq!(letter["bodyMd"], "感谢");
+            assert_eq!(letter["sendAt"], json!({"kind":"now"}));
+            assert_eq!(
+                letter["previous"]["bodyText"],
+                if follow_up { "信" } else { "收到" }
+            );
+            call(
+                &ctx,
+                "answerAgentRequest",
+                json!({"id":requests[0]["id"], "allow":true,
+                "rendered":[{"html":"<p>dialog</p>", "text":"dialog"}]}),
+            )
+            .await
+            .unwrap();
+        };
+        tokio::join!(calling, answer).0.unwrap();
+        let (html, text) =
+            sqlx::query_as::<_, (String, String)>("SELECT html, text FROM email WHERE id = ?")
+                .bind(draft["id"].as_i64().unwrap())
+                .fetch_one(&ctx.db)
+                .await
+                .unwrap();
+        assert!(html.starts_with("<p>dialog</p>"));
+        assert!(text.starts_with("dialog\n\n"));
+        assert!(text.ends_with(if follow_up { "> 信" } else { "> 收到" }));
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn resume_mailbox_rechecks_recipients_and_deleting_a_task_rechecks_its_email_set(
+    db: SqlitePool,
+) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec!["before@example.invalid".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    call(
+        &ctx,
+        "setMentorMailbox",
+        json!({"id":mentor, "mailboxId":1}),
+    )
+    .await
+    .unwrap();
+    test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 0)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mailbox SET paused_until = ?, pause_reason = 'fixture' WHERE id = 1")
+        .bind(i64::MAX)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    let result = allow_after_change(&ctx, "resumeMailbox", json!({"id":1}), async {
+        call(
+            &ctx,
+            "updateMentor",
+            json!({"id":mentor, "name":"王伟", "emails":["after@example.invalid"],
+            "aliases":[], "affiliations":[], "homepages":[], "research":""}),
+        )
+        .await
+        .unwrap();
+    })
+    .await;
+    assert!(matches!(result.unwrap_err().code, ErrorCode::Invalid));
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT paused_until FROM mailbox WHERE id = 1")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        Some(i64::MAX)
+    );
+    let task = sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
+        VALUES ('申请', 'first', 'ai', 'now', 'paused', 0) RETURNING id"#,
+    )
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    let result = allow_after_change(&ctx, "deleteTask", json!({"id":task}), async {
+        sqlx::query("UPDATE email SET task_id = ? WHERE mentor_id = ?")
+            .bind(task)
+            .bind(mentor)
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+    })
+    .await;
+    assert!(matches!(result.unwrap_err().code, ErrorCode::Invalid));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM task WHERE id = ?")
+            .bind(task)
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn editing_a_mailbox_requires_confirmation_only_while_its_pause_is_active(db: SqlitePool) {
     let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());

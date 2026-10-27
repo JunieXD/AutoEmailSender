@@ -1,27 +1,27 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT university, school FROM crawl WHERE id = ?",
+  "query": "SELECT name, mailbox_id FROM mentor WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "university",
+        "name": "name",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "crawl",
-            "name": "university"
+            "table": "mentor",
+            "name": "name"
           }
         }
       },
       {
-        "name": "school",
+        "name": "mailbox_id",
         "ordinal": 1,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "crawl",
-            "name": "school"
+            "table": "mentor",
+            "name": "mailbox_id"
           }
         }
       }
@@ -30,9 +30,9 @@
       "Right": 1
     },
     "nullable": [
-      true,
+      false,
       true
     ]
   },
-  "hash": "15d170dda4ea65e6cbb53ef1cd625cb03c9599afe21de1237559063d4b1dc18a"
+  "hash": "db5d5b46904a57f0e8fcd8b59742f1b18046254826fa9ce280d481bcc13169d1"
 }

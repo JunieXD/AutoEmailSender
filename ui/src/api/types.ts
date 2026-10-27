@@ -10,7 +10,7 @@ export type AffiliationAddition = { before: Affiliation | null, added: Affiliati
 
 export type AgentAccess = { enabled: boolean, };
 
-export type AgentAnswer = { id: number, allow: boolean, };
+export type AgentAnswer = { id: number, allow: boolean, rendered?: Array<RenderedLetter>, };
 
 export type AgentCli = { state: AgentCliState, command: string,
 /**
@@ -55,6 +55,14 @@ export type CandidateRow = { id: number, crawlId: number | null, name: string, e
 export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
 export type Column = { header: string, field: Field | null, };
+
+export type ConfirmationAttachment = { materialId: number | null, fileName: string, size: number, };
+
+export type ConfirmationLetter = { mentorId: number, mentorName: string, address: string | null, mailboxId: number | null, mailboxAddress: string | null, sendAt: SendAt, subject: string, bodyMd: string, attachments: Array<ConfirmationAttachment>,
+/**
+ * The core appends this quote after rendering the new Markdown body.
+ */
+previous: QuotedMessage | null, };
 
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
 
@@ -106,9 +114,9 @@ export type DefaultTemplate = { id: number | null, };
 
 export type Description = {
 /**
- * Only application-authored text and counts; object content belongs in targets.
+ * Only application-authored text and counts; object content belongs in the other fields.
  */
-action: string, targets: Array<string>, };
+action: string, targets: Array<string>, letters: Array<ConfirmationLetter>, emails: Array<EmailOriginal>, originals: Array<Original>, };
 
 export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 
@@ -143,6 +151,8 @@ resendOf: number | null,
 resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, } | { "state": "canceled", cancelReason: string, });
 
 export type EmailId = { id: number, };
+
+export type EmailOriginal = { id: number, mentorId: number, mentorName: string, address: string | null, trashedAt: number | null, taskId: number | null, state: string, kind: string, replyTo: string | null, subject: string | null, bodyMd: string | null, html: string | null, text: string | null, refs: string | null, plannedAt: number | null, latestAt: number | null, manualSchedule: boolean, approvalOrder: number | null, updatedAt: number, sentAt: number | null, mailboxId: number | null, mailboxAddress: string | null, attachments: Array<ConfirmationAttachment>, };
 
 export type EnrichChange = { field: EnrichField, value: unknown, };
 
@@ -190,7 +200,11 @@ export type FirstDraftEdit = { mentorId: number, subject: string, bodyMd: string
  */
 attachments: Array<number>, };
 
-export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: string, bodyMd: string, html: string, text: string,
+export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: string, bodyMd: string,
+/**
+ * Agent approvals receive these from the confirmation dialog.
+ */
+html?: string, text?: string,
 /**
  * Materials, by id.
  */
@@ -525,6 +539,8 @@ export type OperationName = { name: string, };
 
 export type OperationSummary = { name: string, summary: string, group: string, confirmation: OperationConfirmation, };
 
+export type Original = { "kind": "task", "value": { id: number, name: string, state: string, kind: string, writer: string, modelConfigId: number | null, templateId: number | null, templateSubject: string | null, templateBodyMd: string | null, generationPausedAt: number | null, generationPauseReason: string | null, materials: Array<[number, string]>, schedule: string, windowDates: string | null, windowStart: string | null, windowEnd: string | null, perWindow: number | null, } } | { "kind": "mailbox", "value": { id: number, address: string, senderName: string, provider: string, smtpHost: string, smtpPort: number, smtpSecurity: string, imapHost: string, imapPort: number, imapSecurity: string, dailyLimit: number, minIntervalS: number, rotationOrder: number, pausedUntil: number | null, pauseReason: string | null, } } | { "kind": "model", "value": { id: number, name: string | null, model: string, provider: string, baseUrl: string | null, agreed: number, inputPrice: number | null, outputPrice: number | null, tasks: number, crawls: number, } } | { "kind": "mentor", "value": { id: number, updatedAt: number, trashedAt: number | null, mailboxId: number | null, emails: number, messages: number, todos: number, tags: number, updates: number, } } | { "kind": "template", "value": { id: number, name: string, subject: string, bodyMd: string, updatedAt: number, } } | { "kind": "material", "value": { id: number, fileName: string, size: number, createdAt: number, forMatching: number, forWriting: number, attachByDefault: number, emails: number, tasks: number, } } | { "kind": "crawl", "value": { id: number, university: string | null, school: string | null, state: string, startUrls: string | null, limits: string, candidates: number, pages: number, runs: number, } } | { "kind": "tag", "value": { id: number, name: string, color: string, mentors: number, } } | { "kind": "todo", "value": { id: number, mentorId: number, messageId: number | null, text: string, dueDate: string | null, dueTime: string | null, doneAt: number | null, } };
+
 export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
 
 export type PageKind = "entry" | "list" | "profile" | "enrich_profile" | "enrich_child";
@@ -570,17 +586,29 @@ export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type PurposeUsage = { purpose: UsagePurpose, input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
 
+export type QuotedMessage = { messageId: string | null, subject: string | null, sentAt: number, fromAddress: string, fromName: string | null, bodyText: string | null, refs: string | null, };
+
 export type Range = "week" | "month" | "quarter" | "all";
 
 export type ReceiveStatus = { receivedAt: number | null, };
 
-export type RenderedApproval = { attachments: Array<number>, id: number, html: string, text: string, subject: string, bodyMd: string, };
+export type RenderedApproval = { attachments: Array<number>, id: number,
+/**
+ * Agent approvals receive these from the confirmation dialog.
+ */
+html?: string, text?: string, subject: string, bodyMd: string, };
+
+export type RenderedLetter = { html: string, text: string, };
 
 export type ReplyDraft = { factCheck: FactCheck | null, id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
 
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
-export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string,
+/**
+ * Agent approvals receive these from the confirmation dialog.
+ */
+html?: string, text?: string, attachments: Array<number>, };
 
 export type ReplyMessage = { messageId: number, };
 
@@ -629,6 +657,8 @@ export type SchoolProgress = { university: string, contacted: number, replied: n
 export type Scope = { "kind": "filter", "value": MentorFilter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
+
+export type SendAt = { "kind": "now" } | { "kind": "at", at: number, } | { "kind": "task", taskId: number, schedule: Schedule, };
 
 export type SendTestLetter = { mailboxId: number, subject: string, html: string, text: string, attachments: Array<number>, };
 

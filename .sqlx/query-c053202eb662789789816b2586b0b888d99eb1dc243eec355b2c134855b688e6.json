@@ -1,0 +1,273 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, e.mentor_id, m.name AS mentor_name, m.trashed_at,\n            (SELECT address FROM mentor_email WHERE mentor_id = m.id\n                ORDER BY position LIMIT 1) AS \"address?: String\",\n            e.task_id, e.state, e.kind, e.reply_to, e.subject, e.body_md, e.html, e.text, e.refs,\n            e.planned_at, e.latest_at, e.manual_schedule AS \"manual_schedule: bool\",\n            e.approval_order, e.updated_at, e.sent_at, own.mailbox_id, b.address AS mailbox_address\n        FROM email e\n        JOIN mentor m ON m.id = e.mentor_id\n        JOIN email_own_mailbox own ON own.email_id = e.id\n        LEFT JOIN mailbox b ON b.id = own.mailbox_id\n        WHERE e.id IN (SELECT value FROM json_each(?))\n        ORDER BY e.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "mentor_name",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "trashed_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "trashed_at"
+          }
+        }
+      },
+      {
+        "name": "address?: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "task_id",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "kind",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "name": "reply_to",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "reply_to"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 9,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "body_md"
+          }
+        }
+      },
+      {
+        "name": "html",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "html"
+          }
+        }
+      },
+      {
+        "name": "text",
+        "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "text"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 13,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "refs"
+          }
+        }
+      },
+      {
+        "name": "planned_at",
+        "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
+      },
+      {
+        "name": "manual_schedule: bool",
+        "ordinal": 16,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "manual_schedule"
+          }
+        }
+      },
+      {
+        "name": "approval_order",
+        "ordinal": 17,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "approval_order"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 18,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 19,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "mailbox_id",
+        "ordinal": 20,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "mailbox_address",
+        "ordinal": 21,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "c053202eb662789789816b2586b0b888d99eb1dc243eec355b2c134855b688e6"
+}

@@ -662,8 +662,11 @@ pub async fn check(db: &SqlitePool, edit: &DraftEdit, now: i64) -> Result<Vec<ch
 pub struct RenderedApproval {
     pub attachments: Vec<i64>,
     pub id: i64,
-    pub html: String,
-    pub text: String,
+    /// Agent approvals receive these from the confirmation dialog.
+    #[ts(optional)]
+    pub html: Option<String>,
+    #[ts(optional)]
+    pub text: Option<String>,
     pub subject: String,
     #[serde(rename = "bodyMd")]
     pub body_md: String,
@@ -785,6 +788,14 @@ where
         if attached != expected {
             return Err(Error::Invalid("附件刚被修改，请重新核对后批准。".into()));
         }
+        let html = r
+            .html
+            .as_deref()
+            .ok_or_else(|| Error::Invalid("缺少邮件的 HTML 渲染结果。".into()))?;
+        let text = r
+            .text
+            .as_deref()
+            .ok_or_else(|| Error::Invalid("缺少邮件的纯文本渲染结果。".into()))?;
         let (html, text) = if current.kind == "follow_up" {
             let parent = email::thread::previous(
                 &mut tx,
@@ -794,11 +805,10 @@ where
             )
             .await?
             .ok_or_else(|| Error::Invalid("上一封已不在往来里，请移出任务后重新创建。".into()))?;
-            let frozen =
-                email::thread::freeze(&mut tx, r.id, &parent, &r.html, &r.text, zone).await?;
+            let frozen = email::thread::freeze(&mut tx, r.id, &parent, html, text, zone).await?;
             (frozen.html, frozen.text)
         } else {
-            (r.html.clone(), r.text.clone())
+            (html.to_owned(), text.to_owned())
         };
         if emails::approve(&mut tx, request.task_id, r.id, &html, &text, now).await? {
             email::schedule::assign(&mut tx, r.id, request.task_id, now, zone, random).await?;

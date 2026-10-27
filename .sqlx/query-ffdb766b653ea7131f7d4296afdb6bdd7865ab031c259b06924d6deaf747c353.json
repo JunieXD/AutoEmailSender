@@ -1,0 +1,95 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT university, school, state, start_urls, limits,\n                    (SELECT count(*) FROM candidate WHERE crawl_id = crawl.id\n                        AND review = 'pending' AND mentor_id IS NULL) AS \"candidates!: i64\",\n                    (SELECT count(*) FROM crawl_page WHERE crawl_id = crawl.id) AS \"pages!: i64\",\n                    (SELECT count(*) FROM crawl_run WHERE crawl_id = crawl.id) AS \"runs!: i64\"\n                FROM crawl WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "university",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "state",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "state"
+          }
+        }
+      },
+      {
+        "name": "start_urls",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "start_urls"
+          }
+        }
+      },
+      {
+        "name": "limits",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "limits"
+          }
+        }
+      },
+      {
+        "name": "candidates!: i64",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "pages!: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "runs!: i64",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "ffdb766b653ea7131f7d4296afdb6bdd7865ab031c259b06924d6deaf747c353"
+}
