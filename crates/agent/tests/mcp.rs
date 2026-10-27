@@ -103,6 +103,16 @@ async fn mcp_and_help_use_the_running_app_through_real_stdio_and_local_channels(
     assert_eq!(tools.len(), 3);
     assert!(tools.iter().any(|tool| tool["name"] == "call_operation"));
 
+    send(&mut stdin, tool(12, "no_such_tool", json!({}))).await?;
+    let unknown = read(&mut stdout).await?;
+    assert_eq!(unknown["id"], 12);
+    assert_eq!(unknown["error"]["code"], -32602);
+    assert!(unknown.get("result").is_none());
+    send(&mut stdin, tool(13, "describe_operation", json!({}))).await?;
+    let invalid = read(&mut stdout).await?;
+    assert_eq!(invalid["result"]["isError"], true);
+    assert!(invalid.get("error").is_none());
+
     // Initialization and local help work even when app access is closed.
     for args in [["--help"], ["--version"]] {
         assert!(cli(dir.path(), &args).await?.status.success());

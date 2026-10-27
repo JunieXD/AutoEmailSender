@@ -99,11 +99,25 @@ impl ServerHandler for Server {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let result = tokio::select! {
-            result = execute(request, &context) => result,
-            () = context.ct.cancelled() => {
-                Err("调用已取消，未回答的确认请求已作废；已开始的操作会继续完成".into())
-            }
+        // MCP permits omitted arguments for parameterless tools.
+        let arguments = Value::Object(request.arguments.unwrap_or_default());
+        let operation = match request.name.as_ref() {
+            "list_operations" => serde_json::from_value::<ListInput>(arguments)
+                .map(|_| ("listOperations".into(), json!({}))),
+            "describe_operation" => serde_json::from_value::<DescribeInput>(arguments)
+                .map(|input| ("describeOperation".into(), json!({"name":input.name}))),
+            "call_operation" => serde_json::from_value::<CallInput>(arguments)
+                .map(|input| (input.name, Value::Object(input.input))),
+            name => return Err(ErrorData::invalid_params(format!("没有工具 {name}"), None)),
+        };
+        let result = match operation {
+            Ok((op, input)) => tokio::select! {
+                result = execute(&op, input, &context) => result,
+                () = context.ct.cancelled() => {
+                    Err("调用已取消，未回答的确认请求已作废；已开始的操作会继续完成".into())
+                }
+            },
+            Err(error) => Err(format!("工具参数不正确：{error}")),
         };
         let result = match result {
             Ok(value) => match value.get("error") {
@@ -117,29 +131,12 @@ impl ServerHandler for Server {
 }
 
 async fn execute(
-    request: CallToolRequestParams,
+    op: &str,
+    input: Value,
     context: &RequestContext<RoleServer>,
 ) -> Result<Value, String> {
-    // MCP permits omitted arguments for parameterless tools.
-    let arguments = Value::Object(request.arguments.unwrap_or_default());
-    let invalid = |error| format!("工具参数不正确：{error}");
-    let (op, input) = match request.name.as_ref() {
-        "list_operations" => {
-            serde_json::from_value::<ListInput>(arguments).map_err(invalid)?;
-            ("listOperations".into(), json!({}))
-        }
-        "describe_operation" => {
-            let input: DescribeInput = serde_json::from_value(arguments).map_err(invalid)?;
-            ("describeOperation".into(), json!({"name":input.name}))
-        }
-        "call_operation" => {
-            let input: CallInput = serde_json::from_value(arguments).map_err(invalid)?;
-            (input.name, Value::Object(input.input))
-        }
-        name => return Err(format!("没有工具 {name}")),
-    };
     let (waiting, confirmation) = tokio::sync::oneshot::channel();
-    let call = client::call(&op, input, |_| {
+    let call = client::call(op, input, |_| {
         // This only signals progress; the final response owns the result.
         let _ = waiting.send(());
     });
