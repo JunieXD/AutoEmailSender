@@ -98,7 +98,8 @@ export function AccountDialog({
                   <Input
                     ref={emailRef}
                     id="account-email"
-                    type="email"
+                    // Not type="email": the browser would reject full-width input the core normalizes.
+                    inputMode="email"
                     autoComplete="email"
                     spellCheck={false}
                     value={email}
@@ -110,7 +111,10 @@ export function AccountDialog({
                       variant="quiet"
                       className="w-[118px]"
                       disabled={wait > 0 || send.isPending || email.trim() === ""}
-                      onClick={() => send.mutate(email)}
+                      onClick={() => {
+                        submit.reset();
+                        send.mutate(email);
+                      }}
                     >
                       {wait > 0 ? `${wait} 秒后重发` : send.isSuccess ? "重新发送" : "发送验证码"}
                     </Button>
