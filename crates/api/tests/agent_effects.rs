@@ -76,8 +76,6 @@ async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool)
     )
     .await
     .unwrap();
-    let draft =
-        |body: &str| json!({"mentorId":mentor, "subject":"申请", "bodyMd":body, "attachments":[]});
     email::save_first_draft(&ctx.db, mentor, "申请", "旧草稿", &[], 0)
         .await
         .unwrap();
@@ -86,7 +84,10 @@ async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool)
         "saveFirstDraft",
         json!({"mentorId":mentor, "subject":"", "bodyMd":"", "attachments":[]}),
         async {
-            call(&ctx, "saveFirstDraft", draft("新草稿")).await.unwrap();
+            // Same subject and saved time: only the body tells the drafts apart.
+            email::save_first_draft(&ctx.db, mentor, "申请", "新草稿", &[], 0)
+                .await
+                .unwrap();
         },
     )
     .await;

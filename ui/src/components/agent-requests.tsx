@@ -65,7 +65,7 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
           {targets.length > 0 && (
             <ul className="divide-y divide-border rounded-lg border border-border text-sm">
               {targets.slice(0, SHOWN).map((target, i) => (
-                <li key={i} className="px-3 py-1.5 wrap-anywhere">
+                <li key={i} className="px-3 py-1.5 whitespace-pre-line wrap-anywhere">
                   {target}
                 </li>
               ))}

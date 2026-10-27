@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name, e.subject, e.body_md, e.updated_at, (\n                    SELECT group_concat(file_name, '、')\n                    FROM email_attachment\n                    WHERE email_id = e.id\n                ) AS \"attachments?: String\"\n                FROM email e JOIN mentor m ON m.id = e.mentor_id\n                WHERE e.mentor_id = ? AND e.kind = ? AND e.state = 'review'\n                    AND (? <> 'first' OR e.task_id IS NULL)\n                ORDER BY e.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "body_md",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "body_md"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "name": "attachments?: String",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "63134889eb8e0ce18cfd840f4a44fdf882787936d77ae5718fa9191dd0cf3229"
+}
