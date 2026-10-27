@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { AgentRequest } from "@/api/types";
+import type { AgentRequest, ConfirmationLetter, SendAt } from "@/api/types";
+import { openLinks } from "@/components/correspondence";
+import { scheduledAt, scheduleText } from "@/components/schedule";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { fileSize } from "@/format";
+import { letterHtml, letterText } from "@/letter";
 
 /**
  * What an Agent asked to do that needs the user's say (docs/ui.md 设置 › 应用 › 手机和 Agent), one
@@ -29,17 +33,30 @@ const SHOWN = 5;
 
 function RequestDialog({ request, queued }: { request: AgentRequest; queued: number }) {
   const queryClient = useQueryClient();
+  const style = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) });
+  const { action, targets, letters } = request.description;
+  // What goes out is exactly the letter shown here, rendered as the app renders every letter.
+  const rendered = useMemo(() => {
+    const s = style.data;
+    return s && letters.map((l) => ({ html: letterHtml(l.bodyMd, s), text: letterText(l.bodyMd) }));
+  }, [letters, style.data]);
   const answer = useMutation({
-    mutationFn: (allow: boolean) => call("answerAgentRequest", { id: request.id, allow }),
+    mutationFn: (allow: boolean) =>
+      call("answerAgentRequest", { id: request.id, allow, rendered: allow ? rendered : undefined }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["listAgentRequests"] }),
   });
   // An answered request stays on screen until the list comes back without it.
   const busy = answer.isPending || answer.isSuccess;
-  const { action, targets } = request.description;
+  // A task's letters all go by the task's schedule, said once above them.
+  const [first] = letters;
+  const sharedTime =
+    letters.length > 1 && first && letters.every((l) => sendText(l.sendAt) === sendText(first.sendAt))
+      ? sendText(first.sendAt)
+      : null;
   return (
     // Closing it is a no: the Agent hears it was refused and can ask again.
     <Dialog open onOpenChange={(open) => !open && !busy && answer.mutate(false)}>
-      <DialogContent className="w-[480px]">
+      <DialogContent className={letters.length > 0 ? "w-[600px]" : "w-[480px]"}>
         <DialogHeader>Agent 请求</DialogHeader>
         <DialogBody className="space-y-3 py-4">
           <p className="text-base">{action}</p>
@@ -48,7 +65,7 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
           {targets.length > 0 && (
             <ul className="divide-y divide-border rounded-lg border border-border text-sm">
               {targets.slice(0, SHOWN).map((target, i) => (
-                <li key={i} className="px-3 py-1.5 wrap-anywhere">
+                <li key={i} className="px-3 py-1.5 whitespace-pre-line wrap-anywhere">
                   {target}
                 </li>
               ))}
@@ -57,6 +74,27 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
               )}
             </ul>
           )}
+          {letters.length === 1 && first && <Letter letter={first} html={rendered?.[0]?.html} time />}
+          {letters.length > 1 && (
+            <div className="space-y-2">
+              {sharedTime && <p className="text-sm">{sharedTime}</p>}
+              <ul className="max-h-80 divide-y divide-border overflow-y-auto rounded-lg border border-border text-sm">
+                {letters.map((l, i) => (
+                  <li key={i}>
+                    <details>
+                      <summary className="cursor-pointer px-3 py-2 wrap-anywhere">
+                        {l.mentorName}：{l.subject}
+                      </summary>
+                      <div className="px-3 pb-3">
+                        <Letter letter={l} html={rendered?.[i]?.html} time={!sharedTime} />
+                      </div>
+                    </details>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {style.error && <p className="text-sm text-destructive">信件样式未能读取：{errorMessage(style.error)}</p>}
           <p className="text-sm text-muted-foreground">
             这是你接入的 Agent 要做的事，允许后马上执行。5 分钟内不回应，就当作拒绝。
             {queued > 0 && `之后还有 ${queued} 条请求。`}
@@ -67,11 +105,66 @@ function RequestDialog({ request, queued }: { request: AgentRequest; queued: num
           <Button variant="ghost" onClick={() => answer.mutate(false)} disabled={busy}>
             拒绝
           </Button>
-          <Button onClick={() => answer.mutate(true)} disabled={busy}>
+          <Button onClick={() => answer.mutate(true)} disabled={busy || (letters.length > 0 && !rendered)}>
             允许
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function sendText(at: SendAt): string {
+  if (at.kind === "now") return "立即发出";
+  if (at.kind === "at") return `${scheduledAt(at.at)} 发出`;
+  return at.schedule.kind === "now" ? "立即发出" : `按任务的发送安排：${scheduleText(at.schedule)}`;
+}
+
+/** A letter as it will go out; everything in it came from the Agent or the data. */
+function Letter({ letter: l, html, time }: { letter: ConfirmationLetter; html?: string; time: boolean }) {
+  return (
+    <div className="space-y-2 text-sm">
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <dt className="text-muted-foreground">收件人</dt>
+        <dd className="wrap-anywhere">
+          {l.mentorName} {l.address ?? "（未填写邮箱）"}
+        </dd>
+        {l.mailboxAddress && (
+          <>
+            <dt className="text-muted-foreground">发件邮箱</dt>
+            <dd className="wrap-anywhere">{l.mailboxAddress}</dd>
+          </>
+        )}
+        {time && (
+          <>
+            <dt className="text-muted-foreground">时间</dt>
+            <dd>{sendText(l.sendAt)}</dd>
+          </>
+        )}
+        <dt className="text-muted-foreground">主题</dt>
+        <dd className="wrap-anywhere">{l.subject}</dd>
+        {l.attachments.length > 0 && (
+          <>
+            <dt className="text-muted-foreground">附件</dt>
+            <dd className="wrap-anywhere">
+              {l.attachments.map((a) => `${a.fileName}（${fileSize(a.size)}）`).join("、")}
+            </dd>
+          </>
+        )}
+      </dl>
+      {/* In the letter style, as sent; the app's own styles would show it otherwise. */}
+      {html && (
+        <div
+          className="max-h-64 overflow-y-auto rounded-lg border border-border px-4 py-3 [&_a]:text-brand-text [&_a]:underline"
+          dangerouslySetInnerHTML={{ __html: html }}
+          onClick={openLinks}
+        />
+      )}
+      {l.previous && (
+        <p className="text-muted-foreground">
+          正文后附上 {l.previous.fromName ?? l.previous.fromAddress} {scheduledAt(l.previous.sentAt)} 来信的引用。
+        </p>
+      )}
+    </div>
   );
 }

@@ -1,27 +1,27 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT university, school FROM crawl WHERE id = ?",
+  "query": "SELECT address, paused_until FROM mailbox WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "university",
+        "name": "address",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "crawl",
-            "name": "university"
+            "table": "mailbox",
+            "name": "address"
           }
         }
       },
       {
-        "name": "school",
+        "name": "paused_until",
         "ordinal": 1,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "crawl",
-            "name": "school"
+            "table": "mailbox",
+            "name": "paused_until"
           }
         }
       }
@@ -30,9 +30,9 @@
       "Right": 1
     },
     "nullable": [
-      true,
+      false,
       true
     ]
   },
-  "hash": "15d170dda4ea65e6cbb53ef1cd625cb03c9599afe21de1237559063d4b1dc18a"
+  "hash": "c0c4919c155b68976739a5a9836efc7ba69033eea8c96ccd3b0f8abda7ca4c01"
 }

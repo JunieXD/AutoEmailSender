@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name, mailbox_id,\n            (SELECT address FROM mailbox WHERE id = mentor.mailbox_id) AS \"mailbox_address?: String\",\n            (SELECT address FROM mentor_email WHERE mentor_id = mentor.id\n                ORDER BY position LIMIT 1) AS \"address?: String\"\n        FROM mentor WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "mailbox_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "mailbox_id"
+          }
+        }
+      },
+      {
+        "name": "mailbox_address?: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "address?: String",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4233e3752908282a11eb1c423f1916968b61a2fd657f1d13a02a0da8b14ea0d7"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"count!: i64\" FROM email\n                WHERE mentor_id IN (?1, ?2) AND task_id IS NOT NULL\n                    AND state = 'canceled' AND sent_at IS NULL\n                    AND EXISTS (SELECT 1 FROM email k WHERE k.task_id = email.task_id\n                        AND k.mentor_id IN (?1, ?2) AND k.mentor_id <> email.mentor_id\n                        AND (email.mentor_id = ?2 OR k.state IN ('maybe_sent', 'sent', 'bounced')\n                            OR (k.state = 'canceled' AND k.sent_at IS NOT NULL)))",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4b5c93792ca1205ec3efbb22a106c7132b42e0e88f31cc48bff0eca5e775fe40"
+}

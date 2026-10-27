@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT name,\n                    (SELECT count(*) FROM mentor_tag WHERE tag_id = tag.id) AS \"mentors!: i64\"\n                FROM tag WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tag",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "mentors!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "f838eb0d9920b6f7fd2bac77b4c95a1bc127dd01192d4ba5fe3a11003a99c239"
+}

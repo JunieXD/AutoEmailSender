@@ -121,8 +121,36 @@ pub async fn save_first_draft(
     }))
 }
 
-/// Attaches these materials, named as their files are now, in place of what the email had. A
-/// material deleted meanwhile is left out, and of two files with one name, the first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectedAttachment {
+    pub material_id: i64,
+    pub file_name: String,
+    pub size: i64,
+}
+
+/// A deleted material is left out; of several files with one name, keep the first in input order.
+pub async fn select_attachments(
+    conn: &mut SqliteConnection,
+    materials: &[i64],
+) -> Result<Vec<SelectedAttachment>, sqlx::Error> {
+    sqlx::query_as!(
+        SelectedAttachment,
+        r#"WITH selected AS (
+            SELECT m.id AS material_id, m.file_name, m.size, j.key AS position,
+                row_number() OVER (PARTITION BY m.file_name ORDER BY j.key) AS named
+            FROM json_each(?) j JOIN material m ON m.id = j.value
+        )
+        SELECT material_id AS "material_id!", file_name AS "file_name!", size AS "size!"
+        FROM selected WHERE named = 1
+        ORDER BY position"#,
+        Json(materials)
+    )
+    .fetch_all(conn)
+    .await
+}
+
+/// Replaces an email's attachments with the selected materials and their current file names.
 pub async fn attach(
     conn: &mut SqliteConnection,
     email_id: i64,
@@ -131,18 +159,18 @@ pub async fn attach(
     sqlx::query!("DELETE FROM email_attachment WHERE email_id = ?", email_id)
         .execute(&mut *conn)
         .await?;
-    let materials = Json(materials);
-    // "WHERE true" tells SQLite that ON CONFLICT is not part of the join.
-    sqlx::query!(
-        "INSERT INTO email_attachment (email_id, material_id, file_name, size)
-         SELECT ?1, m.id, m.file_name, m.size FROM json_each(?2) j JOIN material m ON m.id = j.value
-         WHERE true ORDER BY j.key
-         ON CONFLICT DO NOTHING",
-        email_id,
-        materials,
-    )
-    .execute(conn)
-    .await?;
+    for file in select_attachments(conn, materials).await? {
+        sqlx::query!(
+            r#"INSERT INTO email_attachment (email_id, material_id, file_name, size)
+            VALUES (?, ?, ?, ?)"#,
+            email_id,
+            file.material_id,
+            file.file_name,
+            file.size
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
     Ok(())
 }
 

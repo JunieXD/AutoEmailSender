@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.message_id, m.subject, m.sent_at, m.from_address, m.from_name,\n                m.body_text, m.refs\n            FROM message m JOIN message_mentor mm ON mm.message_id = m.id\n            WHERE mm.mentor_id = ? AND m.message_id = ? AND m.kind = 'reply'",
+  "describe": {
+    "columns": [
+      {
+        "name": "message_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "message_id"
+          }
+        }
+      },
+      {
+        "name": "subject",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "subject"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "sent_at"
+          }
+        }
+      },
+      {
+        "name": "from_address",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_address"
+          }
+        }
+      },
+      {
+        "name": "from_name",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "from_name"
+          }
+        }
+      },
+      {
+        "name": "body_text",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "body_text"
+          }
+        }
+      },
+      {
+        "name": "refs",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "message",
+            "name": "refs"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "50bcb3e3491b7d3ee96f3b9107e25af15b0c11fb2ca2f95be07c571606221a07"
+}

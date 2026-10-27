@@ -653,7 +653,7 @@ function Text({ text }: { text: string }) {
 const LINK = /((?:https?:\/\/|www\.)[\w\-.~:/?#[\]@!$&'()*+,;=%]*[\w\-~/#=%&])/;
 
 /** Links open in the system's browser or mail app, not in place of the app. */
-function openLinks(event: React.MouseEvent) {
+export function openLinks(event: React.MouseEvent) {
   const link = event.target instanceof Element ? event.target.closest("a") : null;
   if (!link) return;
   event.preventDefault();

@@ -100,6 +100,14 @@ pub struct AgentRequest {
 pub struct AgentAnswer {
     pub id: u64,
     pub allow: bool,
+    #[ts(optional)]
+    pub rendered: Option<Vec<RenderedLetter>>,
+}
+
+#[derive(Deserialize, TS)]
+pub struct RenderedLetter {
+    pub html: String,
+    pub text: String,
 }
 
 #[derive(Default)]
@@ -111,7 +119,7 @@ struct Requests {
 struct Pending {
     request: AgentRequest,
     expires: Instant,
-    answer: oneshot::Sender<bool>,
+    answer: oneshot::Sender<Option<Vec<RenderedLetter>>>,
 }
 
 struct Confirmation<'a> {
@@ -175,7 +183,7 @@ impl Access {
         description: Description,
         waiting: impl FnOnce(&Description),
         cancelled: impl std::future::Future<Output = ()>,
-    ) -> Result<(), CallError> {
+    ) -> Result<Vec<RenderedLetter>, CallError> {
         let (answer, result) = oneshot::channel();
         let expires = Instant::now() + CONFIRM_FOR;
         let id = {
@@ -208,8 +216,8 @@ impl Access {
             () = cancelled => return Err(CallError::invalid("这个请求已经失效".into())),
         };
         match answer {
-            Ok(Ok(true)) => Ok(()),
-            Ok(Ok(false)) => Err(CallError::invalid("你在应用里拒绝了这个操作".into())),
+            Ok(Ok(Some(rendered))) => Ok(rendered),
+            Ok(Ok(None)) => Err(CallError::invalid("你在应用里拒绝了这个操作".into())),
             // Closing access removes unanswered requests and drops their answer senders.
             Ok(Err(_)) => Err(CallError::invalid("这个请求已经失效".into())),
             Err(_) => {
@@ -242,12 +250,20 @@ pub async fn answer_agent_request(ctx: &Context, input: AgentAnswer) -> Result<(
             .iter()
             .position(|p| p.request.id == input.id && p.expires > Instant::now())
             .ok_or_else(|| CallError::invalid("这个请求已经失效".into()))?;
+        let count = requests.pending[index].request.description.letters.len();
+        if input.allow && input.rendered.as_ref().map_or(0, Vec::len) != count {
+            return Err(CallError::invalid(
+                "请为每封待发邮件提供对应的 HTML 和纯文本渲染结果。".into(),
+            ));
+        }
         requests
             .pending
             .remove(index)
             .unwrap_or_else(|| unreachable!("the index was just found"))
     };
-    let answered = pending.answer.send(input.allow);
+    // Requests without letters need no rendering; the count was checked before removing them.
+    let rendered = input.rendered.unwrap_or_default();
+    let answered = pending.answer.send(input.allow.then_some(rendered));
     tracing::info!(
         op = pending.request.op,
         decision = if answered.is_err() {
@@ -539,6 +555,7 @@ async fn session(
     let (closed, mut cancelled) = watch::channel(false);
     let mut reader_closed = closed.subscribe();
     let mut call_shutdown = shutdown.clone();
+    let write_shutdown = shutdown.clone();
     let reading = async {
         let result = async {
             loop {
@@ -581,7 +598,7 @@ async fn session(
                             request.input,
                             |description| {
                                 // The transport may already have been closed.
-                                let _ = waiting.send(description.clone());
+                                let _ = waiting.send(description.action.clone());
                             },
                             async {
                                 tokio::select! {
@@ -604,7 +621,7 @@ async fn session(
                         write_frame(
                             &mut writer,
                             &closed,
-                            serde_json::json!({ "waiting": description }),
+                            serde_json::json!({ "waiting": { "action": description } }),
                         ).await;
                     }
                     result
@@ -614,7 +631,7 @@ async fn session(
                         write_frame(
                             &mut writer,
                             &closed,
-                            serde_json::json!({ "waiting": description }),
+                            serde_json::json!({ "waiting": { "action": description } }),
                         ).await;
                     }
                     call.await
@@ -624,6 +641,9 @@ async fn session(
                 Ok(output) => serde_json::json!({ "ok": output }),
                 Err(error) => serde_json::json!({ "error": error }),
             };
+            if *write_shutdown.borrow() {
+                break;
+            }
             write_frame(&mut writer, &closed, response).await;
         }
         closed.send_replace(true);

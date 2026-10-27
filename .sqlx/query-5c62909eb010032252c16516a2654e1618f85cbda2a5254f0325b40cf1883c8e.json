@@ -1,0 +1,52 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name,\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"old_address?: String\",\n            COUNT(*) AS \"count!: i64\",\n            json_group_array(e.planned_at ORDER BY e.id) AS \"times!: Json<Vec<Option<i64>>>\"\n        FROM mentor m\n        JOIN email e ON e.mentor_id = m.id\n        WHERE m.id = ?1 AND e.state = 'approved'\n            AND (SELECT address FROM mentor_email\n                WHERE mentor_id = ?1 ORDER BY position LIMIT 1) IS NOT ?2 COLLATE NOCASE\n        GROUP BY m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "old_address?: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      },
+      {
+        "name": "count!: i64",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "times!: Json<Vec<Option<i64>>>",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "5c62909eb010032252c16516a2654e1618f85cbda2a5254f0325b40cf1883c8e"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"count!: i64\" FROM email\n                WHERE task_id = ? AND NOT (\n                    state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')\n                    OR (state = 'canceled' AND sent_at IS NOT NULL))",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "685f58ad009af806f312955bc2e9a4fbc42a1e0501520afe485356f2a0d36636"
+}

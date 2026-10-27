@@ -270,7 +270,7 @@ macro_rules! operations {
 pub async fn call_agent(
     ctx: &Context,
     op: &str,
-    input: serde_json::Value,
+    mut input: serde_json::Value,
     waiting: impl FnOnce(&agent::Description),
     cancelled: impl std::future::Future<Output = ()>,
 ) -> Result<serde_json::Value, CallError> {
@@ -286,7 +286,8 @@ pub async fn call_agent(
                 description = agent::confirmation(ctx, op, &input) => description?,
             };
             if let Some(description) = description {
-                ctx.agent_access
+                let rendered = ctx
+                    .agent_access
                     .confirm(op, description.clone(), waiting, &mut cancelled)
                     .await?;
                 if let Some(current) = agent::confirmation(ctx, op, &input).await?
@@ -296,6 +297,25 @@ pub async fn call_agent(
                     return Err(CallError::invalid(
                         "等你确认期间情况变了，请重新发起".into(),
                     ));
+                }
+                match op {
+                    "approveTaskEmails" => {
+                        let approvals = input["emails"].as_array_mut().unwrap_or_else(|| {
+                            unreachable!("task approvals were parsed before confirmation")
+                        });
+                        for (approval, rendered) in approvals.iter_mut().zip(rendered) {
+                            approval["html"] = rendered.html.into();
+                            approval["text"] = rendered.text.into();
+                        }
+                    }
+                    "approveFirstEmail" | "approveFollowUp" | "approveReply" => {
+                        let rendered = rendered.into_iter().next().unwrap_or_else(|| {
+                            unreachable!("the answer's rendering count was checked")
+                        });
+                        input["html"] = rendered.html.into();
+                        input["text"] = rendered.text.into();
+                    }
+                    _ => {}
                 }
             }
             call(ctx, op, input).await
@@ -539,7 +559,8 @@ operations! {
         "updateMentor" [confirm_if "更改已批准邮件的收件地址时"] =>
             update_mentor(MentorEdit) -> mentor::MentorDetail;
         /// 设置联系导师使用的邮箱，mailboxId 为 null 时取消指定。
-        "setMentorMailbox" [none] => set_mentor_mailbox(MentorMailbox) -> mentor::MentorDetail;
+        "setMentorMailbox" [confirm_if "这位导师有已批准还没发出的邮件，且发件邮箱改变时"] =>
+            set_mentor_mailbox(MentorMailbox) -> mentor::MentorDetail;
         /// 为指定导师添加邮箱地址，address 为新地址。
         "addMentorEmail" [confirm_if "新地址成为已批准邮件的收件地址时"] =>
             add_mentor_email(MentorAddress) -> mentor::MentorDetail;
@@ -585,7 +606,8 @@ operations! {
         /// 添加发信和收信邮箱，返回新邮箱的 id。
         "addMailbox" [none] => add_mailbox(NewMailbox) -> MailboxId;
         /// 修改指定邮箱设置，可填写新的授权码。
-        "updateMailbox" [confirm_if "修改未到期暂停中的邮箱设置、会恢复发信时"] => update_mailbox(MailboxEdit) -> ();
+        "updateMailbox" [confirm_if "修改未到期暂停中的邮箱设置会恢复发信，或更改邮箱地址会影响已批准邮件时"] =>
+            update_mailbox(MailboxEdit) -> ();
         /// 立即恢复指定邮箱的发信。
         "resumeMailbox" [confirm] => resume_mailbox(MailboxId) -> ();
         /// 永久删除指定邮箱。
@@ -2017,8 +2039,11 @@ pub struct FirstEmail {
     pub mentor_id: i64,
     pub subject: String,
     pub body_md: String,
-    pub html: String,
-    pub text: String,
+    /// Agent approvals receive these from the confirmation dialog.
+    #[ts(optional)]
+    pub html: Option<String>,
+    #[ts(optional)]
+    pub text: Option<String>,
     /// Materials, by id.
     pub attachments: Vec<i64>,
 }
@@ -2043,8 +2068,14 @@ async fn approve_first_email(ctx: &Context, input: FirstEmail) -> Result<(), Cal
     let approval = email::Approval {
         subject,
         body_md: &input.body_md,
-        html: &input.html,
-        text: &input.text,
+        html: input
+            .html
+            .as_deref()
+            .ok_or_else(|| CallError::invalid("缺少邮件的 HTML 渲染结果。".into()))?,
+        text: input
+            .text
+            .as_deref()
+            .ok_or_else(|| CallError::invalid("缺少邮件的纯文本渲染结果。".into()))?,
         attachments: &input.attachments,
     };
     approved(
@@ -2183,8 +2214,11 @@ pub struct ReplyEmail {
     pub draft_id: i64,
     pub reply_to: String,
     pub body_md: String,
-    pub html: String,
-    pub text: String,
+    /// Agent approvals receive these from the confirmation dialog.
+    #[ts(optional)]
+    pub html: Option<String>,
+    #[ts(optional)]
+    pub text: Option<String>,
     pub attachments: Vec<i64>,
 }
 
@@ -2195,8 +2229,14 @@ async fn approve_reply(ctx: &Context, input: ReplyEmail) -> Result<(), CallError
     let approval = email::Approval {
         subject: "",
         body_md: &input.body_md,
-        html: &input.html,
-        text: &input.text,
+        html: input
+            .html
+            .as_deref()
+            .ok_or_else(|| CallError::invalid("缺少邮件的 HTML 渲染结果。".into()))?,
+        text: input
+            .text
+            .as_deref()
+            .ok_or_else(|| CallError::invalid("缺少邮件的纯文本渲染结果。".into()))?,
         attachments: &input.attachments,
     };
     approved(
@@ -2277,8 +2317,14 @@ async fn approve_follow_up(ctx: &Context, input: ReplyEmail) -> Result<(), CallE
     let approval = email::Approval {
         subject: "",
         body_md: &input.body_md,
-        html: &input.html,
-        text: &input.text,
+        html: input
+            .html
+            .as_deref()
+            .ok_or_else(|| CallError::invalid("缺少邮件的 HTML 渲染结果。".into()))?,
+        text: input
+            .text
+            .as_deref()
+            .ok_or_else(|| CallError::invalid("缺少邮件的纯文本渲染结果。".into()))?,
         attachments: &input.attachments,
     };
     approved(

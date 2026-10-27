@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COALESCE(name, model) AS \"name!: String\"\n                FROM model_config\n                WHERE id = ?",
+  "query": "SELECT m.name || '：' || t.text AS \"name!: String\"\n                FROM todo t JOIN mentor m ON m.id = t.mentor_id WHERE t.id = ?",
   "describe": {
     "columns": [
       {
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "5d4cee726b6e851defd3403e8b0b830255c9d95770a67d844d0a8c6954eee594"
+  "hash": "50e64790a7c604c8af40de2dcdefd653a7c6ef6038a219b763b47f9511d2ebac"
 }

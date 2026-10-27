@@ -227,8 +227,15 @@ async fn confirmations_follow_the_real_channel_and_cli_until_answer_expiry_or_di
     let requests = pending(&ctx).await?;
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["op"], "deleteTag");
-    assert_eq!(requests[0]["description"], waiting["waiting"]);
-    assert_eq!(requests[0]["description"]["targets"], json!([name]));
+    assert_eq!(
+        waiting["waiting"],
+        json!({"action":requests[0]["description"]["action"]})
+    );
+    assert!(
+        requests[0]["description"]["targets"][0]
+            .as_str()
+            .is_some_and(|target| target.contains(&name))
+    );
     assert!(
         requests[0]["description"]["action"]
             .as_str()

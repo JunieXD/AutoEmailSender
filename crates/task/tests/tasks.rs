@@ -85,8 +85,8 @@ fn approval(d: &TaskDraft) -> RenderedApproval {
         id: d.id,
         subject: d.subject.clone(),
         body_md: d.body_md.clone(),
-        html: format!("<p>{}</p>", d.body_md),
-        text: d.body_md.clone(),
+        html: Some(format!("<p>{}</p>", d.body_md)),
+        text: Some(d.body_md.clone()),
     }
 }
 

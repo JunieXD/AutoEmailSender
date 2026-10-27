@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO email_attachment (email_id, material_id, file_name, size)\n            VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "6def9e4e7336cbec504a55eebf979d4401dc33a9623e2defa3c3d5baf961d11b"
+}

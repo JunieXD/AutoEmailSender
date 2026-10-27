@@ -10,7 +10,7 @@ export type AffiliationAddition = { before: Affiliation | null, added: Affiliati
 
 export type AgentAccess = { enabled: boolean, };
 
-export type AgentAnswer = { id: number, allow: boolean, };
+export type AgentAnswer = { id: number, allow: boolean, rendered?: Array<RenderedLetter>, };
 
 export type AgentCli = { state: AgentCliState, command: string,
 /**
@@ -55,6 +55,12 @@ export type CandidateRow = { id: number, crawlId: number | null, name: string, e
 export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
 export type Column = { header: string, field: Field | null, };
+
+export type ConfirmationLetter = { mentorId: number, mentorName: string, address: string | null, mailboxId: number | null, mailboxAddress: string | null, sendAt: SendAt, subject: string, bodyMd: string, attachments: Array<SelectedAttachment>,
+/**
+ * The core appends this quote after rendering the new Markdown body.
+ */
+previous: QuotedMessage | null, };
 
 export type Contact = { "status": "none" } | { "status": "contacted", count: number, lastOutAt: number, } | { "status": "replied", count: number, lastOutAt: number | null, lastReplyAt: number, unread: boolean, } | { "status": "bounced", count: number, lastOutAt: number, };
 
@@ -106,9 +112,9 @@ export type DefaultTemplate = { id: number | null, };
 
 export type Description = {
 /**
- * Only application-authored text and counts; object content belongs in targets.
+ * Only application-authored text and counts; object content belongs in the other fields.
  */
-action: string, targets: Array<string>, };
+action: string, targets: Array<string>, letters: Array<ConfirmationLetter>, };
 
 export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 
@@ -190,7 +196,11 @@ export type FirstDraftEdit = { mentorId: number, subject: string, bodyMd: string
  */
 attachments: Array<number>, };
 
-export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: string, bodyMd: string, html: string, text: string,
+export type FirstEmail = { plannedAt: number | null, mentorId: number, subject: string, bodyMd: string,
+/**
+ * Agent approvals receive these from the confirmation dialog.
+ */
+html?: string, text?: string,
 /**
  * Materials, by id.
  */
@@ -570,17 +580,29 @@ export type Purpose = "matching" | "writing" | "attach_by_default";
 
 export type PurposeUsage = { purpose: UsagePurpose, input: number, cached: number, output: number, estimatedCost: number | null, unpricedCalls: number, };
 
+export type QuotedMessage = { messageId: string | null, subject: string | null, sentAt: number, fromAddress: string, fromName: string | null, bodyText: string | null, refs: string | null, };
+
 export type Range = "week" | "month" | "quarter" | "all";
 
 export type ReceiveStatus = { receivedAt: number | null, };
 
-export type RenderedApproval = { attachments: Array<number>, id: number, html: string, text: string, subject: string, bodyMd: string, };
+export type RenderedApproval = { attachments: Array<number>, id: number,
+/**
+ * Agent approvals receive these from the confirmation dialog.
+ */
+html?: string, text?: string, subject: string, bodyMd: string, };
+
+export type RenderedLetter = { html: string, text: string, };
 
 export type ReplyDraft = { factCheck: FactCheck | null, id: number, replyTo: string, bodyMd: string | null, attachments: Array<number>, target: ReplyTarget | null, };
 
 export type ReplyDraftEdit = { mentorId: number, replyTo: string, bodyMd: string, attachments: Array<number>, };
 
-export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string, html: string, text: string, attachments: Array<number>, };
+export type ReplyEmail = { mentorId: number, draftId: number, replyTo: string, bodyMd: string,
+/**
+ * Agent approvals receive these from the confirmation dialog.
+ */
+html?: string, text?: string, attachments: Array<number>, };
 
 export type ReplyMessage = { messageId: number, };
 
@@ -629,6 +651,10 @@ export type SchoolProgress = { university: string, contacted: number, replied: n
 export type Scope = { "kind": "filter", "value": MentorFilter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
+
+export type SelectedAttachment = { materialId: number, fileName: string, size: number, };
+
+export type SendAt = { "kind": "now" } | { "kind": "at", at: number, } | { "kind": "task", taskId: number, schedule: Schedule, };
 
 export type SendTestLetter = { mailboxId: number, subject: string, html: string, text: string, attachments: Array<number>, };
 
