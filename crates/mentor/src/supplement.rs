@@ -2,21 +2,30 @@
 
 use crate::{Affiliation, MentorFields, place};
 
-pub fn comparable(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .map(|c| match c {
+fn comparable_chars(value: &str) -> impl Iterator<Item = char> + '_ {
+    let mut space = false;
+    value.trim().chars().filter_map(move |c| {
+        if c.is_whitespace() {
+            if space {
+                return None;
+            }
+            space = true;
+            return Some(' ');
+        }
+        space = false;
+        Some(match c {
             'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' => (c as u32 - 0xfee0) as u8 as char,
             _ => c,
         })
-        .collect()
+    })
+}
+
+pub fn comparable(value: &str) -> String {
+    comparable_chars(value).collect()
 }
 
 pub fn same(a: &str, b: &str) -> bool {
-    comparable(a) == comparable(b)
+    a == b || comparable_chars(a).eq(comparable_chars(b))
 }
 
 pub(crate) fn same_affiliation(a: &Affiliation, b: &Affiliation) -> bool {
@@ -29,6 +38,27 @@ pub(crate) fn same_affiliation(a: &Affiliation, b: &Affiliation) -> bool {
     .all(|(a, b)| match (a, b) {
         (Some(a), Some(b)) => same(a, b),
         _ => true,
+    })
+}
+
+pub fn affiliation_position(affiliations: &[Affiliation], incoming: &Affiliation) -> Option<usize> {
+    let exact = affiliations.iter().position(|a| {
+        [
+            (&a.university, &incoming.university),
+            (&a.school, &incoming.school),
+            (&a.department, &incoming.department),
+        ]
+        .into_iter()
+        .all(|(a, b)| match (a, b) {
+            (Some(a), Some(b)) => same(a, b),
+            (None, None) => true,
+            _ => false,
+        })
+    });
+    exact.or_else(|| {
+        affiliations
+            .iter()
+            .position(|a| same_affiliation(a, incoming))
     })
 }
 
@@ -61,25 +91,7 @@ pub fn add_missing(
     append(papers, incoming_papers);
     let mut differences = Vec::new();
     for incoming in &incoming.affiliations {
-        let exact = fields.affiliations.iter().position(|a| {
-            [
-                (&a.university, &incoming.university),
-                (&a.school, &incoming.school),
-                (&a.department, &incoming.department),
-            ]
-            .into_iter()
-            .all(|(a, b)| match (a, b) {
-                (Some(a), Some(b)) => same(a, b),
-                (None, None) => true,
-                _ => false,
-            })
-        });
-        let position = exact.or_else(|| {
-            fields
-                .affiliations
-                .iter()
-                .position(|a| same_affiliation(a, incoming))
-        });
+        let position = affiliation_position(&fields.affiliations, incoming);
         if let Some(position) = position {
             let local = &mut fields.affiliations[position];
             if let (Some(a), Some(b)) = (&local.title, &incoming.title)

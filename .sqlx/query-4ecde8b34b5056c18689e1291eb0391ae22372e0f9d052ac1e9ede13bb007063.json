@@ -1,33 +1,22 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.name, a.university, a.school, a.department, a.title\n        FROM mentor m LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id AND a.position = 0\n        WHERE m.trashed_at IS NULL ORDER BY m.id LIMIT 50",
+  "query": "WITH chosen AS (\n            SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS field\n            FROM json_each(?1)\n        )\n        SELECT a.mentor_id, a.university, a.school, a.department, a.title\n        FROM mentor_affiliation a\n        WHERE a.mentor_id IN (SELECT id FROM chosen WHERE field IN ('title', 'primaryAffiliation'))\n            AND (a.mentor_id IN (SELECT id FROM chosen WHERE field = 'title')\n                OR a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = a.mentor_id))\n        ORDER BY a.mentor_id, a.position",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "mentor_id",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "mentor",
-            "name": "id"
-          }
-        }
-      },
-      {
-        "name": "name",
-        "ordinal": 1,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "mentor",
-            "name": "name"
+            "table": "mentor_affiliation",
+            "name": "mentor_id"
           }
         }
       },
       {
         "name": "university",
-        "ordinal": 2,
+        "ordinal": 1,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +27,7 @@
       },
       {
         "name": "school",
-        "ordinal": 3,
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,7 +38,7 @@
       },
       {
         "name": "department",
-        "ordinal": 4,
+        "ordinal": 3,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -60,7 +49,7 @@
       },
       {
         "name": "title",
-        "ordinal": 5,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -71,10 +60,9 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
-      false,
       false,
       true,
       true,
@@ -82,5 +70,5 @@
       true
     ]
   },
-  "hash": "ac4a8d8807612b086fda85c38fe04b55c5e37ea6dc27670371f511a204db32d5"
+  "hash": "4ecde8b34b5056c18689e1291eb0391ae22372e0f9d052ac1e9ede13bb007063"
 }

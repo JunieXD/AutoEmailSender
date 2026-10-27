@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM library_update WHERE library_id = ?\n        AND field IN ('name', 'research', 'sourceUrl', 'title')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "6cecb3dcc0a146edc1501619e0efb1c85090be27dcaaa4b9da1fe33e39382f1a"
+}

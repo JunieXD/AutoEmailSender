@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT record AS \"record: Json<cloud_api::library::Record>\"\n                    FROM mentor_library WHERE library_id =\n                        (SELECT library_id FROM library_update WHERE id = ?)",
+  "describe": {
+    "columns": [
+      {
+        "name": "record: Json<cloud_api::library::Record>",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_library",
+            "name": "record"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ea7874d42589764db95d8fefc549050ecbdd5108ae56012ba2e8e3382a704459"
+}

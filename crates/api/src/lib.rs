@@ -288,6 +288,7 @@ pub async fn call_agent(
     let result = match op {
         // An agent does not decide whether agents may connect.
         op if !agent::visible(op) => Err(CallError::invalid("这个操作只供应用界面使用".into())),
+        "addLibraryMentors" => libraries::library_add_agent(ctx, input, waiting, cancelled).await,
         _ => {
             tokio::pin!(cancelled);
             let description = tokio::select! {

@@ -125,23 +125,15 @@ pub async fn preview(
     Ok(calculate(&mut tx, &fetched, input).await?.0)
 }
 
-pub async fn add(
-    client: &account::Client,
+pub async fn write(
     db: &SqlitePool,
     input: &Selection,
+    fetched: &wire::Fetched,
     now: i64,
 ) -> Result<Added, Error> {
-    let fetched = fetch(client, db, &input.ids).await?;
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    let (_, changes) = calculate(&mut tx, &fetched, input).await?;
+    let (_, changes) = calculate(&mut tx, fetched, input).await?;
     let (result, accepted) = intake::apply(&mut tx, changes, now).await?;
-    let saved = sqlx::query!(
-        r#"SELECT library_id, record AS "record: Json<wire::Record>" FROM mentor_library
-        WHERE library_id IN (SELECT value FROM json_each(?))"#,
-        Json(&input.ids)
-    )
-    .fetch_all(&mut *tx)
-    .await?;
     for (row, mentor) in accepted {
         let record = fetched
             .records
@@ -149,12 +141,6 @@ pub async fn add(
             .find(|r| r.preview.summary.id == input.ids[(row - 1) as usize])
             .unwrap_or_else(|| unreachable!("only fetched rows are accepted"));
         let id = &record.preview.summary.id;
-        if saved
-            .iter()
-            .any(|s| &s.library_id == id && s.record.revision > record.revision)
-        {
-            continue;
-        }
         sqlx::query!(
             r#"INSERT INTO mentor_library (library_id, mentor_id, status, record)
             VALUES (?, ?, 'active', ?)
@@ -165,6 +151,7 @@ pub async fn add(
         )
         .execute(&mut *tx)
         .await?;
+        crate::updates::readded(&mut tx, id, record).await?;
     }
     tx.commit().await?;
     Ok(Added {

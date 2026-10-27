@@ -280,11 +280,10 @@ pub(crate) async fn confirmation(
     input: &serde_json::Value,
 ) -> Result<Option<Description>, CallError> {
     let mut tx = ctx.db.begin().await?;
-    describe(ctx, &mut tx, op, input).await
+    describe(&mut tx, op, input).await
 }
 
 async fn describe(
-    ctx: &Context,
     conn: &mut SqliteConnection,
     op: &str,
     input: &serde_json::Value,
@@ -885,12 +884,6 @@ async fn describe(
                     .await?;
             return imported_recipients(conn, &changes).await;
         }
-        "addLibraryMentors" => {
-            let input: library::add::Selection = parse(input)?;
-            let fetched = library::add::fetch(&ctx.account, &ctx.db, &input.ids).await?;
-            let (_, changes) = library::add::calculate(conn, &fetched, &input).await?;
-            return imported_recipients(conn, &changes).await;
-        }
         "applyLibraryUpdates" => {
             let input: library::updates::Choices = parse(input)?;
             let plan = library::updates::plan(conn, &input).await?;
@@ -904,6 +897,16 @@ async fn describe(
         _ => return Ok(None),
     };
     Ok(Some(description))
+}
+
+pub(crate) async fn library_addition(
+    ctx: &Context,
+    fetched: &cloud_api::library::Fetched,
+    input: &library::add::Selection,
+) -> Result<Option<Description>, CallError> {
+    let mut tx = ctx.db.begin().await?;
+    let (_, changes) = library::add::calculate(&mut tx, fetched, input).await?;
+    imported_recipients(&mut tx, &changes).await
 }
 
 async fn changed_recipient(

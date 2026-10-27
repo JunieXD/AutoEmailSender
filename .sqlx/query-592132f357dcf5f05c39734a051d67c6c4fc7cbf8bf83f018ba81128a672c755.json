@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM email\n                WHERE mentor_id = ? AND state = 'approved') AS \"approved!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "approved!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "592132f357dcf5f05c39734a051d67c6c4fc7cbf8bf83f018ba81128a672c755"
+}

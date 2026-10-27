@@ -1,15 +1,15 @@
 use cloud_api::{Empty, library as wire, path};
 use mentor::{
     export::Profile,
-    supplement::{add_missing, comparable},
+    supplement::{add_missing, affiliation_position, comparable},
 };
 use reqwest::Method;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 
 use crate::{
     Error,
-    updates::{Field, Value, same_unit},
+    updates::{Field, Value},
 };
 
 const DAY: i64 = 24 * 60 * 60 * 1000;
@@ -18,6 +18,22 @@ const DAY: i64 = 24 * 60 * 60 * 1000;
 pub struct Synchronizer(Mutex<()>);
 
 impl Synchronizer {
+    pub async fn acquire(&self) -> MutexGuard<'_, ()> {
+        self.0.lock().await
+    }
+
+    pub async fn add(
+        &self,
+        client: &account::Client,
+        db: &SqlitePool,
+        input: &crate::add::Selection,
+        now: i64,
+    ) -> Result<crate::add::Added, Error> {
+        let _guard = self.acquire().await;
+        let fetched = crate::add::fetch(client, db, &input.ids).await?;
+        crate::add::write(db, input, &fetched, now).await
+    }
+
     pub async fn check(
         &self,
         client: &account::Client,
@@ -25,7 +41,7 @@ impl Synchronizer {
         now: i64,
         force: bool,
     ) -> Result<u32, Error> {
-        let _guard = self.0.lock().await;
+        let _guard = self.acquire().await;
         let Some(account) = sqlx::query!(
             r#"SELECT email, library_revision, library_checked_at
             FROM account WHERE token IS NOT NULL"#
@@ -137,7 +153,43 @@ pub async fn process(
         let old = crate::profile(&row.record).map_err(Error::Invalid)?;
         let new = crate::profile(record).map_err(Error::Invalid)?;
         let mut after = before.clone();
-        let delta = additions(&old, &new);
+        let mut delta = additions(&old, &new);
+        let owned = sqlx::query_scalar!(
+            r#"SELECT address FROM mentor_email
+            WHERE mentor_id <> ? AND address IN (SELECT value FROM json_each(?))"#,
+            row.mentor_id,
+            Json(&new.fields.emails)
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        let approved = if before.fields.emails.is_empty()
+            && (!delta.fields.emails.is_empty()
+                || old.fields.emails.first() != new.fields.emails.first())
+        {
+            sqlx::query_scalar!(
+                r#"SELECT EXISTS (SELECT 1 FROM email
+                WHERE mentor_id = ? AND state = 'approved') AS "approved!: bool""#,
+                row.mentor_id
+            )
+            .fetch_one(&mut *conn)
+            .await?
+        } else {
+            false
+        };
+        let emails = std::mem::take(&mut delta.fields.emails);
+        if !approved {
+            for address in emails {
+                if !owned.iter().any(|a| a.eq_ignore_ascii_case(&address))
+                    && !after
+                        .fields
+                        .emails
+                        .iter()
+                        .any(|a| a.eq_ignore_ascii_case(&address))
+                {
+                    after.fields.emails.push(address);
+                }
+            }
+        }
         add_missing(
             &mut after.fields,
             &mut after.papers,
@@ -186,14 +238,11 @@ pub async fn process(
             .await?;
         }
         for unit in &new.fields.affiliations {
-            if let Some(old_unit) = old.fields.affiliations.iter().find(|a| same_unit(a, unit))
-                && old_unit.title != unit.title
-                && let Some(local) = after
-                    .fields
-                    .affiliations
-                    .iter_mut()
-                    .find(|a| same_unit(a, unit))
+            if let Some(old_position) = affiliation_position(&old.fields.affiliations, unit)
+                && old.fields.affiliations[old_position].title != unit.title
+                && let Some(position) = affiliation_position(&after.fields.affiliations, unit)
             {
+                let local = &mut after.fields.affiliations[position];
                 if local.title.is_none() {
                     local.title.clone_from(&unit.title);
                 }
@@ -202,17 +251,22 @@ pub async fn process(
                     &change.id,
                     Field::Title,
                     Some(unit),
-                    Value::Text(old_unit.title.clone()),
+                    Value::Text(old.fields.affiliations[old_position].title.clone()),
                     Value::Text(unit.title.clone()),
                     Value::Text(local.title.clone()),
                 )
                 .await?;
             }
         }
-        if old.fields.emails.first() != new.fields.emails.first()
+        if new.fields.emails.is_empty() {
+            clear_preference(conn, &change.id, Field::PrimaryEmail).await?;
+        } else if (approved || old.fields.emails.first() != new.fields.emails.first())
             && let Some(email) = new.fields.emails.first()
         {
-            if after.fields.emails.is_empty() {
+            if after.fields.emails.is_empty()
+                && !approved
+                && !owned.iter().any(|a| a.eq_ignore_ascii_case(email))
+            {
                 after.fields.emails.push(email.clone());
             }
             pending(
@@ -226,13 +280,15 @@ pub async fn process(
             )
             .await?;
         }
-        if old.fields.affiliations.first() != new.fields.affiliations.first()
+        if new.fields.affiliations.is_empty() {
+            clear_preference(conn, &change.id, Field::PrimaryAffiliation).await?;
+        } else if old.fields.affiliations.first() != new.fields.affiliations.first()
             && let Some(unit) = new.fields.affiliations.first()
             && !old
                 .fields
                 .affiliations
                 .first()
-                .is_some_and(|a| same_unit(a, unit))
+                .is_some_and(|a| affiliation_position(std::slice::from_ref(a), unit).is_some())
         {
             if after.fields.affiliations.is_empty() {
                 after.fields.affiliations.push(unit.clone());
@@ -310,10 +366,15 @@ fn additions(old: &Profile, new: &Profile) -> Profile {
     delta.fields.aliases = difference(&old.fields.aliases, &new.fields.aliases);
     delta.fields.homepages = difference(&old.fields.homepages, &new.fields.homepages);
     delta.papers = difference(&old.papers, &new.papers);
-    delta
-        .fields
-        .affiliations
-        .retain(|b| !old.fields.affiliations.iter().any(|a| same_unit(a, b)));
+    delta.fields.affiliations.retain(|b| {
+        affiliation_position(&old.fields.affiliations, b).is_none_or(|position| {
+            let mut a = old.fields.affiliations[position].clone();
+            let mut b = b.clone();
+            a.title = None;
+            b.title = None;
+            a != b
+        })
+    });
     delta
 }
 
@@ -354,6 +415,21 @@ async fn pending(
         Json(original),
         Json(&incoming),
         !local.same(&incoming)
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+async fn clear_preference(
+    conn: &mut SqliteConnection,
+    library: &str,
+    field: Field,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "DELETE FROM library_update WHERE library_id = ? AND field = ?",
+        library,
+        field
     )
     .execute(conn)
     .await?;

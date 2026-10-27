@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT address FROM mentor_email\n            WHERE mentor_id <> ? AND address IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [
+      {
+        "name": "address",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a00dd696076a876586315c43341c917262f6b87a3553294cea4a3e317c8bb61d"
+}

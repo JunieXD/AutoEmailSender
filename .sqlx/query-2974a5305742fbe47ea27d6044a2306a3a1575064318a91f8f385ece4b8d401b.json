@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, field AS \"field: Field\", original AS \"original: Json<Value>\"\n        FROM library_update WHERE library_id = ?\n        AND field IN ('primaryEmail', 'primaryAffiliation')",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "field: Field",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "field"
+          }
+        }
+      },
+      {
+        "name": "original: Json<Value>",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "original"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2974a5305742fbe47ea27d6044a2306a3a1575064318a91f8f385ece4b8d401b"
+}

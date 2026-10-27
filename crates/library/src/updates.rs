@@ -4,7 +4,7 @@ use mentor::{
     Affiliation,
     export::Profile,
     intake,
-    supplement::{append, comparable, same},
+    supplement::{affiliation_position, append, same},
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
@@ -34,23 +34,21 @@ pub(crate) enum Value {
     Affiliation(Affiliation),
 }
 
-pub(crate) fn same_unit(a: &Affiliation, b: &Affiliation) -> bool {
-    [
-        (&a.university, &b.university),
-        (&a.school, &b.school),
-        (&a.department, &b.department),
-    ]
-    .into_iter()
-    .all(|(a, b)| a.as_deref().map(comparable) == b.as_deref().map(comparable))
+fn same_text(a: Option<&str>, b: Option<&str>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => same(a, b),
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 impl Value {
     pub(crate) fn same(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Text(a), Self::Text(b)) => {
-                a.as_deref().map(comparable) == b.as_deref().map(comparable)
+            (Self::Text(a), Self::Text(b)) => same_text(a.as_deref(), b.as_deref()),
+            (Self::Affiliation(a), Self::Affiliation(b)) => {
+                affiliation_position(std::slice::from_ref(a), b).is_some()
             }
-            (Self::Affiliation(a), Self::Affiliation(b)) => same_unit(a, b),
             _ => false,
         }
     }
@@ -108,13 +106,18 @@ pub struct Plan {
     pub mentors: u32,
 }
 
-async fn pending(conn: &mut SqliteConnection) -> Result<Vec<Pending>, sqlx::Error> {
+async fn pending(
+    conn: &mut SqliteConnection,
+    ids: Option<&[i64]>,
+) -> Result<Vec<Pending>, sqlx::Error> {
     let rows = sqlx::query!(
         r#"SELECT u.id, l.mentor_id, u.field AS "field: Field", u.university, u.school,
             u.department, u.original AS "original: Json<Value>", u.incoming AS "incoming: Json<Value>"
         FROM library_update u JOIN mentor_library l ON l.library_id = u.library_id
         WHERE l.mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)
-        ORDER BY u.field, l.mentor_id, u.id"#
+            AND (?1 IS NULL OR u.id IN (SELECT value FROM json_each(?1)))
+        ORDER BY u.field, l.mentor_id, u.id"#,
+        ids.map(Json)
     )
     .fetch_all(conn)
     .await?;
@@ -136,40 +139,140 @@ async fn pending(conn: &mut SqliteConnection) -> Result<Vec<Pending>, sqlx::Erro
         .collect())
 }
 
-fn current(profile: &Profile, field: Field, unit: Option<&Affiliation>) -> Option<Value> {
-    Some(match field {
-        Field::Name => Value::Text(Some(profile.fields.name.clone())),
-        Field::Research => Value::Text(profile.fields.research.clone()),
-        Field::SourceUrl => Value::Text(profile.source_url.clone()),
-        Field::PrimaryEmail => Value::Text(profile.fields.emails.first().cloned()),
-        Field::PrimaryAffiliation => profile
-            .fields
+struct Current {
+    id: i64,
+    name: String,
+    research: Option<String>,
+    source_url: Option<String>,
+    email: Option<String>,
+    affiliations: Vec<Affiliation>,
+}
+
+impl From<&Profile> for Current {
+    fn from(profile: &Profile) -> Self {
+        Self {
+            id: profile.id,
+            name: profile.fields.name.clone(),
+            research: profile.fields.research.clone(),
+            source_url: profile.source_url.clone(),
+            email: profile.fields.emails.first().cloned(),
+            affiliations: profile.fields.affiliations.clone(),
+        }
+    }
+}
+
+async fn current_profiles(
+    conn: &mut SqliteConnection,
+    scope: &[(i64, Field)],
+) -> Result<BTreeMap<i64, Current>, sqlx::Error> {
+    let scope = Json(scope);
+    let mut profiles: BTreeMap<_, _> = sqlx::query!(
+        r#"WITH chosen AS (
+            SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS field
+            FROM json_each(?1)
+        )
+        SELECT m.id, m.name,
+            CASE WHEN m.id IN (SELECT id FROM chosen WHERE field = 'research')
+                THEN (SELECT research FROM mentor_detail WHERE mentor_id = m.id)
+                END AS "research?: String",
+            CASE WHEN m.id IN (SELECT id FROM chosen WHERE field = 'sourceUrl')
+                THEN m.source_url END AS "source_url?: String",
+            CASE WHEN m.id IN (SELECT id FROM chosen WHERE field = 'primaryEmail')
+                THEN (SELECT address FROM mentor_email WHERE mentor_id = m.id ORDER BY position LIMIT 1)
+                END AS "email?: String"
+        FROM mentor m WHERE m.id IN (SELECT id FROM chosen)"#,
+        scope
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| {
+        (
+            r.id,
+            Current {
+                id: r.id,
+                name: r.name,
+                research: r.research,
+                source_url: r.source_url,
+                email: r.email,
+                affiliations: vec![],
+            },
+        )
+    })
+    .collect();
+    for row in sqlx::query!(
+        r#"WITH chosen AS (
+            SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS field
+            FROM json_each(?1)
+        )
+        SELECT a.mentor_id, a.university, a.school, a.department, a.title
+        FROM mentor_affiliation a
+        WHERE a.mentor_id IN (SELECT id FROM chosen WHERE field IN ('title', 'primaryAffiliation'))
+            AND (a.mentor_id IN (SELECT id FROM chosen WHERE field = 'title')
+                OR a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = a.mentor_id))
+        ORDER BY a.mentor_id, a.position"#,
+        scope
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    {
+        profiles
+            .get_mut(&row.mentor_id)
+            .unwrap_or_else(|| unreachable!("selected mentor"))
             .affiliations
+            .push(Affiliation {
+                university: row.university,
+                school: row.school,
+                department: row.department,
+                title: row.title,
+            });
+    }
+    Ok(profiles)
+}
+
+fn current(
+    field: Field,
+    text: Option<String>,
+    affiliations: &[Affiliation],
+    unit: Option<&Affiliation>,
+) -> Option<Value> {
+    Some(match field {
+        Field::Name | Field::Research | Field::SourceUrl | Field::PrimaryEmail => Value::Text(text),
+        Field::PrimaryAffiliation => affiliations
             .first()
             .cloned()
             .map(Value::Affiliation)
             .unwrap_or(Value::Text(None)),
         Field::Title => Value::Text(
-            profile
-                .fields
-                .affiliations
-                .iter()
-                .find(|a| unit.is_some_and(|unit| same_unit(a, unit)))?
+            affiliations
+                .get(affiliation_position(affiliations, unit?)?)?
                 .title
                 .clone(),
         ),
     })
 }
 
-fn visible(pending: &Pending, profile: &Profile) -> Option<Update> {
-    let local = current(profile, pending.field, pending.unit.as_ref())?;
+fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
+    let text = match pending.field {
+        Field::Name => Some(profile.name.clone()),
+        Field::Research => profile.research.clone(),
+        Field::SourceUrl => profile.source_url.clone(),
+        Field::PrimaryEmail => profile.email.clone(),
+        Field::Title | Field::PrimaryAffiliation => None,
+    };
+    let local = current(
+        pending.field,
+        text,
+        &profile.affiliations,
+        pending.unit.as_ref(),
+    )?;
     if local.same(&pending.incoming) {
         return None;
     }
     Some(Update {
         update_id: pending.id,
         id: profile.id,
-        name: profile.fields.name.clone(),
+        name: profile.name.clone(),
         field: pending.field,
         affiliation: pending.unit.clone(),
         local: local.display(),
@@ -180,9 +283,9 @@ fn visible(pending: &Pending, profile: &Profile) -> Option<Update> {
 
 pub async fn list(db: &SqlitePool) -> Result<Vec<Group>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    let rows = pending(&mut tx).await?;
-    let ids: Vec<_> = rows.iter().map(|r| r.mentor_id).collect();
-    let profiles = mentor::export::profiles(&mut tx, &ids).await?;
+    let rows = pending(&mut tx, None).await?;
+    let scope: Vec<_> = rows.iter().map(|r| (r.mentor_id, r.field)).collect();
+    let profiles = current_profiles(&mut tx, &scope).await?;
     let mut groups = BTreeMap::<Field, Vec<Update>>::new();
     for row in rows {
         if let Some(update) = visible(&row, &profiles[&row.mentor_id]) {
@@ -208,13 +311,12 @@ fn take(profile: &mut Profile, field: Field, unit: Option<&Affiliation>, value: 
         (Field::Research, Value::Text(value)) => profile.fields.research.clone_from(value),
         (Field::SourceUrl, Value::Text(value)) => profile.source_url.clone_from(value),
         (Field::Title, Value::Text(value)) => {
-            if let Some(a) = profile
-                .fields
-                .affiliations
-                .iter_mut()
-                .find(|a| unit.is_some_and(|u| same_unit(a, u)))
+            if let Some(position) =
+                unit.and_then(|unit| affiliation_position(&profile.fields.affiliations, unit))
             {
-                a.title.clone_from(value);
+                profile.fields.affiliations[position]
+                    .title
+                    .clone_from(value);
             }
         }
         (Field::PrimaryEmail, Value::Text(Some(email))) => {
@@ -225,11 +327,7 @@ fn take(profile: &mut Profile, field: Field, unit: Option<&Affiliation>, value: 
             profile.fields.emails.insert(0, email.clone());
         }
         (Field::PrimaryAffiliation, Value::Affiliation(incoming)) => {
-            let a = profile
-                .fields
-                .affiliations
-                .iter()
-                .position(|a| same_unit(a, incoming))
+            let a = affiliation_position(&profile.fields.affiliations, incoming)
                 .map(|n| profile.fields.affiliations.remove(n))
                 .unwrap_or_else(|| incoming.clone());
             profile.fields.affiliations.insert(0, a);
@@ -239,7 +337,8 @@ fn take(profile: &mut Profile, field: Field, unit: Option<&Affiliation>, value: 
 }
 
 pub async fn plan(conn: &mut SqliteConnection, choices: &Choices) -> Result<Plan, Error> {
-    let rows = pending(conn).await?;
+    let selected: Vec<_> = choices.choices.iter().map(|c| c.update_id).collect();
+    let rows = pending(conn, Some(&selected)).await?;
     let ids: Vec<_> = rows.iter().map(|r| r.mentor_id).collect();
     let before = mentor::export::profiles(conn, &ids).await?;
     let mut after = before.clone();
@@ -249,7 +348,7 @@ pub async fn plan(conn: &mut SqliteConnection, choices: &Choices) -> Result<Plan
             .iter()
             .find(|r| r.id == choice.update_id)
             .ok_or_else(|| Error::Invalid("待处理更新已变化，请刷新后重新选择。".into()))?;
-        let Some(mut displayed) = visible(row, &before[&row.mentor_id]) else {
+        let Some(mut displayed) = visible(row, &Current::from(&before[&row.mentor_id])) else {
             applied.push(row.id);
             continue;
         };
@@ -260,13 +359,45 @@ pub async fn plan(conn: &mut SqliteConnection, choices: &Choices) -> Result<Plan
             ));
         }
         if choice.take {
+            if let (Field::PrimaryEmail, Value::Text(Some(address))) = (row.field, &row.incoming) {
+                let owner = sqlx::query_scalar!(
+                    r#"SELECT m.name FROM mentor_email e JOIN mentor m ON m.id = e.mentor_id
+                    WHERE e.address = ? AND e.mentor_id <> ?"#,
+                    address,
+                    row.mentor_id
+                )
+                .fetch_optional(&mut *conn)
+                .await?;
+                if let Some(name) = owner {
+                    return Err(Error::Invalid(format!(
+                        "这个邮箱已经是导师 {name} 的，先合并这两位。"
+                    )));
+                }
+            }
+            let mut incoming = row.incoming.clone();
+            if let (Field::PrimaryAffiliation, Value::Affiliation(unit)) = (row.field, &incoming)
+                && affiliation_position(&after[&row.mentor_id].fields.affiliations, unit).is_none()
+            {
+                let record = sqlx::query_scalar!(
+                    r#"SELECT record AS "record: Json<cloud_api::library::Record>"
+                    FROM mentor_library WHERE library_id =
+                        (SELECT library_id FROM library_update WHERE id = ?)"#,
+                    row.id
+                )
+                .fetch_one(&mut *conn)
+                .await?;
+                let latest = crate::profile(&record).map_err(Error::Invalid)?;
+                let position = affiliation_position(&latest.fields.affiliations, unit)
+                    .ok_or_else(|| Error::Invalid("待处理更新已变化，请刷新后重新选择。".into()))?;
+                incoming = Value::Affiliation(latest.fields.affiliations[position].clone());
+            }
             take(
                 after
                     .get_mut(&row.mentor_id)
                     .unwrap_or_else(|| unreachable!("loaded above")),
                 row.field,
                 row.unit.as_ref(),
-                &row.incoming,
+                &incoming,
             );
         }
         applied.push(row.id);
@@ -298,12 +429,118 @@ pub async fn apply(db: &SqlitePool, choices: &Choices, now: i64) -> Result<u32, 
     Ok(plan.mentors)
 }
 
+pub(crate) async fn readded(
+    conn: &mut SqliteConnection,
+    library: &str,
+    record: &cloud_api::library::Record,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"DELETE FROM library_update WHERE library_id = ?
+        AND field IN ('name', 'research', 'sourceUrl', 'title')"#,
+        library
+    )
+    .execute(&mut *conn)
+    .await?;
+    let preferences = sqlx::query!(
+        r#"SELECT id, field AS "field: Field", original AS "original: Json<Value>"
+        FROM library_update WHERE library_id = ?
+        AND field IN ('primaryEmail', 'primaryAffiliation')"#,
+        library
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    for preference in preferences {
+        let incoming = match preference.field {
+            Field::PrimaryEmail => record.emails.first().cloned().map(|v| Value::Text(Some(v))),
+            Field::PrimaryAffiliation => record
+                .preview
+                .units
+                .first()
+                .map(crate::affiliation)
+                .map(Value::Affiliation),
+            _ => unreachable!("only preference fields selected"),
+        };
+        if let Some(incoming) = incoming.filter(|v| !v.same(&preference.original)) {
+            sqlx::query!(
+                "UPDATE library_update SET incoming = ? WHERE id = ?",
+                Json(incoming),
+                preference.id
+            )
+            .execute(&mut *conn)
+            .await?;
+        } else {
+            sqlx::query!("DELETE FROM library_update WHERE id = ?", preference.id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct Comparison(
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<Affiliation>,
+    Option<Affiliation>,
+    Option<Vec<Affiliation>>,
+    Option<Affiliation>,
+);
+
 pub async fn count(db: &SqlitePool) -> Result<i64, sqlx::Error> {
-    let ids: std::collections::BTreeSet<_> = list(db)
-        .await?
-        .into_iter()
-        .flat_map(|g| g.differences)
-        .map(|d| d.id)
-        .collect();
+    // One aggregate crosses the SQLite worker boundary once for the whole comparison set.
+    let Json(rows) = sqlx::query_scalar!(
+        r#"SELECT json_group_array(json_array(l.mentor_id,
+            CASE u.field
+                WHEN 'name' THEN m.name
+                WHEN 'research' THEN (SELECT research
+                    FROM mentor_detail INDEXED BY mentor_detail_library_research
+                    WHERE mentor_id = m.id)
+                WHEN 'sourceUrl' THEN m.source_url
+                WHEN 'primaryEmail' THEN (SELECT address FROM mentor_email
+                    WHERE mentor_id = m.id ORDER BY position LIMIT 1)
+                END,
+            CASE WHEN u.field <> 'primaryAffiliation' THEN json_extract(u.incoming, '$') END,
+            json(CASE WHEN u.field = 'primaryAffiliation' THEN (
+                SELECT json_object('university', university, 'school', school,
+                    'department', department, 'title', title)
+                FROM mentor_affiliation WHERE mentor_id = m.id ORDER BY position LIMIT 1
+            ) END),
+            json(CASE WHEN u.field = 'primaryAffiliation' THEN u.incoming END),
+            json(CASE WHEN u.field = 'title' THEN (
+                SELECT json_group_array(json_object('university', university, 'school', school,
+                    'department', department, 'title', title) ORDER BY position)
+                FROM mentor_affiliation WHERE mentor_id = m.id
+            ) END),
+            json(CASE WHEN u.field = 'title' THEN json_object(
+                'university', nullif(u.university, ''), 'school', nullif(u.school, ''),
+                'department', nullif(u.department, ''), 'title', NULL
+            ) END))) AS "comparisons!: Json<Vec<Comparison>>"
+        FROM library_update u
+        CROSS JOIN mentor_library l INDEXED BY mentor_library_lookup ON l.library_id = u.library_id
+        CROSS JOIN mentor m ON m.id = l.mentor_id
+        WHERE m.trashed_at IS NULL"#
+    )
+    .fetch_one(db)
+    .await?;
+    let mut ids = std::collections::BTreeSet::new();
+    for Comparison(mentor, local, incoming, primary, incoming_unit, affiliations, unit) in rows {
+        let different = if let Some(incoming_unit) = incoming_unit {
+            affiliation_position(primary.as_slice(), &incoming_unit).is_none()
+        } else if let Some(unit) = unit {
+            let affiliations =
+                affiliations.unwrap_or_else(|| unreachable!("title query includes units"));
+            let Some(position) = affiliation_position(&affiliations, &unit) else {
+                continue;
+            };
+            !same_text(affiliations[position].title.as_deref(), incoming.as_deref())
+        } else {
+            !same_text(local.as_deref(), incoming.as_deref())
+        };
+        if different {
+            ids.insert(mentor);
+        }
+    }
     Ok(ids.len() as i64)
 }

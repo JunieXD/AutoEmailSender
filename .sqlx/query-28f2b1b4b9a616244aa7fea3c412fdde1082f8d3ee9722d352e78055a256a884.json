@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT u.id, l.mentor_id, u.field AS \"field: Field\", u.university, u.school,\n            u.department, u.original AS \"original: Json<Value>\", u.incoming AS \"incoming: Json<Value>\"\n        FROM library_update u JOIN mentor_library l ON l.library_id = u.library_id\n        WHERE l.mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)\n        ORDER BY u.field, l.mentor_id, u.id",
+  "query": "SELECT u.id, l.mentor_id, u.field AS \"field: Field\", u.university, u.school,\n            u.department, u.original AS \"original: Json<Value>\", u.incoming AS \"incoming: Json<Value>\"\n        FROM library_update u JOIN mentor_library l ON l.library_id = u.library_id\n        WHERE l.mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)\n            AND (?1 IS NULL OR u.id IN (SELECT value FROM json_each(?1)))\n        ORDER BY u.field, l.mentor_id, u.id",
   "describe": {
     "columns": [
       {
@@ -93,7 +93,7 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false,
@@ -106,5 +106,5 @@
       false
     ]
   },
-  "hash": "85ba3261c41f59a95f6c9990a350b18bf16789ece2f9133d376e04932375c63c"
+  "hash": "28f2b1b4b9a616244aa7fea3c412fdde1082f8d3ee9722d352e78055a256a884"
 }

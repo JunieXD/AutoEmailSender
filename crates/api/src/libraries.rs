@@ -42,13 +42,63 @@ pub async fn library_add(
     ctx: &Context,
     input: library::add::Selection,
 ) -> Result<library::add::Added, CallError> {
-    Ok(library::add::add(&ctx.account, &ctx.db, &input, crate::now()).await?)
+    Ok(ctx
+        .library
+        .add(&ctx.account, &ctx.db, &input, crate::now())
+        .await?)
 }
 pub async fn library_updates(
     ctx: &Context,
     _: Nothing,
 ) -> Result<Vec<library::updates::Group>, CallError> {
     Ok(library::updates::list(&ctx.db).await?)
+}
+
+pub(crate) async fn library_add_agent(
+    ctx: &Context,
+    input: serde_json::Value,
+    waiting: impl FnOnce(&crate::agent::Description),
+    cancelled: impl std::future::Future<Output = ()>,
+) -> Result<serde_json::Value, CallError> {
+    let input: library::add::Selection =
+        serde_path_to_error::deserialize(input).map_err(CallError::bad_input)?;
+    tokio::pin!(cancelled);
+    let prepare = async {
+        let guard = ctx.library.acquire().await;
+        let fetched = library::add::fetch(&ctx.account, &ctx.db, &input.ids).await?;
+        let description = crate::agent::library_addition(ctx, &fetched, &input).await?;
+        Ok::<_, CallError>((guard, fetched, description))
+    };
+    let (guard, fetched, description) = tokio::select! {
+        biased;
+        () = &mut cancelled => return Err(CallError::invalid("这个请求已经失效".into())),
+        result = prepare => result?,
+    };
+    let (fetched, _guard) = if let Some(description) = description {
+        drop(guard);
+        ctx.agent_access
+            .confirm(
+                "addLibraryMentors",
+                description.clone(),
+                waiting,
+                &mut cancelled,
+            )
+            .await?;
+        let guard = ctx.library.acquire().await;
+        let fetched = library::add::fetch(&ctx.account, &ctx.db, &input.ids).await?;
+        if let Some(current) = crate::agent::library_addition(ctx, &fetched, &input).await?
+            && current != description
+        {
+            return Err(CallError::invalid(
+                "等你确认期间情况变了，请重新发起".into(),
+            ));
+        }
+        (fetched, guard)
+    } else {
+        (fetched, guard)
+    };
+    let result = library::add::write(&ctx.db, &input, &fetched, crate::now()).await?;
+    serde_json::to_value(result).map_err(CallError::internal)
 }
 pub async fn library_apply(
     ctx: &Context,

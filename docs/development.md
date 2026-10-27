@@ -77,8 +77,9 @@
 - `crates/library` 通过 `account::Client::authenticated` 访问官方接口，复用令牌失效处理和错误中文。浏览与预览不取邮箱；一页摘要只做一次本机标记查询，以导师库编号确定已添加／回收站，用索引中的规范化姓名和学校确定可能已有。
 - 操作组“导师库”：`getLibraryOrgs`、`listLibraryMentors`、`previewLibraryMentor`、`getLibraryQuota`、`previewLibraryAdd`、`addLibraryMentors`、`listLibraryUpdates`、`applyLibraryUpdates`、`libraryUpdateCount`、`syncLibrary`，全部对 Agent 开放。输入输出从操作声明生成；添加和应用更新沿用表格导入的收件地址确认规则。`previewLibraryAdd` 取得完整记录，首次取得会计入当天数量，重复取得不再计数。
 - `mentor::intake::Preview` 只含对应、补充、差异和问题行；表格的 `mentor::import::Preview` 在外层增加文件信息，JSON 展平，表格原有界面形状不变。导师库的行编号固定对应所选 `ids` 的位置，重取时记录顺序改变或部分撤下不会把选择移给别的记录；问题行另带姓名。
-- `api::libraries::run` 在桌面应用进程已有的 Tokio runtime 中运行，启动时和之后每小时判断：有令牌且从未成功检查或距上次成功检查至少 24 小时才同步。手动 `syncLibrary` 立即检查。同步实例串行，逐条写事务保存导师资料、待处理项和原始记录；一页完成才保存进度，全部完成才保存检查时间。写入失败经 `db::Writes` 重试，网络／服务端失败只记条数和类别，下小时再试。记录资料只在 Rust 中比较；不按 JSON 内的值查询。
+- `api::libraries::run` 在桌面应用进程已有的 Tokio runtime 中运行，启动时和之后每小时判断：有令牌且从未成功检查或距上次成功检查至少 24 小时才同步。手动 `syncLibrary` 立即检查。`Synchronizer` 的同一把锁覆盖添加的取记录与写入，以及整个同步检查；等待 Agent 用户确认时释放，确认后重新持锁，用同一次取得的记录复核并写入 `add::write`。同步逐条写事务保存导师资料、待处理项和原始记录；一页完成才保存进度，全部完成才保存检查时间。写入失败经 `db::Writes` 重试，网络／服务端失败只记条数和类别，下小时再试。记录资料只在 Rust 中比较；不按 JSON 内的值查询。
 - 待处理更新关联导师库记录，以记录、项和职称的单位唯一，合并导师时随记录转移。列出时计算当前值和默认选择，应用时复核用户看到的值，资料已变化则要求刷新；跳过已与新值相同、回收站和已移除单位的职称。`libraryUpdateCount` 按同一口径统计导师数。导师详情提供各条记录的状态和核实时间，任务候选提供退休／离职／去世提醒；同时有多个状态时按去世、离职、退休选一个。
+- 列出和计数只取比较所需字段，应用只加载所选导师；计数从待处理项出发，通过关联和研究方向的覆盖索引读取窄列，将比较值一次聚合传过 SQLite worker 边界，再在 Rust 中比较。单位对应复用 `mentor::supplement::affiliation_position`；业务规则与性能预算见[数据模型](data-model.md#导师库)。
 - 账号行保存同步进度和上次检查时间，注册或登录为不同邮箱时一起清零，同一账号重新登录保留。同步写入前在事务中复核账号，避免换账号期间推进新账号的进度。
 
 ### 桌面后台运行

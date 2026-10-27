@@ -112,7 +112,7 @@ pub async fn run(path: &Path) -> Result {
     let library_rows = sqlx::query!(
         r#"SELECT m.id, m.name, a.university, a.school, a.department, a.title
         FROM mentor m LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id AND a.position = 0
-        WHERE m.trashed_at IS NULL ORDER BY m.id LIMIT 50"#
+        WHERE m.trashed_at IS NULL ORDER BY m.id LIMIT 7406"#
     )
     .fetch_all(&db)
     .await?;
@@ -133,25 +133,33 @@ pub async fn run(path: &Path) -> Result {
             fetched: false,
         })
         .collect();
-    for (r, summary) in library_rows.iter().zip(&summaries).take(10) {
-        let record = cloud_api::library::Record {
-            preview: cloud_api::library::Preview {
-                summary: summary.clone(),
-                units: vec![summary.unit.clone()],
-                papers: vec![],
-                homepages: vec![],
-                source_url: None,
-                verified_at: None,
-            },
-            emails: vec![],
-            revision: 1,
-        };
+    let records: Vec<_> = library_rows
+        .iter()
+        .zip(&summaries)
+        .map(|(r, summary)| {
+            let record = cloud_api::library::Record {
+                preview: cloud_api::library::Preview {
+                    summary: summary.clone(),
+                    units: vec![summary.unit.clone()],
+                    papers: vec![],
+                    homepages: vec![],
+                    source_url: None,
+                    verified_at: None,
+                },
+                emails: vec![],
+                revision: 1,
+            };
+            (r.id, record)
+        })
+        .collect();
+    for (mentor, record) in records.iter().take(10) {
+        let summary = &record.preview.summary;
         sqlx::query(
             r#"INSERT INTO mentor_library (library_id, mentor_id, status, record)
             VALUES (?, ?, 'active', ?)"#,
         )
         .bind(&summary.id)
-        .bind(r.id)
+        .bind(mentor)
         .bind(sqlx::types::Json(record))
         .execute(&db)
         .await?;
@@ -167,11 +175,42 @@ pub async fn run(path: &Path) -> Result {
     }
     report(
         "导师库，本页 50 位的本机标记",
-        median(async || library::local(&db, &summaries).await.map(drop)).await?,
+        median(async || library::local(&db, &summaries[..50]).await.map(drop)).await?,
         home,
     );
     report(
         "导师库，有待处理更新的导师数",
+        median(async || library::updates::count(&db).await.map(drop)).await?,
+        home,
+    );
+
+    let remaining = sqlx::types::Json(
+        records
+            .iter()
+            .skip(10)
+            .map(|(mentor, record)| (&record.preview.summary.id, mentor, record))
+            .collect::<Vec<_>>(),
+    );
+    sqlx::query(
+        r#"INSERT INTO mentor_library (library_id, mentor_id, status, record)
+        SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), 'active',
+            json_extract(value, '$[2]') FROM json_each(?)"#,
+    )
+    .bind(remaining)
+    .execute(&db)
+    .await?;
+    sqlx::query(
+        r#"INSERT INTO library_update (library_id, field, original, incoming)
+        SELECT library_id, 'research', ?, ? FROM mentor_library
+        WHERE library_id LIKE 'mentor_bench%'
+        ON CONFLICT (library_id, field, university, school, department) DO NOTHING"#,
+    )
+    .bind(sqlx::types::Json("旧研究方向"))
+    .bind(sqlx::types::Json("新研究方向"))
+    .execute(&db)
+    .await?;
+    report(
+        "导师库，7406 位待处理（10 万导师）",
         median(async || library::updates::count(&db).await.map(drop)).await?,
         home,
     );

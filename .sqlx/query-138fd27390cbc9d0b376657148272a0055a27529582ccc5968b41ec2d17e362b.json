@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name FROM mentor_email e JOIN mentor m ON m.id = e.mentor_id\n                    WHERE e.address = ? AND e.mentor_id <> ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "138fd27390cbc9d0b376657148272a0055a27529582ccc5968b41ec2d17e362b"
+}
