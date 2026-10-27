@@ -38,6 +38,7 @@ const GROUPS = [
       { to: "/settings/notifications", label: "通知" },
       { to: "/settings/background", label: "后台运行" },
       { to: "/settings/backup", label: "备份" },
+      { to: "/settings/agent", label: "Agent" },
       { to: "/settings/about", label: "关于和日志" },
     ],
   },
@@ -265,7 +266,7 @@ function Toggle({
   );
 }
 
-function SwitchButton({
+export function SwitchButton({
   label,
   checked,
   disabled,

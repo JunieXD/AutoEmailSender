@@ -373,6 +373,10 @@ V3 的产品范围和全局决定。
 - 表格：用 calamine 读、rust_xlsxwriter 写。
 - 界面：React、Vite、TanStack Router、TanStack Query、Tailwind CSS、shadcn/ui；编辑器用 TipTap，Markdown 用 marked 解析、写回由界面自己的序列化器完成（`ui/src/markdown.ts`），图表是几种简单的柱状图和横条，用 HTML 和 CSS 画，不引入图表库。
 - CLI 和 MCP：一个 Rust 小程序，MCP 用官方的 Rust SDK。用户在设置里开启后装到 PATH，也可以一键写进 Claude、Cursor 等工具的 MCP 配置。在 Windows 的 PowerShell 和 cmd 里读到的中文输出不能乱码。
+  - `autoemail` 按 [Tauri 2 的 externalBin](https://v2.tauri.app/develop/sidecar/) 随应用打包，位于 macOS 的 `.app/Contents/MacOS` 或 Windows 安装目录；开发版使用 target 中的程序。核心使用与应用可执行文件同目录的普通绝对路径，Windows 不向 PATH、客户端或界面传扩展路径前缀。安装命令行时，macOS 在 `/usr/local/bin/autoemail` 建符号链接，目录缺失或权限不足时请求系统管理员授权，取消即返回取消原因。状态区分未安装、已安装、旧位置和被其他文件占用；失效链接或指向其他位置 `Auto Email Sender.app/Contents/MacOS/autoemail` 的链接算旧位置，安装时更新，卸载时删除，其他文件和有效的其他工具链接不碰。Windows 只把安装目录加入当前用户 PATH 并广播变化，记录自己添加的项；卸载只撤回自己添加的 PATH 项。
+  - MCP 配置先预览目标文件、完整的 `autoemail` 服务项及是否替换已有项，用户确认后写入；预览后文件变化则重新预览。命令是应用内 `autoemail` 的绝对路径，参数为 `["mcp"]`，类型为 `stdio`。CLI 安装和 MCP 配置操作只供界面调用。
+  - Claude Desktop 使用[官方本机服务指南](https://github.com/modelcontextprotocol/docs/blob/main/quickstart/user.mdx)中的 `claude_desktop_config.json`（macOS：`~/Library/Application Support/Claude/`；Windows：`%APPDATA%\\Claude\\`）。[Cursor](https://cursor.com/docs/mcp) 使用 `~/.cursor/mcp.json`。只改 `mcpServers.autoemail`，其他原文和顺序保留；严格校验 JSON，带注释或结构不符的不写；先写同目录临时文件再替换，不存在则创建目录和文件。配置为有效符号链接时写到目标文件，失效链接报错；预览后链接指向变化时要求重新预览，不替换链接本身。
+  - [Claude Code](https://code.claude.com/docs/en/mcp) 使用 `claude mcp add --transport stdio --scope user autoemail -- <绝对路径> mcp`，由 CLI 管理用户级 `~/.claude.json`，替换时先用 `claude mcp remove --scope user autoemail`。只读取配置来预览，不直接写其状态文件；在 PATH 和官方安装方式的常见位置查找 `claude`，仍找不到时禁用应用内写入，给出完整命令让用户在终端执行。核心按 macOS 默认 zsh 或 Windows PowerShell 的规则生成可复制的命令行。其他工具提供可复制的 `mcpServers` JSON。
   - 连接走本机通道，不开网络端口：macOS 用数据目录里的 Unix 域套接字（只有当前用户能读写），Windows 用拒绝远程连接的命名管道，使用默认 DACL：其他本机用户只有读权限，不能写入第一行令牌，因此不能发起调用；认证前服务端不写任何数据，超时或令牌不对就断开，各连接使用独立管道实例。令牌文件放在当前用户的数据目录里；开关关着时不监听。
   - 一行一个 JSON 的请求和回答，操作名和参数与界面相同，由同一个分发函数执行；不开放的操作在分发前拒绝。
   - 操作的中文说明、补充说明、分组和确认方式写在 `operations!` 中。输入、输出和关联类型的 TypeScript 声明复用 `typescript()` 的 ts-rs 生成方式，不另生成操作的 JSON Schema。CLI 和 MCP 从应用查询目录，不把目录编进命令行，避免命令行与应用版本不一致。

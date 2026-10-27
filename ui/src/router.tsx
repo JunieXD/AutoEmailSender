@@ -24,6 +24,7 @@ import {
   SettingsPage,
 } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
+import { AgentSection } from "./pages/agent";
 import { BackupSection } from "./pages/backup";
 import { WelcomePage } from "./pages/welcome";
 
@@ -191,6 +192,12 @@ const backupRoute = createRoute({
   component: BackupSection,
 });
 
+const agentRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "agent",
+  component: AgentSection,
+});
+
 const aboutRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "about",
@@ -225,6 +232,7 @@ export const router = createRouter({
       notificationsRoute,
       backgroundRoute,
       backupRoute,
+      agentRoute,
       aboutRoute,
     ]),
   ]),

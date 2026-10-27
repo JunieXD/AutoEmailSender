@@ -27,7 +27,16 @@ const CONFIRM_FOR: Duration = Duration::from_secs(5 * 60);
 pub(crate) fn visible(op: &str) -> bool {
     !matches!(
         op,
-        "getAgentAccess" | "setAgentAccess" | "listAgentRequests" | "answerAgentRequest"
+        "getAgentAccess"
+            | "setAgentAccess"
+            | "listAgentRequests"
+            | "answerAgentRequest"
+            | "getAgentCli"
+            | "installAgentCli"
+            | "uninstallAgentCli"
+            | "previewMcpConfig"
+            | "writeMcpConfig"
+            | "mcpConfigText"
     )
 }
 

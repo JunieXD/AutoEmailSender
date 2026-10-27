@@ -1,0 +1,9 @@
+{
+  "build": {
+    "beforeDevCommand": "node tools/build-agent.mjs --debug && pnpm --dir ui dev",
+    "beforeBuildCommand": "node tools/build-agent.mjs && pnpm --dir ui build"
+  },
+  "bundle": {
+    "externalBin": ["binaries/autoemail"]
+  }
+}
