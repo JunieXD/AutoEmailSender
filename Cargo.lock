@@ -154,6 +154,7 @@ dependencies = [
  "send",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sheet",
  "sqlx",
  "stats",

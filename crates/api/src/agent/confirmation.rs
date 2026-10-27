@@ -22,7 +22,7 @@ impl Description {
 }
 
 fn parse<T: DeserializeOwned>(input: &serde_json::Value) -> Result<T, CallError> {
-    serde_json::from_value(input.clone()).map_err(CallError::bad_input)
+    serde_path_to_error::deserialize(input.clone()).map_err(CallError::bad_input)
 }
 
 async fn mentor_targets(ctx: &Context, ids: &[i64]) -> Result<Vec<String>, CallError> {

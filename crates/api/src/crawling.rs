@@ -28,6 +28,18 @@ pub struct CrawlRetry {
 pub struct CandidateIds {
     pub ids: Vec<i64>,
 }
+pub(super) async fn submit_candidates(
+    ctx: &Context,
+    input: crawl::submit::SubmitCandidates,
+) -> Result<crawl::submit::Submitted, CallError> {
+    crawl::submit::submit(&ctx.db, input, now())
+        .await
+        .map_err(|e| match e {
+            crawl::submit::SubmitError::Invalid(message) => CallError::invalid(message),
+            crawl::submit::SubmitError::Deleted => CallError::not_found("这次抓取已被删除"),
+            crawl::submit::SubmitError::Db(error) => error.into(),
+        })
+}
 async fn crawl_ready(ctx: &Context, id: Option<i64>) -> Result<model::Chosen, CallError> {
     let m = model::selected(&ctx.db, id).await?.ok_or_else(|| {
         CallError::invalid("尚未添加模型，请在“设置 › AI › 模型”中添加后再开始。".into())

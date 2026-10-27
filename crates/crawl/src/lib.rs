@@ -11,6 +11,7 @@ pub mod queue;
 pub mod review;
 pub mod runner;
 pub mod store;
+pub mod submit;
 mod url;
 
 pub use ownership::owns_email;

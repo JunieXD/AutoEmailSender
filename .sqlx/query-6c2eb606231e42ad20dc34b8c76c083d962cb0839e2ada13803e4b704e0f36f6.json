@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n        FROM candidate\n        WHERE crawl_id = ?1 AND (id IN (\n            SELECT candidate_id\n            FROM candidate_profile\n            WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2))\n        ) OR (EXISTS (\n            SELECT 1\n            FROM json_each(match_names) a\n            JOIN json_each(?3) b ON a.value = b.value\n        ) AND EXISTS (\n            SELECT 1\n            FROM json_each(emails) a\n            JOIN json_each(?4) b ON a.value = b.value COLLATE NOCASE\n        )))\n        ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6c2eb606231e42ad20dc34b8c76c083d962cb0839e2ada13803e4b704e0f36f6"
+}

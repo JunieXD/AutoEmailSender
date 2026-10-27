@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, json_extract(start_urls, '$[0]') AS \"url: String\",\n            university, school, created_at\n        FROM crawl\n        ORDER BY created_at DESC, id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "url: String",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "university",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "crawl",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      null,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "73fe4e72e688ac78ec4ca529c503c4335564c06cea248d0448ccc4c455a26fd8"
+}

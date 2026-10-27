@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n            SET review = ?, name = ?, aliases = ?, emails = ?, affiliations = ?,\n                homepages = ?, research = ?, papers = ?, evidence = ?,\n                profile_url = coalesce(profile_url, ?),\n                list_page_id = coalesce(list_page_id, ?),\n                profile_page_id = coalesce(?, profile_page_id), profile_fields = ?,\n                match_names = ?, match_schools = ?, note = coalesce(?, note)\n            WHERE id = ?\n            RETURNING profile_url",
+  "describe": {
+    "columns": [
+      {
+        "name": "profile_url",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "profile_url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 17
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "c4e381be0a623dd80bed0b205467d79883e3f970764564ae51a40daf57393ff0"
+}

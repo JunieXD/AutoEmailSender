@@ -599,8 +599,10 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
         review::save(
             &mut tx,
             crawl,
-            claim.id,
-            PageKind::Profile,
+            review::Source::Page {
+                id: claim.id,
+                kind: PageKind::Profile,
+            },
             url.as_str(),
             Person {
                 fields: MentorFields {
@@ -666,8 +668,10 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
         review::save(
             &mut tx,
             crawl,
-            claim.id,
-            PageKind::Profile,
+            review::Source::Page {
+                id: claim.id,
+                kind: PageKind::Profile,
+            },
             site.url(&format!("/limit/{n}")).as_str(),
             Person {
                 fields: MentorFields {
@@ -1063,8 +1067,10 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
         review::save(
             &mut tx,
             crawl,
-            page.id,
-            PageKind::Profile,
+            review::Source::Page {
+                id: page.id,
+                kind: PageKind::Profile,
+            },
             site.url(&format!("/people/{name}")).as_str(),
             Person {
                 fields: MentorFields {
@@ -1127,8 +1133,10 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
         review::save(
             &mut tx,
             crawl,
-            page.id,
-            PageKind::Profile,
+            review::Source::Page {
+                id: page.id,
+                kind: PageKind::Profile,
+            },
             site.url(&format!("/same/{n}")).as_str(),
             Person {
                 fields: MentorFields {
@@ -1223,8 +1231,10 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
     review::save(
         &mut tx,
         crawl,
-        page.id,
-        PageKind::Profile,
+        review::Source::Page {
+            id: page.id,
+            kind: PageKind::Profile,
+        },
         url.as_str(),
         person(vec![]),
     )
@@ -1262,8 +1272,10 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
     review::save(
         &mut tx,
         crawl,
-        page.id,
-        PageKind::Profile,
+        review::Source::Page {
+            id: page.id,
+            kind: PageKind::Profile,
+        },
         url.as_str(),
         person(vec!["新补到的论文".into()]),
     )
@@ -1315,8 +1327,10 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
         review::save(
             &mut tx,
             crawl,
-            page.id,
-            PageKind::Profile,
+            review::Source::Page {
+                id: page.id,
+                kind: PageKind::Profile,
+            },
             u.as_str(),
             person(u.clone(), vec![]),
         )
@@ -1356,8 +1370,10 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
         review::save(
             &mut tx,
             crawl,
-            page.id,
-            PageKind::Profile,
+            review::Source::Page {
+                id: page.id,
+                kind: PageKind::Profile,
+            },
             u.as_str(),
             person(u.clone(), vec!["zhang@example.edu".into()]),
         )
@@ -1437,8 +1453,7 @@ async fn observation(
     review::save(
         &mut tx,
         c.crawl,
-        c.id,
-        kind,
+        review::Source::Page { id: c.id, kind },
         site.url(path).as_str(),
         Person {
             fields,
@@ -1873,8 +1888,10 @@ async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
         review::save(
             &mut tx,
             root.crawl,
-            root.id,
-            PageKind::List,
+            review::Source::Page {
+                id: root.id,
+                kind: PageKind::List,
+            },
             material.url.as_str(),
             person,
         )
@@ -2354,8 +2371,10 @@ async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool)
     review::save(
         &mut tx,
         c.crawl,
-        c.id,
-        PageKind::Profile,
+        review::Source::Page {
+            id: c.id,
+            kind: PageKind::Profile,
+        },
         site.url("/canonical").as_str(),
         Person {
             fields: observed("张三", &[], None),

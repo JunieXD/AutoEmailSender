@@ -191,6 +191,8 @@ mod tests {
     fn detail() -> CrawlDetail {
         CrawlDetail {
             summary: CrawlSummary {
+                university: None,
+                school: None,
                 id: 5,
                 url: Some("https://school.example.edu/list".into()),
                 model_config_id: None,

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, crawl_id, review, mentor_id,\n            name, aliases AS \"aliases: Json<Vec<String>>\",\n            emails AS \"emails: Json<Vec<String>>\",\n            affiliations AS \"affiliations: Json<Vec<mentor::Affiliation>>\",\n            homepages AS \"homepages: Json<Vec<String>>\",\n            research, papers AS \"papers: Json<Vec<String>>\",\n            source_url, enrich AS \"enrich: crate::enrich::EnrichState\",\n            enrich_changes AS \"changes: Json<Vec<crate::enrich::EnrichChange>>\",\n            enrich_error\n        FROM candidate\n        WHERE id IN (SELECT value FROM json_each(?))\n        ORDER BY id",
+  "query": "SELECT id, crawl_id, review, mentor_id,\n            name, aliases AS \"aliases: Json<Vec<String>>\",\n            emails AS \"emails: Json<Vec<String>>\",\n            affiliations AS \"affiliations: Json<Vec<mentor::Affiliation>>\",\n            homepages AS \"homepages: Json<Vec<String>>\",\n            research, papers AS \"papers: Json<Vec<String>>\",\n            source_url, note, enrich AS \"enrich: crate::enrich::EnrichState\",\n            enrich_changes AS \"changes: Json<Vec<crate::enrich::EnrichChange>>\",\n            enrich_error\n        FROM candidate\n        WHERE id IN (SELECT value FROM json_each(?))\n        ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -136,8 +136,19 @@
         }
       },
       {
-        "name": "enrich: crate::enrich::EnrichState",
+        "name": "note",
         "ordinal": 12,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "note"
+          }
+        }
+      },
+      {
+        "name": "enrich: crate::enrich::EnrichState",
+        "ordinal": 13,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -148,7 +159,7 @@
       },
       {
         "name": "changes: Json<Vec<crate::enrich::EnrichChange>>",
-        "ordinal": 13,
+        "ordinal": 14,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -159,7 +170,7 @@
       },
       {
         "name": "enrich_error",
-        "ordinal": 14,
+        "ordinal": 15,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -185,10 +196,11 @@
       true,
       true,
       true,
+      true,
       false,
       true,
       true
     ]
   },
-  "hash": "8eaf5a53fcdd5e3258b0ab9cd91b8c1bfe9579007537b59d26650bd26431adfc"
+  "hash": "81f1dbe0d6720ce92ada792cc756148f548de79ea0a6297e1c5ca8dc8d252005"
 }

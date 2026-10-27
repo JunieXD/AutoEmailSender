@@ -40,7 +40,7 @@ export type CallError = { code: ErrorCode, message: string, };
 
 export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, previous: PreviousLetter | null, };
 
-export type CandidateDetail = { evidence: Array<Evidence>, id: number, crawlId: number | null, review: string, mentorId: number | null, fields: MentorFields, papers: Array<string>, sourceUrl: string | null, enrich: EnrichState, enrichChanges: Array<EnrichChange>, enrichError: string | null, };
+export type CandidateDetail = { evidence: Array<Evidence>, id: number, crawlId: number | null, review: string, mentorId: number | null, fields: MentorFields, papers: Array<string>, sourceUrl: string | null, note: string | null, enrich: EnrichState, enrichChanges: Array<EnrichChange>, enrichError: string | null, };
 
 export type CandidateFilter = "all" | "new" | "supplement" | "maybe" | "missing_email";
 
@@ -78,7 +78,7 @@ export type CrawlId = { id: number, };
 
 export type CrawlList = { crawls: Array<CrawlSummary>, total: number, };
 
-export type CrawlOption = { id: number, url: string | null, createdAt: number, };
+export type CrawlOption = { id: number, url: string | null, university: string | null, school: string | null, createdAt: number, };
 
 export type CrawlPage = { id: number, url: string, kind: PageKind, state: PageState, status: PageStatus, error: string | null, };
 
@@ -94,7 +94,7 @@ export type CrawlStart = { urls: string, modelId: number, };
 
 export type CrawlState = "running" | "paused" | "done" | "failed" | "canceled";
 
-export type CrawlSummary = { id: number, url: string | null, modelConfigId: number | null, state: CrawlState, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, enrichRemaining: number, modelIds: Array<number>, profiles: number, candidates: number, failed: number, tokens: number | null, stage: CrawlStage, };
+export type CrawlSummary = { id: number, url: string | null, university: string | null, school: string | null, modelConfigId: number | null, state: CrawlState, error: string | null, createdAt: number, finishedAt: number | null, pages: number, remaining: number, enrichRemaining: number, modelIds: Array<number>, profiles: number, candidates: number, failed: number, tokens: number | null, stage: CrawlStage, };
 
 export type CrawlUrls = { urls: string, };
 
@@ -652,6 +652,12 @@ export type StatsPeriod = { range: Range, timezone: string, now: number, };
 
 export type StatsQuery = { page: number, range: Range, timezone: string, now: number, };
 
+export type SubmitCandidates = { crawlId?: number, candidates?: Array<SubmittedCandidate>, };
+
+export type Submitted = { crawlId: number, added: number, merged: number, total: number, };
+
+export type SubmittedCandidate = { name: string, aliases?: Array<string>, emails?: Array<string>, affiliations?: Array<Affiliation>, homepages?: Array<string>, profileUrl?: string, sourceUrl: string, research?: string, papers?: Array<string>, note?: string, };
+
 export type TableFormat = "xlsx" | "csv";
 
 export type Tag = { id: number, name: string,
@@ -782,6 +788,7 @@ export interface Operations {
   mentorStats: { input: Nothing; output: MentorOverview };
   tokenStats: { input: StatsPeriod; output: TokenUsage };
   todayWork: { input: TodayWorkQuery; output: TodayWork };
+  submitCandidates: { input: SubmitCandidates; output: Submitted };
   checkCrawlUrls: { input: CrawlUrls; output: Array<string> };
   crawlWork: { input: CrawlWorkQuery; output: Array<CrawlSummary> };
   startCrawl: { input: CrawlStart; output: CrawlId };

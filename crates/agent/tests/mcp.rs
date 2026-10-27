@@ -141,6 +141,24 @@ async fn mcp_and_help_use_the_running_app_through_real_stdio_and_local_channels(
     .await?;
     assert!(content(&read(&mut stdout).await?)?["typescript"].is_string());
 
+    send(
+        &mut stdin,
+        tool(
+            14,
+            "call_operation",
+            json!({"name":"submitCandidates", "input":{"candidates":[{
+                "name":"MCP 假导师", "sourceUrl":"https://example.edu/mcp",
+                "emails":["mcp@example.edu"]
+            }]}}),
+        ),
+    )
+    .await?;
+    let submitted = read(&mut stdout).await?;
+    assert_eq!(submitted["result"]["isError"], false);
+    let submitted = content(&submitted)?;
+    assert_eq!(submitted["added"], 1);
+    assert_eq!(submitted["total"], 1);
+
     api::call(&ctx, "setAiFactCheck", json!({"on":true}))
         .await
         .map_err(|e| e.message)?;

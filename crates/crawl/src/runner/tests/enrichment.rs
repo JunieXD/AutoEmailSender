@@ -67,6 +67,76 @@ async fn detail(db: &SqlitePool, id: i64) -> review::CandidateDetail {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn agent_submission_reopens_for_profile_and_child_enrichment(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<p>张三</p><a href='/contact'>联系</a>");
+    site.page("/contact", "<p>张三 a@example.edu 机器学习</p>");
+    let mut provider = Provider::start().await.unwrap();
+    config(&db, &provider.address).await;
+    let submitted = crate::submit::submit(
+        &db,
+        serde_json::from_value(json!({"candidates":[{
+            "name":"张三", "profileUrl":site.url("/p").as_str(),
+            "sourceUrl":site.url("/").as_str(), "note":"待补邮箱"
+        }]}))
+        .unwrap(),
+        1,
+    )
+    .await
+    .unwrap();
+    assert!(finish(&db, 1).await.unwrap().is_empty());
+    let id = review::list(
+        &db,
+        &CandidateQuery {
+            crawl_id: Some(submitted.crawl_id),
+            processed: false,
+            filter: CandidateFilter::All,
+            page: 1,
+        },
+    )
+    .await
+    .unwrap()
+    .candidates[0]
+        .id;
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let mut profile = answer("a@example.edu", json!([1]));
+    profile["research"] = Value::Null;
+    let result = process_answer(&db, &site, &mut provider, &claim, profile).await;
+    save(&db, &claim, &result).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(claim.kind, PageKind::EnrichChild);
+    let result = process_answer(
+        &db,
+        &site,
+        &mut provider,
+        &claim,
+        answer("a@example.edu", json!([])),
+    )
+    .await;
+    save(&db, &claim, &result).await.unwrap();
+    finish(&db, 3).await.unwrap();
+    let detail = detail(&db, id).await;
+    assert_eq!(detail.candidate.fields.emails, vec!["a@example.edu"]);
+    assert_eq!(
+        detail.candidate.fields.research.as_deref(),
+        Some("机器学习")
+    );
+    assert_eq!(detail.candidate.note.as_deref(), Some("待补邮箱"));
+    assert_eq!(detail.candidate.enrichment.enrich, EnrichState::Done);
+    assert!(
+        detail
+            .evidence
+            .iter()
+            .any(|e| e.url == site.url("/contact").as_str())
+    );
+    assert_eq!(
+        queue::list(&db, 1).await.unwrap().crawls[0].state,
+        queue::CrawlState::Done
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_personal_page_fills_only_empty_fields(db: SqlitePool) {
     let site = Site::new().await;
     site.page(
@@ -710,8 +780,8 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     .unwrap();
     let keep = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails,
-            mentor_id)
-        VALUES (?, ?, 'accepted', 'none', '张三', '["a@example.edu"]', ?)
+            mentor_id, match_names)
+        VALUES (?, ?, 'accepted', 'none', '张三', '["a@example.edu"]', ?, '["张三"]')
         RETURNING id"#,
     )
     .bind(crawl)
@@ -744,8 +814,10 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     review::save(
         &mut tx,
         crawl,
-        page,
-        PageKind::Profile,
+        review::Source::Page {
+            id: page,
+            kind: PageKind::Profile,
+        },
         site.url("/merged").as_str(),
         extract::Person {
             fields: MentorFields {
@@ -789,8 +861,9 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
     )
     .await;
     let duplicate = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails)
-        VALUES (?, ?, 'pending', 'none', '张三', '["a@example.edu"]')
+        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails,
+            match_names)
+        VALUES (?, ?, 'pending', 'none', '张三', '["a@example.edu"]', '["张三"]')
         RETURNING id"#,
     )
     .bind(crawl)
@@ -822,8 +895,10 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
     review::save(
         &mut tx,
         crawl,
-        page,
-        PageKind::Profile,
+        review::Source::Page {
+            id: page,
+            kind: PageKind::Profile,
+        },
         site.url("/active").as_str(),
         extract::Person {
             fields: MentorFields {
