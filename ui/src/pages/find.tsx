@@ -43,14 +43,16 @@ const STAGES: Record<CrawlStage, string> = {
   failed: "没能完成",
   canceled: "已取消",
 };
-/** A crawl by where it started, short enough for a menu or a line. */
-export function crawlName({ url }: { url: string | null }): string {
-  return url
-    ? url
-        .replace(/^https?:\/\//, "")
-        .replace(/\/$/, "")
-        .slice(0, 48)
-    : "Agent 提交";
+/** A crawl by where it started, or an Agent submission by its school, short enough for a menu or a line. */
+export function crawlName(c: { url: string | null; university: string | null; school: string | null }): string {
+  if (c.url === null) {
+    const unit = [c.university, c.school].filter(Boolean).join(" ");
+    return unit ? `Agent 提交：${unit}` : "Agent 提交";
+  }
+  return c.url
+    .replace(/^https?:\/\//, "")
+    .replace(/\/$/, "")
+    .slice(0, 48);
 }
 export function findSearch(s: Record<string, unknown>) {
   const filter: CandidateFilter =
@@ -222,18 +224,21 @@ function CrawlRecord({ crawl: c, expanded }: { crawl: CrawlSummary; expanded: bo
           onClick={() => void navigate({ search: (s) => ({ ...s, detail: expanded ? undefined : c.id }) })}
           aria-expanded={expanded}
         >
-          <strong className="break-all">{c.url ?? "Agent 提交"}</strong>
+          <strong className="break-all">{c.url ?? crawlName(c)}</strong>
           <ChevronDown
             className={`ml-1 inline size-4 text-faint transition-transform ${expanded ? "rotate-180" : ""}`}
           />
           <span className="mt-1 block text-sm text-muted-foreground">
-            {[
-              STAGES[c.stage],
-              `找到 ${c.candidates} 位导师`,
-              `读完 ${c.profiles} 位的个人页`,
-              c.remaining > 0 && `还有 ${c.remaining} 页没读`,
-              c.enrichRemaining > 0 && `补全还剩 ${c.enrichRemaining} 位`,
-            ]
+            {(c.url === null
+              ? [c.stage !== "done" && STAGES[c.stage], `收到 ${c.candidates} 位导师`]
+              : [
+                  STAGES[c.stage],
+                  `找到 ${c.candidates} 位导师`,
+                  `读完 ${c.profiles} 位的个人页`,
+                  c.remaining > 0 && `还有 ${c.remaining} 页没读`,
+                ]
+            )
+              .concat(c.enrichRemaining > 0 && `补全还剩 ${c.enrichRemaining} 位`)
               .filter(Boolean)
               .join(" · ")}
           </span>
@@ -336,48 +341,54 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
               名单可能不完整：{detail.data.limits.join("；")}
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="mr-auto font-medium">页面及未打开的原因</h3>
-            <ModelAction modelIds={modelIds} disabled={retry.isPending} onWrite={() => retry.mutate(null)}>
-              重试全部未打开页面
-            </ModelAction>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            需要浏览器验证、渲染、解密或点击翻页的页面保留已读资料；本次无法接管浏览器
-          </p>
-          {detail.data.pages.map((p) => (
-            <div key={p.id} className="flex items-start gap-2 rounded-md bg-muted p-3">
-              <div className="min-w-0 grow">
-                <p className="break-all">{p.url}</p>
-                <p
-                  className={
-                    p.status !== "success" && p.state === "done" ? "mt-1 text-warning" : "mt-1 text-muted-foreground"
-                  }
-                >
-                  {p.state === "queued" ? "待读取" : p.state === "running" ? "正在读取" : (p.error ?? "已读取")}
-                </p>
-              </div>
-              {p.state === "done" && p.status !== "success" && (
-                <ModelAction
-                  modelId={p.kind.startsWith("enrich_") ? null : modelId}
-                  disabled={retry.isPending}
-                  onWrite={() => retry.mutate(p.id)}
-                >
-                  重试
+          {detail.data.pageTotal > 0 && (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="mr-auto font-medium">页面及未打开的原因</h3>
+                <ModelAction modelIds={modelIds} disabled={retry.isPending} onWrite={() => retry.mutate(null)}>
+                  重试全部未打开页面
                 </ModelAction>
-              )}
-            </div>
-          ))}
-          <Pages page={page} total={detail.data.pageTotal} onPage={setPage} />
-          <details>
-            <summary className="cursor-pointer text-muted-foreground">运行记录</summary>
-            {detail.data.runs.map((r, n) => (
-              <p key={n} className="mt-2 text-xs text-muted-foreground">
-                {day(r.startedAt)} {time(r.startedAt)} — {r.endedAt ? `${day(r.endedAt)} ${time(r.endedAt)}` : "进行中"}{" "}
-                · {r.appVersion}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                需要浏览器验证、渲染、解密或点击翻页的页面保留已读资料；本次无法接管浏览器
               </p>
-            ))}
-          </details>
+              {detail.data.pages.map((p) => (
+                <div key={p.id} className="flex items-start gap-2 rounded-md bg-muted p-3">
+                  <div className="min-w-0 grow">
+                    <p className="break-all">{p.url}</p>
+                    <p
+                      className={
+                        p.status !== "success" && p.state === "done"
+                          ? "mt-1 text-warning"
+                          : "mt-1 text-muted-foreground"
+                      }
+                    >
+                      {p.state === "queued" ? "待读取" : p.state === "running" ? "正在读取" : (p.error ?? "已读取")}
+                    </p>
+                  </div>
+                  {p.state === "done" && p.status !== "success" && (
+                    <ModelAction
+                      modelId={p.kind.startsWith("enrich_") ? null : modelId}
+                      disabled={retry.isPending}
+                      onWrite={() => retry.mutate(p.id)}
+                    >
+                      重试
+                    </ModelAction>
+                  )}
+                </div>
+              ))}
+              <Pages page={page} total={detail.data.pageTotal} onPage={setPage} />
+              <details>
+                <summary className="cursor-pointer text-muted-foreground">运行记录</summary>
+                {detail.data.runs.map((r, n) => (
+                  <p key={n} className="mt-2 text-xs text-muted-foreground">
+                    {day(r.startedAt)} {time(r.startedAt)} —{" "}
+                    {r.endedAt ? `${day(r.endedAt)} ${time(r.endedAt)}` : "进行中"} · {r.appVersion}
+                  </p>
+                ))}
+              </details>
+            </>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="quiet" disabled={exported.isPending} onClick={() => exported.mutate()}>
               导出这次抓取的日志
@@ -421,6 +432,8 @@ function Candidates() {
     queryKey: ["crawlOptions"],
     queryFn: () => call("crawlOptions", {}),
   });
+  // docs/design.md: candidates from an Agent are marked, the app did not read their pages itself.
+  const agentCrawls = new Set(crawls.data?.filter((c) => c.url === null).map((c) => c.id));
   const reject = useMutation({
     mutationFn: (ids: number[]) => call("rejectCandidates", { ids }),
     onSuccess: () => {
@@ -521,6 +534,7 @@ function Candidates() {
                   <strong>{c.name}</strong>
                   <span className="ml-2 text-xs text-muted-foreground">
                     {s.processed ? (c.review === "rejected" ? "已拒绝" : "已接受") : FILTERS[c.category]}
+                    {c.crawlId !== null && agentCrawls.has(c.crawlId) && " · Agent 提交"}
                   </span>
                   <ChevronDown
                     className={`ml-1 inline size-4 text-faint transition-transform ${expanded === c.id ? "rotate-180" : ""}`}
@@ -735,6 +749,9 @@ function CandidateDetails({
   return (
     <div className="mt-4 space-y-3 border-t border-border pt-3 text-sm">
       <ErrorText error={detail.error ?? preview.error} />
+      {detail.data?.note && (
+        <p className="rounded-md bg-warning-soft p-3 break-words text-warning">Agent 说明：{detail.data.note}</p>
+      )}
       {preview.data && <IntakeChoices preview={preview.data} decisions={decisions} onChange={onChange} source="候选" />}
       {detail.data && (
         <>
