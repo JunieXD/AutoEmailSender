@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT address\n                FROM mailbox\n                WHERE id = ? AND paused_until > ?",
+  "query": "SELECT address FROM mailbox WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 2
+      "Right": 1
     },
     "nullable": [
       false
     ]
   },
-  "hash": "39e17d50509e3ece090ff11c80c65c07a609d92dfd65a55f6e0948b04d38aec3"
+  "hash": "61cf765113c8cffa2b795c586eb5cddf197dc3adc48b46e1f51d715847be2a28"
 }

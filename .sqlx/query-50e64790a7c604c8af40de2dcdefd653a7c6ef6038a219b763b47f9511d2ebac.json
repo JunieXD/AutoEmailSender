@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.name || '：' || t.text AS \"name!: String\"\n                FROM todo t JOIN mentor m ON m.id = t.mentor_id WHERE t.id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "name!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50e64790a7c604c8af40de2dcdefd653a7c6ef6038a219b763b47f9511d2ebac"
+}

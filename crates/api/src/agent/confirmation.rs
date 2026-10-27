@@ -1,4 +1,4 @@
-//! Confirmation effects remain complete for rechecking; presentation belongs to the caller.
+//! Rechecking compares exactly the description shown to the user.
 
 use std::collections::BTreeSet;
 
@@ -8,17 +8,12 @@ use ts_rs::TS;
 
 use crate::{CallError, Context};
 
-mod originals;
-use originals::Original;
-
-#[derive(Clone, PartialEq, Serialize, TS)]
+#[derive(Clone, PartialEq, Eq, Serialize, TS)]
 pub struct Description {
     /// Only application-authored text and counts; object content belongs in the other fields.
     pub action: String,
     pub targets: Vec<String>,
     pub letters: Vec<ConfirmationLetter>,
-    pub emails: Vec<EmailOriginal>,
-    pub originals: Vec<Original>,
 }
 
 impl Description {
@@ -27,8 +22,6 @@ impl Description {
             action,
             targets,
             letters: vec![],
-            emails: vec![],
-            originals: vec![],
         }
     }
 }
@@ -87,34 +80,6 @@ pub struct ConfirmationLetter {
     pub previous: Option<QuotedMessage>,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct EmailOriginal {
-    pub id: i64,
-    pub mentor_id: i64,
-    pub mentor_name: String,
-    pub address: Option<String>,
-    pub trashed_at: Option<i64>,
-    pub task_id: Option<i64>,
-    pub state: String,
-    pub kind: String,
-    pub reply_to: Option<String>,
-    pub subject: Option<String>,
-    pub body_md: Option<String>,
-    pub html: Option<String>,
-    pub text: Option<String>,
-    pub refs: Option<String>,
-    pub planned_at: Option<i64>,
-    pub latest_at: Option<i64>,
-    pub manual_schedule: bool,
-    pub approval_order: Option<i64>,
-    pub updated_at: i64,
-    pub sent_at: Option<i64>,
-    pub mailbox_id: Option<i64>,
-    pub mailbox_address: Option<String>,
-    pub attachments: Vec<ConfirmationAttachment>,
-}
-
 async fn mentor_targets(
     conn: &mut SqliteConnection,
     ids: &[i64],
@@ -139,218 +104,95 @@ async fn mentor_targets(
         .collect())
 }
 
-async fn emails(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<EmailOriginal>, CallError> {
+async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<String>, CallError> {
     let rows = sqlx::query!(
-        r#"SELECT e.id, e.mentor_id, m.name AS mentor_name, m.trashed_at,
-            (SELECT address FROM mentor_email WHERE mentor_id = m.id
-                ORDER BY position LIMIT 1) AS "address?: String",
-            e.task_id, e.state, e.kind, e.reply_to, e.subject, e.body_md, e.html, e.text, e.refs,
-            e.planned_at, e.latest_at, e.manual_schedule AS "manual_schedule: bool",
-            e.approval_order, e.updated_at, e.sent_at, own.mailbox_id, b.address AS mailbox_address
-        FROM email e
-        JOIN mentor m ON m.id = e.mentor_id
-        JOIN email_own_mailbox own ON own.email_id = e.id
-        LEFT JOIN mailbox b ON b.id = own.mailbox_id
+        r#"SELECT m.name,
+            (SELECT address FROM mentor_email
+                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String",
+            count(*) AS "count!: i64"
+        FROM email e JOIN mentor m ON m.id = e.mentor_id
         WHERE e.id IN (SELECT value FROM json_each(?))
-        ORDER BY e.id"#,
+        GROUP BY m.id ORDER BY m.id"#,
         Json(ids)
     )
-    .fetch_all(&mut *conn)
+    .fetch_all(conn)
     .await?;
-    let mut originals = Vec::new();
-    for row in rows {
-        let attachments = sqlx::query_as!(
-            ConfirmationAttachment,
-            r#"SELECT material_id, file_name AS "file_name!", size FROM email_attachment
-            WHERE email_id = ? ORDER BY file_name"#,
-            row.id
-        )
-        .fetch_all(&mut *conn)
-        .await?;
-        originals.push(EmailOriginal {
-            id: row.id,
-            mentor_id: row.mentor_id,
-            mentor_name: row.mentor_name,
-            address: row.address,
-            trashed_at: row.trashed_at,
-            task_id: row.task_id,
-            state: row.state,
-            kind: row.kind,
-            reply_to: row.reply_to,
-            subject: row.subject,
-            body_md: row.body_md,
-            html: row.html,
-            text: row.text,
-            refs: row.refs,
-            planned_at: row.planned_at,
-            latest_at: row.latest_at,
-            manual_schedule: row.manual_schedule,
-            approval_order: row.approval_order,
-            updated_at: row.updated_at,
-            sent_at: row.sent_at,
-            mailbox_id: row.mailbox_id,
-            mailbox_address: row.mailbox_address,
-            attachments,
-        });
-    }
-    Ok(originals)
-}
-
-fn email_targets(emails: &[EmailOriginal]) -> Vec<String> {
-    emails
-        .iter()
-        .map(|email| {
-            let address = email.address.as_deref().unwrap_or("未填写邮箱");
-            format!("{}：{address}", email.mentor_name)
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let address = row.address.as_deref().unwrap_or("未填写邮箱");
+            format!("{}：{address}（{} 封）", row.name, row.count)
         })
-        .collect()
+        .collect())
 }
 
-async fn task_target(
-    conn: &mut SqliteConnection,
-    id: i64,
-    originals: &mut Vec<Original>,
-) -> Result<String, CallError> {
-    let row = sqlx::query!(
-        r#"SELECT name, state, kind, writer, model_config_id, template_id,
-            template_subject, template_body_md, generation_paused_at, generation_pause_reason,
-            schedule, window_dates, window_start, window_end, per_window,
-            (SELECT json_group_array(json_array(material_id, role)) FROM
-                (SELECT material_id, role FROM task_material WHERE task_id = task.id
-                    ORDER BY material_id, role)) AS "materials!: String"
-        FROM task WHERE id = ?"#,
+async fn task_target(conn: &mut SqliteConnection, id: i64) -> Result<String, CallError> {
+    Ok(
+        sqlx::query_scalar!("SELECT name FROM task WHERE id = ?", id)
+            .fetch_optional(conn)
+            .await?
+            .unwrap_or_else(|| "找不到的任务（可能已被删除）".into()),
+    )
+}
+
+async fn mailbox_target(conn: &mut SqliteConnection, id: i64) -> Result<String, CallError> {
+    Ok(
+        sqlx::query_scalar!("SELECT address FROM mailbox WHERE id = ?", id)
+            .fetch_optional(conn)
+            .await?
+            .unwrap_or_else(|| "找不到的邮箱（可能已被删除）".into()),
+    )
+}
+
+async fn model_target(conn: &mut SqliteConnection, id: i64) -> Result<String, CallError> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT coalesce(name, model) AS "name!: String" FROM model_config WHERE id = ?"#,
         id
     )
     .fetch_optional(conn)
-    .await?;
-    Ok(match row {
-        Some(row) => {
-            let name = row.name.clone();
-            originals.push(Original::Task {
-                id,
-                name: row.name,
-                state: row.state,
-                kind: row.kind,
-                writer: row.writer,
-                model_config_id: row.model_config_id,
-                template_id: row.template_id,
-                template_subject: row.template_subject,
-                template_body_md: row.template_body_md,
-                generation_paused_at: row.generation_paused_at,
-                generation_pause_reason: row.generation_pause_reason,
-                materials: serde_json::from_str(&row.materials).map_err(CallError::internal)?,
-                schedule: row.schedule,
-                window_dates: row.window_dates,
-                window_start: row.window_start,
-                window_end: row.window_end,
-                per_window: row.per_window,
-            });
-            name
-        }
-        None => "找不到的任务（可能已被删除）".into(),
-    })
+    .await?
+    .unwrap_or_else(|| "找不到的模型配置（可能已被删除）".into()))
 }
 
-async fn mailbox_target(
-    conn: &mut SqliteConnection,
-    id: i64,
-    originals: &mut Vec<Original>,
-) -> Result<String, CallError> {
-    let row = sqlx::query!(
-        r#"SELECT address, sender_name, provider, smtp_host, smtp_port, smtp_security,
-            imap_host, imap_port, imap_security, daily_limit, min_interval_s, rotation_order,
-            paused_until, pause_reason
-        FROM mailbox WHERE id = ?"#,
-        id
-    )
-    .fetch_optional(conn)
-    .await?;
-    Ok(match row {
-        Some(row) => {
-            let address = row.address.clone();
-            originals.push(Original::Mailbox {
-                id,
-                address: row.address,
-                sender_name: row.sender_name,
-                provider: row.provider,
-                smtp_host: row.smtp_host,
-                smtp_port: row.smtp_port,
-                smtp_security: row.smtp_security,
-                imap_host: row.imap_host,
-                imap_port: row.imap_port,
-                imap_security: row.imap_security,
-                daily_limit: row.daily_limit,
-                min_interval_s: row.min_interval_s,
-                rotation_order: row.rotation_order,
-                paused_until: row.paused_until,
-                pause_reason: row.pause_reason,
-            });
-            address
-        }
-        None => "找不到的邮箱（可能已被删除）".into(),
-    })
-}
-
-async fn model_target(
-    conn: &mut SqliteConnection,
-    id: i64,
-    originals: &mut Vec<Original>,
-) -> Result<String, CallError> {
-    let row = sqlx::query!(
-        r#"SELECT name, provider, base_url, model, agreed, input_price, output_price,
-            (SELECT count(*) FROM task WHERE model_config_id = model_config.id) AS "tasks!: i64",
-            (SELECT count(*) FROM crawl WHERE model_config_id = model_config.id) AS "crawls!: i64"
-        FROM model_config WHERE id = ?"#,
-        id
-    )
-    .fetch_optional(conn)
-    .await?;
-    Ok(match row {
-        Some(row) => {
-            let name = row.name.clone().unwrap_or_else(|| row.model.clone());
-            originals.push(Original::Model {
-                id,
-                name: row.name,
-                model: row.model,
-                provider: row.provider,
-                base_url: row.base_url,
-                agreed: row.agreed,
-                input_price: row.input_price,
-                output_price: row.output_price,
-                tasks: row.tasks,
-                crawls: row.crawls,
-            });
-            name
-        }
-        None => "找不到的模型配置（可能已被删除）".into(),
-    })
-}
-
-async fn task_emails(
-    conn: &mut SqliteConnection,
-    id: i64,
-) -> Result<Vec<EmailOriginal>, CallError> {
-    let ids = sqlx::query_scalar!("SELECT id FROM email WHERE task_id = ? ORDER BY id", id)
-        .fetch_all(&mut *conn)
-        .await?;
-    emails(conn, &ids).await
-}
-
-async fn mailbox_emails(
-    conn: &mut SqliteConnection,
-    id: i64,
-) -> Result<Vec<EmailOriginal>, CallError> {
-    let ids = sqlx::query_scalar!(
+async fn mailbox_emails(conn: &mut SqliteConnection, id: i64) -> Result<Vec<i64>, CallError> {
+    Ok(sqlx::query_scalar!(
         r#"SELECT e.id FROM email e
         JOIN email_own_mailbox own ON own.email_id = e.id
         WHERE e.state = 'approved' AND (own.mailbox_id = ?
             OR (own.mailbox_id IS NULL AND e.kind = 'first'))
+            AND (e.task_id IS NULL OR e.task_id IN
+                (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
         ORDER BY e.id"#,
         id
     )
-    .fetch_all(&mut *conn)
-    .await?;
-    emails(conn, &ids).await
+    .fetch_all(conn)
+    .await?)
+}
+
+async fn sending(
+    conn: &mut SqliteConnection,
+    action: &str,
+    target: String,
+    ids: &[i64],
+) -> Result<Description, CallError> {
+    let mut targets = email_targets(conn, ids).await?;
+    let action = format!(
+        "{action}：会发出 {} 封邮件，给 {} 位导师",
+        ids.len(),
+        targets.len()
+    );
+    targets.insert(0, target);
+    Ok(Description::new(action, targets))
+}
+
+fn display_time(at: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(at)
+        .map(|at| {
+            at.with_timezone(&chrono::Local)
+                .format("%Y年%-m月%-d日 %H:%M:%S%.3f %:z")
+                .to_string()
+        })
+        .unwrap_or_else(|| format!("无法识别的时间：{at}"))
 }
 
 async fn letter(
@@ -446,25 +288,7 @@ pub(crate) async fn confirmation(
     input: &serde_json::Value,
 ) -> Result<Option<Description>, CallError> {
     let mut tx = ctx.db.begin().await?;
-    let mut description = describe(&mut tx, op, input).await?;
-    if let Some(description) = &mut description {
-        for task in description
-            .emails
-            .iter()
-            .filter_map(|e| e.task_id)
-            .collect::<BTreeSet<_>>()
-        {
-            if !description.originals.iter().any(|original| {
-                matches!(original,
-                Original::Task { id, .. } if *id == task)
-            }) {
-                description
-                    .targets
-                    .push(task_target(&mut tx, task, &mut description.originals).await?);
-            }
-        }
-    }
-    Ok(description)
+    describe(&mut tx, op, input).await
 }
 
 async fn describe(
@@ -472,8 +296,7 @@ async fn describe(
     op: &str,
     input: &serde_json::Value,
 ) -> Result<Option<Description>, CallError> {
-    let mut originals = Vec::new();
-    let mut description = match op {
+    let description = match op {
         "approveTaskEmails" => {
             let input: task::TaskApprovals = parse(input)?;
             let ids = input
@@ -484,26 +307,24 @@ async fn describe(
             if ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
                 return Err(CallError::invalid("同一封邮件不能重复批准。".into()));
             }
-            let email_originals = emails(conn, &ids).await?;
             let schedule = email::schedule::get(conn, input.task_id).await?.form();
             let mut description = Description::new(
                 format!("发出 {} 封邮件", input.emails.len()),
-                email_targets(&email_originals),
+                email_targets(conn, &ids).await?,
             );
             description
                 .targets
-                .push(task_target(conn, input.task_id, &mut originals).await?);
+                .push(task_target(conn, input.task_id).await?);
             for approval in input.emails {
-                let current = email_originals
-                    .iter()
-                    .find(|email| {
-                        email.id == approval.id
-                            && email.task_id == Some(input.task_id)
-                            && email.state == "review"
-                    })
-                    .ok_or_else(|| {
-                        CallError::invalid("草稿已不在任务里，请刷新后重新批准。".into())
-                    })?;
+                let current = sqlx::query!(
+                    r#"SELECT mentor_id, kind, reply_to FROM email
+                    WHERE id = ? AND task_id = ? AND state = 'review'"#,
+                    approval.id,
+                    input.task_id
+                )
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or_else(|| CallError::invalid("草稿已不在任务里，请刷新后重新批准。".into()))?;
                 let previous = if current.kind == "follow_up" {
                     previous(
                         conn,
@@ -542,7 +363,6 @@ async fn describe(
                     .await?,
                 );
             }
-            description.emails = task_emails(conn, input.task_id).await?;
             description
         }
         "approveFirstEmail" => {
@@ -563,14 +383,6 @@ async fn describe(
                 )
                 .await?,
             );
-            let ids = sqlx::query_scalar!(
-                r#"SELECT id FROM email WHERE mentor_id = ? AND kind = 'first'
-                AND task_id IS NULL AND state = 'review' ORDER BY id"#,
-                input.mentor_id
-            )
-            .fetch_all(&mut *conn)
-            .await?;
-            description.emails = emails(conn, &ids).await?;
             description
         }
         "approveFollowUp" | "approveReply" => {
@@ -609,357 +421,293 @@ async fn describe(
                 )
                 .await?,
             );
-            description.emails = emails(conn, &[input.draft_id]).await?;
             description
         }
         "sendEmailNow" | "resendEmail" | "retryEmail" => {
             let input: crate::EmailId = parse(input)?;
-            let email_originals = emails(conn, &[input.id]).await?;
             let action = match op {
                 "sendEmailNow" => "立即发出 1 封邮件",
                 "resendEmail" => "重新发出 1 封邮件",
                 _ => "重试发出 1 封邮件",
             };
-            let mut description = Description::new(action.into(), email_targets(&email_originals));
-            let tasks = email_originals
-                .iter()
-                .filter_map(|e| e.task_id)
-                .collect::<BTreeSet<_>>();
-            description.emails = email_originals;
-            for task in tasks {
-                description
-                    .targets
-                    .push(task_target(conn, task, &mut originals).await?);
-                description.emails = task_emails(conn, task).await?;
-            }
-            description
+            Description::new(action.into(), email_targets(conn, &[input.id]).await?)
         }
-        "resumeTask" | "deleteTask" | "changeTaskSchedule" => {
+        "resumeTask" | "changeTaskSchedule" => {
             let id = parse::<crate::TaskId>(input)?.id;
-            let email_originals = task_emails(conn, id).await?;
-            let target = task_target(conn, id, &mut originals).await?;
-            let mut description = match op {
-                "resumeTask" => object("恢复 1 个任务的发信", target),
-                "deleteTask" => {
-                    let count = email_originals
-                        .iter()
-                        .filter(|e| {
-                            !matches!(
-                                e.state.as_str(),
-                                "sending" | "cloud" | "maybe_sent" | "sent" | "bounced"
-                            ) && !(e.state == "canceled" && e.sent_at.is_some())
-                        })
-                        .count();
-                    object(
-                        &format!("永久删除 1 个任务和其中 {count} 封没发出的邮件（包括已批准的）"),
-                        target,
-                    )
-                }
-                _ => {
-                    let input: task::ScheduleEdit = parse(input)?;
-                    let target = match input.schedule {
-                        email::schedule::Schedule::Now => format!("{target}：改为立即发送"),
-                        email::schedule::Schedule::Window(window) => format!(
-                            "{target}：改为 {} 的 {}–{}，每个窗口最多 {} 封",
-                            window.dates.join("、"),
-                            window.start,
-                            window.end,
-                            window.per_window
-                        ),
-                    };
-                    object("更改 1 个任务的发送时间", target)
-                }
-            };
-            description.emails = email_originals;
-            description
-        }
-        "resumeMailbox" | "deleteMailbox" => {
-            let input: crate::MailboxId = parse(input)?;
-            let mut description = object(
-                if op == "resumeMailbox" {
-                    "恢复 1 个邮箱的发信"
-                } else {
-                    "永久删除 1 个邮箱"
-                },
-                mailbox_target(conn, input.id, &mut originals).await?,
-            );
-            description.emails = mailbox_emails(conn, input.id).await?;
-            if op == "deleteMailbox" {
-                let counts = sqlx::query!(
-                    r#"SELECT
-                        (SELECT count(*) FROM message WHERE mailbox_id = ?1) AS "messages!: i64",
-                        (SELECT count(*) FROM reply_processing WHERE message_id IN
-                            (SELECT id FROM message WHERE mailbox_id = ?1)) AS "processing!: i64",
-                        (SELECT count(*) FROM mailbox_folder WHERE mailbox_id = ?1) AS "folders!: i64",
-                        (SELECT count(*) FROM mentor_scan WHERE mailbox_id = ?1) AS "scans!: i64",
-                        (SELECT count(*) FROM mentor WHERE mailbox_id = ?1) AS "mentors!: i64""#,
-                    input.id
-                )
-                .fetch_one(&mut *conn)
-                .await?;
-                description.targets.push(format!(
-                    "同时删除：{} 封已收取邮件、{} 项回信处理、{} 个文件夹进度、{} 项历史查找；{} 位导师改为自动选邮箱",
-                    counts.messages, counts.processing, counts.folders, counts.scans, counts.mentors
-                ));
-            }
-            description
-        }
-        "rescheduleEmail" => {
-            let input: crate::RescheduleEmail = parse(input)?;
-            let email_originals = emails(conn, &[input.id]).await?;
-            let mut description = Description::new(
-                "更改 1 封邮件的发送时间".into(),
-                email_targets(&email_originals),
-            );
-            let at = chrono::DateTime::from_timestamp_millis(input.planned_at)
-                .map(|at| {
-                    at.with_timezone(&chrono::Local)
-                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, false)
-                })
-                .unwrap_or_else(|| format!("无法识别的时间：{}", input.planned_at));
-            description.targets.push(format!("发送时间：{at}"));
-            description.emails = email_originals;
-            description
-        }
-        "deleteMentors" | "mergeMentors" => {
-            let ids = if op == "deleteMentors" {
-                parse::<crate::MentorIds>(input)?
-                    .ids
-                    .into_iter()
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .collect::<Vec<_>>()
-            } else {
-                let input: crate::MentorMerge = parse(input)?;
-                vec![input.other, input.keep]
-            };
-            let mut description = Description::new(
-                if op == "deleteMentors" {
-                    format!("永久删除 {} 位导师", ids.len())
-                } else {
-                    "合并 2 位导师：第 1 位并入第 2 位".into()
-                },
-                mentor_targets(conn, &ids).await?,
-            );
-            for id in &ids {
-                let row = sqlx::query!(
-                    r#"SELECT updated_at, trashed_at, mailbox_id,
-                        (SELECT count(*) FROM email WHERE mentor_id = mentor.id) AS "emails!: i64",
-                        (SELECT count(*) FROM message_mentor WHERE mentor_id = mentor.id) AS "messages!: i64",
-                        (SELECT count(*) FROM todo WHERE mentor_id = mentor.id) AS "todos!: i64",
-                        (SELECT count(*) FROM mentor_tag WHERE mentor_id = mentor.id) AS "tags!: i64",
-                        (SELECT count(*) FROM library_update WHERE mentor_id = mentor.id) AS "updates!: i64"
-                    FROM mentor WHERE id = ?"#,
-                    id
-                )
-                .fetch_optional(&mut *conn)
-                .await?;
-                if let Some(row) = row {
-                    description.targets.push(format!(
-                        "关联 {} 封发件、{} 封已收取邮件、{} 条待办、{} 个标签、{} 条资料更新",
-                        row.emails, row.messages, row.todos, row.tags, row.updates
-                    ));
-                    originals.push(Original::Mentor {
-                        id: *id,
-                        updated_at: row.updated_at,
-                        trashed_at: row.trashed_at,
-                        mailbox_id: row.mailbox_id,
-                        emails: row.emails,
-                        messages: row.messages,
-                        todos: row.todos,
-                        tags: row.tags,
-                        updates: row.updates,
-                    });
-                }
-            }
-            let email_ids = sqlx::query_scalar!(
-                r#"SELECT id FROM email
-                WHERE mentor_id IN (SELECT value FROM json_each(?))
-                ORDER BY id"#,
-                Json(&ids)
+            let ids = sqlx::query_scalar!(
+                "SELECT id FROM email WHERE task_id = ? AND state = 'approved' ORDER BY id",
+                id
             )
             .fetch_all(&mut *conn)
             .await?;
-            description.emails = emails(conn, &email_ids).await?;
-            if op == "deleteMentors" {
-                let count = sqlx::query_scalar!(
-                    r#"WITH doomed AS (SELECT id FROM mentor
-                        WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL)
-                    SELECT count(*) AS "count!: i64" FROM message
-                    WHERE id IN (SELECT message_id FROM message_mentor WHERE mentor_id IN doomed)
-                        AND NOT EXISTS (SELECT 1 FROM message_mentor mm
-                            WHERE mm.message_id = message.id AND mm.mentor_id NOT IN doomed)"#,
-                    Json(&ids)
-                )
-                .fetch_one(&mut *conn)
-                .await?;
-                description
-                    .targets
-                    .push(format!("同时永久删除 {count} 封不涉及其他导师的已收取邮件"));
+            let target = task_target(conn, id).await?;
+            if op == "resumeTask" {
+                sending(conn, "恢复 1 个任务的发信", target, &ids).await?
+            } else {
+                let input: task::ScheduleEdit = parse(input)?;
+                let target = match input.schedule {
+                    email::schedule::Schedule::Now => format!("{target}：改为立即发送"),
+                    email::schedule::Schedule::Window(window) => format!(
+                        "{target}：改为 {} 的 {}–{}，每个窗口最多 {} 封",
+                        window.dates.join("、"),
+                        window.start,
+                        window.end,
+                        window.per_window
+                    ),
+                };
+                sending(conn, "更改 1 个任务的发送时间", target, &ids).await?
             }
-            description
+        }
+        "deleteTask" => {
+            let input: crate::TaskId = parse(input)?;
+            let count = sqlx::query_scalar!(
+                r#"SELECT count(*) AS "count!: i64" FROM email
+                WHERE task_id = ? AND NOT (
+                    state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')
+                    OR (state = 'canceled' AND sent_at IS NOT NULL))"#,
+                input.id
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            object(
+                &format!("永久删除 1 个任务和其中 {count} 封没发出的邮件（包括已批准的）"),
+                task_target(conn, input.id).await?,
+            )
+        }
+        "resumeMailbox" | "updateMailbox" => {
+            let (id, action, target) = if op == "resumeMailbox" {
+                let input: crate::MailboxId = parse(input)?;
+                (
+                    input.id,
+                    "恢复 1 个邮箱的发信",
+                    mailbox_target(conn, input.id).await?,
+                )
+            } else {
+                let input: crate::MailboxEdit = parse(input)?;
+                let at = crate::now();
+                let address = sqlx::query_scalar!(
+                    "SELECT address FROM mailbox WHERE id = ? AND paused_until > ?",
+                    input.id,
+                    at
+                )
+                .fetch_optional(&mut *conn)
+                .await?;
+                let Some(address) = address else {
+                    return Ok(None);
+                };
+                let target = if address == input.form.address {
+                    address
+                } else {
+                    format!("{address} → {}", input.form.address)
+                };
+                (input.id, "改 1 个邮箱的设置并恢复发信", target)
+            };
+            let ids = mailbox_emails(conn, id).await?;
+            sending(conn, action, target, &ids).await?
+        }
+        "deleteMailbox" => {
+            let input: crate::MailboxId = parse(input)?;
+            let counts = sqlx::query!(
+                r#"SELECT
+                    (SELECT count(*) FROM message WHERE mailbox_id = ?1) AS "messages!: i64",
+                    (SELECT count(*) FROM reply_processing WHERE message_id IN
+                        (SELECT id FROM message WHERE mailbox_id = ?1)) AS "processing!: i64",
+                    (SELECT count(*) FROM mentor WHERE mailbox_id = ?1) AS "mentors!: i64""#,
+                input.id
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            object(
+                &format!(
+                    "永久删除 1 个邮箱和其中 {} 封已收取邮件、{} 项回信处理；{} 位导师改为自动选择发件邮箱",
+                    counts.messages, counts.processing, counts.mentors
+                ),
+                mailbox_target(conn, input.id).await?,
+            )
+        }
+        "rescheduleEmail" => {
+            let input: crate::RescheduleEmail = parse(input)?;
+            let at = display_time(input.planned_at);
+            let targets = email_targets(conn, &[input.id])
+                .await?
+                .into_iter()
+                .map(|target| format!("{target}；发送时间：{at}"))
+                .collect();
+            Description::new("更改 1 封邮件的发送时间".into(), targets)
+        }
+        "deleteMentors" => {
+            let input: crate::MentorIds = parse(input)?;
+            let ids = sqlx::query_scalar!(
+                r#"SELECT id FROM mentor
+                WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL
+                ORDER BY id"#,
+                Json(&input.ids)
+            )
+            .fetch_all(&mut *conn)
+            .await?;
+            let counts = sqlx::query!(
+                r#"WITH doomed AS (SELECT value AS id FROM json_each(?1))
+                SELECT
+                    (SELECT count(*) FROM email WHERE mentor_id IN doomed) AS "emails!: i64",
+                    (SELECT count(*) FROM todo WHERE mentor_id IN doomed) AS "todos!: i64",
+                    (SELECT count(*) FROM mentor_tag WHERE mentor_id IN doomed) AS "tags!: i64",
+                    (SELECT count(*) FROM library_update WHERE mentor_id IN doomed) AS "updates!: i64",
+                    (SELECT count(*) FROM message
+                        WHERE id IN (SELECT message_id FROM message_mentor WHERE mentor_id IN doomed)
+                        AND NOT EXISTS (SELECT 1 FROM message_mentor mm
+                            WHERE mm.message_id = message.id AND mm.mentor_id NOT IN doomed))
+                        AS "messages!: i64""#,
+                Json(&ids)
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            Description::new(
+                format!(
+                    "永久删除 {} 位导师、{} 封发件、{} 封已收取邮件、{} 条待办和 {} 条资料更新，移除 {} 项标签关联",
+                    ids.len(),
+                    counts.emails,
+                    counts.messages,
+                    counts.todos,
+                    counts.updates,
+                    counts.tags
+                ),
+                mentor_targets(conn, &ids).await?,
+            )
+        }
+        "mergeMentors" => {
+            let input: crate::MentorMerge = parse(input)?;
+            let drafts = mentor::merge::conflicting_drafts(conn, input.keep, input.other).await?;
+            let canceled = sqlx::query_scalar!(
+                r#"SELECT count(*) AS "count!: i64" FROM email
+                WHERE mentor_id IN (?1, ?2) AND task_id IS NOT NULL
+                    AND state = 'canceled' AND sent_at IS NULL
+                    AND EXISTS (SELECT 1 FROM email k WHERE k.task_id = email.task_id
+                        AND k.mentor_id IN (?1, ?2) AND k.mentor_id <> email.mentor_id
+                        AND (email.mentor_id = ?2 OR k.state IN ('maybe_sent', 'sent', 'bounced')
+                            OR (k.state = 'canceled' AND k.sent_at IS NOT NULL)))"#,
+                input.keep,
+                input.other
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            Description::new(
+                format!(
+                    "合并 2 位导师：第 1 位并入第 2 位，丢弃 {} 封重复草稿和 {canceled} 条重复的已取消任务邮件记录",
+                    drafts.len()
+                ),
+                mentor_targets(conn, &[input.other, input.keep]).await?,
+            )
         }
         "deleteTemplate" => {
             let input: crate::TemplateId = parse(input)?;
-            let row = sqlx::query!(
-                "SELECT name, subject, body_md, updated_at FROM template WHERE id = ?",
-                input.id
-            )
-            .fetch_optional(&mut *conn)
-            .await?;
-            let target = match row {
-                Some(row) => {
-                    let name = row.name.clone();
-                    originals.push(Original::Template {
-                        id: input.id,
-                        name: row.name,
-                        subject: row.subject,
-                        body_md: row.body_md,
-                        updated_at: row.updated_at,
-                    });
-                    name
-                }
-                None => "找不到的模板（可能已被删除）".into(),
-            };
-            object("永久删除 1 个模板", target)
+            let name = sqlx::query_scalar!("SELECT name FROM template WHERE id = ?", input.id)
+                .fetch_optional(conn)
+                .await?
+                .unwrap_or_else(|| "找不到的模板（可能已被删除）".into());
+            object("永久删除 1 个模板", name)
         }
         "deleteMaterial" => {
             let input: crate::MaterialId = parse(input)?;
             let row = sqlx::query!(
-                r#"SELECT file_name, size, created_at, for_matching, for_writing, attach_by_default,
-                    (SELECT count(*) FROM email_attachment WHERE material_id = material.id) AS "emails!: i64",
+                r#"SELECT file_name,
+                    (SELECT count(*) FROM email_attachment a JOIN email e ON e.id = a.email_id
+                        WHERE a.material_id = material.id
+                        AND e.state IN ('generating', 'generation_failed', 'review')) AS "drafts!: i64",
                     (SELECT count(*) FROM task_material WHERE material_id = material.id) AS "tasks!: i64"
                 FROM material WHERE id = ?"#,
                 input.id
             )
-            .fetch_optional(&mut *conn)
+            .fetch_optional(conn)
             .await?;
-            let target = match row {
-                Some(row) => {
-                    let target = format!(
-                        "{}（{} 字节，关联 {} 份邮件附件、{} 项任务材料）",
-                        row.file_name, row.size, row.emails, row.tasks
-                    );
-                    originals.push(Original::Material {
-                        id: input.id,
-                        file_name: row.file_name,
-                        size: row.size,
-                        created_at: row.created_at,
-                        for_matching: row.for_matching,
-                        for_writing: row.for_writing,
-                        attach_by_default: row.attach_by_default,
-                        emails: row.emails,
-                        tasks: row.tasks,
-                    });
-                    target
-                }
-                None => "找不到的材料（可能已被删除）".into(),
-            };
-            object("永久删除 1 份材料", target)
+            match row {
+                Some(row) => object(
+                    &format!(
+                        "永久删除 1 份材料，移除 {} 封草稿的附件和 {} 项任务材料关联",
+                        row.drafts, row.tasks
+                    ),
+                    row.file_name,
+                ),
+                None => object("永久删除 1 份材料", "找不到的材料（可能已被删除）".into()),
+            }
         }
         "deleteCrawl" => {
             let input: crate::CrawlId = parse(input)?;
             let row = sqlx::query!(
-                r#"SELECT university, school, state, start_urls, limits,
+                r#"SELECT university, school,
                     (SELECT count(*) FROM candidate WHERE crawl_id = crawl.id
                         AND review = 'pending' AND mentor_id IS NULL) AS "candidates!: i64",
-                    (SELECT count(*) FROM crawl_page WHERE crawl_id = crawl.id) AS "pages!: i64",
+                    (SELECT count(*) FROM crawl_page WHERE crawl_id = crawl.id
+                        OR candidate_id IN (SELECT id FROM candidate WHERE crawl_id = crawl.id
+                            AND review = 'pending' AND mentor_id IS NULL)) AS "pages!: i64",
                     (SELECT count(*) FROM crawl_run WHERE crawl_id = crawl.id) AS "runs!: i64"
                 FROM crawl WHERE id = ?"#,
                 input.id
             )
-            .fetch_optional(&mut *conn)
+            .fetch_optional(conn)
             .await?;
-            let target = match row {
+            match row {
                 Some(row) => {
-                    let target = format!(
-                        "{} {}：同时删除 {} 位未审核候选、{} 个抓取页面、{} 项运行记录",
-                        row.university.as_deref().unwrap_or(""),
-                        row.school.as_deref().unwrap_or(""),
-                        row.candidates,
-                        row.pages,
-                        row.runs
-                    );
-                    originals.push(Original::Crawl {
-                        id: input.id,
-                        university: row.university,
-                        school: row.school,
-                        state: row.state,
-                        start_urls: row.start_urls,
-                        limits: row.limits,
-                        candidates: row.candidates,
-                        pages: row.pages,
-                        runs: row.runs,
-                    });
-                    target
+                    let parts = row
+                        .university
+                        .into_iter()
+                        .chain(row.school)
+                        .collect::<Vec<_>>();
+                    let name = if parts.is_empty() {
+                        "导师抓取".into()
+                    } else {
+                        parts.join(" ")
+                    };
+                    object(
+                        &format!(
+                            "永久删除 1 项抓取记录、{} 位未审核候选、{} 个抓取页面和 {} 项运行记录",
+                            row.candidates, row.pages, row.runs
+                        ),
+                        name,
+                    )
                 }
-                None => "找不到的抓取（可能已被删除）".into(),
-            };
-            object("永久删除 1 项抓取记录", target)
+                None => object(
+                    "永久删除 1 项抓取记录",
+                    "找不到的抓取（可能已被删除）".into(),
+                ),
+            }
         }
         "deleteTag" => {
             let input: crate::TagId = parse(input)?;
             let row = sqlx::query!(
-                r#"SELECT name, color,
+                r#"SELECT name,
                     (SELECT count(*) FROM mentor_tag WHERE tag_id = tag.id) AS "mentors!: i64"
                 FROM tag WHERE id = ?"#,
                 input.id
             )
-            .fetch_optional(&mut *conn)
+            .fetch_optional(conn)
             .await?;
-            let target = match row {
-                Some(row) => {
-                    let target =
-                        format!("{}（同时移除 {} 位导师的标签关联）", row.name, row.mentors);
-                    originals.push(Original::Tag {
-                        id: input.id,
-                        name: row.name,
-                        color: row.color,
-                        mentors: row.mentors,
-                    });
-                    target
-                }
-                None => "找不到的标签（可能已被删除）".into(),
-            };
-            object("永久删除 1 个标签", target)
+            match row {
+                Some(row) => object(
+                    &format!("永久删除 1 个标签，移除 {} 位导师的标签关联", row.mentors),
+                    row.name,
+                ),
+                None => object("永久删除 1 个标签", "找不到的标签（可能已被删除）".into()),
+            }
         }
         "deleteTodo" => {
             let input: crate::TodoId = parse(input)?;
-            let row = sqlx::query!(
-                r#"SELECT m.name, t.mentor_id, t.message_id, t.text, t.due_date, t.due_time, t.done_at
+            let name = sqlx::query_scalar!(
+                r#"SELECT m.name || '：' || t.text AS "name!: String"
                 FROM todo t JOIN mentor m ON m.id = t.mentor_id WHERE t.id = ?"#,
                 input.id
             )
-            .fetch_optional(&mut *conn)
-            .await?;
-            let target = match row {
-                Some(row) => {
-                    let target = format!("{}：{}", row.name, row.text);
-                    originals.push(Original::Todo {
-                        id: input.id,
-                        mentor_id: row.mentor_id,
-                        message_id: row.message_id,
-                        text: row.text,
-                        due_date: row.due_date,
-                        due_time: row.due_time,
-                        done_at: row.done_at,
-                    });
-                    target
-                }
-                None => "找不到的待办（可能已被删除）".into(),
-            };
-            object("永久删除 1 条待办", target)
+            .fetch_optional(conn)
+            .await?
+            .unwrap_or_else(|| "找不到的待办（可能已被删除）".into());
+            object("永久删除 1 条待办", name)
         }
         "deleteModelConfig" => {
             let input: crate::ModelConfigId = parse(input)?;
-            object(
-                "永久删除 1 个模型配置",
-                model_target(conn, input.id, &mut originals).await?,
-            )
+            object("永久删除 1 个模型配置", model_target(conn, input.id).await?)
         }
         "agreeModel" => {
             let input: crate::ModelAgreement = parse(input)?;
-            let model = model_target(conn, input.id, &mut originals).await?;
+            let model = model_target(conn, input.id).await?;
             let (provider, address) = if input.provider == model::providers::CUSTOM {
                 (
                     "自定义模型服务",
@@ -985,66 +733,31 @@ async fn describe(
             if row.mailbox_id == input.mailbox_id {
                 return Ok(None);
             }
-            let ids = sqlx::query_scalar!(
-                "SELECT id FROM email WHERE mentor_id = ? AND state = 'approved' ORDER BY id",
+            let count = sqlx::query_scalar!(
+                r#"SELECT count(*) AS "count!: i64" FROM email
+                WHERE mentor_id = ? AND state = 'approved'"#,
                 input.id
             )
-            .fetch_all(&mut *conn)
+            .fetch_one(&mut *conn)
             .await?;
-            if ids.is_empty() {
+            if count == 0 {
                 return Ok(None);
             }
             let before = match row.mailbox_id {
-                Some(id) => mailbox_target(conn, id, &mut originals).await?,
+                Some(id) => mailbox_target(conn, id).await?,
                 None => "自动选择邮箱".into(),
             };
             let after = match input.mailbox_id {
-                Some(id) => mailbox_target(conn, id, &mut originals).await?,
+                Some(id) => mailbox_target(conn, id).await?,
                 None => "自动选择邮箱".into(),
             };
-            let mut description = object(
+            object(
                 &format!(
                     "更改 1 位导师的发件邮箱：影响已批准还没发出的 {} 封邮件",
-                    ids.len()
+                    count
                 ),
                 format!("{}：{before} → {after}", row.name),
-            );
-            description.emails = emails(conn, &ids).await?;
-            description
-        }
-        "updateMailbox" => {
-            let input: crate::MailboxEdit = parse(input)?;
-            let at = crate::now();
-            let address = sqlx::query_scalar!(
-                r#"SELECT address
-                FROM mailbox
-                WHERE id = ? AND paused_until > ?"#,
-                input.id,
-                at
             )
-            .fetch_optional(&mut *conn)
-            .await?;
-            let Some(_) = address else {
-                return Ok(None);
-            };
-            let mut description = object(
-                "改邮箱的设置：会马上恢复发信",
-                mailbox_target(conn, input.id, &mut originals).await?,
-            );
-            let form = input.form;
-            description.targets.push(format!(
-                "改为：{}（发件人：{}；SMTP {}:{}；IMAP {}:{}；每天最多 {} 封、间隔 {} 秒）",
-                form.address,
-                form.sender_name,
-                form.smtp.host,
-                form.smtp.port,
-                form.imap.host,
-                form.imap.port,
-                form.daily_limit,
-                form.min_interval_s
-            ));
-            description.emails = mailbox_emails(conn, input.id).await?;
-            description
         }
         "saveFirstDraft" | "saveReplyDraft" => {
             let (mentor, kind) = if op == "saveFirstDraft" {
@@ -1060,32 +773,34 @@ async fn describe(
                 }
                 (input.mentor_id, "reply")
             };
-            let ids = sqlx::query_scalar!(
-                r#"SELECT id FROM email
-                WHERE mentor_id = ? AND kind = ? AND state = 'review'
-                    AND (? <> 'first' OR task_id IS NULL)
-                ORDER BY id"#,
+            let rows = sqlx::query!(
+                r#"SELECT m.name, e.subject, e.updated_at
+                FROM email e JOIN mentor m ON m.id = e.mentor_id
+                WHERE e.mentor_id = ? AND e.kind = ? AND e.state = 'review'
+                    AND (? <> 'first' OR e.task_id IS NULL)
+                ORDER BY e.id"#,
                 mentor,
                 kind,
                 kind
             )
-            .fetch_all(&mut *conn)
+            .fetch_all(conn)
             .await?;
-            if ids.is_empty() {
+            if rows.is_empty() {
                 return Ok(None);
             }
-            let email_originals = emails(conn, &ids).await?;
-            let mut description = Description::new(
-                if kind == "first" {
-                    "删除 1 封首封草稿"
-                } else {
-                    "删除 1 封回复草稿"
-                }
-                .into(),
-                email_targets(&email_originals),
-            );
-            description.emails = email_originals;
-            description
+            let kind = if kind == "first" { "首封" } else { "回复" };
+            let targets = rows
+                .into_iter()
+                .map(|row| {
+                    let subject = row.subject.as_deref().unwrap_or("（无主题）");
+                    format!(
+                        "{}的{kind}草稿《{subject}》，{} 保存",
+                        row.name,
+                        display_time(row.updated_at)
+                    )
+                })
+                .collect();
+            Description::new(format!("删除 1 封{kind}草稿"), targets)
         }
         "updateMentor" => {
             let input: crate::MentorEdit = parse(input)?;
@@ -1129,7 +844,6 @@ async fn describe(
         }
         _ => return Ok(None),
     };
-    description.originals.extend(originals);
     Ok(Some(description))
 }
 
@@ -1155,33 +869,23 @@ async fn changed_recipient(
     .fetch_optional(&mut *conn)
     .await?;
     let Some(row) = row else { return Ok(None) };
-    let ids = sqlx::query_scalar!(
-        "SELECT id FROM email WHERE mentor_id = ? AND state = 'approved' ORDER BY id",
-        mentor
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut description = {
-        let action = if address.is_some() {
-            format!(
-                "改 1 位导师的发信地址：已批准还没发出的 {} 封会发到新地址",
-                row.count
-            )
-        } else {
-            format!(
-                "移除 1 位导师的发信地址：已批准还没发出的 {} 封将没有收件地址",
-                row.count
-            )
-        };
-        let before = row.old_address.as_deref().unwrap_or("未填写邮箱");
-        let after = address.unwrap_or("未填写邮箱");
-        object(
-            &action,
-            format!("{}：{before} → {after}（{} 封）", row.name, row.count),
+    let action = if address.is_some() {
+        format!(
+            "改 1 位导师的发信地址：已批准还没发出的 {} 封会发到新地址",
+            row.count
+        )
+    } else {
+        format!(
+            "移除 1 位导师的发信地址：已批准还没发出的 {} 封将没有收件地址",
+            row.count
         )
     };
-    description.emails = emails(conn, &ids).await?;
-    Ok(Some(description))
+    let before = row.old_address.as_deref().unwrap_or("未填写邮箱");
+    let after = address.unwrap_or("未填写邮箱");
+    Ok(Some(object(
+        &action,
+        format!("{}：{before} → {after}（{} 封）", row.name, row.count),
+    )))
 }
 
 async fn imported_recipients(
@@ -1225,21 +929,7 @@ async fn imported_recipients(
             format!("{}：{before} → {after}（{} 封）", row.name, row.count)
         })
         .collect();
-    let changed = changes
-        .iter()
-        .filter_map(mentor::intake::Change::changed_recipient)
-        .map(|(id, _)| id)
-        .collect::<Vec<_>>();
-    let ids = sqlx::query_scalar!(
-        r#"SELECT id FROM email WHERE mentor_id IN (SELECT value FROM json_each(?))
-        AND state = 'approved' ORDER BY id"#,
-        Json(changed)
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut description = Description::new(action, targets);
-    description.emails = emails(conn, &ids).await?;
-    Ok(Some(description))
+    Ok(Some(Description::new(action, targets)))
 }
 
 #[cfg(test)]

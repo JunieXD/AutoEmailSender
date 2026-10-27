@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM email WHERE task_id = ? ORDER BY id",
+  "query": "SELECT name FROM template WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "name",
         "ordinal": 0,
-        "type_info": "Integer",
+        "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "email",
-            "name": "id"
+            "table": "template",
+            "name": "name"
           }
         }
       }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "a618a72d14a51a4210dc8f2efb7db01a3241c80c789411f14c74bf480cb3a448"
+  "hash": "02e9f329adb5818fded7c3219bc89cbc046628be285b3ab5c71d4aeecc1c28ee"
 }

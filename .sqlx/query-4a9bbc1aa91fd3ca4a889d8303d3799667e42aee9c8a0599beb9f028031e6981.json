@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id FROM email e\n        JOIN email_own_mailbox own ON own.email_id = e.id\n        WHERE e.state = 'approved' AND (own.mailbox_id = ?\n            OR (own.mailbox_id IS NULL AND e.kind = 'first'))\n        ORDER BY e.id",
+  "query": "SELECT id FROM email WHERE task_id = ? AND state = 'approved' ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "fb2a65aa5c89257e8bcb33408b05ba29917c1f02da48b640b6f7949252fd0fcf"
+  "hash": "4a9bbc1aa91fd3ca4a889d8303d3799667e42aee9c8a0599beb9f028031e6981"
 }

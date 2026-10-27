@@ -78,7 +78,9 @@ async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool)
     .unwrap();
     let draft =
         |body: &str| json!({"mentorId":mentor, "subject":"申请", "bodyMd":body, "attachments":[]});
-    call(&ctx, "saveFirstDraft", draft("旧草稿")).await.unwrap();
+    email::save_first_draft(&ctx.db, mentor, "申请", "旧草稿", &[], 0)
+        .await
+        .unwrap();
     let result = allow_after_change(
         &ctx,
         "saveFirstDraft",
@@ -228,6 +230,34 @@ async fn changing_from_a_paused_mailbox_to_an_available_one_requires_confirmatio
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn changing_from_a_paused_mailbox_to_automatic_requires_confirmation(db: SqlitePool) {
     mailbox_change_is_confirmed(db, true).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn resuming_a_mailbox_is_not_invalidated_by_an_imap_port_change(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mailbox SET paused_until = ?, pause_reason = 'fixture' WHERE id = 1")
+        .bind(i64::MAX)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+    allow_after_change(&ctx, "resumeMailbox", json!({"id":1}), async {
+        sqlx::query("UPDATE mailbox SET imap_port = 994 WHERE id = 1")
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<i64>>("SELECT paused_until FROM mailbox WHERE id = 1")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

@@ -44,7 +44,7 @@ pub struct Preview {
     pub discarded_drafts: Vec<email::DraftKind>,
 }
 
-async fn conflicting_drafts(
+pub async fn conflicting_drafts(
     conn: &mut sqlx::SqliteConnection,
     keep: i64,
     other: i64,

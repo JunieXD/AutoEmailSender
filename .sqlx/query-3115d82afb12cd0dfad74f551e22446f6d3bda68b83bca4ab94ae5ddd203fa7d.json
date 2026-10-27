@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT file_name,\n                    (SELECT count(*) FROM email_attachment a JOIN email e ON e.id = a.email_id\n                        WHERE a.material_id = material.id\n                        AND e.state IN ('generating', 'generation_failed', 'review')) AS \"drafts!: i64\",\n                    (SELECT count(*) FROM task_material WHERE material_id = material.id) AS \"tasks!: i64\"\n                FROM material WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "file_name",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "material",
+            "name": "file_name"
+          }
+        }
+      },
+      {
+        "name": "drafts!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "tasks!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3115d82afb12cd0dfad74f551e22446f6d3bda68b83bca4ab94ae5ddd203fa7d"
+}

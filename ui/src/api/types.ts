@@ -116,7 +116,7 @@ export type Description = {
 /**
  * Only application-authored text and counts; object content belongs in the other fields.
  */
-action: string, targets: Array<string>, letters: Array<ConfirmationLetter>, emails: Array<EmailOriginal>, originals: Array<Original>, };
+action: string, targets: Array<string>, letters: Array<ConfirmationLetter>, };
 
 export type Difference = { row: number, id: number, name: string, field: Field, affiliation: Affiliation | null, local: string, incoming: string, };
 
@@ -151,8 +151,6 @@ resendOf: number | null,
 resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, } | { "state": "canceled", cancelReason: string, });
 
 export type EmailId = { id: number, };
-
-export type EmailOriginal = { id: number, mentorId: number, mentorName: string, address: string | null, trashedAt: number | null, taskId: number | null, state: string, kind: string, replyTo: string | null, subject: string | null, bodyMd: string | null, html: string | null, text: string | null, refs: string | null, plannedAt: number | null, latestAt: number | null, manualSchedule: boolean, approvalOrder: number | null, updatedAt: number, sentAt: number | null, mailboxId: number | null, mailboxAddress: string | null, attachments: Array<ConfirmationAttachment>, };
 
 export type EnrichChange = { field: EnrichField, value: unknown, };
 
@@ -538,8 +536,6 @@ export type OperationDescription = { name: string, summary: string, details: str
 export type OperationName = { name: string, };
 
 export type OperationSummary = { name: string, summary: string, group: string, confirmation: OperationConfirmation, };
-
-export type Original = { "kind": "task", "value": { id: number, name: string, state: string, kind: string, writer: string, modelConfigId: number | null, templateId: number | null, templateSubject: string | null, templateBodyMd: string | null, generationPausedAt: number | null, generationPauseReason: string | null, materials: Array<[number, string]>, schedule: string, windowDates: string | null, windowStart: string | null, windowEnd: string | null, perWindow: number | null, } } | { "kind": "mailbox", "value": { id: number, address: string, senderName: string, provider: string, smtpHost: string, smtpPort: number, smtpSecurity: string, imapHost: string, imapPort: number, imapSecurity: string, dailyLimit: number, minIntervalS: number, rotationOrder: number, pausedUntil: number | null, pauseReason: string | null, } } | { "kind": "model", "value": { id: number, name: string | null, model: string, provider: string, baseUrl: string | null, agreed: number, inputPrice: number | null, outputPrice: number | null, tasks: number, crawls: number, } } | { "kind": "mentor", "value": { id: number, updatedAt: number, trashedAt: number | null, mailboxId: number | null, emails: number, messages: number, todos: number, tags: number, updates: number, } } | { "kind": "template", "value": { id: number, name: string, subject: string, bodyMd: string, updatedAt: number, } } | { "kind": "material", "value": { id: number, fileName: string, size: number, createdAt: number, forMatching: number, forWriting: number, attachByDefault: number, emails: number, tasks: number, } } | { "kind": "crawl", "value": { id: number, university: string | null, school: string | null, state: string, startUrls: string | null, limits: string, candidates: number, pages: number, runs: number, } } | { "kind": "tag", "value": { id: number, name: string, color: string, mentors: number, } } | { "kind": "todo", "value": { id: number, mentorId: number, messageId: number | null, text: string, dueDate: string | null, dueTime: string | null, doneAt: number | null, } };
 
 export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
 

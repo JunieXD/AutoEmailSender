@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM email WHERE mentor_id = ? AND kind = 'first'\n                AND task_id IS NULL AND state = 'review' ORDER BY id",
+  "query": "SELECT id FROM mentor\n                WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL\n                ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "email",
+            "table": "mentor",
             "name": "id"
           }
         }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "5ec256bce00f640f3128135ac53562ff5846b792140d385ee71ad7811893e820"
+  "hash": "155ba1d01bce22c04868ae4b7ebdc2286d61e97f20f1702b4954aa9b7756bbe6"
 }
