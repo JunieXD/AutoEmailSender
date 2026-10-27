@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Row, Section, SwitchButton } from "./settings";
 
+const MAC = navigator.userAgent.includes("Mac");
+
 const CLIENTS: [McpClient, string, string][] = [
   ["claudeDesktop", "Claude Desktop", "重新打开 Claude Desktop 后生效。"],
   ["claudeCode", "Claude Code", "新开的 Claude Code 会话里生效。"],
@@ -59,6 +61,7 @@ export function AgentSection() {
 function McpRow() {
   const [open, setOpen] = useState<McpClient | null>(null);
   const [written, setWritten] = useState<McpClient[]>([]);
+  const [shown, setShown] = useState(false);
   const text = useQuery({ queryKey: ["mcpConfigText"], queryFn: () => call("mcpConfigText", {}) });
   const copy = useMutation({ mutationFn: (config: string) => navigator.clipboard.writeText(config) });
   return (
@@ -78,21 +81,30 @@ function McpRow() {
             </Button>
           </li>
         ))}
+        <li className="px-4 py-2.5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <p>别的工具</p>
+              <p className="text-sm text-muted-foreground">{copy.isSuccess ? "已复制，" : "复制后"}加进它的 MCP 配置</p>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <Button variant="ghost" disabled={!text.data} onClick={() => setShown(!shown)} aria-expanded={shown}>
+                {shown ? "收起" : "查看"}
+              </Button>
+              <Button variant="quiet" disabled={!text.data} onClick={() => text.data && copy.mutate(text.data)}>
+                复制配置
+              </Button>
+            </div>
+          </div>
+          {shown && text.data && (
+            <pre className="mt-2 rounded-lg bg-muted px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
+              {text.data}
+            </pre>
+          )}
+        </li>
       </ul>
-      <p className="mt-1 text-sm text-muted-foreground">别的工具：把下面这段加进它的 MCP 配置。</p>
-      {text.data && (
-        <pre className="rounded-lg bg-muted px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
-          {text.data}
-        </pre>
-      )}
       {text.error && <p className="text-sm text-destructive">未能生成配置：{errorMessage(text.error)}</p>}
-      <div className="flex items-center gap-3">
-        <Button variant="quiet" disabled={!text.data} onClick={() => text.data && copy.mutate(text.data)}>
-          复制
-        </Button>
-        {copy.isSuccess && <span className="text-sm text-muted-foreground">已复制</span>}
-        {copy.error && <span className="text-sm text-destructive">未能复制：{errorMessage(copy.error)}</span>}
-      </div>
+      {copy.error && <p className="text-sm text-destructive">未能复制：{errorMessage(copy.error)}</p>}
       {open && (
         <McpDialog
           client={open}
@@ -116,6 +128,7 @@ function McpDialog({ client, onClose, onWritten }: { client: McpClient; onClose:
     gcTime: 0,
   });
   const write = useMutation({ mutationFn: () => call("writeMcpConfig", { client }), onSuccess: onWritten });
+  const copy = useMutation({ mutationFn: (commands: string) => navigator.clipboard.writeText(commands) });
   const p = preview.data;
   return (
     <Dialog open onOpenChange={(open) => !open && !write.isPending && onClose()}>
@@ -126,12 +139,15 @@ function McpDialog({ client, onClose, onWritten }: { client: McpClient; onClose:
             <>
               {p.commands.length > 0 ? (
                 <>
-                  <p>{p.writeUnavailable ?? "会用 Claude Code 自己的命令添加，它把配置存在："}</p>
-                  <p className="break-all text-muted-foreground">{p.path}</p>
-                  <p>运行的命令：</p>
+                  <p>{p.writeUnavailable ?? "会运行 Claude Code 自己的命令添加："}</p>
                   <pre className="rounded-lg bg-muted px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere">
                     {p.commands.join("\n")}
                   </pre>
+                  {!p.writeUnavailable && (
+                    <p className="text-muted-foreground">
+                      Claude Code 把配置存在 <span className="break-all">{p.path}</span>。
+                    </p>
+                  )}
                 </>
               ) : (
                 <>
@@ -148,14 +164,19 @@ function McpDialog({ client, onClose, onWritten }: { client: McpClient; onClose:
           {preview.isPending && <p className="text-muted-foreground">正在读取配置…</p>}
           {preview.error && <p className="text-destructive">无法写入：{errorMessage(preview.error)}</p>}
           {write.error && <p className="text-destructive">未能写入：{errorMessage(write.error)}</p>}
+          {copy.error && <p className="text-destructive">未能复制：{errorMessage(copy.error)}</p>}
         </DialogBody>
         <DialogFooter className="justify-end">
           <Button variant="ghost" onClick={onClose} disabled={write.isPending}>
             取消
           </Button>
-          <Button onClick={() => write.mutate()} disabled={!p || p.writeUnavailable !== null || write.isPending}>
-            写入
-          </Button>
+          {p?.writeUnavailable ? (
+            <Button onClick={() => copy.mutate(p.commands.join("\n"))}>{copy.isSuccess ? "已复制" : "复制命令"}</Button>
+          ) : (
+            <Button onClick={() => write.mutate()} disabled={!p || write.isPending}>
+              写入
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -168,30 +189,48 @@ function CliRow() {
   const onSuccess = (data: AgentCli) => queryClient.setQueryData(["getAgentCli"], data);
   const install = useMutation({ mutationFn: () => call("installAgentCli", {}), onSuccess });
   const uninstall = useMutation({ mutationFn: () => call("uninstallAgentCli", {}), onSuccess });
-  const busy = install.isPending || uninstall.isPending;
+  const busy = !cli.data || install.isPending || uninstall.isPending;
   const failed = install.error ?? uninstall.error;
+  const state = cli.data?.state;
   return (
     <Row label="命令行">
-      {cli.data?.state.kind === "installed" ? (
-        <>
-          <p className="text-sm text-muted-foreground">
-            已安装，在终端里输入 <code>{cli.data.command}</code> 使用，比如 <code>{cli.data.command} list</code>{" "}
-            列出能做的事。装在 <span className="break-all">{cli.data.location}</span>。
-          </p>
-          <Button variant="quiet" className="self-start" disabled={busy} onClick={() => uninstall.mutate()}>
-            卸载
-          </Button>
-        </>
-      ) : (
-        <>
-          <p className="text-sm text-muted-foreground">
-            给只能运行命令的 Agent 和脚本用。装好后在终端里直接输入 autoemail 就能用。macOS 上可能要输入电脑的密码。
-          </p>
-          <Button variant="quiet" className="self-start" disabled={!cli.data || busy} onClick={() => install.mutate()}>
+      <p className="text-sm text-muted-foreground">
+        {state?.kind === "installed" ? (
+          <>
+            已安装，在终端里输入 <code>autoemail</code> 使用，比如 <code>autoemail list</code> 列出能做的事。装在{" "}
+            <span className="break-all">{cli.data?.location}</span>。
+          </>
+        ) : state?.kind === "oldLocation" ? (
+          <>
+            终端里的 autoemail 还指向以前的应用（<span className="break-all">{state.target}</span>
+            ），更新后改用现在这个。
+          </>
+        ) : state?.kind === "occupied" ? (
+          <>
+            <span className="break-all">{cli.data?.location}</span>{" "}
+            已经是别的程序，为了不覆盖它没有安装。把它删掉或改名后，回到这里安装。
+          </>
+        ) : (
+          `给只能运行命令的 Agent 和脚本用。装好后在终端里直接输入 autoemail 就能用。${MAC ? "安装时可能要输入电脑的密码。" : ""}`
+        )}
+      </p>
+      <div className="flex gap-2">
+        {(state === undefined || state.kind === "notInstalled") && (
+          <Button variant="quiet" disabled={busy} onClick={() => install.mutate()}>
             安装命令行工具
           </Button>
-        </>
-      )}
+        )}
+        {state?.kind === "oldLocation" && (
+          <Button variant="quiet" disabled={busy} onClick={() => install.mutate()}>
+            更新
+          </Button>
+        )}
+        {(state?.kind === "installed" || state?.kind === "oldLocation") && (
+          <Button variant="quiet" disabled={busy} onClick={() => uninstall.mutate()}>
+            卸载
+          </Button>
+        )}
+      </div>
       {cli.error && <p className="text-sm text-destructive">未能读取：{errorMessage(cli.error)}</p>}
       {failed && <p className="text-sm text-destructive">{errorMessage(failed)}</p>}
     </Row>
