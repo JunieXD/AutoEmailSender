@@ -46,7 +46,7 @@ export type Attachment = { fileName: string, size: number, };
 
 export type CallError = { code: ErrorCode, message: string, };
 
-export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, previous: PreviousLetter | null, };
+export type Candidate = { id: number, name: string, reason: string | null, contactCount: number, lastContactAt: number | null, libraryStatus: LibraryStatus | null, previous: PreviousLetter | null, };
 
 export type CandidateDetail = { evidence: Array<Evidence>, id: number, crawlId: number | null, review: string, mentorId: number | null, fields: MentorFields, papers: Array<string>, sourceUrl: string | null, note: string | null, enrich: EnrichState, enrichChanges: Array<EnrichChange>, enrichError: string | null, };
 
@@ -234,6 +234,8 @@ export type ImportSetup = { sheet: number | null, columns: Array<Field | null> |
 
 export type Imported = { created: number, updated: number, };
 
+export type IntakePreview = { created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, additions: Array<Addition>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
+
 export type Kind = "first" | "follow_up";
 
 export type Letter = { subject: string, bodyMd: string, };
@@ -249,6 +251,42 @@ font: LetterFont | null, fontSizePt: number, lineHeight: number, paragraphSpacin
  * Two characters at the start of each paragraph.
  */
 firstLineIndent: boolean, };
+
+export type LibraryAddPreview = { missing: number, created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, additions: Array<Addition>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
+
+export type LibraryAdded = { created: number, supplemented: number, missing: number, };
+
+export type LibraryId = { id: string, };
+
+export type LibraryListRequest = { org?: string, q?: string, page: number, };
+
+export type LibraryLocal = { "kind": "added" } | { "kind": "trashed" } | { "kind": "maybeExisting", id: number, name: string, };
+
+export type LibraryMentor = { local: LibraryLocal | null, id: string, name: string, aliases: Array<string>, research: string | null, emailCount: number, fetched: boolean, university: string | null, school: string | null, department: string | null, title: string | null, };
+
+export type LibraryMentorPreview = { local: LibraryLocal | null, units: Array<LibraryUnit>, papers: Array<string>, homepages: Array<string>, sourceUrl: string | null, verifiedAt: number | null, id: string, name: string, aliases: Array<string>, research: string | null, emailCount: number, fetched: boolean, university: string | null, school: string | null, department: string | null, title: string | null, };
+
+export type LibraryMentors = { total: number, mentors: Array<LibraryMentor>, };
+
+export type LibraryOrg = { id: string, parentId: string | null, name: string, count: number, };
+
+export type LibraryOrgs = { orgs: Array<LibraryOrg>, };
+
+export type LibraryQuota = { remaining: number | null, };
+
+export type LibrarySelection = { ids: Array<string>, decisions?: Decisions, };
+
+export type LibraryStatus = "active" | "retired" | "departed" | "deceased" | "removed";
+
+export type LibraryUnit = { university: string | null, school: string | null, department: string | null, title: string | null, };
+
+export type LibraryUpdate = { updateId: number, id: number, name: string, field: LibraryUpdateField, affiliation: Affiliation | null, local: string, incoming: string, take: boolean, };
+
+export type LibraryUpdateChoices = { choices: Array<LibraryUpdate>, };
+
+export type LibraryUpdateField = "name" | "research" | "sourceUrl" | "title" | "primaryEmail" | "primaryAffiliation";
+
+export type LibraryUpdateGroup = { field: LibraryUpdateField, differences: Array<LibraryUpdate>, };
 
 export type MailAddress = { address: string, };
 
@@ -345,7 +383,7 @@ affiliations: Array<Affiliation>, homepages: Array<string>,
 /**
  * The page the mentor was found on.
  */
-sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchAnalysis, contact: Contact, tags: Array<Tag>, trashed: boolean, };
+sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchAnalysis, contact: Contact, tags: Array<Tag>, trashed: boolean, library: Array<MentorLibraryRecord>, };
 
 export type MentorEdit = { id: number, name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
 
@@ -376,6 +414,8 @@ export type MentorForm = { name: string, aliases: Array<string>, emails: Array<s
 export type MentorId = { id: number, };
 
 export type MentorIds = { ids: Array<number>, };
+
+export type MentorLibraryRecord = { id: string, status: LibraryStatus, verifiedAt: number | null, };
 
 export type MentorMailbox = { id: number, mailboxId: number | null, };
 
@@ -642,7 +682,7 @@ export type Reviewed = { accepted: number, skipped: number, };
 
 export type Rotation = "failover" | "perEmail";
 
-export type RowError = { row: number, reason: string, };
+export type RowError = { row: number, name: string, reason: string, };
 
 export type Schedule = { "kind": "now" } | { "kind": "window" } & Window;
 
@@ -821,6 +861,16 @@ export interface Operations {
   resetAccountPassword: { input: AccountVerification; output: null };
   logoutAccount: { input: Nothing; output: null };
   deleteAccount: { input: AccountCredentials; output: null };
+  getLibraryOrgs: { input: Nothing; output: LibraryOrgs };
+  listLibraryMentors: { input: LibraryListRequest; output: LibraryMentors };
+  previewLibraryMentor: { input: LibraryId; output: LibraryMentorPreview };
+  getLibraryQuota: { input: Nothing; output: LibraryQuota };
+  previewLibraryAdd: { input: LibrarySelection; output: LibraryAddPreview };
+  addLibraryMentors: { input: LibrarySelection; output: LibraryAdded };
+  listLibraryUpdates: { input: Nothing; output: Array<LibraryUpdateGroup> };
+  applyLibraryUpdates: { input: LibraryUpdateChoices; output: number };
+  libraryUpdateCount: { input: Nothing; output: number };
+  syncLibrary: { input: Nothing; output: number };
   getAgentCli: { input: Nothing; output: AgentCli };
   installAgentCli: { input: Nothing; output: AgentCli };
   uninstallAgentCli: { input: Nothing; output: AgentCli };
@@ -854,7 +904,7 @@ export interface Operations {
   enrichCandidates: { input: CandidateIds; output: EnrichPlan };
   listCandidates: { input: CandidateQuery; output: CandidatePage };
   getCandidate: { input: CrawlId; output: CandidateDetail };
-  previewCandidates: { input: ReviewInput; output: Preview };
+  previewCandidates: { input: ReviewInput; output: IntakePreview };
   acceptCandidates: { input: ReviewInput; output: Reviewed };
   rejectCandidates: { input: CandidateIds; output: number };
   scheduleCapacity: { input: Window; output: Capacity };

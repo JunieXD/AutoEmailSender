@@ -1,0 +1,71 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.name,\n             CASE WHEN m.trashed_at IS NOT NULL THEN '导师在回收站里'\n               WHEN NOT EXISTS (SELECT 1 FROM mentor_email WHERE mentor_id = m.id)\n                 THEN '导师尚未填写邮箱'\n               WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id\n                 AND task_id = ?2 AND state = 'sent')\n                 THEN '原任务中的邮件已发出'\n               WHEN EXISTS (SELECT 1 FROM email WHERE mentor_id = m.id\n                 AND kind IN ('first', 'follow_up')\n                 AND state IN ('generating', 'generation_failed', 'review', 'approved',\n                   'cloud', 'sending', 'maybe_sent', 'failed')\n                 AND NOT (task_id IS ?2 AND ?2 IS NOT NULL\n                   AND state IN ('failed', 'generation_failed')))\n                 THEN '还有一封没发出的首封或追问'\n               ELSE NULL END AS \"reason: String\",\n             coalesce(c.contact_count, 0) AS \"contact_count!: i64\",\n             c.last_out_at AS last_contact_at,\n             (SELECT json_quote(status) FROM mentor_library WHERE mentor_id = m.id\n                AND status IN ('retired', 'departed', 'deceased')\n                ORDER BY CASE status WHEN 'deceased' THEN 0 WHEN 'departed' THEN 1 ELSE 2 END,\n                    library_id LIMIT 1) AS \"library_status?: Json<cloud_api::library::Status>\"\n           FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n           WHERE m.id IN (SELECT value FROM json_each(?1))\n           ORDER BY m.name, m.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "reason: String",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "contact_count!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "last_contact_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "last_out_at"
+          }
+        }
+      },
+      {
+        "name": "library_status?: Json<cloud_api::library::Status>",
+        "ordinal": 5,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "2d3ca132c5bd08bba6eb91e214d6000d5fc33a73ade39e223e6f9a648f1a643c"
+}

@@ -16,7 +16,7 @@ pub mod import;
 pub mod intake;
 pub mod matching;
 pub mod merge;
-mod supplement;
+pub mod supplement;
 pub mod tags;
 pub mod trash;
 
@@ -139,6 +139,16 @@ pub struct Affiliation {
 
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename = "MentorLibraryRecord")]
+pub struct LibraryRecord {
+    pub id: String,
+    pub status: cloud_api::library::Status,
+    #[serde(rename = "verifiedAt")]
+    pub verified_at: Option<i64>,
+}
+
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct MentorDetail {
     pub id: i64,
     pub name: String,
@@ -158,6 +168,7 @@ pub struct MentorDetail {
     pub contact: Contact,
     pub tags: Vec<Tag>,
     pub trashed: bool,
+    pub library: Vec<LibraryRecord>,
 }
 
 /// A completed result stays visible while another analysis runs or fails.
@@ -569,6 +580,21 @@ pub async fn detail(
     )
     .fetch_all(&mut *conn)
     .await?;
+    let library = sqlx::query!(
+        r#"SELECT library_id, json_quote(status) AS "status!: Json<cloud_api::library::Status>",
+            record AS "record: Json<cloud_api::library::Record>"
+        FROM mentor_library WHERE mentor_id = ? ORDER BY library_id"#,
+        id
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| LibraryRecord {
+        id: r.library_id,
+        status: r.status.0,
+        verified_at: r.record.preview.verified_at,
+    })
+    .collect();
     Ok(Some(MentorDetail {
         id: r.id,
         name: r.name,
@@ -595,6 +621,7 @@ pub async fn detail(
             .remove(&id)
             .unwrap_or_default(),
         trashed: r.trashed,
+        library,
     }))
 }
 

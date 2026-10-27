@@ -1,5 +1,5 @@
-import type { Decisions, Preview, ImportProfile, Addition } from "@/api/types";
-import { Differences } from "@/components/differences";
+import type { Decisions, IntakePreview, ImportProfile, Addition } from "@/api/types";
+import { Differences, FIELD_NAMES } from "@/components/differences";
 import { placeOf } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 
@@ -8,11 +8,13 @@ export function IntakeChoices({
   decisions,
   onChange,
   source = "表格",
+  numbered = true,
 }: {
-  preview: Preview;
+  preview: IntakePreview;
   decisions: Decisions;
   onChange: (next: Decisions | ((previous: Decisions) => Decisions)) => void;
   source?: string;
+  numbered?: boolean;
 }) {
   const choose = onChange;
   return (
@@ -23,6 +25,8 @@ export function IntakeChoices({
           <h3 className="mb-2 font-medium">资料不同</h3>
           <Differences
             source={source}
+            numbered={numbered}
+            names={FIELD_NAMES}
             items={preview.differences}
             take={decisions.take}
             onChange={(take) => choose((d) => ({ ...d, take }))}
@@ -52,7 +56,7 @@ export function IntakeChoices({
                 <div className="grid grid-cols-2 gap-4 phone:grid-cols-1">
                   <div>
                     <span className="mb-1 block text-xs text-muted-foreground">
-                      {source} · 第 {m.rows.join("、")} 项
+                      {numbered ? `${source} · 第 ${m.rows.join("、")} 项` : source}
                     </span>
                     <ProfileDetails profile={m.incoming} />
                   </div>
@@ -117,9 +121,7 @@ export function IntakeChoices({
           <div className="space-y-2">
             {preview.trashed.map((m) => (
               <div key={m.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm">
-                <p className="mr-auto">
-                  {m.name} · 第 {m.rows.join("、")} 项
-                </p>
+                <p className="mr-auto">{numbered ? `${m.name} · 第 ${m.rows.join("、")} 项` : m.name}</p>
                 {[false, true].map((restore) => (
                   <label key={String(restore)} className="flex items-center gap-2">
                     <input

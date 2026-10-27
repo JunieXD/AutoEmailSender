@@ -584,7 +584,8 @@ async fn describe(
                     (SELECT count(*) FROM email WHERE mentor_id IN doomed) AS "emails!: i64",
                     (SELECT count(*) FROM todo WHERE mentor_id IN doomed) AS "todos!: i64",
                     (SELECT count(*) FROM mentor_tag WHERE mentor_id IN doomed) AS "tags!: i64",
-                    (SELECT count(*) FROM library_update WHERE mentor_id IN doomed) AS "updates!: i64",
+                    (SELECT count(*) FROM library_update WHERE library_id IN
+                        (SELECT library_id FROM mentor_library WHERE mentor_id IN doomed)) AS "updates!: i64",
                     (SELECT count(*) FROM message
                         WHERE id IN (SELECT message_id FROM message_mentor WHERE mentor_id IN doomed)
                         AND NOT EXISTS (SELECT 1 FROM message_mentor mm
@@ -883,6 +884,11 @@ async fn describe(
                     .await?;
             return imported_recipients(conn, &changes).await;
         }
+        "applyLibraryUpdates" => {
+            let input: library::updates::Choices = parse(input)?;
+            let plan = library::updates::plan(conn, &input).await?;
+            return imported_recipients(conn, &plan.changes).await;
+        }
         "acceptCandidates" => {
             let input: crawl::review::ReviewInput = parse(input)?;
             let plan = crawl::review::plan(conn, &input).await?;
@@ -891,6 +897,16 @@ async fn describe(
         _ => return Ok(None),
     };
     Ok(Some(description))
+}
+
+pub(crate) async fn library_addition(
+    ctx: &Context,
+    fetched: &cloud_api::library::Fetched,
+    input: &library::add::Selection,
+) -> Result<Option<Description>, CallError> {
+    let mut tx = ctx.db.begin().await?;
+    let (_, changes) = library::add::calculate(&mut tx, fetched, input).await?;
+    imported_recipients(&mut tx, &changes).await
 }
 
 async fn changed_recipient(
@@ -1043,6 +1059,8 @@ mod tests {
             BTreeSet::from([
                 "acceptCandidates",
                 "addMentorEmail",
+                "addLibraryMentors",
+                "applyLibraryUpdates",
                 "importMentors",
                 "saveFirstDraft",
                 "saveReplyDraft",

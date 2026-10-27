@@ -7,6 +7,261 @@ use base64::prelude::{BASE64_STANDARD, Engine};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
+fn library_record(emails: &[&str]) -> cloud_api::library::Record {
+    cloud_api::library::Record {
+        preview: cloud_api::library::Preview {
+            summary: cloud_api::library::Summary {
+                id: "mentor_one".into(),
+                name: "导师".into(),
+                aliases: vec![],
+                unit: Default::default(),
+                research: None,
+                email_count: emails.len() as u32,
+                fetched: true,
+            },
+            units: vec![],
+            papers: vec![],
+            homepages: vec![],
+            source_url: None,
+            verified_at: None,
+        },
+        emails: emails.iter().map(|e| (*e).into()).collect(),
+        revision: 1,
+    }
+}
+
+async fn library_context(db: SqlitePool) -> (Context, test_fixtures::provider::Provider, i64) {
+    let server = test_fixtures::provider::Provider::start().await.unwrap();
+    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    ctx.account =
+        account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        "INSERT INTO account (id,email,token) VALUES (1,'student@example.invalid','test-token')",
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "导师".into(),
+            emails: vec!["old@example.com".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 10)
+        .await
+        .unwrap();
+    (ctx, server, mentor)
+}
+
+async fn library_response(
+    request: test_fixtures::provider::Request,
+    record: cloud_api::library::Record,
+) {
+    request
+        .respond
+        .send(test_fixtures::provider::Response::Raw {
+            status: 200,
+            content: serde_json::to_string(&cloud_api::library::Fetched {
+                records: vec![record],
+                missing: vec![],
+                remaining: Some(199),
+            })
+            .unwrap(),
+        })
+        .unwrap();
+    request.completed.await.unwrap();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn library_addition_executes_the_snapshot_checked_without_confirmation(db: SqlitePool) {
+    let (ctx, mut server, mentor) = library_context(db).await;
+    let calling = call_agent(
+        &ctx,
+        "addLibraryMentors",
+        json!({"ids":["mentor_one"]}),
+        |_| panic!("the checked record did not change the recipient"),
+        pending(),
+    );
+    let replies = async {
+        let request = server.requests.recv().await.unwrap();
+        library_response(request, library_record(&["old@example.com"])).await;
+        loop {
+            let request = server.requests.recv().await.unwrap();
+            let mut next = library_record(&["new@demo.edu.example", "old@example.com"]);
+            next.revision = 2;
+            library_response(request, next).await;
+        }
+    };
+    tokio::select! {
+        result = calling => { result.unwrap(); },
+        () = replies => unreachable!("the response loop stays available until the call ends"),
+    }
+    assert_eq!(
+        mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails,
+        ["old@example.com"]
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn library_addition_executes_the_rechecked_snapshot_after_confirmation(db: SqlitePool) {
+    let (ctx, mut server, mentor) = library_context(db).await;
+    let calling = allow_after_change(
+        &ctx,
+        "addLibraryMentors",
+        json!({"ids":["mentor_one"]}),
+        async {},
+    );
+    let replies = async {
+        for _ in 0..2 {
+            let request = server.requests.recv().await.unwrap();
+            library_response(
+                request,
+                library_record(&["checked@demo.edu.example", "old@example.com"]),
+            )
+            .await;
+        }
+        loop {
+            let request = server.requests.recv().await.unwrap();
+            let mut changed = library_record(&["unchecked@demo.edu.example", "old@example.com"]);
+            changed.revision = 2;
+            library_response(request, changed).await;
+        }
+    };
+    tokio::select! {
+        result = calling => { result.unwrap(); },
+        () = replies => unreachable!("the response loop stays available until the call ends"),
+    }
+    assert_eq!(
+        mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails[0],
+        "checked@demo.edu.example"
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn library_addition_rejects_a_changed_confirmation_before_writing(db: SqlitePool) {
+    let (ctx, mut server, mentor) = library_context(db).await;
+    let calling = allow_after_change(
+        &ctx,
+        "addLibraryMentors",
+        json!({"ids":["mentor_one"]}),
+        async {},
+    );
+    let replies = async {
+        for email in ["checked@demo.edu.example", "changed@demo.edu.example"] {
+            let request = server.requests.recv().await.unwrap();
+            library_response(request, library_record(&[email, "old@example.com"])).await;
+        }
+    };
+    let (result, ()) = tokio::join!(calling, replies);
+    assert!(matches!(
+        result,
+        Err(api::CallError {
+            code: ErrorCode::Invalid,
+            ..
+        })
+    ));
+    assert_eq!(
+        mentor::get(&ctx.db, mentor).await.unwrap().unwrap().emails,
+        ["old@example.com"]
+    );
+}
+
+async fn addition_and_removal_race(db: SqlitePool, initially_linked: bool) {
+    use std::future::Future;
+    let (ctx, mut server, mentor) = library_context(db).await;
+    if initially_linked {
+        let (result, ()) = tokio::join!(
+            call(&ctx, "addLibraryMentors", json!({"ids":["mentor_one"]})),
+            async {
+                library_response(
+                    server.requests.recv().await.unwrap(),
+                    library_record(&["old@example.com"]),
+                )
+                .await;
+            }
+        );
+        result.unwrap();
+    }
+    let adding = call(&ctx, "addLibraryMentors", json!({"ids":["mentor_one"]}));
+    tokio::pin!(adding);
+    let old = tokio::select! {
+        request = server.requests.recv() => request.unwrap(),
+        result = &mut adding => panic!("addition finished without its response: {result:?}"),
+    };
+    let blocked = {
+        let lease = ctx.library.acquire();
+        tokio::pin!(lease);
+        std::future::poll_fn(|cx| std::task::Poll::Ready(lease.as_mut().poll(cx).is_pending()))
+            .await
+    };
+    let checking = call(&ctx, "syncLibrary", json!({}));
+    tokio::pin!(checking);
+    std::future::poll_fn(|cx| {
+        assert!(checking.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    let synchronize = async {
+        let reply = async {
+            let request = server.requests.recv().await.unwrap();
+            assert!(request.line.contains("/library/changes?after=0"));
+            request
+                .respond
+                .send(test_fixtures::provider::Response::Raw {
+                    status: 200,
+                    content: serde_json::to_string(&cloud_api::library::Changes {
+                        changes: vec![cloud_api::library::Change {
+                            id: "mentor_one".into(),
+                            revision: 2,
+                            data: cloud_api::library::ChangeData::Removed(()),
+                        }],
+                        revision: 2,
+                        more: false,
+                    })
+                    .unwrap(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        };
+        let (result, ()) = tokio::join!(checking, reply);
+        result.unwrap();
+    };
+    if blocked {
+        library_response(old, library_record(&["old@example.com"])).await;
+        adding.await.unwrap();
+        synchronize.await;
+    } else {
+        synchronize.await;
+        library_response(old, library_record(&["old@example.com"])).await;
+        adding.await.unwrap();
+    }
+    let detail = mentor::get(&ctx.db, mentor).await.unwrap().unwrap();
+    assert_eq!(
+        detail.library[0].status,
+        cloud_api::library::Status::Removed
+    );
+    let cursor: i64 = sqlx::query_scalar("SELECT library_revision FROM account")
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(cursor, 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn first_library_addition_does_not_lose_a_concurrent_removed_change(db: SqlitePool) {
+    addition_and_removal_race(db, false).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn delayed_library_addition_cannot_reactivate_a_removed_record(db: SqlitePool) {
+    addition_and_removal_race(db, true).await;
+}
+
 async fn refused(ctx: &Context, op: &str, input: Value) {
     let (registered, waiting) = tokio::sync::oneshot::channel();
     let calling = call_agent(
@@ -95,6 +350,157 @@ async fn account_deletion_confirmation_uses_the_input_email_without_the_password
     };
     let error = tokio::join!(calling, answer).0.unwrap_err();
     assert!(error.message.contains("在应用里拒绝"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn library_addition_confirms_before_changing_an_approved_recipient(db: SqlitePool) {
+    use test_fixtures::provider::{Provider, Response};
+    let mut server = Provider::start().await.unwrap();
+    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    ctx.account =
+        account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        "INSERT INTO account (id,email,token) VALUES (1,'student@example.invalid','test-token')",
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "导师".into(),
+            emails: vec!["old@example.com".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 10)
+        .await
+        .unwrap();
+    let record = library_record(&["new@demo.edu.example", "old@example.com"]);
+    let calling = refused(&ctx, "addLibraryMentors", json!({"ids":["mentor_one"]}));
+    let response = async {
+        let request = server.requests.recv().await.unwrap();
+        let body = cloud_api::library::Fetched {
+            records: vec![record],
+            missing: vec![],
+            remaining: Some(199),
+        };
+        request
+            .respond
+            .send(Response::Raw {
+                status: 200,
+                content: serde_json::to_string(&body).unwrap(),
+            })
+            .unwrap();
+        request.completed.await.unwrap();
+    };
+    tokio::join!(calling, response);
+    let local = mentor::get(&ctx.db, mentor).await.unwrap().unwrap();
+    assert_eq!(local.emails, ["old@example.com"]);
+    assert!(local.library.is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn library_update_confirms_before_reordering_an_approved_recipient(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "导师".into(),
+            emails: vec!["old@demo.edu.example".into(), "new@demo.edu.example".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 10)
+        .await
+        .unwrap();
+    sqlx::query(
+        r#"INSERT INTO mentor_library(library_id, mentor_id, status, record)
+        VALUES ('mentor_one', ?, 'active', ?)"#,
+    )
+    .bind(mentor)
+    .bind(sqlx::types::Json(library_record(&[
+        "old@demo.edu.example",
+        "new@demo.edu.example",
+    ])))
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO library_update(library_id,field,original,incoming)
+        VALUES ('mentor_one','primaryEmail','"old@demo.edu.example"','"new@demo.edu.example"')"#,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    let groups = call(&ctx, "listLibraryUpdates", json!({})).await.unwrap();
+    let input = json!({"choices":groups[0]["differences"]});
+    refused(&ctx, "applyLibraryUpdates", input.clone()).await;
+    let address: String = sqlx::query_scalar(
+        "SELECT address FROM mentor_email WHERE mentor_id=? ORDER BY position LIMIT 1",
+    )
+    .bind(mentor)
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    assert_eq!(address, "old@demo.edu.example");
+    call(&ctx, "applyLibraryUpdates", input).await.unwrap();
+    let address: String = sqlx::query_scalar(
+        "SELECT address FROM mentor_email WHERE mentor_id=? ORDER BY position LIMIT 1",
+    )
+    .bind(mentor)
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap();
+    assert_eq!(address, "new@demo.edu.example");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn task_candidates_warn_about_library_status_but_not_removed_records(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "导师".into(),
+            emails: vec!["one@demo.edu.example".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        r#"INSERT INTO mentor_library (library_id, mentor_id, status, record)
+        VALUES ('mentor_one', ?, 'active', ?)"#,
+    )
+    .bind(mentor)
+    .bind(sqlx::types::Json(library_record(&["one@demo.edu.example"])))
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    let input = json!({"sourceTaskId":null,"kind":"first","name":"任务","schedule":{"kind":"now"},
+        "ids":[mentor],"writer":"ai","templateId":null,"templateSourceId":null,
+        "modelConfigId":null,"references":[],"attachments":[]});
+    for status in ["active", "retired", "departed", "deceased", "removed"] {
+        sqlx::query("UPDATE mentor_library SET status=?")
+            .bind(status)
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        let plan = call(&ctx, "planTask", input.clone()).await.unwrap();
+        let expected = if matches!(status, "active" | "removed") {
+            Value::Null
+        } else {
+            json!(status)
+        };
+        assert_eq!(plan["mentors"][0]["libraryStatus"], expected);
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

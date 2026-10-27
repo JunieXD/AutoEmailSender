@@ -10,3 +10,7 @@ workspace = true
 
 [dependencies]
 serde.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+ts-rs = ["dep:ts-rs"]

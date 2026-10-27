@@ -5,6 +5,7 @@ import { call, errorMessage } from "@/api/call";
 import type { Material, NewTask, TemplateSummary, Writer, Kind } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Field, formClose } from "@/components/form";
+import { LIBRARY_STATUS } from "@/components/library";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -117,6 +118,7 @@ function TaskSteps({
   const eligible = plan.data?.mentors.filter((m) => m.reason === null) ?? [];
   const unavailable = plan.data?.mentors.filter((m) => m.reason !== null) ?? [];
   const contacted = eligible.filter((m) => m.contactCount > 0 || m.lastContactAt !== null);
+  const departed = eligible.filter((m) => m.libraryStatus !== null);
   const create = useMutation({
     mutationFn: () => call("createTask", { ...form, ids: eligible.map((m) => m.id) }),
     onSuccess: ({ id }) => {
@@ -180,6 +182,18 @@ function TaskSteps({
                   </Button>
                 </div>
               )}
+              {departed.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 text-warning">
+                  <p>其中 {departed.length} 位在导师库里标为已退休、离职或去世</p>
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    onClick={() => setExcluded([...excluded, ...departed.map((m) => m.id)])}
+                  >
+                    全部移出
+                  </Button>
+                </div>
+              )}
               <div className="max-h-72 space-y-[3px] overflow-y-auto">
                 {eligible.map((m) => (
                   <div key={m.id} className="flex items-center gap-2 rounded-md bg-muted px-3 py-2">
@@ -195,6 +209,9 @@ function TaskSteps({
                         <p className="text-xs text-warning">
                           联系 {m.contactCount} 次{m.lastContactAt !== null && `，最近 ${day(m.lastContactAt)}`}
                         </p>
+                      )}
+                      {m.libraryStatus && (
+                        <p className="text-xs text-warning">导师库标为{LIBRARY_STATUS[m.libraryStatus]}</p>
                       )}
                     </div>
                     <Button variant="ghost" size="sm" onClick={() => setExcluded([...excluded, m.id])}>

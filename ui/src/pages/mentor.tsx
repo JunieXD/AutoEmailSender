@@ -1,6 +1,5 @@
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { ChevronLeft, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
@@ -8,8 +7,18 @@ import type { MentorDetail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Correspondence } from "@/components/correspondence";
 import { formOf, MentorDialog } from "@/components/mentor-dialog";
-import { Avatar, ContactLabel, dropDrafts, BASIS_CHANGED, Missing, placeOf, refreshMentors } from "@/components/mentor";
+import {
+  Avatar,
+  ContactLabel,
+  dropDrafts,
+  BASIS_CHANGED,
+  ExternalLink,
+  Missing,
+  placeOf,
+  refreshMentors,
+} from "@/components/mentor";
 import { TagChip, TagPicker, TagSaveError } from "@/components/tags";
+import { LIBRARY_STATUS } from "@/components/library";
 import { MatchButton } from "@/components/matching";
 import { Notice } from "@/components/notice";
 import { Button } from "@/components/ui/button";
@@ -82,6 +91,7 @@ export function MentorPage() {
             )}
           </div>
         )}
+        <LibraryNotice mentor={m} />
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <Correspondence key={m.id} mentor={m} />
         </div>
@@ -224,7 +234,9 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
             // A load still under way may have read the mentor before this save.
             await queryClient.cancelQueries({ queryKey: ["getMentor", m.id] });
             queryClient.setQueryData(["getMentor", m.id], saved);
-            void queryClient.invalidateQueries({ queryKey: ["listMentors"] });
+            // An edited profile may now agree with a library update, which then no longer waits.
+            for (const queryKey of [["listMentors"], ["listLibraryUpdates"], ["libraryUpdateCount"]])
+              void queryClient.invalidateQueries({ queryKey });
             setEditing(false);
           }}
           onClose={() => setEditing(false)}
@@ -279,7 +291,26 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
           </>
         )}
       </dl>
+      {m.library.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{libraryNote(m)}</p>}
     </Section>
+  );
+}
+
+function libraryNote(m: MentorDetail): string {
+  const verified = Math.max(...m.library.map((r) => r.verifiedAt ?? 0));
+  return verified > 0 ? `来自导师库，核实于 ${day(verified)}` : "来自导师库";
+}
+
+/** What the library says of a mentor no longer there to write to; a merged mentor may have several records. */
+function LibraryNotice({ mentor: m }: { mentor: MentorDetail }) {
+  const status = m.library.find((r) => r.status !== "active")?.status;
+  if (!status) return null;
+  return (
+    <p className="bg-muted px-5 py-2 text-sm phone:px-3">
+      {status === "removed"
+        ? "导师库已撤下这位导师的资料，以后不再更新。"
+        : `导师库标注这位导师${LIBRARY_STATUS[status]}。`}
+    </p>
   );
 }
 
@@ -331,35 +362,6 @@ function SendingMailbox({ mentor: m }: { mentor: MentorDetail }) {
       </dd>
     </>
   );
-}
-
-/** Opens in the system browser. Addresses come from web pages and imports, so only web links are links. */
-function ExternalLink({ url }: { url: string }) {
-  const href = webUrl(url);
-  if (!href) return <>{url}</>;
-  return (
-    <a
-      href={href}
-      className="text-brand-text hover:underline"
-      onClick={(e) => {
-        e.preventDefault();
-        void openUrl(href);
-      }}
-    >
-      {url}
-    </a>
-  );
-}
-
-/** The address in the normalised form the opener's permission accepts (lowercase scheme), if it is a web page. */
-function webUrl(url: string): string | null {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
-  } catch {
-    // Not an address at all.
-    return null;
-  }
 }
 
 function Analysis({ mentor: m }: { mentor: MentorDetail }) {

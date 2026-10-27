@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mentor_id, record AS \"record: Json<wire::Record>\"\n        FROM mentor_library WHERE library_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_library",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "record: Json<wire::Record>",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_library",
+            "name": "record"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "88e61ec8205f77ebc4893bfe56757eca6375853c13c202e3e2f6d00a8d222e06"
+}

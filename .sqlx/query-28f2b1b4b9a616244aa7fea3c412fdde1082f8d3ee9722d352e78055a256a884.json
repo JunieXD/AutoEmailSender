@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT u.id, l.mentor_id, u.field AS \"field: Field\", u.university, u.school,\n            u.department, u.original AS \"original: Json<Value>\", u.incoming AS \"incoming: Json<Value>\"\n        FROM library_update u JOIN mentor_library l ON l.library_id = u.library_id\n        WHERE l.mentor_id IN (SELECT id FROM mentor WHERE trashed_at IS NULL)\n            AND (?1 IS NULL OR u.id IN (SELECT value FROM json_each(?1)))\n        ORDER BY u.field, l.mentor_id, u.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_library",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "field: Field",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "field"
+          }
+        }
+      },
+      {
+        "name": "university",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "university"
+          }
+        }
+      },
+      {
+        "name": "school",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "school"
+          }
+        }
+      },
+      {
+        "name": "department",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "department"
+          }
+        }
+      },
+      {
+        "name": "original: Json<Value>",
+        "ordinal": 6,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "original"
+          }
+        }
+      },
+      {
+        "name": "incoming: Json<Value>",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "library_update",
+            "name": "incoming"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "28f2b1b4b9a616244aa7fea3c412fdde1082f8d3ee9722d352e78055a256a884"
+}

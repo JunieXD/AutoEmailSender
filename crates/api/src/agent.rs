@@ -20,7 +20,7 @@ const MAX_AUTHENTICATING: usize = 4;
 
 mod confirmation;
 pub use confirmation::Description;
-pub(crate) use confirmation::confirmation;
+pub(crate) use confirmation::{confirmation, library_addition};
 
 const CONFIRM_FOR: Duration = Duration::from_secs(5 * 60);
 

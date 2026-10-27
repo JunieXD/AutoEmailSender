@@ -1,0 +1,45 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT library_id, json_quote(status) AS \"status!: Json<cloud_api::library::Status>\",\n            record AS \"record: Json<cloud_api::library::Record>\"\n        FROM mentor_library WHERE mentor_id = ? ORDER BY library_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "library_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_library",
+            "name": "library_id"
+          }
+        }
+      },
+      {
+        "name": "status!: Json<cloud_api::library::Status>",
+        "ordinal": 1,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "record: Json<cloud_api::library::Record>",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_library",
+            "name": "record"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      null,
+      false
+    ]
+  },
+  "hash": "afd546fd271e523ed2ece07ffedb1a3dce8ab160bdd866e4b5317d11a15a712c"
+}

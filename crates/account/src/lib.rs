@@ -262,7 +262,11 @@ async fn verified(
 async fn save_session(db: &SqlitePool, session: Session) -> Result<State, Error> {
     sqlx::query!(
         r#"INSERT INTO account (id, email, token) VALUES (1, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET email = excluded.email, token = excluded.token"#,
+        ON CONFLICT (id) DO UPDATE SET email = excluded.email, token = excluded.token,
+            library_revision = CASE WHEN account.email = excluded.email
+                THEN account.library_revision ELSE 0 END,
+            library_checked_at = CASE WHEN account.email = excluded.email
+                THEN account.library_checked_at ELSE NULL END"#,
         session.account.email,
         session.token
     )
@@ -333,6 +337,7 @@ impl Error {
                 ErrorCode::SessionExpired => "登录已失效，请重新登录。".into(),
                 ErrorCode::MailUnavailable => "验证码暂时无法发送，请稍后重试。".into(),
                 ErrorCode::Internal => "服务器暂时无法处理，请稍后重试。".into(),
+                ErrorCode::QuotaExceeded => "今天还能添加的数量不够了，少选几位或明天再来。".into(),
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()
                 }

@@ -3,6 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod library;
+
 pub mod path {
     pub const REGISTER_CODE: &str = "/v1/account/register-code";
     pub const REGISTER: &str = "/v1/account/register";
@@ -11,6 +13,11 @@ pub mod path {
     pub const RESET_CODE: &str = "/v1/account/reset-code";
     pub const RESET_PASSWORD: &str = "/v1/account/reset-password";
     pub const ACCOUNT: &str = "/v1/account";
+    pub const LIBRARY_ORGS: &str = "/v1/library/orgs";
+    pub const LIBRARY_MENTORS: &str = "/v1/library/mentors";
+    pub const LIBRARY_QUOTA: &str = "/v1/library/quota";
+    pub const LIBRARY_FETCH: &str = "/v1/library/fetch";
+    pub const LIBRARY_CHANGES: &str = "/v1/library/changes";
 }
 
 #[derive(Serialize, Deserialize)]
@@ -71,6 +78,7 @@ pub enum ErrorCode {
     Internal,
     NotFound,
     MethodNotAllowed,
+    QuotaExceeded,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

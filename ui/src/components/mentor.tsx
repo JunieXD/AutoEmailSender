@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { QueryClient } from "@tanstack/react-query";
 import type { Affiliation, Contact, ContactStatus, DraftKind, ReplyOutcome } from "@/api/types";
 import { refreshTasks } from "@/components/task-cache";
@@ -121,6 +122,9 @@ export function refreshMentors(queryClient: QueryClient) {
     ["listConversations"],
     ["listTodos"],
     ["unreadCount"],
+    // Edited, trashed and merged mentors change which library updates still differ.
+    ["listLibraryUpdates"],
+    ["libraryUpdateCount"],
   ]) {
     void queryClient.invalidateQueries({ queryKey });
   }
@@ -155,5 +159,34 @@ export function dropDrafts(queryClient: QueryClient, ids: number[], kind: DraftK
       for (const m of mutations.findAll({ mutationKey: ["writeLetter", id] })) mutations.remove(m);
       for (const m of mutations.findAll({ mutationKey: ["factCheckEmail", "getFirstDraft", id] })) mutations.remove(m);
     }
+  }
+}
+
+/** Opens in the system browser. Addresses come from web pages and imports, so only web links are links. */
+export function ExternalLink({ url }: { url: string }) {
+  const href = webUrl(url);
+  if (!href) return <>{url}</>;
+  return (
+    <a
+      href={href}
+      className="text-brand-text hover:underline"
+      onClick={(e) => {
+        e.preventDefault();
+        void openUrl(href);
+      }}
+    >
+      {url}
+    </a>
+  );
+}
+
+/** The address in the normalised form the opener's permission accepts (lowercase scheme), if it is a web page. */
+function webUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+  } catch {
+    // Not an address at all.
+    return null;
   }
 }

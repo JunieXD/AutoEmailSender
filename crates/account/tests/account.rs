@@ -283,3 +283,49 @@ async fn redirects_cannot_forward_account_credentials() {
         () = unexpected => {},
     }
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token, library_revision, library_checked_at)
+        VALUES (1, 'first@example.invalid', 'old-token', 42, 100)"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    for (email, expected) in [
+        ("first@example.invalid", (42, Some(100))),
+        ("second@example.invalid", (0, None)),
+    ] {
+        let login = client.login(&db, email, "fixed-password-123".into());
+        let reply = async {
+            let request = server.requests.recv().await.unwrap();
+            request
+                .respond
+                .send(Response::Raw {
+                    status: 200,
+                    content: serde_json::to_string(&Session {
+                        token: "new-test-token".into(),
+                        account: Account {
+                            email: email.into(),
+                            sponsor_until: None,
+                        },
+                    })
+                    .unwrap(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        };
+        let (result, ()) = tokio::join!(login, reply);
+        result.unwrap();
+        let progress: (i64, Option<i64>) =
+            sqlx::query_as("SELECT library_revision, library_checked_at FROM account")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(progress, expected);
+    }
+}

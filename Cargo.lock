@@ -161,10 +161,12 @@ dependencies = [
  "base64 0.22.1",
  "check",
  "chrono",
+ "cloud-api",
  "crawl",
  "db",
  "email",
  "fakemail",
+ "library",
  "mailbox",
  "matching",
  "material",
@@ -976,6 +978,7 @@ name = "cloud-api"
 version = "3.0.0-alpha.0"
 dependencies = [
  "serde",
+ "ts-rs",
 ]
 
 [[package]]
@@ -3274,6 +3277,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "library"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "account",
+ "cloud-api",
+ "db",
+ "mentor",
+ "net",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "test-fixtures",
+ "tokio",
+ "tracing",
+ "ts-rs",
+ "url",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3461,6 +3484,7 @@ dependencies = [
 name = "mentor"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "cloud-api",
  "db",
  "email",
  "profile",
@@ -6164,6 +6188,7 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "check",
  "chrono",
+ "cloud-api",
  "db",
  "email",
  "fakemail",
@@ -8090,10 +8115,12 @@ dependencies = [
  "api",
  "axum",
  "chrono",
+ "cloud-api",
  "crawl",
  "db",
  "email",
  "fastrand",
+ "library",
  "mentor",
  "send",
  "serde",

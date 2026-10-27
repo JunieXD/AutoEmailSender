@@ -2,7 +2,7 @@
 use crate::export::{Profile, profiles};
 use crate::import::{
     AddedFields, Addition, AffiliationAddition, Decisions, Difference, Field, ImportCandidate,
-    Imported, MaybeSame, Preview, RowError, Trashed,
+    Imported, MaybeSame, RowError, Trashed,
 };
 pub use crate::supplement::comparable;
 use crate::supplement::{add_missing, append, same};
@@ -10,6 +10,20 @@ use crate::{SaveError, create, trash, update};
 use sqlx::{SqliteConnection, types::Json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+#[derive(Debug, Default, serde::Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "IntakePreview")]
+pub struct Preview {
+    pub created: u32,
+    pub supplemented: u32,
+    pub updated: u32,
+    pub unchanged: u32,
+    pub differences: Vec<Difference>,
+    pub additions: Vec<Addition>,
+    pub maybe_same: Vec<MaybeSame>,
+    pub trashed: Vec<Trashed>,
+    pub errors: Vec<RowError>,
+}
 pub struct Row {
     pub number: u32,
     /// A prior user-approved association, never supplied by an external extractor.
@@ -23,6 +37,15 @@ pub struct Change {
     rows: Vec<u32>,
 }
 impl Change {
+    pub fn edit(before: Profile, after: Profile) -> Self {
+        Self {
+            before: Some(before),
+            after,
+            restore: false,
+            rows: vec![],
+        }
+    }
+
     pub fn changed_recipient(&self) -> Option<(i64, Option<&str>)> {
         let before = self.before.as_ref()?;
         let same = match (
@@ -359,6 +382,7 @@ pub async fn calculate(
             for row in rows {
                 preview.errors.push(RowError {
                     row: row.number,
+                    name: row.profile.fields.name.clone(),
                     reason: format!(
                         "这些邮箱对应{count}已有的导师：{names}。请先合并这些导师或修改资料"
                     ),

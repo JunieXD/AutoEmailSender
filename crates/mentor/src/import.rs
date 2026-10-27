@@ -173,6 +173,7 @@ pub struct Trashed {
 #[derive(Debug, Serialize, TS)]
 pub struct RowError {
     pub row: u32,
+    pub name: String,
     pub reason: String,
 }
 
@@ -208,16 +209,10 @@ pub struct Preview {
     pub sheet: usize,
     pub columns: Vec<Column>,
     pub issue: Option<String>,
-    pub created: u32,
-    pub supplemented: u32,
-    pub updated: u32,
-    pub unchanged: u32,
-    pub differences: Vec<Difference>,
-    pub additions: Vec<Addition>,
-    pub maybe_same: Vec<MaybeSame>,
-    pub trashed: Vec<Trashed>,
-    pub errors: Vec<RowError>,
+    #[serde(flatten)]
+    pub intake: intake::Preview,
 }
+
 #[derive(Debug, Default, Deserialize, TS)]
 pub struct Decisions {
     pub take: Vec<Difference>,
@@ -297,8 +292,15 @@ fn read_rows(sheets: &[Sheet], setup: &Setup, preview: &mut Preview) -> Vec<Row>
                 targets: vec![],
                 profile,
             }),
-            Err(reason) => preview.errors.push(RowError {
+            Err(reason) => preview.intake.errors.push(RowError {
                 row: number,
+                name: preview
+                    .columns
+                    .iter()
+                    .position(|c| c.field == Some(Field::Name))
+                    .and_then(|c| cells.get(c))
+                    .cloned()
+                    .unwrap_or_default(),
                 reason,
             }),
         }
@@ -473,11 +475,10 @@ pub async fn calculate(
     let mut table = Preview::default();
     let rows = read_rows(sheets, setup, &mut table);
     let (mut preview, changes) = intake::calculate(conn, rows, decisions).await?;
-    preview.sheets = table.sheets;
-    preview.sheet = table.sheet;
-    preview.columns = table.columns;
-    preview.issue = table.issue;
-    preview.errors.extend(table.errors);
+    preview
+        .errors
+        .extend(std::mem::take(&mut table.intake.errors));
     preview.errors.sort_by_key(|e| e.row);
-    Ok((preview, changes))
+    table.intake = preview;
+    Ok((table, changes))
 }

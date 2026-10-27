@@ -11,6 +11,7 @@
 | `crates/cloud-api` | 官方服务器共用的请求、响应和错误类型 |
 | `crates/account` | 账号：钥匙派生、官方服务器访问、登录状态和会话保存 |
 | `crates/mentor` | 导师：列表、搜索、编辑、标签、回收站、表格导入导出 |
+| `crates/library` | 导师库：浏览、本机标记、添加、资料更新和同步 |
 | `crates/sheet` | CSV、XLSX、XLS 表格的读写 |
 | `crates/crawl` | 抓取基础：网址边界、HTTP、页面材料、邮箱证据和归属核对、翻页和页面存取 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试、限流与暂停分类 |
@@ -62,7 +63,7 @@
 
 ### 官方账号
 
-- `crates/cloud-api` 只依赖 serde，统一 `/v1/` 的 JSON 协议、路径和错误码；官方服务端按公开仓库提交号引用。服务端的表、验证码和限流细节在私有服务端仓库的 `docs/account.md`。
+- `crates/cloud-api` 默认只依赖 serde，统一 `/v1/` 的 JSON 协议、路径和错误码；桌面端开启可选的 `ts-rs` 特性，从同一份导师库协议生成界面类型。官方服务端按公开仓库提交号引用。服务端的表、验证码和限流细节在私有服务端仓库的 `docs/account.md`。
 - `crates/account` 经 `net` 的系统代理和系统证书访问服务器，保留连接池但禁止重定向，避免把凭据转交给别的地址。默认地址常量为 `http://127.0.0.1:8787`，构造客户端时读取环境变量 `AUTOEMAIL_SERVER_URL`，存在时使用该值，否则使用默认地址。正式服务地址还未确定，部署时替换常量。
 - 邮箱去首尾空白、折叠全角英文字母／数字／`＠`／`．` 后转小写。`cloud_api::normalize_email` 是桌面与服务端的同一份规则；规范化结果也用于密码盐。
 - 密码不上传、不保存、不记日志。Argon2id v19，`m = 65,536 KiB`、`t = 3`、`p = 4`，盐为 UTF-8 的 `auto-email-sender:` 加规范化邮箱，输出 32 字节主钥匙；HKDF-SHA256 使用空盐（`None`）、info 的 UTF-8 字节 `login`，输出 32 字节登录钥匙，以无填充 base64url 上传。上述参数和规范化规则改变时必须迁移。
@@ -70,6 +71,16 @@
 - `Client::authenticated` 是官方服务共用的带令牌请求入口。实际访问服务器时发现 `session_expired`，只清掉本次使用的令牌，保留邮箱并返回 `SignedOut`，随后读取本机状态得到 `expired`；不自动重放请求。账号变更在同一个客户端内串行执行，避免旧登录覆盖新状态。
 - 操作组“账号”：`getAccount {}`、`sendRegistrationCode { email }`、`registerAccount { email, code, password }`、`loginAccount { email, password }`、`sendPasswordResetCode { email }`、`resetAccountPassword { email, code, password }`、`logoutAccount {}`、`deleteAccount { email, password }`。注册和登录返回 `State`，其余写操作返回 `null`。Agent 注销必须确认，说明使用输入的邮箱和删除效果，不含密码。注销绑定用户确认的邮箱；取得账号变更锁后，按共享规则规范化输入邮箱并核对当前登录账号，不同就拒绝，不访问服务器。
 - 重置密码后所有设备会话失效；本机正是该邮箱时立即清令牌。退出登录只有服务器撤销会话成功或确认会话已失效后才清本机记录，网络失败会明确报错。注销成功只删除本机账号记录，不动导师、邮件等本机数据。错误中文由 `account::Error::message` 统一提供。
+
+### 导师库
+
+- `crates/library` 通过 `account::Client::authenticated` 访问官方接口，复用令牌失效处理和错误中文。浏览与预览不取邮箱；一页摘要只做一次本机标记查询，以导师库编号确定已添加／回收站，用索引中的规范化姓名和学校确定可能已有。
+- 操作组“导师库”：`getLibraryOrgs`、`listLibraryMentors`、`previewLibraryMentor`、`getLibraryQuota`、`previewLibraryAdd`、`addLibraryMentors`、`listLibraryUpdates`、`applyLibraryUpdates`、`libraryUpdateCount`、`syncLibrary`，全部对 Agent 开放。输入输出从操作声明生成；添加和应用更新沿用表格导入的收件地址确认规则。`previewLibraryAdd` 取得完整记录，首次取得会计入当天数量，重复取得不再计数。
+- `mentor::intake::Preview` 只含对应、补充、差异和问题行；表格的 `mentor::import::Preview` 在外层增加文件信息，JSON 展平，表格原有界面形状不变。导师库的行编号固定对应所选 `ids` 的位置，重取时记录顺序改变或部分撤下不会把选择移给别的记录；问题行另带姓名。
+- `api::libraries::run` 在桌面应用进程已有的 Tokio runtime 中运行，启动时和之后每小时判断：有令牌且从未成功检查或距上次成功检查至少 24 小时才同步。手动 `syncLibrary` 立即检查。`Synchronizer` 的同一把锁覆盖添加的取记录与写入，以及整个同步检查；等待 Agent 用户确认时释放，确认后重新持锁，用同一次取得的记录复核并写入 `add::write`。同步逐条写事务保存导师资料、待处理项和原始记录；一页完成才保存进度，全部完成才保存检查时间。写入失败经 `db::Writes` 重试，网络／服务端失败只记条数和类别，下小时再试。记录资料只在 Rust 中比较；不按 JSON 内的值查询。
+- 待处理更新关联导师库记录，以记录、项和职称的单位唯一，合并导师时随记录转移。列出时计算当前值和默认选择，应用时复核用户看到的值，资料已变化则要求刷新；跳过已与新值相同、回收站和已移除单位的职称。`libraryUpdateCount` 按同一口径统计导师数。导师详情提供各条记录的状态和核实时间，任务候选提供退休／离职／去世提醒；同时有多个状态时按去世、离职、退休选一个。
+- 列出、计数和应用的可见性复核共用 `current_profiles` 和 `visible`；按导师编号读取姓名、来源网址、研究方向、首邮箱和完整单位列表，不按字段裁剪，不读取论文、备注和标签。计数对可见差异的导师编号去重；应用只加载所选导师。单位对应复用 `mentor::supplement::affiliation_position`；业务规则见[导师库](data-model.md#导师库)，规模和预算见[性能](data-model.md#性能)。
+- 账号行保存同步进度和上次检查时间，注册或登录为不同邮箱时一起清零，同一账号重新登录保留。同步写入前在事务中复核账号，避免换账号期间推进新账号的进度。
 
 ### 桌面后台运行
 

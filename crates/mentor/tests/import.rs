@@ -65,16 +65,16 @@ async fn headers_mapping_validation_and_physical_rows(db: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(p.sheet, 1);
-    assert_eq!(p.created, 1);
+    assert_eq!(p.intake.created, 1);
     assert_eq!(p.columns[0].field, Some(Field::Name));
     assert_eq!(p.columns[1].field, Some(Field::Email));
     assert_eq!(
-        p.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
+        p.intake.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
         [5, 6, 7]
     );
-    assert!(p.errors[0].reason.contains("姓名"));
-    assert!(p.errors[1].reason.contains("邮箱"));
-    assert!(p.errors[2].reason.contains("主页"));
+    assert!(p.intake.errors[0].reason.contains("姓名"));
+    assert!(p.intake.errors[1].reason.contains("邮箱"));
+    assert!(p.intake.errors[2].reason.contains("主页"));
     let setup = Setup {
         sheet: Some(1),
         columns: Some(vec![
@@ -129,9 +129,9 @@ async fn matching_groups_and_ambiguous_emails(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.created, 2);
-    assert_eq!(p.maybe_same.len(), 1);
-    assert_eq!(p.maybe_same[0].selected, Some(li));
+    assert_eq!(p.intake.created, 2);
+    assert_eq!(p.intake.maybe_same.len(), 1);
+    assert_eq!(p.intake.maybe_same[0].selected, Some(li));
     let done = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((done.created, done.updated), (2, 1));
     let p = mentor::get(&db, wang).await.unwrap().unwrap();
@@ -144,7 +144,7 @@ async fn matching_groups_and_ambiguous_emails(db: SqlitePool) {
         &["错误", "wang@pku.edu.cn;another@pku.edu.cn"],
     ]);
     let p = import::preview(&db, &bad, &Setup::default()).await.unwrap();
-    assert!(p.errors[0].reason.contains("两位"));
+    assert!(p.intake.errors[0].reason.contains("两位"));
     let separate = table(&[&["姓名", "学校"], &["李明", "北京大学"]]);
     assert_eq!(
         apply(
@@ -205,7 +205,7 @@ async fn additions_conflicts_and_stale_decisions(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.differences.len(), 3);
+    assert_eq!(p.intake.differences.len(), 3);
     let done = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!(done.updated, 1);
     let m = mentor::get(&db, id).await.unwrap().unwrap();
@@ -225,7 +225,7 @@ async fn additions_conflicts_and_stale_decisions(db: SqlitePool) {
             &db,
             &sheets,
             &Decisions {
-                take: p.differences,
+                take: p.intake.differences,
                 ..Default::default()
             }
         )
@@ -281,7 +281,7 @@ async fn trash_and_round_trip(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.trashed.len(), 1);
+    assert_eq!(p.intake.trashed.len(), 1);
     assert_eq!(apply(&db, &sheets, &Decisions::default()).await.updated, 0);
     assert_eq!(
         apply(
@@ -380,8 +380,8 @@ async fn unrelated_edits_do_not_invalidate_a_choice_and_whitespace_is_ignored(db
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.maybe_same.len(), 1);
-    assert!(p.differences.is_empty());
+    assert_eq!(p.intake.maybe_same.len(), 1);
+    assert!(p.intake.differences.is_empty());
     apply(&db, &sheets, &Decisions::default()).await;
     let fields = MentorFields {
         name: "Ming  Wang".into(),
@@ -414,7 +414,7 @@ async fn unrelated_edits_do_not_invalidate_a_choice_and_whitespace_is_ignored(db
         &db,
         &sheets,
         &Decisions {
-            take: p.differences,
+            take: p.intake.differences,
             ..Default::default()
         },
     )
@@ -540,9 +540,9 @@ async fn trashed_rows_are_one_mentor_and_skipped_as_a_group(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.trashed.len(), 1);
-    assert_eq!(p.trashed[0].rows, [2, 3, 4]);
-    assert!(p.differences.is_empty());
+    assert_eq!(p.intake.trashed.len(), 1);
+    assert_eq!(p.intake.trashed[0].rows, [2, 3, 4]);
+    assert!(p.intake.differences.is_empty());
     let skipped = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((skipped.created, skipped.updated), (0, 0));
     assert!(
@@ -579,7 +579,7 @@ async fn restore_approval_does_not_follow_a_different_target(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.trashed[0].id, a);
+    assert_eq!(p.intake.trashed[0].id, a);
     for (id, name, emails) in [
         (a, "王明", vec![]),
         (b, "王敏", vec!["b@a.cn".into(), "w@a.cn".into()]),
@@ -626,9 +626,9 @@ async fn shared_new_email_and_trash_separate(db: SqlitePool) {
     let initial = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(initial.maybe_same.len(), 1);
-    assert_eq!(initial.maybe_same[0].rows, [2, 3]);
-    assert_eq!(initial.trashed[0].rows, [2, 3]);
+    assert_eq!(initial.intake.maybe_same.len(), 1);
+    assert_eq!(initial.intake.maybe_same[0].rows, [2, 3]);
+    assert_eq!(initial.intake.trashed[0].rows, [2, 3]);
     let skipped = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((skipped.created, skipped.updated), (0, 0));
     let choices = Decisions {
@@ -638,10 +638,10 @@ async fn shared_new_email_and_trash_separate(db: SqlitePool) {
     let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
         .await
         .unwrap();
-    assert_eq!(p.created, 1);
-    assert!(p.trashed.is_empty());
-    assert_eq!(p.maybe_same.len(), 1);
-    assert_eq!(p.maybe_same[0].rows, [2, 3]);
+    assert_eq!(p.intake.created, 1);
+    assert!(p.intake.trashed.is_empty());
+    assert_eq!(p.intake.maybe_same.len(), 1);
+    assert_eq!(p.intake.maybe_same[0].rows, [2, 3]);
     let result = apply(&db, &sheets, &choices).await;
     assert_eq!((result.created, result.updated), (1, 0));
     assert!(mentor::get(&db, id).await.unwrap().unwrap().trashed);
@@ -665,9 +665,9 @@ async fn shared_email_must_precede_fuzzy_candidate(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert!(p.errors.is_empty(), "{:?}", p.errors);
-    assert!(p.maybe_same.is_empty());
-    assert!(p.trashed.is_empty());
+    assert!(p.intake.errors.is_empty(), "{:?}", p.intake.errors);
+    assert!(p.intake.maybe_same.is_empty());
+    assert!(p.intake.trashed.is_empty());
     let result = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((result.created, result.updated), (0, 1));
     assert!(mentor::get(&db, a).await.unwrap().unwrap().trashed);
@@ -691,16 +691,16 @@ async fn shared_email_chain_rejects_only_real_owner_conflicts(db: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(
-        p.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
+        p.intake.errors.iter().map(|e| e.row).collect::<Vec<_>>(),
         [2, 3, 4]
     );
-    for error in &p.errors {
+    for error in &p.intake.errors {
         for (name, id) in [("王明", wang), ("李明", li)] {
             assert!(error.reason.contains(name));
             assert!(error.reason.contains(&format!("编号 {id}")));
         }
     }
-    assert_eq!(p.created, 1);
+    assert_eq!(p.intake.created, 1);
     let result = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((result.created, result.updated), (1, 0));
 }
@@ -732,9 +732,9 @@ async fn splitting_rows_recalculates_the_full_preview(db: SqlitePool) {
         .unwrap();
     assert_eq!(
         (
-            first.created,
-            first.differences[0].row,
-            first.differences[0].incoming.as_str()
+            first.intake.created,
+            first.intake.differences[0].row,
+            first.intake.differences[0].incoming.as_str()
         ),
         (0, 2, "教授")
     );
@@ -747,13 +747,13 @@ async fn splitting_rows_recalculates_the_full_preview(db: SqlitePool) {
         .unwrap();
     assert_eq!(
         (
-            next.created,
-            next.differences[0].row,
-            next.differences[0].incoming.as_str()
+            next.intake.created,
+            next.intake.differences[0].row,
+            next.intake.differences[0].incoming.as_str()
         ),
         (1, 3, "研究员")
     );
-    choices.take = next.differences;
+    choices.take = next.intake.differences;
     let result = apply(&db, &sheets, &choices).await;
     assert_eq!((result.created, result.updated), (1, 1));
     assert_eq!(
@@ -795,8 +795,12 @@ async fn valid_homepage_with_semicolon_survives_export_import(db: SqlitePool) {
         let preview = import::preview(&db, &sheets, &Setup::default())
             .await
             .unwrap();
-        assert!(preview.errors.is_empty(), "{:?}", preview.errors);
-        assert_eq!(preview.unchanged, 1);
+        assert!(
+            preview.intake.errors.is_empty(),
+            "{:?}",
+            preview.intake.errors
+        );
+        assert_eq!(preview.intake.unchanged, 1);
     }
 }
 
@@ -887,7 +891,7 @@ async fn repeated_name_only_import_must_not_duplicate(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.maybe_same.len(), 1);
+    assert_eq!(p.intake.maybe_same.len(), 1);
     let result = apply(&db, &sheets, &Decisions::default()).await;
     assert_eq!((result.created, result.updated), (0, 0));
 }
@@ -929,13 +933,17 @@ async fn full_width_email_exports_round_trip_without_duplicates(db: SqlitePool) 
         let preview = import::preview(&db, &sheets, &Setup::default())
             .await
             .unwrap();
-        assert!(preview.errors.is_empty(), "{name}");
+        assert!(preview.intake.errors.is_empty(), "{name}");
         assert_eq!(
-            (preview.created, preview.updated, preview.unchanged),
+            (
+                preview.intake.created,
+                preview.intake.updated,
+                preview.intake.unchanged
+            ),
             (0, 0, 1),
             "{name}"
         );
-        assert!(preview.differences.is_empty(), "{name}");
+        assert!(preview.intake.differences.is_empty(), "{name}");
         let result = apply(&db, &sheets, &Decisions::default()).await;
         assert_eq!((result.created, result.updated), (0, 0), "{name}");
         assert_eq!(
@@ -979,15 +987,19 @@ async fn full_width_name_exports_round_trip_without_duplicates(db: SqlitePool) {
         let preview = import::preview(&db, &sheets, &Setup::default())
             .await
             .unwrap();
-        assert!(preview.errors.is_empty(), "{name}");
-        assert_eq!(preview.maybe_same.len(), 1, "{name}");
-        assert_eq!(preview.maybe_same[0].selected, Some(id), "{name}");
+        assert!(preview.intake.errors.is_empty(), "{name}");
+        assert_eq!(preview.intake.maybe_same.len(), 1, "{name}");
+        assert_eq!(preview.intake.maybe_same[0].selected, Some(id), "{name}");
         assert_eq!(
-            (preview.created, preview.updated, preview.unchanged),
+            (
+                preview.intake.created,
+                preview.intake.updated,
+                preview.intake.unchanged
+            ),
             (0, 0, 1),
             "{name}"
         );
-        assert!(preview.differences.is_empty(), "{name}");
+        assert!(preview.intake.differences.is_empty(), "{name}");
         let result = apply(&db, &sheets, &Decisions::default()).await;
         assert_eq!((result.created, result.updated), (0, 0), "{name}");
         assert_eq!(
@@ -1043,18 +1055,23 @@ async fn half_width_names_and_aliases_match_without_changing_full_width_values(d
         let preview = import::preview(&db, &sheets, &Setup::default())
             .await
             .unwrap();
-        assert!(preview.errors.is_empty(), "{name}");
-        assert_eq!(preview.maybe_same.len(), 1, "{name}");
-        assert_eq!(preview.maybe_same[0].selected, Some(id), "{name}");
-        assert_eq!(preview.maybe_same[0].candidates[0].id, id, "{name}");
+        assert!(preview.intake.errors.is_empty(), "{name}");
+        assert_eq!(preview.intake.maybe_same.len(), 1, "{name}");
+        assert_eq!(preview.intake.maybe_same[0].selected, Some(id), "{name}");
+        assert_eq!(preview.intake.maybe_same[0].candidates[0].id, id, "{name}");
         let same_name = name == "Wang Wei";
         assert_eq!(
-            (preview.created, preview.updated, preview.unchanged),
+            (
+                preview.intake.created,
+                preview.intake.updated,
+                preview.intake.unchanged
+            ),
             (0, 0, u32::from(same_name)),
             "{name}"
         );
         assert_eq!(
             preview
+                .intake
                 .differences
                 .iter()
                 .map(|d| d.field)
@@ -1117,9 +1134,9 @@ async fn namesake_exports_round_trip_without_crossing_profiles(db: SqlitePool) {
         let preview = import::preview(&db, &sheets, &Setup::default())
             .await
             .unwrap();
-        assert!(preview.errors.is_empty(), "{name}");
-        assert_eq!(preview.maybe_same.len(), 2, "{name}");
-        for (group, id) in preview.maybe_same.iter().zip(&ids) {
+        assert!(preview.intake.errors.is_empty(), "{name}");
+        assert_eq!(preview.intake.maybe_same.len(), 2, "{name}");
+        for (group, id) in preview.intake.maybe_same.iter().zip(&ids) {
             assert_eq!(group.selected, Some(*id), "{name}");
             assert_eq!(
                 group.candidates.iter().map(|c| c.id).collect::<Vec<_>>(),
@@ -1128,11 +1145,15 @@ async fn namesake_exports_round_trip_without_crossing_profiles(db: SqlitePool) {
             );
         }
         assert_eq!(
-            (preview.created, preview.updated, preview.unchanged),
+            (
+                preview.intake.created,
+                preview.intake.updated,
+                preview.intake.unchanged
+            ),
             (0, 0, 2),
             "{name}"
         );
-        assert!(preview.differences.is_empty(), "{name}");
+        assert!(preview.intake.differences.is_empty(), "{name}");
         let result = apply(&db, &sheets, &Decisions::default()).await;
         assert_eq!((result.created, result.updated), (0, 0), "{name}");
         assert_eq!(
@@ -1160,7 +1181,11 @@ async fn mixed_missing_email_import_is_unchanged_when_repeated(db: SqlitePool) {
         .await
         .unwrap();
     assert_eq!(
-        (preview.created, preview.updated, preview.unchanged),
+        (
+            preview.intake.created,
+            preview.intake.updated,
+            preview.intake.unchanged
+        ),
         (0, 0, 2)
     );
     let result = apply(&db, &sheets, &Decisions::default()).await;
@@ -1202,10 +1227,17 @@ async fn namesake_defaults_and_explicit_targets_keep_differences(db: SqlitePool)
         .await
         .unwrap();
     assert_eq!(
-        p.maybe_same.iter().map(|m| m.selected).collect::<Vec<_>>(),
+        p.intake
+            .maybe_same
+            .iter()
+            .map(|m| m.selected)
+            .collect::<Vec<_>>(),
         [Some(ids[0]), None, None]
     );
-    assert_eq!((p.created, p.updated, p.unchanged), (2, 0, 1));
+    assert_eq!(
+        (p.intake.created, p.intake.updated, p.intake.unchanged),
+        (2, 0, 1)
+    );
     let mut choices = Decisions {
         matches: vec![
             GroupChoice {
@@ -1222,18 +1254,21 @@ async fn namesake_defaults_and_explicit_targets_keep_differences(db: SqlitePool)
     let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
         .await
         .unwrap();
-    assert_eq!((p.created, p.updated, p.unchanged), (0, 1, 1));
-    assert_eq!(p.differences.len(), 1);
+    assert_eq!(
+        (p.intake.created, p.intake.updated, p.intake.unchanged),
+        (0, 1, 1)
+    );
+    assert_eq!(p.intake.differences.len(), 1);
     assert_eq!(
         (
-            p.differences[0].id,
-            p.differences[0].row,
-            p.differences[0].field
+            p.intake.differences[0].id,
+            p.intake.differences[0].row,
+            p.intake.differences[0].field
         ),
         (ids[1], 3, Field::Research)
     );
-    assert_eq!(p.differences[0].incoming, "数论");
-    choices.take = p.differences;
+    assert_eq!(p.intake.differences[0].incoming, "数论");
+    choices.take = p.intake.differences;
     let result = apply(&db, &sheets, &choices).await;
     assert_eq!((result.created, result.updated), (0, 1));
     assert_eq!(
@@ -1252,8 +1287,8 @@ async fn namesake_defaults_and_explicit_targets_keep_differences(db: SqlitePool)
     let p = import::preview(&db, &alias, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.maybe_same[0].candidates.len(), 2);
-    assert_eq!(p.maybe_same[0].selected, None);
+    assert_eq!(p.intake.maybe_same[0].candidates.len(), 2);
+    assert_eq!(p.intake.maybe_same[0].selected, None);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -1275,10 +1310,10 @@ async fn stale_namesake_target_recalculates_default_before_import(db: SqlitePool
     let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
         .await
         .unwrap();
-    assert_eq!(p.maybe_same.len(), 1);
-    assert_eq!(p.maybe_same[0].rows, [2, 3]);
-    assert_eq!(p.maybe_same[0].selected, Some(b));
-    assert_eq!((p.created, p.updated), (0, 1));
+    assert_eq!(p.intake.maybe_same.len(), 1);
+    assert_eq!(p.intake.maybe_same[0].rows, [2, 3]);
+    assert_eq!(p.intake.maybe_same[0].selected, Some(b));
+    assert_eq!((p.intake.created, p.intake.updated), (0, 1));
     mentor::update(
         &db,
         b,
@@ -1293,7 +1328,7 @@ async fn stale_namesake_target_recalculates_default_before_import(db: SqlitePool
     let p = import::preview_decisions(&db, &sheets, &Setup::default(), &choices)
         .await
         .unwrap();
-    assert_eq!(p.maybe_same[0].selected, Some(a));
+    assert_eq!(p.intake.maybe_same[0].selected, Some(a));
     let result = apply(&db, &sheets, &choices).await;
     assert_eq!((result.created, result.updated), (0, 1));
     let m = mentor::get(&db, a).await.unwrap().unwrap();
@@ -1321,7 +1356,7 @@ async fn list_fields_use_their_own_separators(db: SqlitePool) {
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert!(p.errors.is_empty());
+    assert!(p.intake.errors.is_empty());
     apply(&db, &sheets, &Decisions::default()).await;
     let m = mentor::get(&db, 1).await.unwrap().unwrap();
     assert_eq!(
@@ -1376,12 +1411,15 @@ async fn candidate_index_matches_aliases_and_checks_school_and_email(db: SqliteP
     let p = import::preview(&db, &sheets, &Setup::default())
         .await
         .unwrap();
-    assert_eq!(p.maybe_same.len(), 1);
+    assert_eq!(p.intake.maybe_same.len(), 1);
     assert_eq!(
-        (p.maybe_same[0].row, p.maybe_same[0].selected.unwrap()),
+        (
+            p.intake.maybe_same[0].row,
+            p.intake.maybe_same[0].selected.unwrap()
+        ),
         (2, id)
     );
-    assert_eq!(p.created, 3);
+    assert_eq!(p.intake.created, 3);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

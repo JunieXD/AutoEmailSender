@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
 import { AgentRequests } from "@/components/agent-requests";
+import { LibraryUpdatesDialog } from "@/components/library";
 import { useAccount } from "@/components/account";
 import { UpdateEntry } from "@/components/update";
 import { useResume } from "@/pages/mailboxes";
@@ -257,6 +258,12 @@ function useBackground() {
     queryFn: () => call("listMailboxes", {}),
     refetchInterval: 3000,
   });
+  const library = useQuery({
+    queryKey: ["libraryUpdateCount"],
+    queryFn: () => call("libraryUpdateCount", {}),
+    // Only a synchronization, at most hourly, adds to it; changes the user makes refresh it directly.
+    refetchInterval: 60_000,
+  });
   const storage = useQuery({
     queryKey: ["storageFailure"],
     queryFn: () => call("storageFailure", {}),
@@ -281,6 +288,7 @@ function useBackground() {
     matchingPause: matching.data?.pause ?? null,
     receiving: (mailboxes.data?.length ?? 0) > 0,
     repliesPaused: replies.data?.pause ?? null,
+    libraryUpdates: library.data ?? 0,
     marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
     crawled:
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
@@ -297,6 +305,7 @@ function useBackground() {
       crawls.error ??
       mailboxes.error ??
       replies.error ??
+      library.error ??
       done.error,
   };
   return {
@@ -315,7 +324,8 @@ function useBackground() {
       work.paused.length +
       work.crawlsPending.length +
       (work.matching > 0 && work.matchingPause ? 1 : 0) +
-      (work.repliesPaused ? 1 : 0),
+      (work.repliesPaused ? 1 : 0) +
+      (work.libraryUpdates > 0 ? 1 : 0),
   };
 }
 
@@ -350,6 +360,8 @@ function Background({ className }: { className?: string }) {
   });
   const resume = useResume();
   const { receive, receiving, receiveError, received } = useReceive();
+  const [open, setOpen] = useState(false);
+  const [libraryUpdates, setLibraryUpdates] = useState(false);
   const error =
     work.error ??
     crawl.error ??
@@ -359,7 +371,7 @@ function Background({ className }: { className?: string }) {
     resumeReplies.error ??
     receiveError;
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <button
@@ -452,6 +464,17 @@ function Background({ className }: { className?: string }) {
                   继续
                 </ModelAction>
               </div>
+            )}
+            {work.libraryUpdates > 0 && (
+              <button
+                className={cn(ITEM, "w-full text-left")}
+                onClick={() => {
+                  setOpen(false);
+                  setLibraryUpdates(true);
+                }}
+              >
+                <Entry title={`导师库有 ${work.libraryUpdates} 位导师的资料有更新`} detail="打开去选" />
+              </button>
             )}
           </Group>
         )}
@@ -559,6 +582,7 @@ function Background({ className }: { className?: string }) {
         )}
         {error && <p className="text-destructive">{errorMessage(error)}</p>}
       </PopoverContent>
+      {libraryUpdates && <LibraryUpdatesDialog onClose={() => setLibraryUpdates(false)} />}
     </Popover>
   );
 }

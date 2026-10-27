@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM account\n            WHERE email = ? AND token IS NOT NULL) AS \"matches!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "matches!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "50dd6337ef4dd6ba391637f8dd973a6a3b81695538c511cdea4ad8a1097dcb3c"
+}

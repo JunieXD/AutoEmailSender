@@ -281,13 +281,6 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
     .execute(&mut *tx)
     .await?;
     sqlx::query!(
-        "UPDATE library_update SET mentor_id = ? WHERE mentor_id = ?",
-        keep,
-        other
-    )
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query!(
         "UPDATE todo SET mentor_id = ? WHERE mentor_id = ?",
         keep,
         other
