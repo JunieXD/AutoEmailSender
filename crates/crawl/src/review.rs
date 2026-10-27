@@ -29,6 +29,7 @@ pub struct Candidate {
     pub fields: MentorFields,
     pub papers: Vec<String>,
     pub source_url: Option<String>,
+    pub note: Option<String>,
     #[serde(flatten)]
     pub enrichment: crate::enrich::Enrichment,
 }
@@ -102,7 +103,7 @@ pub(crate) async fn read(
             affiliations AS "affiliations: Json<Vec<mentor::Affiliation>>",
             homepages AS "homepages: Json<Vec<String>>",
             research, papers AS "papers: Json<Vec<String>>",
-            source_url, enrich AS "enrich: crate::enrich::EnrichState",
+            source_url, note, enrich AS "enrich: crate::enrich::EnrichState",
             enrich_changes AS "changes: Json<Vec<crate::enrich::EnrichChange>>",
             enrich_error
         FROM candidate
@@ -128,6 +129,7 @@ pub(crate) async fn read(
         },
         papers: r.papers.map(|Json(v)| v).unwrap_or_default(),
         source_url: r.source_url,
+        note: r.note,
         enrichment: crate::enrich::Enrichment {
             enrich: r.enrich,
             enrich_changes: r.changes.map(|Json(v)| v).unwrap_or_default(),
@@ -381,20 +383,34 @@ pub async fn list(db: &SqlitePool, q: &CandidateQuery) -> Result<CandidatePage, 
     })
 }
 
+pub(crate) enum Source {
+    Page { id: i64, kind: PageKind },
+    Agent { note: Option<String> },
+}
+
+/// Returns whether this person added a candidate rather than merging into existing candidates.
 pub(crate) async fn save(
     conn: &mut SqliteConnection,
     crawl: i64,
-    page: i64,
-    kind: PageKind,
+    source: Source,
     url: &str,
     person: Person,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let f = &person.fields;
     let profile = person.profile.as_ref().map(crate::PageUrl::as_str);
+    let (list_page, profile_page, is_profile, note) = match &source {
+        Source::Page { id, kind } => (
+            (*kind == PageKind::List).then_some(*id),
+            (*kind == PageKind::Profile).then_some(*id),
+            *kind == PageKind::Profile,
+            None,
+        ),
+        Source::Agent { note } => (None, None, profile == Some(url), note.as_deref()),
+    };
     // The runner checks redirected names before allowing the destination as an identity.
     let identities: Vec<_> = profile
         .into_iter()
-        .chain((kind == PageKind::Profile).then_some(url))
+        .chain(is_profile.then_some(url))
         .collect();
     let ids = sqlx::query_scalar!(
         r#"SELECT id
@@ -439,14 +455,16 @@ pub(crate) async fn save(
     if ids.len() > 1 {
         crate::enrich::stop(conn, &ids).await?;
     }
-    if old.is_empty()
+    let added = old.is_empty();
+    if added
+        && matches!(source, Source::Page { .. })
         && sqlx::query_scalar!("SELECT count(*) FROM candidate WHERE crawl_id = ?", crawl)
             .fetch_one(&mut *conn)
             .await?
             >= queue::PERSON_LIMIT
     {
         queue::limit(conn, crawl, "已达到 1000 位导师上限").await?;
-        return Ok(());
+        return Ok(false);
     }
     let evidence = Evidence {
         url: url.into(),
@@ -483,7 +501,7 @@ pub(crate) async fn save(
         .iter()
         .flatten()
         .map(|Json(f)| f)
-        .chain((kind == PageKind::Profile).then_some(f))
+        .chain(is_profile.then_some(f))
     {
         if let Some(fields) = &mut profile_fields {
             intake::add_candidate(fields, &mut vec![], incoming, &[]);
@@ -548,7 +566,7 @@ pub(crate) async fn save(
                 profile_url = coalesce(profile_url, ?),
                 list_page_id = coalesce(list_page_id, ?),
                 profile_page_id = coalesce(?, profile_page_id), profile_fields = ?,
-                match_names = ?, match_schools = ?
+                match_names = ?, match_schools = ?, note = coalesce(?, note)
             WHERE id = ?
             RETURNING profile_url"#,
             review,
@@ -561,19 +579,12 @@ pub(crate) async fn save(
             Json(&papers),
             Json(&sources),
             profile,
-            if kind == PageKind::List {
-                Some(page)
-            } else {
-                None
-            },
-            if kind == PageKind::Profile {
-                Some(page)
-            } else {
-                None
-            },
+            list_page,
+            profile_page,
             profile_fields,
             names,
             schools,
+            note.or_else(|| old.iter().find_map(|c| c.note.as_deref())),
             id
         )
         .fetch_one(&mut *conn)
@@ -584,20 +595,12 @@ pub(crate) async fn save(
             r#"INSERT INTO candidate (crawl_id, list_page_id, profile_page_id,
                 profile_url, review, enrich, name, aliases, emails, affiliations,
                 homepages, research, papers, source_url, evidence, profile_fields,
-                match_names, match_schools)
-            VALUES (?, ?, ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                match_names, match_schools, note)
+            VALUES (?, ?, ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id"#,
             crawl,
-            if kind == PageKind::List {
-                Some(page)
-            } else {
-                None
-            },
-            if kind == PageKind::Profile {
-                Some(page)
-            } else {
-                None
-            },
+            list_page,
+            profile_page,
             profile,
             fields.name,
             Json(&fields.aliases),
@@ -610,7 +613,8 @@ pub(crate) async fn save(
             Json(&sources),
             profile_fields,
             names,
-            schools
+            schools,
+            note
         )
         .fetch_one(&mut *conn)
         .await?;
@@ -639,7 +643,7 @@ pub(crate) async fn save(
     .execute(&mut *conn)
     .await?;
     // Profile work is scheduled only once, directly from the validated list link.
-    if kind == PageKind::List
+    if let Some(page) = list_page
         && let Some(target) = person.profile
         && canonical_profile.as_deref() == Some(target.as_str())
     {
@@ -651,5 +655,5 @@ pub(crate) async fn save(
         .await?;
         queue::enqueue(conn, crawl, &target, &scope, 0, PageKind::Profile).await?;
     }
-    Ok(())
+    Ok(added)
 }

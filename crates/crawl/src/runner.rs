@@ -900,8 +900,10 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     review::save(
                         &mut tx,
                         c.crawl,
-                        c.id,
-                        p.kind,
+                        review::Source::Page {
+                            id: c.id,
+                            kind: p.kind,
+                        },
                         p.material.url.as_str(),
                         Person {
                             fields: person.fields.clone(),

@@ -154,7 +154,7 @@ macro_rules! operations {
     ($($group:literal {
         $(
             #[doc = $summary:literal]
-            $(#[doc = $details:literal])*
+            $(#[doc = $details:expr])*
             $op:literal [$confirmation:ident $($condition:literal)?]
                 => $handler:ident($input:ty) -> $output:ty;
         )*
@@ -345,6 +345,10 @@ operations! {
         "todayWork" [none] => today_work(TodayWorkQuery) -> stats::TodayWork;
     }
     "抓取与候选" {
+        /// 把你从学校官网整理的导师送进候选区，由用户审核后入库；收集导师前先读这个操作的说明。
+        #[doc = include_str!("submit-candidates.md")]
+        "submitCandidates" [none] => submit_candidates(crawl::submit::SubmitCandidates)
+            -> crawl::submit::Submitted;
         /// 检查并整理抓取网址，urls 为按行分隔的网址。
         "checkCrawlUrls" [none] => check_crawl_urls(CrawlUrls) -> Vec<String>;
         /// 查询指定时间范围内抓取的后台进度。

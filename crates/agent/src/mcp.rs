@@ -58,6 +58,7 @@ impl ServerHandler for Server {
             .with_instructions(
                 "这是 Auto Email Sender，帮学生整理导师资料、生成邮件草稿并联系导师的桌面应用。
 先 list_operations 列出操作，再 describe_operation 查看说明与类型，最后 call_operation 调用。
+用户要从学校官网收集导师时，先用 describe_operation 读 submitCandidates 的说明。
 向导师发信或恢复发信、永久丢失数据、同意向模型服务商发送数据等关键操作，需用户在应用里确认；
 某些操作只在特定情况下需确认，以操作说明和应用判断为准。调用会等用户回答，最多 5 分钟。
 若连接失败，请告诉用户打开 Auto Email Sender，并在设置里允许 Agent 连接，再重新调用。",

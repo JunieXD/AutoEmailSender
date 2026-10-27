@@ -447,6 +447,8 @@ pub async fn recover(db: &SqlitePool) -> Result<(), sqlx::Error> {
 pub struct CrawlSummary {
     pub id: i64,
     pub url: Option<String>,
+    pub university: Option<String>,
+    pub school: Option<String>,
     pub model_config_id: Option<i64>,
     pub state: CrawlState,
     pub error: Option<String>,
@@ -468,12 +470,15 @@ pub struct CrawlSummary {
 pub struct CrawlOption {
     pub id: i64,
     pub url: Option<String>,
+    pub university: Option<String>,
+    pub school: Option<String>,
     pub created_at: i64,
 }
 pub async fn options(db: &SqlitePool) -> Result<Vec<CrawlOption>, sqlx::Error> {
     sqlx::query_as!(
         CrawlOption,
-        r#"SELECT id, json_extract(start_urls, '$[0]') AS "url: String", created_at
+        r#"SELECT id, json_extract(start_urls, '$[0]') AS "url: String",
+            university, school, created_at
         FROM crawl
         ORDER BY created_at DESC, id DESC"#
     )
@@ -529,8 +534,8 @@ pub(crate) async fn summaries(
     sqlx::query_as!(
         CrawlSummary,
         r#"SELECT c.id, json_extract(c.start_urls, '$[0]') AS "url: String",
-            c.model_config_id, c.state AS "state: CrawlState", c.error, c.created_at,
-            c.finished_at, (
+            c.university, c.school, c.model_config_id, c.state AS "state: CrawlState",
+            c.error, c.created_at, c.finished_at, (
             SELECT count(*)
             FROM crawl_page
             WHERE crawl_id = c.id AND work_state = 'done'
