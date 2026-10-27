@@ -378,16 +378,18 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
                 </div>
               ))}
               <Pages page={page} total={detail.data.pageTotal} onPage={setPage} />
-              <details>
-                <summary className="cursor-pointer text-muted-foreground">运行记录</summary>
-                {detail.data.runs.map((r, n) => (
-                  <p key={n} className="mt-2 text-xs text-muted-foreground">
-                    {day(r.startedAt)} {time(r.startedAt)} —{" "}
-                    {r.endedAt ? `${day(r.endedAt)} ${time(r.endedAt)}` : "进行中"} · {r.appVersion}
-                  </p>
-                ))}
-              </details>
             </>
+          )}
+          {detail.data.runs.length > 0 && (
+            <details>
+              <summary className="cursor-pointer text-muted-foreground">运行记录</summary>
+              {detail.data.runs.map((r, n) => (
+                <p key={n} className="mt-2 text-xs text-muted-foreground">
+                  {day(r.startedAt)} {time(r.startedAt)} —{" "}
+                  {r.endedAt ? `${day(r.endedAt)} ${time(r.endedAt)}` : "进行中"} · {r.appVersion}
+                </p>
+              ))}
+            </details>
           )}
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="quiet" disabled={exported.isPending} onClick={() => exported.mutate()}>
