@@ -2,10 +2,12 @@
 //! (docs/design.md#桌面端). Input is validated here, when it is deserialized.
 
 pub mod agent;
+pub mod agent_settings;
 use agent::{
     answer_agent_request, describe_operation, get_agent_access, list_agent_requests,
     list_operations, set_agent_access,
 };
+use agent_settings::*;
 pub mod backup;
 mod crawling;
 mod fact_check;
@@ -28,6 +30,7 @@ use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
+    pub agent_settings: agent_settings::Settings,
     pub agent_access: agent::Access,
     pub writes: db::Writes,
     pub db: SqlitePool,
@@ -49,6 +52,7 @@ impl Context {
     pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
         let writes = db::Writes::default();
         Self {
+            agent_settings: Default::default(),
             agent_access: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
             writes,
@@ -318,6 +322,18 @@ impl Drop for AgentCallLog<'_> {
 
 operations! {
     "Agent 连接" {
+        /// 读取命令行工具的安装状态、命令名和绝对路径。
+        "getAgentCli" [none] => get_agent_cli(Nothing) -> AgentCli;
+        /// 将 autoemail 安装到终端 PATH。
+        "installAgentCli" [none] => install_agent_cli(Nothing) -> AgentCli;
+        /// 撤回应用添加的命令行链接或用户 PATH 项。
+        "uninstallAgentCli" [none] => uninstall_agent_cli(Nothing) -> AgentCli;
+        /// 预览指定客户端的 MCP 配置路径、完整服务项及是否替换已有项。
+        "previewMcpConfig" [none] => preview_mcp_config(McpConfigQuery) -> McpConfigPreview;
+        /// 确认后写入指定客户端最近预览的配置，原文件变化时需重新预览。
+        "writeMcpConfig" [none] => write_mcp_config(McpConfigQuery) -> ();
+        /// 读取供其他 MCP 工具复制的 JSON 配置。
+        "mcpConfigText" [none] => mcp_config_text(Nothing) -> String;
         /// 读取是否允许 Agent 连接。
         "getAgentAccess" [none] => get_agent_access(Nothing) -> bool;
         /// 设置是否允许 Agent 连接，enabled 为是否开启。
