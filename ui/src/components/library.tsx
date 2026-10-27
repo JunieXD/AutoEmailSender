@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type {
   Decisions,
@@ -9,6 +9,7 @@ import type {
   LibraryUpdate,
   LibraryUpdateField,
 } from "@/api/types";
+import { useAccountRecheck } from "@/components/account";
 import { Differences } from "@/components/differences";
 import { IntakeChoices } from "@/components/intake-choices";
 import { refreshMentors } from "@/components/mentor";
@@ -39,14 +40,6 @@ export function refreshLibrary(client: QueryClient) {
   for (const key of ["getLibraryOrgs", "listLibraryMentors", "previewLibraryMentor", "getLibraryQuota"])
     void client.invalidateQueries({ queryKey: [key] });
   refreshMentors(client);
-}
-
-/** A session the server no longer accepts turns the library tab back to logging in. */
-export function useAccountRecheck(error: unknown) {
-  const client = useQueryClient();
-  useEffect(() => {
-    if (error) void client.invalidateQueries({ queryKey: ["getAccount"] });
-  }, [error, client]);
 }
 
 /** Whether adding these needs the user's choices first, as importing a table would. */

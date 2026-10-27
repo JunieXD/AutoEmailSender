@@ -186,10 +186,13 @@ impl Client {
         order_number: &str,
     ) -> Result<Sponsor, Error> {
         let order_number = order_number.trim();
-        if !(1..=64).contains(&order_number.len())
-            || !order_number.bytes().all(|c| c.is_ascii_alphanumeric())
-        {
-            return Err(Error::Invalid("请填写 1–64 位字母或数字的爱发电订单号。"));
+        if order_number.is_empty() {
+            return Err(Error::Invalid("请填写爱发电的订单号。"));
+        }
+        if order_number.len() > 64 || !order_number.bytes().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(Error::Invalid(
+                "订单号只有字母和数字，请从爱发电的“我的订单”里复制。",
+            ));
         }
         let account: cloud_api::Account = self
             .authenticated(

@@ -1,11 +1,14 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
+import { AccountDialog, type AccountMode, useAccount, useAccountRecheck } from "@/components/account";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { day, time } from "@/format";
+import { useNow } from "@/now";
 import { Row, Section } from "./settings";
 
 /** Settings › 应用 › 账号和赞助 (docs/ui.md#交互). */
@@ -40,6 +43,7 @@ export function AccountSection() {
           <Row label="账号">
             <p className="text-sm break-all text-muted-foreground">{state.email}</p>
           </Row>
+          {state.kind === "loggedIn" && <SponsorRow />}
           {state.kind === "expired" ? (
             <div className="flex items-center gap-4">
               <p className="text-sm text-warning">登录已失效，请重新登录。</p>
@@ -69,6 +73,115 @@ export function AccountSection() {
         />
       )}
     </Section>
+  );
+}
+
+/** Sponsorship lives only on the server; paying happens in the browser, so coming back re-reads it. */
+function SponsorRow() {
+  const sponsor = useQuery({ queryKey: ["getSponsor"], queryFn: () => call("getSponsor", {}) });
+  const now = useNow();
+  const [claiming, setClaiming] = useState(false);
+  const link = useMutation({
+    mutationFn: () => call("sponsorLink", {}),
+    onSuccess: (url) => void openUrl(url),
+  });
+  useAccountRecheck(sponsor.error ?? link.error);
+  const { refetch } = sponsor;
+  useEffect(() => {
+    const refresh = () => void refetch({ cancelRefetch: false });
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [refetch]);
+  const until = sponsor.data?.sponsorUntil;
+  const active = until != null && until > now;
+  return (
+    <Row label="赞助">
+      {sponsor.error ? (
+        <p className="text-sm text-destructive">赞助状态未能读取：{errorMessage(sponsor.error)}</p>
+      ) : (
+        sponsor.data && (
+          <p className="text-sm">
+            {until == null ? "还不是赞助者" : active ? `赞助者，到${endOf(until)}` : `赞助已于${day(until)}到期`}
+          </p>
+        )
+      )}
+      <p className="text-sm text-muted-foreground">
+        赞助者导师库不限数量、官方模型额度更高，还能用邮件追踪、云端定时发送和云端备份；这些要靠服务器长期运行和持续整理数据。
+      </p>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <Button disabled={link.isPending} onClick={() => link.mutate()}>
+          {active ? "续赞助" : "去爱发电赞助"}
+        </Button>
+        <Button variant="ghost" onClick={() => setClaiming(true)}>
+          付款后没开通？
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">在浏览器打开爱发电；链接带着你的账号编号，用来付款后自动开通。</p>
+      {link.error && <p className="text-sm text-destructive">未能打开赞助页：{errorMessage(link.error)}</p>}
+      {claiming && <ClaimDialog onClose={() => setClaiming(false)} />}
+    </Row>
+  );
+}
+
+/** "1月28日", or the time as well when it ends today. */
+function endOf(until: number): string {
+  const date = day(until);
+  return date === "今天" ? `今天 ${time(until)}` : date;
+}
+
+/** Claiming an order paid without the app's link, by the number 爱发电 shows for it. */
+function ClaimDialog({ onClose }: { onClose: () => void }) {
+  const [orderNumber, setOrderNumber] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+  const claim = useMutation({
+    mutationFn: () => call("claimSponsorOrder", { orderNumber }),
+    onSuccess: (sponsor) => {
+      queryClient.setQueryData(["getSponsor"], sponsor);
+      void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
+      onClose();
+    },
+  });
+  useAccountRecheck(claim.error);
+  return (
+    <Dialog open onOpenChange={formClose(orderNumber !== "", claim.isPending, onClose)}>
+      <DialogContent className="w-[460px]" initialFocus={inputRef}>
+        <form
+          className="flex min-h-0 flex-1 flex-col"
+          onSubmit={(e) => {
+            e.preventDefault();
+            claim.mutate();
+          }}
+        >
+          <DialogHeader>用订单号开通</DialogHeader>
+          <DialogBody>
+            <fieldset disabled={claim.isPending} className="flex min-w-0 flex-col gap-3.5">
+              <p className="text-sm">
+                没从应用的链接付款，或付款几分钟后还没开通时，填爱发电“我的订单”里这笔订单的订单号。
+              </p>
+              <Field label="订单号" id="sponsor-order">
+                <Input
+                  ref={inputRef}
+                  id="sponsor-order"
+                  autoComplete="off"
+                  value={orderNumber}
+                  onChange={(e) => setOrderNumber(e.target.value)}
+                />
+              </Field>
+            </fieldset>
+          </DialogBody>
+          <DialogFooter>
+            <p className="grow text-sm text-destructive" role="alert">
+              {claim.error && errorMessage(claim.error)}
+            </p>
+            <DialogClose render={<Button variant="ghost" />}>取消</DialogClose>
+            <Button type="submit" disabled={claim.isPending || orderNumber.trim() === ""}>
+              {claim.isPending ? "正在开通…" : "开通"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
