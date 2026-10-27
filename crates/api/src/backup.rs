@@ -172,6 +172,7 @@ async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
         SET secret = NULL;
         UPDATE model_config
         SET api_key = CASE WHEN provider = 'custom' AND api_key = '' THEN '' END;
+        UPDATE account SET token = NULL;
         UPDATE crawl_page
         SET text = CASE WHEN status = 'success' THEN '' END;
         VACUUM;"#,

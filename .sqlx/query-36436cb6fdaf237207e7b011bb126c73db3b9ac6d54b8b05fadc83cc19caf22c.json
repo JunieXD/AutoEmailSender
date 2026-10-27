@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET token = NULL WHERE token = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "36436cb6fdaf237207e7b011bb126c73db3b9ac6d54b8b05fadc83cc19caf22c"
+}

@@ -1,0 +1,29 @@
+[package]
+name = "account"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+argon2 = "0.6"
+base64 = "0.22"
+cloud-api.workspace = true
+hkdf = "0.13"
+mentor.workspace = true
+net.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+serde.workspace = true
+sha2 = "0.11"
+sqlx.workspace = true
+tokio.workspace = true
+ts-rs.workspace = true
+zeroize = "1.8"
+
+[dev-dependencies]
+db.workspace = true
+serde_json.workspace = true
+test-fixtures = { path = "../test-fixtures" }

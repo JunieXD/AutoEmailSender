@@ -1,0 +1,97 @@
+use serde::Deserialize;
+use ts_rs::TS;
+
+use crate::{CallError, Context, ErrorCode, Nothing};
+
+#[derive(Deserialize, TS)]
+pub struct AccountEmail {
+    pub email: String,
+}
+
+#[derive(Deserialize, TS)]
+pub struct AccountLogin {
+    pub email: String,
+    pub password: String,
+}
+
+#[derive(Deserialize, TS)]
+pub struct AccountVerification {
+    pub email: String,
+    pub code: String,
+    pub password: String,
+}
+
+#[derive(Deserialize, TS)]
+pub struct AccountPassword {
+    pub password: String,
+}
+
+pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {
+    Ok(ctx.account.state(&ctx.db, &ctx.net).await?)
+}
+
+pub async fn send_registration_code(ctx: &Context, input: AccountEmail) -> Result<(), CallError> {
+    Ok(ctx.account.send_code(&ctx.net, &input.email, false).await?)
+}
+
+pub async fn register_account(
+    ctx: &Context,
+    input: AccountVerification,
+) -> Result<account::State, CallError> {
+    Ok(ctx
+        .account
+        .register(&ctx.db, &ctx.net, &input.email, &input.code, input.password)
+        .await?)
+}
+
+pub async fn login_account(
+    ctx: &Context,
+    input: AccountLogin,
+) -> Result<account::State, CallError> {
+    Ok(ctx
+        .account
+        .login(&ctx.db, &ctx.net, &input.email, input.password)
+        .await?)
+}
+
+pub async fn send_password_reset_code(ctx: &Context, input: AccountEmail) -> Result<(), CallError> {
+    Ok(ctx.account.send_code(&ctx.net, &input.email, true).await?)
+}
+
+pub async fn reset_account_password(
+    ctx: &Context,
+    input: AccountVerification,
+) -> Result<(), CallError> {
+    Ok(ctx
+        .account
+        .reset_password(&ctx.db, &ctx.net, &input.email, &input.code, input.password)
+        .await?)
+}
+
+pub async fn logout_account(ctx: &Context, _: Nothing) -> Result<(), CallError> {
+    Ok(ctx.account.logout(&ctx.db, &ctx.net).await?)
+}
+
+pub async fn delete_account(ctx: &Context, input: AccountPassword) -> Result<(), CallError> {
+    Ok(ctx
+        .account
+        .delete(&ctx.db, &ctx.net, input.password)
+        .await?)
+}
+
+impl From<account::Error> for CallError {
+    fn from(error: account::Error) -> Self {
+        tracing::warn!(error = %error, "account operation failed");
+        let code = match error {
+            account::Error::Invalid(_) => ErrorCode::Invalid,
+            account::Error::Database(_) | account::Error::Worker(_) | account::Error::Key => {
+                ErrorCode::Internal
+            }
+            _ => ErrorCode::External,
+        };
+        Self {
+            code,
+            message: error.message(),
+        }
+    }
+}

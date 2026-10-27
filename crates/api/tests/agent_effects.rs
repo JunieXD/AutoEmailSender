@@ -64,6 +64,58 @@ async fn allow_after_change(
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn account_deletion_confirmation_tracks_the_email_without_the_password(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'first@example.invalid', 'test-token')"#,
+    )
+    .execute(&ctx.db)
+    .await
+    .unwrap();
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        &ctx,
+        "deleteAccount",
+        json!({"password":"private-test-password"}),
+        |description| {
+            assert_eq!(description.targets, ["first@example.invalid"]);
+            assert!(
+                !serde_json::to_string(description)
+                    .unwrap()
+                    .contains("private-test-password")
+            );
+            registered.send(()).unwrap();
+        },
+        pending(),
+    );
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+        sqlx::query("UPDATE account SET email = 'second@example.invalid'")
+            .execute(&ctx.db)
+            .await
+            .unwrap();
+        call(
+            &ctx,
+            "answerAgentRequest",
+            json!({"id":requests[0]["id"], "allow":true}),
+        )
+        .await
+        .unwrap();
+    };
+    let error = tokio::join!(calling, answer).0.unwrap_err();
+    assert!(error.message.contains("情况变了"));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM account")
+            .fetch_one(&ctx.db)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool) {
     let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
     let mentor = mentor::create(

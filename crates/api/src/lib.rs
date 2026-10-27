@@ -8,7 +8,9 @@ use agent::{
     list_operations, set_agent_access,
 };
 use agent_settings::*;
+mod accounts;
 pub mod backup;
+use accounts::*;
 mod crawling;
 mod fact_check;
 mod mail_domains;
@@ -30,6 +32,7 @@ use sqlx::SqlitePool;
 use ts_rs::{Config, TS, TypeVisitor};
 
 pub struct Context {
+    pub account: account::Client,
     pub agent_settings: agent_settings::Settings,
     pub agent_access: agent::Access,
     pub writes: db::Writes,
@@ -52,6 +55,7 @@ impl Context {
     pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
         let writes = db::Writes::default();
         Self {
+            account: Default::default(),
             agent_settings: Default::default(),
             agent_access: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
@@ -341,6 +345,24 @@ impl Drop for AgentCallLog<'_> {
 }
 
 operations! {
+    "账号" {
+        /// 读取账号状态；已登录时从服务器读取邮箱和赞助到期时间。
+        "getAccount" [none] => get_account(Nothing) -> account::State;
+        /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
+        "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();
+        /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。
+        "registerAccount" [none] => register_account(AccountVerification) -> account::State;
+        /// 登录账号；密码只在本机派生钥匙。
+        "loginAccount" [none] => login_account(AccountLogin) -> account::State;
+        /// 向已注册的邮箱发送重置密码验证码。
+        "sendPasswordResetCode" [none] => send_password_reset_code(AccountEmail) -> ();
+        /// 用验证码重置密码，所有设备的旧会话失效；旧云端备份无法解密。
+        "resetAccountPassword" [none] => reset_account_password(AccountVerification) -> ();
+        /// 撤销当前设备的会话并退出登录。
+        "logoutAccount" [none] => logout_account(Nothing) -> ();
+        /// 输入密码注销账号，删除服务器上的全部账号数据，本机数据保留。
+        "deleteAccount" [confirm] => delete_account(AccountPassword) -> ();
+    }
     "Agent 连接" {
         /// 读取命令行工具的安装状态、命令名和绝对路径。
         "getAgentCli" [none] => get_agent_cli(Nothing) -> AgentCli;

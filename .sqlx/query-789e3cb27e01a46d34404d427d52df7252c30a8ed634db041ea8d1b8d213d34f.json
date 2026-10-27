@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT email, token FROM account",
+  "describe": {
+    "columns": [
+      {
+        "name": "email",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "token",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "token"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "789e3cb27e01a46d34404d427d52df7252c30a8ed634db041ea8d1b8d213d34f"
+}
