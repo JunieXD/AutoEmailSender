@@ -355,6 +355,12 @@ operations! {
     "账号" {
         /// 从本机读取账号状态和邮箱，不连接服务器。
         "getAccount" [none] => get_account(Nothing) -> account::State;
+        /// 读取服务器上的赞助到期时间。
+        "getSponsor" [none] => get_sponsor(Nothing) -> account::Sponsor;
+        /// 获取带当前账号编号的爱发电赞助链接。
+        "sponsorLink" [none] => sponsor_link(Nothing) -> String;
+        /// 用爱发电订单号开通赞助，返回新的到期时间。
+        "claimSponsorOrder" [none] => claim_sponsor_order(SponsorOrder) -> account::Sponsor;
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
         "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();
         /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。

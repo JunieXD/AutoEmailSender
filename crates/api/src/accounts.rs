@@ -21,6 +21,30 @@ pub struct AccountVerification {
     pub password: String,
 }
 
+#[derive(Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SponsorOrder {
+    pub order_number: String,
+}
+
+pub async fn get_sponsor(ctx: &Context, _: Nothing) -> Result<account::Sponsor, CallError> {
+    Ok(ctx.account.get_sponsor(&ctx.db).await?)
+}
+
+pub async fn sponsor_link(ctx: &Context, _: Nothing) -> Result<String, CallError> {
+    Ok(ctx.account.sponsor_link(&ctx.db).await?)
+}
+
+pub async fn claim_sponsor_order(
+    ctx: &Context,
+    input: SponsorOrder,
+) -> Result<account::Sponsor, CallError> {
+    Ok(ctx
+        .account
+        .claim_sponsor_order(&ctx.db, &input.order_number)
+        .await?)
+}
+
 pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {
     Ok(account::state(&ctx.db).await?)
 }

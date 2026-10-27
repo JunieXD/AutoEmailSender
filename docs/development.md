@@ -72,6 +72,7 @@
 - 操作组“账号”：`getAccount {}`、`sendRegistrationCode { email }`、`registerAccount { email, code, password }`、`loginAccount { email, password }`、`sendPasswordResetCode { email }`、`resetAccountPassword { email, code, password }`、`logoutAccount {}`、`deleteAccount { email, password }`。注册和登录返回 `State`，其余写操作返回 `null`。Agent 注销必须确认，说明使用输入的邮箱和删除效果，不含密码。注销绑定用户确认的邮箱；取得账号变更锁后，按共享规则规范化输入邮箱并核对当前登录账号，不同就拒绝，不访问服务器。
 - 重置密码后所有设备会话失效；本机正是该邮箱时立即清令牌。退出登录只有服务器撤销会话成功或确认会话已失效后才清本机记录，网络失败会明确报错。注销成功只删除本机账号记录，不动导师、邮件等本机数据。错误中文由 `account::Error::message` 统一提供。
 - 赞助状态只在服务器上，不存本机。操作组“账号”另有 `getSponsor {}` 返回 `{ sponsorUntil }`（读 `GET /v1/account`），`sponsorLink {}` 返回服务器生成的爱发电链接，界面用系统浏览器打开；`claimSponsorOrder { orderNumber }` 认领订单，返回新的 `{ sponsorUntil }`。三者都经 `Client::authenticated`，Agent 调用不用确认。
+- 认领订单在桌面边界去首尾空白，接受 1–64 位 ASCII 字母或数字；到期时间沿用 UTC 毫秒，在生成的 TypeScript 中为 `number | null`。
 
 ### 导师库
 

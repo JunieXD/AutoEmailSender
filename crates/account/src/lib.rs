@@ -28,6 +28,12 @@ pub enum State {
     Expired { email: String },
 }
 
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Sponsor {
+    pub sponsor_until: Option<i64>,
+}
+
 pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
     let row = sqlx::query!(
         r#"SELECT email, token IS NOT NULL AS "logged_in!: bool"
@@ -156,6 +162,48 @@ impl Client {
         }
         sqlx::query!("DELETE FROM account").execute(db).await?;
         Ok(())
+    }
+
+    pub async fn get_sponsor(&self, db: &SqlitePool) -> Result<Sponsor, Error> {
+        let account: cloud_api::Account = self
+            .authenticated(db, Method::GET, path::ACCOUNT, None::<&Empty>)
+            .await?;
+        Ok(Sponsor {
+            sponsor_until: account.sponsor_until,
+        })
+    }
+
+    pub async fn sponsor_link(&self, db: &SqlitePool) -> Result<String, Error> {
+        let link: cloud_api::SponsorLink = self
+            .authenticated(db, Method::GET, path::SPONSOR_LINK, None::<&Empty>)
+            .await?;
+        Ok(link.url)
+    }
+
+    pub async fn claim_sponsor_order(
+        &self,
+        db: &SqlitePool,
+        order_number: &str,
+    ) -> Result<Sponsor, Error> {
+        let order_number = order_number.trim();
+        if !(1..=64).contains(&order_number.len())
+            || !order_number.bytes().all(|c| c.is_ascii_alphanumeric())
+        {
+            return Err(Error::Invalid("请填写 1–64 位字母或数字的爱发电订单号。"));
+        }
+        let account: cloud_api::Account = self
+            .authenticated(
+                db,
+                Method::POST,
+                path::SPONSOR_CLAIM,
+                Some(&cloud_api::ClaimRequest {
+                    order_number: order_number.into(),
+                }),
+            )
+            .await?;
+        Ok(Sponsor {
+            sponsor_until: account.sponsor_until,
+        })
     }
 
     pub async fn delete(
@@ -338,6 +386,14 @@ impl Error {
                 ErrorCode::MailUnavailable => "验证码暂时无法发送，请稍后重试。".into(),
                 ErrorCode::Internal => "服务器暂时无法处理，请稍后重试。".into(),
                 ErrorCode::QuotaExceeded => "今天还能添加的数量不够了，少选几位或明天再来。".into(),
+                ErrorCode::OrderNotFound => {
+                    "查不到这笔订单，请检查订单号；刚付款请稍等几分钟再试。".into()
+                }
+                ErrorCode::OrderClaimed => "这笔订单已经给别的账号开通过赞助。".into(),
+                ErrorCode::OrderNotSponsorship => {
+                    "这笔订单不是赞助方案，请在爱发电的赞助方案付款后再开通。".into()
+                }
+                ErrorCode::SponsorUnavailable => "赞助暂时不可用，请稍后重试。".into(),
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()
                 }

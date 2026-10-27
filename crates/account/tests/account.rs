@@ -4,6 +4,122 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use test_fixtures::provider::{Provider, Response};
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'student@example.invalid', 'sponsor-token')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let calls = async {
+        assert_eq!(client.get_sponsor(&db).await.unwrap().sponsor_until, None);
+        assert_eq!(
+            client.sponsor_link(&db).await.unwrap(),
+            "https://afdian.com/order/create?custom_order_id=123"
+        );
+        assert_eq!(
+            client
+                .claim_sponsor_order(&db, "  AbC123\n")
+                .await
+                .unwrap()
+                .sponsor_until,
+            Some(1_800_000_000_000)
+        );
+        for invalid in ["", "   ", "订单号", "abc-123", &"a".repeat(65)] {
+            assert!(matches!(
+                client.claim_sponsor_order(&db, invalid).await,
+                Err(Error::Invalid(_))
+            ));
+        }
+    };
+    let replies = async {
+        for (method, path, body) in [
+            (
+                "GET",
+                path::ACCOUNT,
+                json!({"email":"student@example.invalid", "sponsorUntil":null}),
+            ),
+            (
+                "GET",
+                path::SPONSOR_LINK,
+                json!({"url":"https://afdian.com/order/create?custom_order_id=123"}),
+            ),
+            (
+                "POST",
+                path::SPONSOR_CLAIM,
+                json!({"email":"student@example.invalid", "sponsorUntil":1_800_000_000_000_i64}),
+            ),
+        ] {
+            let request = server.requests.recv().await.unwrap();
+            assert!(request.line.starts_with(&format!("{method} {path} ")));
+            assert_eq!(request.authorization, "Bearer sponsor-token");
+            if method == "POST" {
+                let claim: cloud_api::ClaimRequest = serde_json::from_value(request.body).unwrap();
+                assert_eq!(claim.order_number, "AbC123");
+            }
+            request
+                .respond
+                .send(Response::Raw {
+                    status: 200,
+                    content: body.to_string(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+    assert!(server.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn sponsorship_preserves_server_error_codes(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'student@example.invalid', 'sponsor-token')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    const CODES: [ErrorCode; 4] = [
+        ErrorCode::OrderNotFound,
+        ErrorCode::OrderClaimed,
+        ErrorCode::OrderNotSponsorship,
+        ErrorCode::SponsorUnavailable,
+    ];
+    let calls = async {
+        for code in CODES {
+            let error = client.claim_sponsor_order(&db, "abc123").await.unwrap_err();
+            assert!(matches!(error, Error::Server(ref error) if error.code == code));
+        }
+    };
+    let replies = async {
+        for code in CODES {
+            let request = server.requests.recv().await.unwrap();
+            request
+                .respond
+                .send(Response::Raw {
+                    status: 400,
+                    content: serde_json::to_string(&ApiError {
+                        code,
+                        retry_after_seconds: None,
+                    })
+                    .unwrap(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+}
+
 #[tokio::test]
 async fn derivation_matches_an_independent_argon2_and_hkdf_vector_and_normalizes_email() {
     let password = "fixed-password-123";

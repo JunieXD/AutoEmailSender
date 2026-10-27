@@ -722,6 +722,10 @@ steps: Array<string>,
  */
 url: string, } | { "kind": "unsupported", reason: string, };
 
+export type Sponsor = { sponsorUntil: number | null, };
+
+export type SponsorOrder = { orderNumber: string, };
+
 export type StatsPeriod = { range: Range, timezone: string, now: number, };
 
 export type StatsQuery = { page: number, range: Range, timezone: string, now: number, };
@@ -854,6 +858,9 @@ export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490"
 
 export interface Operations {
   getAccount: { input: Nothing; output: AccountState };
+  getSponsor: { input: Nothing; output: Sponsor };
+  sponsorLink: { input: Nothing; output: string };
+  claimSponsorOrder: { input: SponsorOrder; output: Sponsor };
   sendRegistrationCode: { input: AccountEmail; output: null };
   registerAccount: { input: AccountVerification; output: AccountState };
   loginAccount: { input: AccountCredentials; output: AccountState };

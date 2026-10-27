@@ -13,6 +13,8 @@ pub mod path {
     pub const RESET_CODE: &str = "/v1/account/reset-code";
     pub const RESET_PASSWORD: &str = "/v1/account/reset-password";
     pub const ACCOUNT: &str = "/v1/account";
+    pub const SPONSOR_LINK: &str = "/v1/sponsor/link";
+    pub const SPONSOR_CLAIM: &str = "/v1/sponsor/claim";
     pub const LIBRARY_ORGS: &str = "/v1/library/orgs";
     pub const LIBRARY_MENTORS: &str = "/v1/library/mentors";
     pub const LIBRARY_QUOTA: &str = "/v1/library/quota";
@@ -47,6 +49,17 @@ pub struct DeleteRequest {
     pub login_key: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClaimRequest {
+    pub order_number: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SponsorLink {
+    pub url: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -79,6 +92,10 @@ pub enum ErrorCode {
     NotFound,
     MethodNotAllowed,
     QuotaExceeded,
+    OrderNotFound,
+    OrderClaimed,
+    OrderNotSponsorship,
+    SponsorUnavailable,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
