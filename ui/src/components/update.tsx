@@ -10,7 +10,7 @@ import { day, fileSize } from "@/format";
 
 /** The app's update state, refreshed by the shell on "update-changed" (docs/ui.md#交互). */
 export function useUpdate() {
-  return useQuery({ queryKey: ["updateStatus"], queryFn: updateStatus, staleTime: Infinity });
+  return useQuery({ queryKey: ["updateStatus"], queryFn: updateStatus });
 }
 
 /** The sidebar entry shown while a newer version is known. */

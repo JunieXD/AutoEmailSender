@@ -164,7 +164,11 @@ async fn check(app: &AppHandle) -> Result<UpdateStatus, String> {
         .updater_builder()
         .timeout(Duration::from_secs(30))
         .configure_client(move |builder| net.configure_http(builder))
-        .on_before_exit(move || crate::before_exit(&exit_app))
+        // Replaces the plugin's own hook, so its cleanup runs here too.
+        .on_before_exit(move || {
+            crate::before_exit(&exit_app);
+            exit_app.cleanup_before_exit();
+        })
         .build()
         .map_err(check_error)?
         .check()
