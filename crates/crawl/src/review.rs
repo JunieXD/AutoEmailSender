@@ -412,6 +412,10 @@ pub(crate) async fn save(
         .into_iter()
         .chain(is_profile.then_some(url))
         .collect();
+    let names: Vec<_> = std::iter::once(&f.name)
+        .chain(&f.aliases)
+        .map(|name| intake::comparable(name))
+        .collect();
     let ids = sqlx::query_scalar!(
         r#"SELECT id
         FROM candidate
@@ -419,7 +423,11 @@ pub(crate) async fn save(
             SELECT candidate_id
             FROM candidate_profile
             WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2))
-        ) OR (name = ?3 AND EXISTS (
+        ) OR (EXISTS (
+            SELECT 1
+            FROM json_each(match_names) a
+            JOIN json_each(?3) b ON a.value = b.value
+        ) AND EXISTS (
             SELECT 1
             FROM json_each(emails) a
             JOIN json_each(?4) b ON a.value = b.value COLLATE NOCASE
@@ -427,7 +435,7 @@ pub(crate) async fn save(
         ORDER BY id"#,
         crawl,
         Json(&identities),
-        f.name,
+        Json(&names),
         Json(&f.emails)
     )
     .fetch_all(&mut *conn)

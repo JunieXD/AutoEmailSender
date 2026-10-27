@@ -166,7 +166,7 @@ macro_rules! operations {
         ) -> Result<serde_json::Value, CallError> {
             match op {
                 $($($op => {
-                    let input = serde_json::from_value::<$input>(input)
+                    let input = serde_path_to_error::deserialize::<_, $input>(input)
                         .map_err(CallError::bad_input)?;
                     serde_json::to_value($handler(ctx, input).await?).map_err(CallError::internal)
                 })*)*

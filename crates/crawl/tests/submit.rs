@@ -173,6 +173,58 @@ async fn duplicate_profiles_and_name_email_overlap_merge_and_keep_first_values(d
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn renamed_profile_keeps_list_identity_when_resubmitted(db: SqlitePool) {
+    let first = candidate("张三", "x@example.edu");
+    let mut linked = first.clone();
+    linked["profileUrl"] = json!("https://example.edu/p");
+    let mut profile = candidate("Zhang San", "x@example.edu");
+    profile["profileUrl"] = json!("https://example.edu/p");
+    profile["sourceUrl"] = profile["profileUrl"].clone();
+    let batch = vec![first.clone(), linked, profile];
+    let initial = submit(&db, None, batch.clone(), 1).await.unwrap();
+    assert_eq!((initial.added, initial.merged, initial.total), (1, 2, 1));
+    let id = list(&db, initial.crawl_id).await.candidates[0].id;
+    let renamed = review::detail(&db, id).await.unwrap().unwrap().candidate;
+    assert_eq!(renamed.fields.name, "Zhang San");
+    assert!(renamed.fields.aliases.contains(&"张三".into()));
+
+    let single = submit(&db, Some(initial.crawl_id), vec![first], 2)
+        .await
+        .unwrap();
+    assert_eq!((single.added, single.merged, single.total), (0, 1, 1));
+    let repeated = submit(&db, Some(initial.crawl_id), batch, 3).await.unwrap();
+    assert_eq!((repeated.added, repeated.merged, repeated.total), (0, 3, 1));
+
+    let incoming = json!({"name":"另一种写法", "aliases":["Ｚｈａｎｇ  Ｓａｎ"],
+        "emails":["X@example.edu"], "sourceUrl":"https://example.edu/list"});
+    let alias = submit(
+        &db,
+        Some(initial.crawl_id),
+        vec![
+            incoming,
+            json!({"name":"第三种写法", "aliases":["张三"], "emails":["x@example.edu"],
+            "sourceUrl":"https://example.edu/list"}),
+        ],
+        4,
+    )
+    .await
+    .unwrap();
+    assert_eq!((alias.added, alias.merged, alias.total), (0, 2, 1));
+    for incoming in [
+        candidate("不相同的姓名", "x@example.edu"),
+        candidate("Zhang San", "different@example.edu"),
+    ] {
+        assert_eq!(
+            submit(&db, Some(initial.crawl_id), vec![incoming], 5)
+                .await
+                .unwrap()
+                .added,
+            1
+        );
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn invalid_batch_reports_positions_and_leaves_database_unchanged(db: SqlitePool) {
     let good = candidate("有效导师", "valid@example.edu");
     let crawl = submit(&db, None, vec![good.clone()], 1)

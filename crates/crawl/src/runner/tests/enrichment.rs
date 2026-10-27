@@ -780,8 +780,8 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     .unwrap();
     let keep = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails,
-            mentor_id)
-        VALUES (?, ?, 'accepted', 'none', '张三', '["a@example.edu"]', ?)
+            mentor_id, match_names)
+        VALUES (?, ?, 'accepted', 'none', '张三', '["a@example.edu"]', ?, '["张三"]')
         RETURNING id"#,
     )
     .bind(crawl)
@@ -861,8 +861,9 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
     )
     .await;
     let duplicate = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails)
-        VALUES (?, ?, 'pending', 'none', '张三', '["a@example.edu"]')
+        r#"INSERT INTO candidate (crawl_id, profile_url, review, enrich, name, emails,
+            match_names)
+        VALUES (?, ?, 'pending', 'none', '张三', '["a@example.edu"]', '["张三"]')
         RETURNING id"#,
     )
     .bind(crawl)
