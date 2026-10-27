@@ -26,9 +26,9 @@
 | `crates/writing` | AI 写信和核对：给模型的资料和规则，校验模型输出 |
 | `crates/fakemail` | 测试用的假 SMTP 和 IMAP 服务器 |
 | `crates/test-fixtures` | 测试用的数据库夹具和本地模型 HTTP 服务器 |
-| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的 TypeScript 类型从这里生成 |
+| `crates/api` | 界面、手机和 agent 调用的操作，统一的分发入口；本地备份和恢复（`backup`，zip 读写及校验单独放在 `backup::archive`）；界面用的操作类型从这里生成 |
 | `crates/agent` | Agent 本机通道和 `autoemail` 命令行 |
-| `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、数据目录，把界面的调用交给 `api` |
+| `crates/app` | Tauri 桌面应用：窗口、托盘、系统通知、开机自启、自动更新、数据目录，把界面的调用交给 `api` |
 | `xtask` | 仓库命令：生成类型、示例数据、基准 |
 | `ui` | 界面；`ui/src/api/types.ts` 是生成的 |
 
@@ -81,7 +81,7 @@
 - `autoemail list` 按组显示操作及确认标记，`autoemail help <操作名>` 显示说明与类型；两者均调用应用查询。`autoemail --help` 和 `--version` 无需连接应用。`autoemail mcp` 使用标准输入输出提供三个 MCP 工具，工具列表固定、操作目录由应用提供；连接策略、错误和进度通知见[总体设计](design.md#桌面端)。
 - 应用最多等用户确认 5 分钟；[Claude Code 默认超时](https://code.claude.com/docs/en/mcp#time-limits-on-mcp-tool-calls)足以覆盖，但 `MCP_TOOL_TIMEOUT` 设得比 5 分钟短时会先超时。收到进度后是否重置计时由[客户端选择](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/2026-07-28/basic/patterns/cancellation.mdx#timeouts)；[Claude Desktop](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop) 和 [Cursor](https://cursor.com/docs/context/mcp) 的官方说明未明确工具超时或进度重置保证，不能保证等待满 5 分钟。
 - 最简调用为 `autoemail call <操作名> [JSON 输入]`，省略输入时为 `{}`。需要确认时，通道先返回一行 `{ "waiting": { "action": "…" } }` 中间消息；命令行只把 `action` 写到标准错误，不输出对象内容，继续等最终回答。标准输出只有一行最终的原始 JSON，包含 `error` 时退出码非零。开发构建默认用本仓库 `.dev-data`，可用 `AUTOEMAIL_DATA_DIR` 指向独立开发数据目录；正式构建默认用应用标识对应的数据目录。Windows 控制台交给 Rust 标准输出处理 Unicode，重定向输出为 UTF-8。
-- `pnpm dev` 和 `pnpm package` 加载 `tauri.agent.conf.json`，Tauri 的构建钩子先运行跨平台的 `tools/build-agent.mjs`，按 `TAURI_ENV_TARGET_TRIPLE` 和调试／发布模式编译 CLI，并复制为 `crates/app/binaries/autoemail-<目标平台>[.exe]`，再构建界面。CI 打包也使用同一个 `pnpm package` 命令；当前 CI 只有检查，没有发布或打包流程。基础配置不声明 externalBin，使直接运行 Cargo 的类型检查和测试不依赖预先生成的 sidecar。Tauri 将 sidecar 放在应用可执行文件旁，开发版同样放进 target 输出目录。不要单独运行不带配置的 `tauri build` 来制作分发包。
+- `pnpm dev` 和 `pnpm package` 加载 `tauri.agent.conf.json`，Tauri 的构建钩子先运行跨平台的 `tools/build-agent.mjs`，按 `TAURI_ENV_TARGET_TRIPLE` 和调试／发布模式编译 CLI，并复制为 `crates/app/binaries/autoemail-<目标平台>[.exe]`，再构建界面。发布工作流使用相同的配置与构建钩子。基础配置不声明 externalBin，使直接运行 Cargo 的类型检查和测试不依赖预先生成的 sidecar。Tauri 将 sidecar 放在应用可执行文件旁，开发版同样放进 target 输出目录。不要单独运行不带配置的 `tauri build` 来制作分发包。
 - `api::agent_settings` 提供六个仅界面可用的操作，输入输出包含在生成类型中：`getAgentCli {}`、`installAgentCli {}`、`uninstallAgentCli {}` 返回 `{ state, command, path, location }`。`state.kind` 为 `notInstalled`、`installed`、`oldLocation`（附 `target`）或 `occupied`；`path` 是 CLI 普通绝对路径，`location` 是 macOS 的链接或 Windows 的 PATH 目录。macOS 先尝试无权限操作，确实缺权限或目录才通过 `osascript … with administrator privileges` 请求授权；旧链接用同目录临时链接替换，其他文件不动，授权后再次核对链接归属。Windows 通过系统自带 PowerShell 读写 `HKCU\Environment\Path`，保留原注册表字符串类型和其余项，在 `HKCU\Software\AutoEmailSender\CliPath` 记录自己加入的一项，用 `WM_SETTINGCHANGE` 广播；比较目录时统一扩展前缀、斜杠、尾斜杠和大小写，不修改当前进程或系统级 PATH，已打开的终端需重新打开。
 - `previewMcpConfig { client }` 的 client 是 `claudeDesktop`、`claudeCode` 或 `cursor`，返回 `{ path, server, exists, commands, writeUnavailable }`；`server` 是包含 `autoemail` 的完整 JSON 服务项。`commands` 是可直接复制到 macOS zsh 或 Windows PowerShell 的命令行字符串数组，其余客户端为空。找不到 Claude Code 时仍返回完整命令，`writeUnavailable` 给出原因，界面显示原因并禁用写入；可写时该字段为 `null`。预览留在当前 Context 的内存中；用户确认后调用 `writeMcpConfig { client }`，未预览、文件原文变化或重新解析的链接目标变化时拒绝写入。`mcpConfigText {}` 返回包含 `mcpServers.autoemail` 的 JSON 文本，供其他工具复制。
 - 客户端位置和写入方式见[总体设计](design.md#桌面端)。Claude Code 在 PATH 之外也查找原生安装的 `~/.local/bin`，macOS 再看 `/opt/homebrew/bin` 和 `/usr/local/bin`；Windows 再看用户与系统 WinGet 的 Links 目录及 `%APPDATA%\npm`。尊重 `CLAUDE_CONFIG_DIR`。由官方 CLI 添加用户级服务，替换旧项的添加失败时通过 `add-json` 恢复旧项；不打印客户端输出，避免带出配置中的凭据。桌面客户端用 serde_json 的 RawValue 保留其他配置的原始字节，现有文件权限随替换保留；新文件在 Unix 上为 `0600`。配置为符号链接时保留逻辑路径和解析目标，写入前与原子替换前重新解析并核对；失效链接报错，保留链接本身。测试注入临时配置路径和链接位置，不改真实客户端配置，不触发管理员授权，也不改注册表。
@@ -96,6 +96,28 @@
 - Tauri 事件的注册和注销为空操作，不推送事件；界面原有的轮询、操作后刷新照常工作。
 - 启动状态返回成功，数据位置和版本来自本次核心；导出日志、导出表格、打开数据目录等原生能力明确提示预览不支持。外部链接交给浏览器打开。
 - 仅在 Vite 的 `preview` 开发模式注入调用桥；正式 `pnpm --dir ui build` 和打包不会包含它。
+
+### 自动更新
+
+- 使用官方 `tauri-plugin-updater`，只从 Rust 检查、下载和安装，不开放插件的界面权限。`updater.rs` 在核心启动成功后立即检查，之后每 6 小时检查；debug 构建不启动检查，手动查询始终返回 `current`。自动检查失败只记日志，不发失败事件。
+- 通过 `configure_client` 把检查和下载的 HTTP builder 交给 `net::Net::configure_http`，复用系统代理（含 SOCKS 和本机地址直连）与系统信任的 TLS 配置；每次新连接重新读取代理，不另做检测。插件固定在 2.14 小版本范围，因为这个回调的 reqwest 类型可能随插件的小版本变化。检查超时 30 秒，下载超时 30 分钟。
+- `ui/src/api/app.ts` 提供 `updateStatus()`、`checkUpdate()`、`downloadUpdate()`、`restartUpdate()`，对应同名 snake_case Tauri 命令，无参数。状态由 Rust 的 `update_status.rs` 定义，`cargo xtask types` 同时生成应用层状态类型和核心操作类型。
+- 状态为 `current`、`available { update, error }`、`downloading { update, downloaded, total }`、`ready { update }`。`update` 含 `version`、`published_at`（Unix 毫秒，可空）、`notes`（可空）；下载大小单位为字节，未知总大小为 `null`。`error` 是上次下载失败原因，可重试。事件 `update-changed` 不带内容，界面收到后重读状态；进度事件最多每 250 毫秒一次，开始、失败、完成立即通知。
+- 检查、下载和安装互斥；已有下载好的包时检查保留该包。下载由插件校验签名后才进入 `ready`，包只留在内存，退出后需重新下载。安装入口再次由插件校验。macOS 替换 `.app` 后调用 Tauri `restart()`；Windows 使用 NSIS passive 模式，由安装器重开应用。Windows 插件直接退出进程，`on_before_exit` 与正常退出共用 `before_exit`，关闭抓取窗口；发送中的邮件沿用启动恢复逻辑标为可能已发出。
+- 正式更新公钥和 GitHub `latest.json` 地址在 `tauri.conf.json`，打包生成更新包与 `.sig`；macOS 的 `signingIdentity: "-"` 为整包加 ad-hoc 签名，不做公证。
+
+## 发布
+
+3.0 之前不运行发布工作流、不创建 Release。版本发布由维护者手动执行：
+
+1. 在准备发布的提交里更新工作区 `Cargo.toml` 的版本，运行 `pnpm check` 和[手动检查](#手动检查)，按该版本创建并推送标签，例如 `v3.0.0`。
+2. 准备给用户看的 Markdown 更新说明，包含主要变化和需要用户操作的事项；不放内部信息。打开 Actions 的“构建发布草稿”，选择含工作流的分支，输入已存在的标签和更新说明。工作流检出该标签，先核对标签是否恰好为 `v` 加工作区版本，不一致直接失败。
+3. 仓库密钥 `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 分别保存更新签名私钥和密码。构建时读取这两个密钥，不放进文件或日志；本地 `pnpm package` 也通过这两个环境变量签名。公钥已经随应用配置提交，私钥必须另外备份，换掉公钥会使旧客户端无法更新。
+4. 工作流分别构建 Apple Silicon macOS 与 Windows x64，使用 `tauri-apps/tauri-action@v1`，只创建普通版本的**草稿** Release，不自动公开。两个平台依次上传到同一草稿并合并 `latest.json`，避免更新清单互相覆盖。更新说明同时成为 Release 正文和清单的 `notes`。
+5. 检查草稿中的 DMG、`.app.tar.gz` 与 `.sig`、NSIS `-setup.exe` 与 `.sig`，以及唯一的更新清单 `latest.json`。核对清单版本、说明、发布日期，以及 `darwin-aarch64`、`windows-x86_64` 的下载链接和签名；签名应与上传的 `.sig` 一致。没有 `latest.yml` 或 `appcast.xml`。
+6. 下载草稿产物做全新安装与升级验收，macOS 执行 `codesign --verify --deep --strict --verbose=2 "Auto Email Sender.app"`。两个平台的检查都通过后，维护者手动发布草稿（不勾选预发布）。公开后从更新地址读取 `latest.json` 并再测一次真实升级。
+
+工作流只响应 `workflow_dispatch`，push、PR 和推标签均不触发。构建失败可能留下不完整草稿，补跑通过并核对两平台产物后再发布；同一标签若已经公开，Action 会拒绝修改为草稿。
 
 ## 代码
 
