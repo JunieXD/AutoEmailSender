@@ -234,7 +234,9 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
             // A load still under way may have read the mentor before this save.
             await queryClient.cancelQueries({ queryKey: ["getMentor", m.id] });
             queryClient.setQueryData(["getMentor", m.id], saved);
-            void queryClient.invalidateQueries({ queryKey: ["listMentors"] });
+            // An edited profile may now agree with a library update, which then no longer waits.
+            for (const queryKey of [["listMentors"], ["listLibraryUpdates"], ["libraryUpdateCount"]])
+              void queryClient.invalidateQueries({ queryKey });
             setEditing(false);
           }}
           onClose={() => setEditing(false)}
