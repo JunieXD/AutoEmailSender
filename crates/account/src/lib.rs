@@ -9,7 +9,7 @@ use cloud_api::{ApiError, Empty, ErrorCode, Session, path};
 use reqwest::{Method, RequestBuilder};
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::SqlitePool;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use ts_rs::TS;
 
 /// The production address will be set when the official service is deployed.
@@ -53,6 +53,7 @@ pub struct Client {
     change: Mutex<()>,
     address: String,
     http: reqwest::Client,
+    changed: watch::Sender<()>,
 }
 
 impl Client {
@@ -73,7 +74,12 @@ impl Client {
             address: address.trim_end_matches('/').into(),
             change: Mutex::new(()),
             http,
+            changed: watch::channel(()).0,
         }
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<()> {
+        self.changed.subscribe()
     }
 
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
@@ -260,9 +266,13 @@ impl Client {
                 code: ErrorCode::SessionExpired,
                 ..
             })) => {
-                sqlx::query!("UPDATE account SET token = NULL WHERE token = ?", token)
-                    .execute(db)
-                    .await?;
+                let cleared =
+                    sqlx::query!("UPDATE account SET token = NULL WHERE token = ?", token)
+                        .execute(db)
+                        .await?;
+                if cleared.rows_affected() > 0 {
+                    self.changed.send_replace(());
+                }
                 Err(Error::SignedOut)
             }
             result => result,

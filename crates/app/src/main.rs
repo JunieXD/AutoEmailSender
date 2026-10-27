@@ -222,6 +222,15 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
     }
     let (ctx, restored) = api::startup::open(&dir).await.map_err(StartupError::Core)?;
     let ctx = Arc::new(ctx);
+    let mut account_changed = ctx.account.subscribe();
+    let ui = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while account_changed.changed().await.is_ok() {
+            if let Err(e) = ui.emit("account-changed", ()) {
+                tracing::warn!("refresh account: {e}");
+            }
+        }
+    });
     let ui = app.clone();
     let agent = api::agent::start(ctx.clone(), dir, move |event| match event {
         api::agent::Event::Requested(description) => {
