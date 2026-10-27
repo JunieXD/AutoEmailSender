@@ -158,12 +158,22 @@ impl Client {
         Ok(())
     }
 
-    pub async fn delete(&self, db: &SqlitePool, password: String) -> Result<(), Error> {
+    pub async fn delete(
+        &self,
+        db: &SqlitePool,
+        email: &str,
+        password: String,
+    ) -> Result<(), Error> {
         let _guard = self.change.lock().await;
-        let email = sqlx::query_scalar!("SELECT email FROM account WHERE token IS NOT NULL")
-            .fetch_optional(db)
-            .await?
-            .ok_or(Error::SignedOut)?;
+        let current_email =
+            sqlx::query_scalar!("SELECT email FROM account WHERE token IS NOT NULL")
+                .fetch_optional(db)
+                .await?
+                .ok_or(Error::SignedOut)?;
+        let email = checked_email(email)?;
+        if current_email != email {
+            return Err(Error::AccountChanged);
+        }
         let login_key = login_key(&email, password).await?;
         self.authenticated::<Empty>(
             db,
@@ -271,6 +281,7 @@ pub enum Error {
     Network(reqwest::Error),
     Server(ApiError),
     SignedOut,
+    AccountChanged,
 }
 
 impl From<sqlx::Error> for Error {
@@ -288,6 +299,7 @@ impl std::fmt::Display for Error {
             Self::Server(error) => write!(f, "account server: {:?}", error.code),
             Self::Invalid(_) => write!(f, "invalid account input"),
             Self::SignedOut => write!(f, "account session expired"),
+            Self::AccountChanged => write!(f, "account deletion target changed"),
         }
     }
 }
@@ -305,6 +317,7 @@ impl Error {
             }
             Self::Network(_) => "连不上服务器，请检查网络和代理设置后重试。".into(),
             Self::SignedOut => "登录已失效，请重新登录。".into(),
+            Self::AccountChanged => "要注销的账号已经不是当前登录的账号，请刷新后重试。".into(),
             Self::Server(error) => match error.code {
                 ErrorCode::InvalidInput => "填写的账号信息不正确，请检查后重试。".into(),
                 ErrorCode::EmailRegistered => "这个邮箱已注册，请直接登录。".into(),

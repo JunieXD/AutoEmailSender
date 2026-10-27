@@ -45,7 +45,11 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
             State::LoggedIn { .. }
         ));
         let error = client
-            .delete(&db, "fixed-password-123".into())
+            .delete(
+                &db,
+                " ＳＴＵＤＥＮＴ＠ＥＸＡＭＰＬＥ．ｉｎｖａｌｉｄ ",
+                "fixed-password-123".into(),
+            )
             .await
             .unwrap_err();
         assert!(matches!(error, Error::SignedOut));
@@ -61,6 +65,12 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         assert!(matches!(
             account::state(&db).await.unwrap(),
             State::Expired { .. }
+        ));
+        assert!(matches!(
+            client
+                .delete(&db, "another@example.invalid", "fixed-password-123".into())
+                .await,
+            Err(Error::SignedOut)
         ));
         client.logout(&db).await.unwrap();
         assert!(matches!(
@@ -115,6 +125,77 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         request.completed.await.unwrap();
     };
     tokio::join!(calls, replies);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'first@example.invalid', 'first-token')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+
+    let login = client.login(&db, "second@example.invalid", "shared-password".into());
+    tokio::pin!(login);
+    let request = tokio::select! {
+        request = server.requests.recv() => request.unwrap(),
+        result = &mut login => panic!("login finished before its response: {result:?}"),
+    };
+    assert!(request.line.starts_with(&format!("POST {} ", path::LOGIN)));
+    assert!(matches!(
+        account::state(&db).await.unwrap(),
+        State::LoggedIn { email } if email == "first@example.invalid"
+    ));
+
+    // The deletion of A must wait behind B's unfinished login before reading local state.
+    let deleting = client.delete(&db, "first@example.invalid", "shared-password".into());
+    tokio::pin!(deleting);
+    std::future::poll_fn(|cx| {
+        assert!(deleting.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    request
+        .respond
+        .send(Response::Raw {
+            status: 200,
+            content: serde_json::to_string(&Session {
+                token: "second-token".into(),
+                account: Account {
+                    email: "second@example.invalid".into(),
+                    sponsor_until: None,
+                },
+            })
+            .unwrap(),
+        })
+        .unwrap();
+    request.completed.await.unwrap();
+
+    let (logged_in, deleted) = tokio::select! {
+        result = async { tokio::join!(login, deleting) } => result,
+        request = server.requests.recv() => {
+            panic!("deletion sent an unexpected request: {}", request.unwrap().line);
+        },
+    };
+    assert!(matches!(
+        logged_in.unwrap(),
+        State::LoggedIn { email } if email == "second@example.invalid"
+    ));
+    assert!(matches!(deleted, Err(Error::AccountChanged)));
+    let saved: (String, String) = sqlx::query_as("SELECT email, token FROM account")
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(
+        saved,
+        ("second@example.invalid".into(), "second-token".into())
+    );
+    assert!(server.requests.try_recv().is_err());
 }
 
 #[tokio::test]

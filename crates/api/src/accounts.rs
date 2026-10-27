@@ -9,7 +9,7 @@ pub struct AccountEmail {
 }
 
 #[derive(Deserialize, TS)]
-pub struct AccountLogin {
+pub struct AccountCredentials {
     pub email: String,
     pub password: String,
 }
@@ -18,11 +18,6 @@ pub struct AccountLogin {
 pub struct AccountVerification {
     pub email: String,
     pub code: String,
-    pub password: String,
-}
-
-#[derive(Deserialize, TS)]
-pub struct AccountPassword {
     pub password: String,
 }
 
@@ -46,7 +41,7 @@ pub async fn register_account(
 
 pub async fn login_account(
     ctx: &Context,
-    input: AccountLogin,
+    input: AccountCredentials,
 ) -> Result<account::State, CallError> {
     Ok(ctx
         .account
@@ -72,15 +67,18 @@ pub async fn logout_account(ctx: &Context, _: Nothing) -> Result<(), CallError> 
     Ok(ctx.account.logout(&ctx.db).await?)
 }
 
-pub async fn delete_account(ctx: &Context, input: AccountPassword) -> Result<(), CallError> {
-    Ok(ctx.account.delete(&ctx.db, input.password).await?)
+pub async fn delete_account(ctx: &Context, input: AccountCredentials) -> Result<(), CallError> {
+    Ok(ctx
+        .account
+        .delete(&ctx.db, &input.email, input.password)
+        .await?)
 }
 
 impl From<account::Error> for CallError {
     fn from(error: account::Error) -> Self {
         tracing::warn!(error = %error, "account operation failed");
         let code = match error {
-            account::Error::Invalid(_) => ErrorCode::Invalid,
+            account::Error::Invalid(_) | account::Error::AccountChanged => ErrorCode::Invalid,
             account::Error::Database(_) | account::Error::Worker(_) => ErrorCode::Internal,
             _ => ErrorCode::External,
         };

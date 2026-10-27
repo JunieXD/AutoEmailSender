@@ -355,15 +355,15 @@ operations! {
         /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。
         "registerAccount" [none] => register_account(AccountVerification) -> account::State;
         /// 登录账号；密码只在本机派生钥匙。
-        "loginAccount" [none] => login_account(AccountLogin) -> account::State;
+        "loginAccount" [none] => login_account(AccountCredentials) -> account::State;
         /// 向已注册的邮箱发送重置密码验证码。
         "sendPasswordResetCode" [none] => send_password_reset_code(AccountEmail) -> ();
         /// 用验证码重置密码，所有设备的旧会话失效。
         "resetAccountPassword" [none] => reset_account_password(AccountVerification) -> ();
         /// 撤销当前设备的会话并退出登录。
         "logoutAccount" [none] => logout_account(Nothing) -> ();
-        /// 输入密码注销账号，删除服务器上的全部账号数据，本机数据保留。
-        "deleteAccount" [confirm] => delete_account(AccountPassword) -> ();
+        /// 输入邮箱和密码注销账号，删除服务器上的全部账号数据，本机数据保留。
+        "deleteAccount" [confirm] => delete_account(AccountCredentials) -> ();
     }
     "Agent 连接" {
         /// 读取命令行工具的安装状态、命令名和绝对路径。

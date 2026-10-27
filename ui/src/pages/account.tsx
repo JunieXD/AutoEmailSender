@@ -78,7 +78,7 @@ function DeleteDialog({ email, onClose }: { email: string; onClose: () => void }
   const passwordRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const remove = useMutation({
-    mutationFn: () => call("deleteAccount", { password }),
+    mutationFn: () => call("deleteAccount", { email, password }),
     onSuccess: onClose,
     // A session found to have run out turns the section to "expired".
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["getAccount"] }),
