@@ -20,6 +20,9 @@ pub struct Request {
 }
 #[derive(Debug)]
 pub enum Response {
+    Redirect {
+        location: String,
+    },
     Raw {
         status: u16,
         content: String,
@@ -136,6 +139,9 @@ async fn serve(stream: TcpStream, requests: mpsc::UnboundedSender<Request>) {
         return;
     };
     let (status, content, extra) = match response {
+        Response::Redirect { location } => {
+            (307, String::new(), format!("Location: {location}\r\n"))
+        }
         Response::Raw { status, content } => (status, content, String::new()),
         Response::Answer {
             text,

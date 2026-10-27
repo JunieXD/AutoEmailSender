@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT email, token IS NOT NULL AS \"logged_in!: bool\"\n        FROM account",
+  "describe": {
+    "columns": [
+      {
+        "name": "email",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "email"
+          }
+        }
+      },
+      {
+        "name": "logged_in!: bool",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8dc6171c46f3a9349a33be20a15f233bef00e914dae8729f246599159f95ae84"
+}

@@ -289,6 +289,13 @@ async fn describe(
     input: &serde_json::Value,
 ) -> Result<Option<Description>, CallError> {
     let description = match op {
+        "deleteAccount" => {
+            let input: crate::accounts::AccountCredentials = parse(input)?;
+            object(
+                "注销账号并删除服务器上的全部账号数据，本机数据保留",
+                input.email,
+            )
+        }
         "approveTaskEmails" => {
             let input: task::TaskApprovals = parse(input)?;
             let ids = input
@@ -1007,6 +1014,7 @@ mod tests {
                 "approveReply",
                 "approveTaskEmails",
                 "changeTaskSchedule",
+                "deleteAccount",
                 "deleteCrawl",
                 "deleteMailbox",
                 "deleteMaterial",

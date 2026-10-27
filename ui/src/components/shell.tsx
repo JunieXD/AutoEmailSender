@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { StartupFailure } from "@/components/startup-failure";
 import { AgentRequests } from "@/components/agent-requests";
+import { useAccount } from "@/components/account";
 import { UpdateEntry } from "@/components/update";
 import { useResume } from "@/pages/mailboxes";
 import { useReceive } from "@/pages/conversations";
@@ -30,8 +31,7 @@ const NAV = [
   { to: "/stats", label: "统计", icon: ChartNoAxesColumn },
 ] as const;
 
-// docs/ui.md#布局: settings open from the account row at the bottom of the sidebar; until there are
-// accounts, the row is settings itself.
+// docs/ui.md#布局: settings open from the account row at the bottom of the sidebar.
 const MORE = { to: "/more", label: "更多", icon: Settings } as const;
 const SETTINGS = { to: "/settings", label: "设置", icon: Settings } as const;
 
@@ -143,7 +143,7 @@ export function Shell() {
         <div className="grow" />
         <UpdateEntry />
         <Background />
-        <NavLink {...SETTINGS} />
+        <AccountRow />
       </aside>
       <main className="relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
         <Outlet />
@@ -182,7 +182,7 @@ export function Shell() {
   );
 }
 
-function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTINGS) {
+function NavLink({ to, label, icon: Icon }: Omit<(typeof NAV)[number] | typeof SETTINGS, "label"> & { label: string }) {
   return (
     <Link
       to={to}
@@ -190,8 +190,8 @@ function NavLink({ to, label, icon: Icon }: (typeof NAV)[number] | typeof SETTIN
       activeProps={{ className: "bg-background font-medium text-brand-text" }}
       inactiveProps={{ className: "text-muted-foreground hover:bg-press" }}
     >
-      <Icon className="size-[18px]" strokeWidth={1.6} />
-      {label}
+      <Icon className="size-[18px] shrink-0" strokeWidth={1.6} />
+      <span className="truncate">{label}</span>
       {to === "/conversations" && <UnreadBadge className="ml-auto" />}
     </Link>
   );
@@ -583,7 +583,19 @@ function Entry({ title, detail }: { title: string; detail: string }) {
   );
 }
 
+/** The account row's label: the account's email once there is one. */
+function useSettingsLabel() {
+  const account = useAccount().data;
+  return account && account.kind !== "loggedOut" ? account.email : SETTINGS.label;
+}
+
+function AccountRow() {
+  const label = useSettingsLabel();
+  return <NavLink {...SETTINGS} label={label} />;
+}
+
 export function MorePage() {
+  const settings = useSettingsLabel();
   return (
     <div className="p-5">
       <h1 className="mb-5 text-2xl font-semibold">更多</h1>
@@ -596,8 +608,8 @@ export function MorePage() {
         统计
       </Link>
       <Link to="/settings" className="mb-3 flex h-12 items-center gap-3 rounded-md bg-muted px-4">
-        <Settings className="size-5" />
-        设置
+        <Settings className="size-5 shrink-0" />
+        <span className="truncate">{settings}</span>
       </Link>
       <Background className="h-12 w-full rounded-md bg-muted px-4 text-foreground [&>svg]:size-5" />
     </div>

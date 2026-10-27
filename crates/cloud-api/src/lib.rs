@@ -1,0 +1,97 @@
+//! The official server's wire format. Times are UTC milliseconds; secrets use base64url without
+//! padding. No desktop dependencies or user-facing messages belong here.
+
+use serde::{Deserialize, Serialize};
+
+pub mod path {
+    pub const REGISTER_CODE: &str = "/v1/account/register-code";
+    pub const REGISTER: &str = "/v1/account/register";
+    pub const LOGIN: &str = "/v1/account/login";
+    pub const LOGOUT: &str = "/v1/account/logout";
+    pub const RESET_CODE: &str = "/v1/account/reset-code";
+    pub const RESET_PASSWORD: &str = "/v1/account/reset-password";
+    pub const ACCOUNT: &str = "/v1/account";
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmailRequest {
+    pub email: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LoginRequest {
+    pub email: String,
+    pub login_key: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifyRequest {
+    pub email: String,
+    pub code: String,
+    pub login_key: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeleteRequest {
+    pub login_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub email: String,
+    pub sponsor_until: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub token: String,
+    pub account: Account,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Empty {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    InvalidInput,
+    EmailRegistered,
+    EmailNotRegistered,
+    InvalidCode,
+    InvalidCredentials,
+    RateLimited,
+    SessionExpired,
+    MailUnavailable,
+    Internal,
+    NotFound,
+    MethodNotAllowed,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiError {
+    pub code: ErrorCode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
+}
+
+/// This is part of the key derivation protocol; changing it would lock existing accounts out.
+pub fn normalize_email(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .map(|c| match c {
+            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
+                (c as u32 - 0xfee0) as u8 as char
+            }
+            _ => c,
+        })
+        .collect::<String>()
+        .to_lowercase()
+}

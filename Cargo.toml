@@ -9,6 +9,8 @@ license = "GPL-3.0-only"
 publish = false
 
 [workspace.dependencies]
+account = { path = "crates/account" }
+cloud-api = { path = "crates/cloud-api" }
 api = { path = "crates/api" }
 crawl = { path = "crates/crawl" }
 check = { path = "crates/check" }
@@ -66,4 +68,8 @@ debug = false
 
 # SQLite is C code that is slow unoptimised; the development app and `cargo xtask bench` both use it.
 [profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
+# Memory filling must stay fast enough for interactive password derivation in development.
+[profile.dev.package.argon2]
 opt-level = 3

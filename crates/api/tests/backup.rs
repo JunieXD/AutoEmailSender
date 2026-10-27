@@ -61,6 +61,13 @@ async fn readonly(path: &Path) -> SqliteConnection {
 async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     fixture(&db, dir.path()).await;
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'student@example.invalid', 'private-account-token')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     let target = dir.path().join("backup.zip");
     backup::export(&db, &dir.path().join("materials"), &target, NOW)
         .await
@@ -83,6 +90,7 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
         "private-model-key",
         "private-custom-key",
         "private-crawled-page",
+        "private-account-token",
     ] {
         assert!(
             !snapshot
@@ -110,6 +118,12 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
             .unwrap(),
         [None, Some(String::new()), None]
     );
+    let account: (String, Option<String>) = sqlx::query_as("SELECT email, token FROM account")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(account.0, "student@example.invalid");
+    assert!(account.1.is_none());
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT text FROM crawl_page")
             .fetch_one(&mut conn)
@@ -278,9 +292,22 @@ async fn older_database_is_upgraded_during_prepare_and_starts_after_confirmation
     fixture(&db, source.path()).await;
     sqlx::query("ANALYZE").execute(&db).await.unwrap();
     let target = source.path().join("backup.zip");
-    backup::export(&db, &source.path().join("materials"), &target, NOW)
+    let snapshot = source.path().join("old.db");
+    sqlx::query("VACUUM INTO ?")
+        .bind(snapshot.to_str().unwrap())
+        .execute(&db)
         .await
         .unwrap();
+    let mut old_manifest = manifest();
+    old_manifest["databaseVersion"] = json!(1);
+    archive(
+        &target,
+        &[
+            ("manifest.json", &serde_json::to_vec(&old_manifest).unwrap()),
+            ("app.db", &fs::read(snapshot).unwrap()),
+            ("materials/1", b"resume"),
+        ],
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let _lock = api::startup::DataLock::acquire(dir.path()).unwrap();

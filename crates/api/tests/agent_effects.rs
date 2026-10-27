@@ -64,6 +64,40 @@ async fn allow_after_change(
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn account_deletion_confirmation_uses_the_input_email_without_the_password(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let (registered, waiting) = tokio::sync::oneshot::channel();
+    let calling = call_agent(
+        &ctx,
+        "deleteAccount",
+        json!({"email":"first@example.invalid", "password":"private-test-password"}),
+        |description| {
+            assert_eq!(description.targets, ["first@example.invalid"]);
+            assert!(
+                !serde_json::to_string(description)
+                    .unwrap()
+                    .contains("private-test-password")
+            );
+            registered.send(()).unwrap();
+        },
+        pending(),
+    );
+    let answer = async {
+        waiting.await.unwrap();
+        let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+        call(
+            &ctx,
+            "answerAgentRequest",
+            json!({"id":requests[0]["id"], "allow":false}),
+        )
+        .await
+        .unwrap();
+    };
+    let error = tokio::join!(calling, answer).0.unwrap_err();
+    assert!(error.message.contains("在应用里拒绝"));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool) {
     let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
     let mentor = mentor::create(
