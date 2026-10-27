@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ExportMentors, RestoreInfo } from "@/api/types";
+import type { ExportMentors, RestoreInfo, UpdateStatus } from "@/api/types";
 
 // Commands of the desktop app itself (crates/app), beside the core's operations in call.ts.
 
@@ -61,4 +61,24 @@ export function cancelRestore(): Promise<void> {
 /** Backs up current data and restarts to install the confirmed restore. */
 export function restoreBackup(): Promise<void> {
   return invoke<void>("restore_backup");
+}
+
+/** Current desktop update state; refresh on update-changed. */
+export function updateStatus(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("update_status");
+}
+
+/** Checks now; automatic checks run in Rust even with no visible window. */
+export function checkUpdate(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("check_update");
+}
+
+/** Downloads and verifies the update; progress is available through updateStatus. */
+export function downloadUpdate(): Promise<void> {
+  return invoke<void>("download_update");
+}
+
+/** Installs the verified package and restarts the app. */
+export function restartUpdate(): Promise<void> {
+  return invoke<void>("restart_update");
 }

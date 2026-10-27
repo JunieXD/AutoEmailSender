@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 matching.workspace = true
 api.workspace = true
+net.workspace = true
 profile.workspace = true
 receive.workspace = true
 send.workspace = true
@@ -28,8 +29,12 @@ tracing-subscriber = "0.3.23"
 task.workspace = true
 crawl.workspace = true
 tauri-plugin-autostart = "2"
+tauri-plugin-updater = { version = "~2.14.0", default-features = false, features = ["rustls-tls"] }
 tokio = { workspace = true, features = ["sync"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"

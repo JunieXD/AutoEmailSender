@@ -3,10 +3,11 @@ import { Link, Outlet, useChildMatches, useNavigate } from "@tanstack/react-rout
 import { getVersion } from "@tauri-apps/api/app";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { autostartEnabled, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
+import { autostartEnabled, checkUpdate, dataLocation, exportLogs, openDataLocation, setAutostart } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import { ModelAction } from "@/components/ai-writing";
 import { refreshReplyOutcomes } from "@/components/mentor";
+import { UpdateDialog, useUpdate } from "@/components/update";
 import { Button } from "@/components/ui/button";
 import { Segments } from "@/components/ui/segments";
 import { savedTheme, setTheme } from "@/theme";
@@ -153,6 +154,7 @@ export function AboutSection() {
     <Section title="关于和日志">
       <Row label="版本">
         <p className="text-sm text-muted-foreground">{version.data ?? " "}</p>
+        <CheckUpdate />
       </Row>
       <Row label="数据位置">
         <p className="text-sm break-all text-muted-foreground">{location.data ?? " "}</p>
@@ -176,6 +178,30 @@ export function AboutSection() {
         </div>
       </Row>
     </Section>
+  );
+}
+
+/** A newer version opens the same dialog as the sidebar entry. */
+function CheckUpdate() {
+  const queryClient = useQueryClient();
+  const status = useUpdate().data;
+  const [open, setOpen] = useState(false);
+  const check = useMutation({
+    mutationFn: checkUpdate,
+    onSuccess: (s) => {
+      queryClient.setQueryData(["updateStatus"], s);
+      setOpen(s.kind !== "current");
+    },
+  });
+  return (
+    <div className="flex items-center gap-3">
+      <Button variant="quiet" disabled={check.isPending} onClick={() => check.mutate()}>
+        {check.isPending ? "正在检查…" : "检查更新"}
+      </Button>
+      {check.data?.kind === "current" && <span className="text-sm text-muted-foreground">已是最新版本</span>}
+      {check.isError && <span className="text-sm text-destructive">{errorMessage(check.error)}</span>}
+      {open && status && status.kind !== "current" && <UpdateDialog status={status} onClose={() => setOpen(false)} />}
+    </div>
   );
 }
 

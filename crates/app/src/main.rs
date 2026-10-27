@@ -7,6 +7,7 @@ mod backup;
 mod browser;
 mod logs;
 mod save;
+mod updater;
 
 use std::error::Error;
 use std::io::Write;
@@ -130,6 +131,7 @@ fn main() -> tauri::Result<()> {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .app_name(context.config().identifier.clone())
@@ -137,12 +139,14 @@ fn main() -> tauri::Result<()> {
                 .build(),
         )
         .manage(backup::Commands::default())
+        .manage(updater::Updater::default())
         .setup(|app| {
             background::init(app.handle())?;
             // A login launch stays in the tray unless there is something the user must see.
             let must_show = match tauri::async_runtime::block_on(start(app.handle())) {
                 Ok((ctx, restored)) => {
                     app.manage(ctx);
+                    updater::start(app.handle());
                     restored
                 }
                 Err(e) => {
@@ -170,7 +174,11 @@ fn main() -> tauri::Result<()> {
             data_location,
             open_data_location,
             autostart::autostart_enabled,
-            autostart::set_autostart
+            autostart::set_autostart,
+            updater::update_status,
+            updater::check_update,
+            updater::download_update,
+            updater::restart_update
         ])
         .build(context)?;
     app.run(|app, event| {
@@ -178,7 +186,7 @@ fn main() -> tauri::Result<()> {
             event,
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
-            browser::close_all(app);
+            before_exit(app);
         }
         #[cfg(target_os = "macos")]
         if let tauri::RunEvent::Reopen { .. } = event {
@@ -186,6 +194,10 @@ fn main() -> tauri::Result<()> {
         }
     });
     Ok(())
+}
+
+fn before_exit(app: &AppHandle) {
+    browser::close_all(app);
 }
 
 /// Opens the data directory, the logs and the database.

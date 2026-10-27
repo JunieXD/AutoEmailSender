@@ -43,6 +43,10 @@ async function invoke(command: string, args: Record<string, unknown> = {}): Prom
     }
     case "startup_failure":
       return null;
+    // Like the development build, which never looks for updates.
+    case "update_status":
+    case "check_update":
+      return { kind: "current" };
     case "data_location":
       return import.meta.env.AES_PREVIEW_DATA;
     case "plugin:app|version":
