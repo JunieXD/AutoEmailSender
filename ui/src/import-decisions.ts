@@ -1,6 +1,7 @@
-import type { Decisions, Difference, Preview } from "@/api/types";
+import type { Decisions, Preview } from "@/api/types";
+import type { Compared } from "@/components/differences";
 
-export function sameDifference(a: Difference, b: Difference): boolean {
+export function sameDifference(a: Compared<string>, b: Compared<string>): boolean {
   return (
     a.id === b.id &&
     a.field === b.field &&

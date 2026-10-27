@@ -1,8 +1,8 @@
 import { findSearch } from "@/pages/find";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import { Download, Merge, Plus, Search, Trash2 } from "lucide-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { Download, Merge, Plus, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { ContactStatus, Imported, MentorFilter, ReplyOutcomeFilter, Scope, Kind } from "@/api/types";
 import { BatchBar, Confirm } from "@/components/batch-bar";
@@ -22,6 +22,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/notice";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { SearchBox } from "@/components/search-box";
 import { Segments } from "@/components/ui/segments";
 import { type FilterSearch, filterOf, filterSearch, filtered, MentorFilters } from "@/components/mentor-filters";
 
@@ -127,6 +128,10 @@ export function MentorsPage() {
         </div>
         <div className="grow" />
         <SearchBox
+          id="mentor-search"
+          label="搜索导师"
+          placeholder="搜索姓名、学校、研究方向"
+          className="w-[320px] phone:order-3 phone:w-full"
           value={search.q ?? ""}
           onChange={(q) => navigate({ search: (s) => ({ ...s, q: q || undefined, page: undefined }) })}
         />
@@ -142,6 +147,13 @@ export function MentorsPage() {
               className={buttonVariants({ variant: "ghost", className: "w-full justify-start" })}
             >
               智能抓取
+            </Link>
+            <Link
+              to="/find"
+              search={findSearch({ tab: "library" })}
+              className={buttonVariants({ variant: "ghost", className: "w-full justify-start" })}
+            >
+              从导师库添加
             </Link>
             <Button
               variant="ghost"
@@ -371,35 +383,5 @@ export function MentorsPage() {
         />
       </footer>
     </div>
-  );
-}
-
-function SearchBox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const [text, setText] = useState(value);
-  // Follow the URL when it changes from elsewhere, such as going back.
-  const [shown, setShown] = useState(value);
-  if (value !== shown) {
-    setShown(value);
-    setText(value);
-  }
-  const commit = useEffectEvent(onChange);
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (text.trim() !== value) commit(text.trim());
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [text, value]);
-  return (
-    <label className="flex h-10 w-[320px] items-center gap-2 rounded-full bg-muted px-4 text-muted-foreground focus-within:ring-2 focus-within:ring-ring phone:order-3 phone:w-full">
-      <Search className="size-[18px] shrink-0" strokeWidth={1.6} />
-      <input
-        id="mentor-search"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="搜索姓名、学校、研究方向"
-        aria-label="搜索导师"
-        className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-faint"
-      />
-    </label>
   );
 }

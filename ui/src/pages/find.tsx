@@ -19,6 +19,7 @@ import { BatchBar, Confirm } from "@/components/batch-bar";
 import { IntakeChoices, ProfileDetails } from "@/components/intake-choices";
 import { refreshMentors, placeOf } from "@/components/mentor";
 import { Pager } from "@/components/mentor-table";
+import { LibraryTab } from "@/pages/library";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,6 +35,8 @@ const FILTERS = {
   missing_email: "缺邮箱",
 } as const;
 const EMPTY: Decisions = { take: [], matches: [], restore: [] };
+const TABS = ["candidates", "crawl", "library"] as const;
+const TAB_NAMES: Record<(typeof TABS)[number], string> = { candidates: "候选", crawl: "智能抓取", library: "导师库" };
 const STAGES: Record<CrawlStage, string> = {
   lists: "正在找名单",
   profiles: "正在读个人页",
@@ -60,12 +63,14 @@ export function findSearch(s: Record<string, unknown>) {
       ? s.filter
       : "all";
   return {
-    tab: s.tab === "crawl" ? ("crawl" as const) : ("candidates" as const),
+    tab: TABS.find((tab) => tab === s.tab) ?? "candidates",
     filter,
     crawl: Number(s.crawl) || undefined,
     processed: s.processed === true,
     page: Math.max(1, Number(s.page) || 1),
     detail: Number(s.detail) || undefined,
+    org: typeof s.org === "string" && s.org !== "" ? s.org : undefined,
+    q: typeof s.q === "string" && s.q !== "" ? s.q : undefined,
   };
 }
 export function refreshCrawls(client: ReturnType<typeof useQueryClient>) {
@@ -90,7 +95,7 @@ export function FindPage() {
       <header className="shrink-0 px-6 pt-6 phone:px-4">
         <h1 className="text-2xl font-semibold">找导师</h1>
         <div className="my-4 flex w-fit gap-1 rounded-full bg-muted p-1" role="tablist" aria-label="找导师">
-          {(["candidates", "crawl"] as const).map((tab) => (
+          {TABS.map((tab) => (
             <Button
               key={tab}
               role="tab"
@@ -98,12 +103,12 @@ export function FindPage() {
               variant={search.tab === tab ? "quiet" : "ghost"}
               onClick={() => void navigate({ search: (s) => ({ ...s, tab, page: 1 }) })}
             >
-              {tab === "candidates" ? "候选" : "智能抓取"}
+              {TAB_NAMES[tab]}
             </Button>
           ))}
         </div>
       </header>
-      {search.tab === "crawl" ? <Crawls /> : <Candidates />}
+      {search.tab === "crawl" ? <Crawls /> : search.tab === "library" ? <LibraryTab /> : <Candidates />}
     </>
   );
 }
