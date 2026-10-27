@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.name,\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"address?: String\",\n            count(*) AS \"count!: i64\"\n        FROM email e JOIN mentor m ON m.id = e.mentor_id\n        WHERE e.id IN (SELECT value FROM json_each(?))\n        GROUP BY m.id ORDER BY m.id",
+  "query": "SELECT m.name,\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"address?: String\",\n            count(*) AS \"count!: i64\",\n            json_group_array(e.planned_at ORDER BY e.id) AS \"times!: Json<Vec<Option<i64>>>\"\n        FROM email e JOIN mentor m ON m.id = e.mentor_id\n        WHERE e.id IN (SELECT value FROM json_each(?))\n        GROUP BY m.id ORDER BY m.id",
   "describe": {
     "columns": [
       {
@@ -30,6 +30,12 @@
         "ordinal": 2,
         "type_info": "Null",
         "origin": "Expression"
+      },
+      {
+        "name": "times!: Json<Vec<Option<i64>>>",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -38,8 +44,9 @@
     "nullable": [
       false,
       false,
+      null,
       null
     ]
   },
-  "hash": "54108bc3df8ee556357ee8a5e11f48cc7511d0bc979ae91c982444203818ca17"
+  "hash": "5f2a1a56e062a4ac08ca6bc62d141e8e90587cadfabdbeccc18b5003df63f1f5"
 }

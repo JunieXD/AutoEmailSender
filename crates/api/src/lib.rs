@@ -606,7 +606,8 @@ operations! {
         /// 添加发信和收信邮箱，返回新邮箱的 id。
         "addMailbox" [none] => add_mailbox(NewMailbox) -> MailboxId;
         /// 修改指定邮箱设置，可填写新的授权码。
-        "updateMailbox" [confirm_if "修改未到期暂停中的邮箱设置、会恢复发信时"] => update_mailbox(MailboxEdit) -> ();
+        "updateMailbox" [confirm_if "修改未到期暂停中的邮箱设置会恢复发信，或更改邮箱地址会影响已批准邮件时"] =>
+            update_mailbox(MailboxEdit) -> ();
         /// 立即恢复指定邮箱的发信。
         "resumeMailbox" [confirm] => resume_mailbox(MailboxId) -> ();
         /// 永久删除指定邮箱。

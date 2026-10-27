@@ -31,14 +31,6 @@ fn parse<T: DeserializeOwned>(input: &serde_json::Value) -> Result<T, CallError>
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfirmationAttachment {
-    pub material_id: Option<i64>,
-    pub file_name: String,
-    pub size: i64,
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SendAt {
     Now,
@@ -75,7 +67,7 @@ pub struct ConfirmationLetter {
     pub send_at: SendAt,
     pub subject: String,
     pub body_md: String,
-    pub attachments: Vec<ConfirmationAttachment>,
+    pub attachments: Vec<email::SelectedAttachment>,
     /// The core appends this quote after rendering the new Markdown body.
     pub previous: Option<QuotedMessage>,
 }
@@ -109,7 +101,8 @@ async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<S
         r#"SELECT m.name,
             (SELECT address FROM mentor_email
                 WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String",
-            count(*) AS "count!: i64"
+            count(*) AS "count!: i64",
+            json_group_array(e.planned_at ORDER BY e.id) AS "times!: Json<Vec<Option<i64>>>"
         FROM email e JOIN mentor m ON m.id = e.mentor_id
         WHERE e.id IN (SELECT value FROM json_each(?))
         GROUP BY m.id ORDER BY m.id"#,
@@ -121,7 +114,12 @@ async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<S
         .into_iter()
         .map(|row| {
             let address = row.address.as_deref().unwrap_or("未填写邮箱");
-            format!("{}：{address}（{} 封）", row.name, row.count)
+            format!(
+                "{}：{address}（{} 封）；原定发送时间：{}",
+                row.name,
+                row.count,
+                sending_times(row.times.0)
+            )
         })
         .collect())
 }
@@ -195,6 +193,14 @@ fn display_time(at: i64) -> String {
         .unwrap_or_else(|| format!("无法识别的时间：{at}"))
 }
 
+fn sending_times(times: Vec<Option<i64>>) -> String {
+    times
+        .into_iter()
+        .map(|at| at.map_or_else(|| "按任务的发送安排".into(), display_time))
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
 async fn letter(
     conn: &mut SqliteConnection,
     mentor_id: i64,
@@ -214,21 +220,7 @@ async fn letter(
     )
     .fetch_one(&mut *conn)
     .await?;
-    let mut files = Vec::new();
-    for id in attachments {
-        files.push(
-            sqlx::query_as!(
-                ConfirmationAttachment,
-                r#"SELECT id AS material_id, file_name, size FROM material WHERE id = ?"#,
-                id
-            )
-            .fetch_optional(&mut *conn)
-            .await?
-            .ok_or_else(|| {
-                CallError::invalid("有附件的材料已被删除。重新选择附件后再发送。".into())
-            })?,
-        );
-    }
+    let files = email::select_attachments(conn, attachments).await?;
     Ok(ConfirmationLetter {
         mentor_id,
         mentor_name: mentor.name,
@@ -427,10 +419,35 @@ async fn describe(
             let input: crate::EmailId = parse(input)?;
             let action = match op {
                 "sendEmailNow" => "立即发出 1 封邮件",
-                "resendEmail" => "重新发出 1 封邮件",
+                "resendEmail" => "立即重新发出 1 封邮件",
                 _ => "重试发出 1 封邮件",
             };
-            Description::new(action.into(), email_targets(conn, &[input.id]).await?)
+            let mut targets = email_targets(conn, &[input.id]).await?;
+            if op == "retryEmail" {
+                let task = sqlx::query_scalar!("SELECT task_id FROM email WHERE id = ?", input.id)
+                    .fetch_optional(&mut *conn)
+                    .await?
+                    .flatten();
+                let schedule = match task {
+                    Some(task) => email::schedule::get(conn, task).await?.form(),
+                    None => email::schedule::Schedule::Now,
+                };
+                let timing = match schedule {
+                    email::schedule::Schedule::Now => "立即发送".into(),
+                    email::schedule::Schedule::Window(window) => format!(
+                        "按任务的发送安排：{} 的 {}–{}，每个窗口最多 {} 封",
+                        window.dates.join("、"),
+                        window.start,
+                        window.end,
+                        window.per_window
+                    ),
+                };
+                targets = targets
+                    .into_iter()
+                    .map(|target| format!("{target}；本次重试：{timing}"))
+                    .collect();
+            }
+            Description::new(action.into(), targets)
         }
         "resumeTask" | "changeTaskSchedule" => {
             let id = parse::<crate::TaskId>(input)?.id;
@@ -474,35 +491,44 @@ async fn describe(
                 task_target(conn, input.id).await?,
             )
         }
-        "resumeMailbox" | "updateMailbox" => {
-            let (id, action, target) = if op == "resumeMailbox" {
-                let input: crate::MailboxId = parse(input)?;
-                (
-                    input.id,
-                    "恢复 1 个邮箱的发信",
-                    mailbox_target(conn, input.id).await?,
-                )
-            } else {
-                let input: crate::MailboxEdit = parse(input)?;
-                let at = crate::now();
-                let address = sqlx::query_scalar!(
-                    "SELECT address FROM mailbox WHERE id = ? AND paused_until > ?",
-                    input.id,
-                    at
-                )
-                .fetch_optional(&mut *conn)
-                .await?;
-                let Some(address) = address else {
-                    return Ok(None);
-                };
-                let target = if address == input.form.address {
-                    address
-                } else {
-                    format!("{address} → {}", input.form.address)
-                };
-                (input.id, "改 1 个邮箱的设置并恢复发信", target)
+        "resumeMailbox" => {
+            let input: crate::MailboxId = parse(input)?;
+            let ids = mailbox_emails(conn, input.id).await?;
+            let target = mailbox_target(conn, input.id).await?;
+            sending(conn, "恢复 1 个邮箱的发信", target, &ids).await?
+        }
+        "updateMailbox" => {
+            let input: crate::MailboxEdit = parse(input)?;
+            let fields = input.form.check().map_err(CallError::invalid)?;
+            let row = sqlx::query!(
+                "SELECT address, paused_until FROM mailbox WHERE id = ?",
+                input.id
+            )
+            .fetch_optional(&mut *conn)
+            .await?;
+            let Some(row) = row else {
+                return Ok(None);
             };
-            let ids = mailbox_emails(conn, id).await?;
+            let after: &str = fields.address.as_ref();
+            let resumes = row.paused_until.is_some_and(|until| until > crate::now());
+            let changed = row.address != after;
+            if !resumes && !changed {
+                return Ok(None);
+            }
+            let ids = mailbox_emails(conn, input.id).await?;
+            if !resumes && ids.is_empty() {
+                return Ok(None);
+            }
+            let target = if changed {
+                format!("{} → {after}", row.address)
+            } else {
+                row.address
+            };
+            let action = if resumes {
+                "改 1 个邮箱的设置并恢复发信"
+            } else {
+                "更改 1 个邮箱的发件地址"
+            };
             sending(conn, action, target, &ids).await?
         }
         "deleteMailbox" => {
@@ -531,7 +557,7 @@ async fn describe(
             let targets = email_targets(conn, &[input.id])
                 .await?
                 .into_iter()
-                .map(|target| format!("{target}；发送时间：{at}"))
+                .map(|target| format!("{target}；改为：{at}"))
                 .collect();
             Description::new("更改 1 封邮件的发送时间".into(), targets)
         }
@@ -726,21 +752,20 @@ async fn describe(
         }
         "setMentorMailbox" => {
             let input: crate::MentorMailbox = parse(input)?;
-            let row = sqlx::query!("SELECT name, mailbox_id FROM mentor WHERE id = ?", input.id)
+            let row = sqlx::query!("SELECT mailbox_id FROM mentor WHERE id = ?", input.id)
                 .fetch_optional(&mut *conn)
                 .await?;
             let Some(row) = row else { return Ok(None) };
             if row.mailbox_id == input.mailbox_id {
                 return Ok(None);
             }
-            let count = sqlx::query_scalar!(
-                r#"SELECT count(*) AS "count!: i64" FROM email
-                WHERE mentor_id = ? AND state = 'approved'"#,
+            let ids = sqlx::query_scalar!(
+                "SELECT id FROM email WHERE mentor_id = ? AND state = 'approved' ORDER BY id",
                 input.id
             )
-            .fetch_one(&mut *conn)
+            .fetch_all(&mut *conn)
             .await?;
-            if count == 0 {
+            if ids.is_empty() {
                 return Ok(None);
             }
             let before = match row.mailbox_id {
@@ -751,12 +776,17 @@ async fn describe(
                 Some(id) => mailbox_target(conn, id).await?,
                 None => "自动选择邮箱".into(),
             };
-            object(
-                &format!(
+            let targets = email_targets(conn, &ids)
+                .await?
+                .into_iter()
+                .map(|target| format!("{target}；发件邮箱：{before} → {after}"))
+                .collect();
+            Description::new(
+                format!(
                     "更改 1 位导师的发件邮箱：影响已批准还没发出的 {} 封邮件",
-                    count
+                    ids.len()
                 ),
-                format!("{}：{before} → {after}", row.name),
+                targets,
             )
         }
         "saveFirstDraft" | "saveReplyDraft" => {
@@ -856,7 +886,8 @@ async fn changed_recipient(
         r#"SELECT m.name,
             (SELECT address FROM mentor_email
                 WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "old_address?: String",
-            COUNT(*) AS "count!: i64"
+            COUNT(*) AS "count!: i64",
+            json_group_array(e.planned_at ORDER BY e.id) AS "times!: Json<Vec<Option<i64>>>"
         FROM mentor m
         JOIN email e ON e.mentor_id = m.id
         WHERE m.id = ?1 AND e.state = 'approved'
@@ -884,7 +915,12 @@ async fn changed_recipient(
     let after = address.unwrap_or("未填写邮箱");
     Ok(Some(object(
         &action,
-        format!("{}：{before} → {after}（{} 封）", row.name, row.count),
+        format!(
+            "{}：{before} → {after}（{} 封）；原定发送时间：{}",
+            row.name,
+            row.count,
+            sending_times(row.times.0)
+        ),
     )))
 }
 
@@ -902,7 +938,8 @@ async fn imported_recipients(
         r#"SELECT m.name, json_extract(selected.value, '$[1]') AS "address?: String",
             (SELECT address FROM mentor_email
                 WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "old_address?: String",
-            COUNT(*) AS "count!: i64"
+            COUNT(*) AS "count!: i64",
+            json_group_array(e.planned_at ORDER BY e.id) AS "times!: Json<Vec<Option<i64>>>"
         FROM json_each(?) selected
         JOIN mentor m ON m.id = json_extract(selected.value, '$[0]')
         JOIN email e ON e.mentor_id = m.id
@@ -926,7 +963,12 @@ async fn imported_recipients(
         .map(|row| {
             let before = row.old_address.as_deref().unwrap_or("未填写邮箱");
             let after = row.address.as_deref().unwrap_or("未填写邮箱");
-            format!("{}：{before} → {after}（{} 封）", row.name, row.count)
+            format!(
+                "{}：{before} → {after}（{} 封）；原定发送时间：{}",
+                row.name,
+                row.count,
+                sending_times(row.times.0)
+            )
         })
         .collect();
     Ok(Some(Description::new(action, targets)))

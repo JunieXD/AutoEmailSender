@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS material_id, file_name, size FROM material WHERE id = ?",
+  "query": "WITH selected AS (\n            SELECT m.id AS material_id, m.file_name, m.size, j.key AS position,\n                row_number() OVER (PARTITION BY m.file_name ORDER BY j.key) AS named\n            FROM json_each(?) j JOIN material m ON m.id = j.value\n        )\n        SELECT material_id AS \"material_id!\", file_name AS \"file_name!\", size AS \"size!\"\n        FROM selected WHERE named = 1\n        ORDER BY position",
   "describe": {
     "columns": [
       {
-        "name": "material_id",
+        "name": "material_id!",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
@@ -15,7 +15,7 @@
         }
       },
       {
-        "name": "file_name",
+        "name": "file_name!",
         "ordinal": 1,
         "type_info": "Text",
         "origin": {
@@ -26,7 +26,7 @@
         }
       },
       {
-        "name": "size",
+        "name": "size!",
         "ordinal": 2,
         "type_info": "Integer",
         "origin": {
@@ -46,5 +46,5 @@
       false
     ]
   },
-  "hash": "62009c1db7f7996008cdccfe928fafe8f453c1041e0b8fd5ec2e08fd9d84bf58"
+  "hash": "03aa1ad16bf23b4b6d6b7b6f1059c0cbfb6c9acaf9f720da88b04b3f2229dfc7"
 }

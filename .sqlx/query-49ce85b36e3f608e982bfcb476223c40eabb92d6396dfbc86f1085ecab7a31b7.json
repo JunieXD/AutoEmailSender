@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.name, json_extract(selected.value, '$[1]') AS \"address?: String\",\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"old_address?: String\",\n            COUNT(*) AS \"count!: i64\"\n        FROM json_each(?) selected\n        JOIN mentor m ON m.id = json_extract(selected.value, '$[0]')\n        JOIN email e ON e.mentor_id = m.id\n        WHERE e.state = 'approved'\n        GROUP BY m.id\n        ORDER BY m.id",
+  "query": "SELECT m.name, json_extract(selected.value, '$[1]') AS \"address?: String\",\n            (SELECT address FROM mentor_email\n                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS \"old_address?: String\",\n            COUNT(*) AS \"count!: i64\",\n            json_group_array(e.planned_at ORDER BY e.id) AS \"times!: Json<Vec<Option<i64>>>\"\n        FROM json_each(?) selected\n        JOIN mentor m ON m.id = json_extract(selected.value, '$[0]')\n        JOIN email e ON e.mentor_id = m.id\n        WHERE e.state = 'approved'\n        GROUP BY m.id\n        ORDER BY m.id",
   "describe": {
     "columns": [
       {
@@ -36,6 +36,12 @@
         "ordinal": 3,
         "type_info": "Null",
         "origin": "Expression"
+      },
+      {
+        "name": "times!: Json<Vec<Option<i64>>>",
+        "ordinal": 4,
+        "type_info": "Null",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -45,8 +51,9 @@
       false,
       null,
       false,
+      null,
       null
     ]
   },
-  "hash": "8257e217e2539946df9ef8037d00aee18bb44be222153655b084acb72e4ab73d"
+  "hash": "49ce85b36e3f608e982bfcb476223c40eabb92d6396dfbc86f1085ecab7a31b7"
 }

@@ -56,9 +56,7 @@ export type Capacity = { windows: number, emails: number, nextChangeAt: number |
 
 export type Column = { header: string, field: Field | null, };
 
-export type ConfirmationAttachment = { materialId: number | null, fileName: string, size: number, };
-
-export type ConfirmationLetter = { mentorId: number, mentorName: string, address: string | null, mailboxId: number | null, mailboxAddress: string | null, sendAt: SendAt, subject: string, bodyMd: string, attachments: Array<ConfirmationAttachment>,
+export type ConfirmationLetter = { mentorId: number, mentorName: string, address: string | null, mailboxId: number | null, mailboxAddress: string | null, sendAt: SendAt, subject: string, bodyMd: string, attachments: Array<SelectedAttachment>,
 /**
  * The core appends this quote after rendering the new Markdown body.
  */
@@ -653,6 +651,8 @@ export type SchoolProgress = { university: string, contacted: number, replied: n
 export type Scope = { "kind": "filter", "value": MentorFilter } | { "kind": "ids", "value": Array<number> };
 
 export type Security = "tls" | "starttls";
+
+export type SelectedAttachment = { materialId: number, fileName: string, size: number, };
 
 export type SendAt = { "kind": "now" } | { "kind": "at", at: number, } | { "kind": "task", taskId: number, schedule: Schedule, };
 

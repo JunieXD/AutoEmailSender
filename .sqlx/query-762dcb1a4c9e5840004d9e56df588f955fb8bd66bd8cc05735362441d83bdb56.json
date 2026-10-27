@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mailbox_id FROM mentor WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "mailbox_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "mailbox_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "762dcb1a4c9e5840004d9e56df588f955fb8bd66bd8cc05735362441d83bdb56"
+}

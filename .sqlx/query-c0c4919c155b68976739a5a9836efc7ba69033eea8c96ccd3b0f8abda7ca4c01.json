@@ -1,27 +1,27 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT name, mailbox_id FROM mentor WHERE id = ?",
+  "query": "SELECT address, paused_until FROM mailbox WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "name",
+        "name": "address",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "mentor",
-            "name": "name"
+            "table": "mailbox",
+            "name": "address"
           }
         }
       },
       {
-        "name": "mailbox_id",
+        "name": "paused_until",
         "ordinal": 1,
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "mentor",
-            "name": "mailbox_id"
+            "table": "mailbox",
+            "name": "paused_until"
           }
         }
       }
@@ -34,5 +34,5 @@
       true
     ]
   },
-  "hash": "db5d5b46904a57f0e8fcd8b59742f1b18046254826fa9ce280d481bcc13169d1"
+  "hash": "c0c4919c155b68976739a5a9836efc7ba69033eea8c96ccd3b0f8abda7ca4c01"
 }
