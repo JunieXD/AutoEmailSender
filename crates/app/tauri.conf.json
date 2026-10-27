@@ -13,6 +13,8 @@
       {
         "title": "Auto Email Sender",
         "visible": false,
+        "center": true,
+        "preventOverflow": true,
         "width": 1280,
         "height": 820,
         "minWidth": 380,
@@ -30,6 +32,11 @@
     "createUpdaterArtifacts": true,
     "macOS": {
       "signingIdentity": "-"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
     }
   },
   "plugins": {

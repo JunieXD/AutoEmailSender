@@ -45,6 +45,10 @@ try {
             $environment.SetValue('Path', ($entries -join ';'), $kind)
             $marker.DeleteValue('CliPath', $false)
         }
+        if ($action -eq 'uninstall') {
+            # The key holds nothing but the marker.
+            [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKey('Software\AutoEmailSender', $false)
+        }
         $installed = @($entries | Where-Object { SameDirectory $_ }).Count -gt 0
         if ($action -eq 'install' -and -not $installed) {
             # Record intent first so an interrupted installation can still be uninstalled.
