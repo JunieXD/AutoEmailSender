@@ -104,6 +104,7 @@ impl From<account::Error> for CallError {
         let code = match error {
             account::Error::Invalid(_) | account::Error::AccountChanged => ErrorCode::Invalid,
             account::Error::Database(_) | account::Error::Worker(_) => ErrorCode::Internal,
+            account::Error::SignedOut => ErrorCode::SignedOut,
             _ => ErrorCode::External,
         };
         Self {

@@ -9,7 +9,6 @@ import type {
   LibraryUpdate,
   LibraryUpdateField,
 } from "@/api/types";
-import { useAccountRecheck } from "@/components/account";
 import { Differences } from "@/components/differences";
 import { IntakeChoices } from "@/components/intake-choices";
 import { refreshMentors } from "@/components/mentor";
@@ -85,7 +84,6 @@ export function LibraryAddDialog({
     mutationFn: () => call("addLibraryMentors", { ids, decisions: decisions ?? undefined }),
     onSuccess: onDone,
   });
-  useAccountRecheck(again.error ?? add.error);
   const differenceIds = new Set(preview.differences.map((d) => d.id));
   const possible = preview.created + preview.updated + preview.unchanged > 0;
   return (

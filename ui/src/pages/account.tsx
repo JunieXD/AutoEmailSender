@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import { AccountDialog, type AccountMode, useAccount, useAccountRecheck } from "@/components/account";
+import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -43,7 +43,7 @@ export function AccountSection() {
           <Row label="账号">
             <p className="text-sm break-all text-muted-foreground">{state.email}</p>
           </Row>
-          {state.kind === "loggedIn" && <SponsorRow />}
+          {state.kind === "loggedIn" && <SponsorRow key={state.email} email={state.email} />}
           {state.kind === "expired" ? (
             <div className="flex items-center gap-4">
               <p className="text-sm text-warning">登录已失效，请重新登录。</p>
@@ -76,16 +76,15 @@ export function AccountSection() {
   );
 }
 
-/** Sponsorship lives only on the server; paying happens in the browser, so coming back re-reads it. */
-function SponsorRow() {
-  const sponsor = useQuery({ queryKey: ["getSponsor"], queryFn: () => call("getSponsor", {}) });
+/**
+ * Sponsorship lives only on the server; paying happens in the browser, so coming back re-reads it.
+ * It is kept per account, so another login never shows this one's period.
+ */
+function SponsorRow({ email }: { email: string }) {
+  const sponsor = useQuery({ queryKey: ["getSponsor", email], queryFn: () => call("getSponsor", {}) });
   const now = useNow();
   const [claiming, setClaiming] = useState(false);
-  const link = useMutation({
-    mutationFn: () => call("sponsorLink", {}),
-    onSuccess: (url) => void openUrl(url),
-  });
-  useAccountRecheck(sponsor.error ?? link.error);
+  const link = useMutation({ mutationFn: async () => openUrl(await call("sponsorLink", {})) });
   const { refetch } = sponsor;
   useEffect(() => {
     const refresh = () => void refetch({ cancelRefetch: false });
@@ -98,12 +97,12 @@ function SponsorRow() {
     <Row label="赞助">
       {sponsor.error ? (
         <p className="text-sm text-destructive">赞助状态未能读取：{errorMessage(sponsor.error)}</p>
+      ) : sponsor.data ? (
+        <p className="text-sm">
+          {until == null ? "还不是赞助者" : active ? `赞助者，到${endOf(until)}` : `赞助已于${day(until)}到期`}
+        </p>
       ) : (
-        sponsor.data && (
-          <p className="text-sm">
-            {until == null ? "还不是赞助者" : active ? `赞助者，到${endOf(until)}` : `赞助已于${day(until)}到期`}
-          </p>
-        )
+        <p className="text-sm text-muted-foreground">正在读取…</p>
       )}
       <p className="text-sm text-muted-foreground">
         赞助者导师库不限数量、官方模型额度更高，还能用邮件追踪、云端定时发送和云端备份；这些要靠服务器长期运行和持续整理数据。
@@ -118,7 +117,7 @@ function SponsorRow() {
       </div>
       <p className="text-xs text-muted-foreground">在浏览器打开爱发电；链接带着你的账号编号，用来付款后自动开通。</p>
       {link.error && <p className="text-sm text-destructive">未能打开赞助页：{errorMessage(link.error)}</p>}
-      {claiming && <ClaimDialog onClose={() => setClaiming(false)} />}
+      {claiming && <ClaimDialog email={email} onClose={() => setClaiming(false)} />}
     </Row>
   );
 }
@@ -130,19 +129,20 @@ function endOf(until: number): string {
 }
 
 /** Claiming an order paid without the app's link, by the number 爱发电 shows for it. */
-function ClaimDialog({ onClose }: { onClose: () => void }) {
+function ClaimDialog({ email, onClose }: { email: string; onClose: () => void }) {
   const [orderNumber, setOrderNumber] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const claim = useMutation({
     mutationFn: () => call("claimSponsorOrder", { orderNumber }),
-    onSuccess: (sponsor) => {
-      queryClient.setQueryData(["getSponsor"], sponsor);
+    onSuccess: async (sponsor) => {
+      // A read already on its way may carry the period from before the claim.
+      await queryClient.cancelQueries({ queryKey: ["getSponsor", email] });
+      queryClient.setQueryData(["getSponsor", email], sponsor);
       void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
       onClose();
     },
   });
-  useAccountRecheck(claim.error);
   return (
     <Dialog open onOpenChange={formClose(orderNumber !== "", claim.isPending, onClose)}>
       <DialogContent className="w-[460px]" initialFocus={inputRef}>

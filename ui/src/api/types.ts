@@ -172,7 +172,7 @@ export type EnrichState = "none" | "queued" | "running" | "done";
 
 export type Entry = { "email": Email } | { "message": Message } | { "todo": Todo };
 
-export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "needs_agreement" | "internal";
+export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "signed_out" | "needs_agreement" | "internal";
 
 export type Evidence = { url: string, name: string, emails: Array<string>, research: string | null, };
 

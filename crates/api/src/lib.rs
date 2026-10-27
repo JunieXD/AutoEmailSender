@@ -99,6 +99,9 @@ pub enum ErrorCode {
     /// A service outside the app, such as a mail server, did not do what was asked; the message
     /// says why and what to do.
     External,
+    /// The official server no longer accepts this computer's login; the account now reads as
+    /// expired.
+    SignedOut,
     NeedsAgreement,
     Internal,
 }

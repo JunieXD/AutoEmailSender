@@ -14,6 +14,11 @@ export function errorMessage(error: unknown): string {
   return isCallError(error) ? error.message : String(error);
 }
 
+/** The official server no longer accepts this computer's login. */
+export function isSignedOut(error: unknown): boolean {
+  return isCallError(error) && error.code === "signed_out";
+}
+
 function isCallError(error: unknown): error is CallError {
   return typeof error === "object" && error !== null && "message" in error && typeof error.message === "string";
 }

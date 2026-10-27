@@ -11,14 +11,6 @@ export function useAccount() {
   return useQuery({ queryKey: ["getAccount"], queryFn: () => call("getAccount", {}) });
 }
 
-/** A session the server no longer accepts turns account-gated places back to logging in. */
-export function useAccountRecheck(error: unknown) {
-  const client = useQueryClient();
-  useEffect(() => {
-    if (error) void client.invalidateQueries({ queryKey: ["getAccount"] });
-  }, [error, client]);
-}
-
 export type AccountMode = "login" | "register" | "reset";
 
 const MODES = {
