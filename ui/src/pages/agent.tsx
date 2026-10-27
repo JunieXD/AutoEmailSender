@@ -186,19 +186,19 @@ function McpDialog({ client, onClose, onWritten }: { client: McpClient; onClose:
 function CliRow() {
   const queryClient = useQueryClient();
   const cli = useQuery({ queryKey: ["getAgentCli"], queryFn: () => call("getAgentCli", {}) });
-  const onSuccess = (data: AgentCli) => queryClient.setQueryData(["getAgentCli"], data);
-  const install = useMutation({ mutationFn: () => call("installAgentCli", {}), onSuccess });
-  const uninstall = useMutation({ mutationFn: () => call("uninstallAgentCli", {}), onSuccess });
-  const busy = !cli.data || install.isPending || uninstall.isPending;
-  const failed = install.error ?? uninstall.error;
+  const change = useMutation({
+    mutationFn: (op: "installAgentCli" | "uninstallAgentCli") => call(op, {}),
+    onSuccess: (data: AgentCli) => queryClient.setQueryData(["getAgentCli"], data),
+  });
+  const busy = !cli.data || change.isPending;
   const state = cli.data?.state;
   return (
     <Row label="命令行">
       <p className="text-sm text-muted-foreground">
         {state?.kind === "installed" ? (
           <>
-            已安装，在终端里输入 <code>autoemail</code> 使用，比如 <code>autoemail list</code> 列出能做的事。装在{" "}
-            <span className="break-all">{cli.data?.location}</span>。
+            已安装，在{MAC ? "" : "新开的"}终端里输入 <code>autoemail</code> 使用，比如 <code>autoemail list</code>{" "}
+            列出能做的事。装在 <span className="break-all">{cli.data?.location}</span>。
           </>
         ) : state?.kind === "oldLocation" ? (
           <>
@@ -211,28 +211,28 @@ function CliRow() {
             已经是别的程序，为了不覆盖它没有安装。把它删掉或改名后，回到这里安装。
           </>
         ) : (
-          `给只能运行命令的 Agent 和脚本用。装好后在终端里直接输入 autoemail 就能用。${MAC ? "安装时可能要输入电脑的密码。" : ""}`
+          `给只能运行命令的 Agent 和脚本用。${MAC ? "装好后在终端里直接输入 autoemail 就能用，安装时可能要输入电脑的密码。" : "装好后在新开的终端里直接输入 autoemail 就能用。"}`
         )}
       </p>
       <div className="flex gap-2">
         {(state === undefined || state.kind === "notInstalled") && (
-          <Button variant="quiet" disabled={busy} onClick={() => install.mutate()}>
+          <Button variant="quiet" disabled={busy} onClick={() => change.mutate("installAgentCli")}>
             安装命令行工具
           </Button>
         )}
         {state?.kind === "oldLocation" && (
-          <Button variant="quiet" disabled={busy} onClick={() => install.mutate()}>
+          <Button variant="quiet" disabled={busy} onClick={() => change.mutate("installAgentCli")}>
             更新
           </Button>
         )}
         {(state?.kind === "installed" || state?.kind === "oldLocation") && (
-          <Button variant="quiet" disabled={busy} onClick={() => uninstall.mutate()}>
+          <Button variant="quiet" disabled={busy} onClick={() => change.mutate("uninstallAgentCli")}>
             卸载
           </Button>
         )}
       </div>
       {cli.error && <p className="text-sm text-destructive">未能读取：{errorMessage(cli.error)}</p>}
-      {failed && <p className="text-sm text-destructive">{errorMessage(failed)}</p>}
+      {change.error && <p className="text-sm text-destructive">{errorMessage(change.error)}</p>}
     </Row>
   );
 }
