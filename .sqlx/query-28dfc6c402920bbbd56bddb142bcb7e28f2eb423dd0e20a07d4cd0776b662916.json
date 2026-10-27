@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "WITH chosen AS (\n            SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS field\n            FROM json_each(?1)\n        )\n        SELECT a.mentor_id, a.university, a.school, a.department, a.title\n        FROM mentor_affiliation a\n        WHERE a.mentor_id IN (SELECT id FROM chosen WHERE field IN ('title', 'primaryAffiliation'))\n            AND (a.mentor_id IN (SELECT id FROM chosen WHERE field = 'title')\n                OR a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = a.mentor_id))\n        ORDER BY a.mentor_id, a.position",
+  "query": "SELECT mentor_id, university, school, department, title\n        FROM mentor_affiliation WHERE mentor_id IN (SELECT value FROM json_each(?))\n        ORDER BY mentor_id, position",
   "describe": {
     "columns": [
       {
@@ -70,5 +70,5 @@
       true
     ]
   },
-  "hash": "4ecde8b34b5056c18689e1291eb0391ae22372e0f9d052ac1e9ede13bb007063"
+  "hash": "28dfc6c402920bbbd56bddb142bcb7e28f2eb423dd0e20a07d4cd0776b662916"
 }

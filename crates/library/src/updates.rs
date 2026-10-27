@@ -34,7 +34,7 @@ pub(crate) enum Value {
     Affiliation(Affiliation),
 }
 
-fn same_text(a: Option<&str>, b: Option<&str>) -> bool {
+pub(crate) fn same_text(a: Option<&str>, b: Option<&str>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => same(a, b),
         (None, None) => true,
@@ -43,11 +43,11 @@ fn same_text(a: Option<&str>, b: Option<&str>) -> bool {
 }
 
 impl Value {
-    pub(crate) fn same(&self, other: &Self) -> bool {
-        match (self, other) {
+    fn is_current(&self, local: &Self, affiliations: &[Affiliation]) -> bool {
+        match (self, local) {
             (Self::Text(a), Self::Text(b)) => same_text(a.as_deref(), b.as_deref()),
-            (Self::Affiliation(a), Self::Affiliation(b)) => {
-                affiliation_position(std::slice::from_ref(a), b).is_some()
+            (Self::Affiliation(unit), Self::Affiliation(_)) => {
+                affiliation_position(affiliations, unit) == Some(0)
             }
             _ => false,
         }
@@ -148,40 +148,17 @@ struct Current {
     affiliations: Vec<Affiliation>,
 }
 
-impl From<&Profile> for Current {
-    fn from(profile: &Profile) -> Self {
-        Self {
-            id: profile.id,
-            name: profile.fields.name.clone(),
-            research: profile.fields.research.clone(),
-            source_url: profile.source_url.clone(),
-            email: profile.fields.emails.first().cloned(),
-            affiliations: profile.fields.affiliations.clone(),
-        }
-    }
-}
-
 async fn current_profiles(
     conn: &mut SqliteConnection,
-    scope: &[(i64, Field)],
+    ids: &[i64],
 ) -> Result<BTreeMap<i64, Current>, sqlx::Error> {
-    let scope = Json(scope);
     let mut profiles: BTreeMap<_, _> = sqlx::query!(
-        r#"WITH chosen AS (
-            SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS field
-            FROM json_each(?1)
-        )
-        SELECT m.id, m.name,
-            CASE WHEN m.id IN (SELECT id FROM chosen WHERE field = 'research')
-                THEN (SELECT research FROM mentor_detail WHERE mentor_id = m.id)
-                END AS "research?: String",
-            CASE WHEN m.id IN (SELECT id FROM chosen WHERE field = 'sourceUrl')
-                THEN m.source_url END AS "source_url?: String",
-            CASE WHEN m.id IN (SELECT id FROM chosen WHERE field = 'primaryEmail')
-                THEN (SELECT address FROM mentor_email WHERE mentor_id = m.id ORDER BY position LIMIT 1)
-                END AS "email?: String"
-        FROM mentor m WHERE m.id IN (SELECT id FROM chosen)"#,
-        scope
+        r#"SELECT m.id, m.name, m.source_url, d.research,
+            (SELECT address FROM mentor_email WHERE mentor_id = m.id
+                ORDER BY position LIMIT 1) AS "email?: String"
+        FROM mentor m JOIN mentor_detail d ON d.mentor_id = m.id
+        WHERE m.id IN (SELECT value FROM json_each(?))"#,
+        Json(ids)
     )
     .fetch_all(&mut *conn)
     .await?
@@ -201,17 +178,10 @@ async fn current_profiles(
     })
     .collect();
     for row in sqlx::query!(
-        r#"WITH chosen AS (
-            SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS field
-            FROM json_each(?1)
-        )
-        SELECT a.mentor_id, a.university, a.school, a.department, a.title
-        FROM mentor_affiliation a
-        WHERE a.mentor_id IN (SELECT id FROM chosen WHERE field IN ('title', 'primaryAffiliation'))
-            AND (a.mentor_id IN (SELECT id FROM chosen WHERE field = 'title')
-                OR a.position = (SELECT min(position) FROM mentor_affiliation WHERE mentor_id = a.mentor_id))
-        ORDER BY a.mentor_id, a.position"#,
-        scope
+        r#"SELECT mentor_id, university, school, department, title
+        FROM mentor_affiliation WHERE mentor_id IN (SELECT value FROM json_each(?))
+        ORDER BY mentor_id, position"#,
+        Json(ids)
     )
     .fetch_all(&mut *conn)
     .await?
@@ -230,43 +200,24 @@ async fn current_profiles(
     Ok(profiles)
 }
 
-fn current(
-    field: Field,
-    text: Option<String>,
-    affiliations: &[Affiliation],
-    unit: Option<&Affiliation>,
-) -> Option<Value> {
-    Some(match field {
-        Field::Name | Field::Research | Field::SourceUrl | Field::PrimaryEmail => Value::Text(text),
-        Field::PrimaryAffiliation => affiliations
+fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
+    let local = match pending.field {
+        Field::Name => Value::Text(Some(profile.name.clone())),
+        Field::Research => Value::Text(profile.research.clone()),
+        Field::SourceUrl => Value::Text(profile.source_url.clone()),
+        Field::PrimaryEmail => Value::Text(profile.email.clone()),
+        Field::PrimaryAffiliation => profile
+            .affiliations
             .first()
             .cloned()
             .map(Value::Affiliation)
             .unwrap_or(Value::Text(None)),
-        Field::Title => Value::Text(
-            affiliations
-                .get(affiliation_position(affiliations, unit?)?)?
-                .title
-                .clone(),
-        ),
-    })
-}
-
-fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
-    let text = match pending.field {
-        Field::Name => Some(profile.name.clone()),
-        Field::Research => profile.research.clone(),
-        Field::SourceUrl => profile.source_url.clone(),
-        Field::PrimaryEmail => profile.email.clone(),
-        Field::Title | Field::PrimaryAffiliation => None,
+        Field::Title => {
+            let position = affiliation_position(&profile.affiliations, pending.unit.as_ref()?)?;
+            Value::Text(profile.affiliations[position].title.clone())
+        }
     };
-    let local = current(
-        pending.field,
-        text,
-        &profile.affiliations,
-        pending.unit.as_ref(),
-    )?;
-    if local.same(&pending.incoming) {
+    if pending.incoming.is_current(&local, &profile.affiliations) {
         return None;
     }
     Some(Update {
@@ -277,15 +228,15 @@ fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
         affiliation: pending.unit.clone(),
         local: local.display(),
         incoming: pending.incoming.display(),
-        take: local.same(&pending.original),
+        take: pending.original.is_current(&local, &profile.affiliations),
     })
 }
 
 pub async fn list(db: &SqlitePool) -> Result<Vec<Group>, sqlx::Error> {
     let mut tx = db.begin().await?;
     let rows = pending(&mut tx, None).await?;
-    let scope: Vec<_> = rows.iter().map(|r| (r.mentor_id, r.field)).collect();
-    let profiles = current_profiles(&mut tx, &scope).await?;
+    let ids: Vec<_> = rows.iter().map(|r| r.mentor_id).collect();
+    let profiles = current_profiles(&mut tx, &ids).await?;
     let mut groups = BTreeMap::<Field, Vec<Update>>::new();
     for row in rows {
         if let Some(update) = visible(&row, &profiles[&row.mentor_id]) {
@@ -340,6 +291,7 @@ pub async fn plan(conn: &mut SqliteConnection, choices: &Choices) -> Result<Plan
     let selected: Vec<_> = choices.choices.iter().map(|c| c.update_id).collect();
     let rows = pending(conn, Some(&selected)).await?;
     let ids: Vec<_> = rows.iter().map(|r| r.mentor_id).collect();
+    let current = current_profiles(conn, &ids).await?;
     let before = mentor::export::profiles(conn, &ids).await?;
     let mut after = before.clone();
     let mut applied = Vec::new();
@@ -348,7 +300,7 @@ pub async fn plan(conn: &mut SqliteConnection, choices: &Choices) -> Result<Plan
             .iter()
             .find(|r| r.id == choice.update_id)
             .ok_or_else(|| Error::Invalid("待处理更新已变化，请刷新后重新选择。".into()))?;
-        let Some(mut displayed) = visible(row, &Current::from(&before[&row.mentor_id])) else {
+        let Some(mut displayed) = visible(row, &current[&row.mentor_id]) else {
             applied.push(row.id);
             continue;
         };
@@ -449,6 +401,12 @@ pub(crate) async fn readded(
     )
     .fetch_all(&mut *conn)
     .await?;
+    let affiliations: Vec<_> = record
+        .preview
+        .units
+        .iter()
+        .map(crate::affiliation)
+        .collect();
     for preference in preferences {
         let incoming = match preference.field {
             Field::PrimaryEmail => record.emails.first().cloned().map(|v| Value::Text(Some(v))),
@@ -460,7 +418,9 @@ pub(crate) async fn readded(
                 .map(Value::Affiliation),
             _ => unreachable!("only preference fields selected"),
         };
-        if let Some(incoming) = incoming.filter(|v| !v.same(&preference.original)) {
+        if let Some(incoming) =
+            incoming.filter(|v| !preference.original.is_current(v, &affiliations))
+        {
             sqlx::query!(
                 "UPDATE library_update SET incoming = ? WHERE id = ?",
                 Json(incoming),
@@ -477,70 +437,15 @@ pub(crate) async fn readded(
     Ok(())
 }
 
-#[derive(Deserialize)]
-struct Comparison(
-    i64,
-    Option<String>,
-    Option<String>,
-    Option<Affiliation>,
-    Option<Affiliation>,
-    Option<Vec<Affiliation>>,
-    Option<Affiliation>,
-);
-
 pub async fn count(db: &SqlitePool) -> Result<i64, sqlx::Error> {
-    // One aggregate crosses the SQLite worker boundary once for the whole comparison set.
-    let Json(rows) = sqlx::query_scalar!(
-        r#"SELECT json_group_array(json_array(l.mentor_id,
-            CASE u.field
-                WHEN 'name' THEN m.name
-                WHEN 'research' THEN (SELECT research
-                    FROM mentor_detail INDEXED BY mentor_detail_library_research
-                    WHERE mentor_id = m.id)
-                WHEN 'sourceUrl' THEN m.source_url
-                WHEN 'primaryEmail' THEN (SELECT address FROM mentor_email
-                    WHERE mentor_id = m.id ORDER BY position LIMIT 1)
-                END,
-            CASE WHEN u.field <> 'primaryAffiliation' THEN json_extract(u.incoming, '$') END,
-            json(CASE WHEN u.field = 'primaryAffiliation' THEN (
-                SELECT json_object('university', university, 'school', school,
-                    'department', department, 'title', title)
-                FROM mentor_affiliation WHERE mentor_id = m.id ORDER BY position LIMIT 1
-            ) END),
-            json(CASE WHEN u.field = 'primaryAffiliation' THEN u.incoming END),
-            json(CASE WHEN u.field = 'title' THEN (
-                SELECT json_group_array(json_object('university', university, 'school', school,
-                    'department', department, 'title', title) ORDER BY position)
-                FROM mentor_affiliation WHERE mentor_id = m.id
-            ) END),
-            json(CASE WHEN u.field = 'title' THEN json_object(
-                'university', nullif(u.university, ''), 'school', nullif(u.school, ''),
-                'department', nullif(u.department, ''), 'title', NULL
-            ) END))) AS "comparisons!: Json<Vec<Comparison>>"
-        FROM library_update u
-        CROSS JOIN mentor_library l INDEXED BY mentor_library_lookup ON l.library_id = u.library_id
-        CROSS JOIN mentor m ON m.id = l.mentor_id
-        WHERE m.trashed_at IS NULL"#
-    )
-    .fetch_one(db)
-    .await?;
-    let mut ids = std::collections::BTreeSet::new();
-    for Comparison(mentor, local, incoming, primary, incoming_unit, affiliations, unit) in rows {
-        let different = if let Some(incoming_unit) = incoming_unit {
-            affiliation_position(primary.as_slice(), &incoming_unit).is_none()
-        } else if let Some(unit) = unit {
-            let affiliations =
-                affiliations.unwrap_or_else(|| unreachable!("title query includes units"));
-            let Some(position) = affiliation_position(&affiliations, &unit) else {
-                continue;
-            };
-            !same_text(affiliations[position].title.as_deref(), incoming.as_deref())
-        } else {
-            !same_text(local.as_deref(), incoming.as_deref())
-        };
-        if different {
-            ids.insert(mentor);
-        }
-    }
+    let mut tx = db.begin().await?;
+    let rows = pending(&mut tx, None).await?;
+    let ids: Vec<_> = rows.iter().map(|r| r.mentor_id).collect();
+    let profiles = current_profiles(&mut tx, &ids).await?;
+    let ids: std::collections::BTreeSet<_> = rows
+        .iter()
+        .filter_map(|row| visible(row, &profiles[&row.mentor_id]))
+        .map(|update| update.id)
+        .collect();
     Ok(ids.len() as i64)
 }

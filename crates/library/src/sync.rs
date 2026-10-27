@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, MutexGuard};
 
 use crate::{
     Error,
-    updates::{Field, Value},
+    updates::{Field, Value, same_text},
 };
 
 const DAY: i64 = 24 * 60 * 60 * 1000;
@@ -226,6 +226,7 @@ pub async fn process(
                 }
                 local.clone_from(&b);
             }
+            let different = !same_text(local.as_deref(), b.as_deref());
             pending(
                 conn,
                 &change.id,
@@ -233,29 +234,32 @@ pub async fn process(
                 None,
                 Value::Text(a),
                 Value::Text(b),
-                Value::Text(local),
+                different,
             )
             .await?;
         }
         for unit in &new.fields.affiliations {
-            if let Some(old_position) = affiliation_position(&old.fields.affiliations, unit)
-                && old.fields.affiliations[old_position].title != unit.title
-                && let Some(position) = affiliation_position(&after.fields.affiliations, unit)
-            {
-                let local = &mut after.fields.affiliations[position];
-                if local.title.is_none() {
-                    local.title.clone_from(&unit.title);
+            if let Some(old_position) = affiliation_position(&old.fields.affiliations, unit) {
+                let old_unit = &old.fields.affiliations[old_position];
+                move_title(conn, &change.id, old_unit, unit).await?;
+                if old_unit.title != unit.title
+                    && let Some(position) = affiliation_position(&after.fields.affiliations, unit)
+                {
+                    let local = &mut after.fields.affiliations[position];
+                    if local.title.is_none() {
+                        local.title.clone_from(&unit.title);
+                    }
+                    pending(
+                        conn,
+                        &change.id,
+                        Field::Title,
+                        Some(unit),
+                        Value::Text(old_unit.title.clone()),
+                        Value::Text(unit.title.clone()),
+                        !same_text(local.title.as_deref(), unit.title.as_deref()),
+                    )
+                    .await?;
                 }
-                pending(
-                    conn,
-                    &change.id,
-                    Field::Title,
-                    Some(unit),
-                    Value::Text(old.fields.affiliations[old_position].title.clone()),
-                    Value::Text(unit.title.clone()),
-                    Value::Text(local.title.clone()),
-                )
-                .await?;
             }
         }
         if new.fields.emails.is_empty() {
@@ -276,31 +280,19 @@ pub async fn process(
                 None,
                 Value::Text(old.fields.emails.first().cloned()),
                 Value::Text(Some(email.clone())),
-                Value::Text(after.fields.emails.first().cloned()),
+                !same_text(after.fields.emails.first().map(String::as_str), Some(email)),
             )
             .await?;
         }
         if new.fields.affiliations.is_empty() {
             clear_preference(conn, &change.id, Field::PrimaryAffiliation).await?;
-        } else if old.fields.affiliations.first() != new.fields.affiliations.first()
-            && let Some(unit) = new.fields.affiliations.first()
-            && !old
-                .fields
-                .affiliations
-                .first()
-                .is_some_and(|a| affiliation_position(std::slice::from_ref(a), unit).is_some())
+        } else if let Some(unit) = new.fields.affiliations.first()
+            && affiliation_position(&old.fields.affiliations, unit) != Some(0)
         {
             if after.fields.affiliations.is_empty() {
                 after.fields.affiliations.push(unit.clone());
             }
             let original = old
-                .fields
-                .affiliations
-                .first()
-                .cloned()
-                .map(Value::Affiliation)
-                .unwrap_or(Value::Text(None));
-            let local = after
                 .fields
                 .affiliations
                 .first()
@@ -314,7 +306,7 @@ pub async fn process(
                 None,
                 original,
                 Value::Affiliation(unit.clone()),
-                local,
+                affiliation_position(&after.fields.affiliations, unit) != Some(0),
             )
             .await?;
         }
@@ -385,20 +377,9 @@ async fn pending(
     unit: Option<&mentor::Affiliation>,
     original: Value,
     incoming: Value,
-    local: Value,
+    different: bool,
 ) -> Result<(), sqlx::Error> {
-    let university = unit
-        .and_then(|a| a.university.as_deref())
-        .map(comparable)
-        .unwrap_or_default();
-    let school = unit
-        .and_then(|a| a.school.as_deref())
-        .map(comparable)
-        .unwrap_or_default();
-    let department = unit
-        .and_then(|a| a.department.as_deref())
-        .map(comparable)
-        .unwrap_or_default();
+    let [university, school, department] = unit_key(unit);
     sqlx::query!(
         r#"INSERT INTO library_update (library_id, field, university, school, department, original, incoming)
         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
@@ -414,10 +395,48 @@ async fn pending(
         department,
         Json(original),
         Json(&incoming),
-        !local.same(&incoming)
+        different
     )
     .execute(conn)
     .await?;
+    Ok(())
+}
+
+fn unit_key(unit: Option<&mentor::Affiliation>) -> [String; 3] {
+    [
+        unit.and_then(|a| a.university.as_deref()),
+        unit.and_then(|a| a.school.as_deref()),
+        unit.and_then(|a| a.department.as_deref()),
+    ]
+    .map(|value| value.map(comparable).unwrap_or_default())
+}
+
+async fn move_title(
+    conn: &mut SqliteConnection,
+    library: &str,
+    old: &mentor::Affiliation,
+    new: &mentor::Affiliation,
+) -> Result<(), sqlx::Error> {
+    let old = unit_key(Some(old));
+    let new = unit_key(Some(new));
+    if old != new {
+        let [university, school, department] = new;
+        let [old_university, old_school, old_department] = old;
+        sqlx::query!(
+            r#"UPDATE library_update SET university = ?, school = ?, department = ?
+            WHERE library_id = ? AND field = 'title'
+                AND university = ? AND school = ? AND department = ?"#,
+            university,
+            school,
+            department,
+            library,
+            old_university,
+            old_school,
+            old_department
+        )
+        .execute(conn)
+        .await?;
+    }
     Ok(())
 }
 

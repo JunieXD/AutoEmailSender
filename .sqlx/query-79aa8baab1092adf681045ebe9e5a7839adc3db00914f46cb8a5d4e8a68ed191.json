@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE library_update SET university = ?, school = ?, department = ?\n            WHERE library_id = ? AND field = 'title'\n                AND university = ? AND school = ? AND department = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "79aa8baab1092adf681045ebe9e5a7839adc3db00914f46cb8a5d4e8a68ed191"
+}

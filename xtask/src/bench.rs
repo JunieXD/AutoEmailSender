@@ -212,7 +212,7 @@ pub async fn run(path: &Path) -> Result {
     report(
         "导师库，7406 位待处理（10 万导师）",
         median(async || library::updates::count(&db).await.map(drop)).await?,
-        home,
+        Duration::from_millis(100),
     );
 
     let mut university = page(None, None, 1);

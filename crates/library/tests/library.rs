@@ -890,6 +890,74 @@ async fn sync_appends_emails_without_changing_an_approved_recipient(db: SqlitePo
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn completing_a_unit_keeps_the_earliest_title_and_latest_default_choice(db: SqlitePool) {
+    let (client, mut server) = setup(&db).await;
+    let mut row = record("mentor_one", "导师", "one@demo.edu.example");
+    adding(&client, &mut server, &db, vec![row.clone()], vec![]).await;
+    let id = mentor_id(&db, "mentor_one").await;
+    row.preview.units[0].title = Some("教授".into());
+    change(&db, row.clone(), 2).await;
+    row.preview.units[0].school = Some("计算机学院".into());
+    row.preview.units[0].title = Some("研究员".into());
+    change(&db, row, 3).await;
+    let groups = updates::list(&db).await.unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].field, updates::Field::Title);
+    assert_eq!(groups[0].differences.len(), 1);
+    assert_eq!(groups[0].differences[0].incoming, "研究员");
+    assert!(groups[0].differences[0].take);
+    updates::apply(
+        &db,
+        &updates::Choices {
+            choices: groups.into_iter().flat_map(|g| g.differences).collect(),
+        },
+        40,
+    )
+    .await
+    .unwrap();
+    let local = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(local.affiliations[0].title.as_deref(), Some("研究员"));
+    assert_eq!(updates::count(&db).await.unwrap(), 0);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn swapping_compatible_units_changes_the_primary_unit(db: SqlitePool) {
+    let (client, mut server) = setup(&db).await;
+    let mut row = record("mentor_one", "导师", "one@demo.edu.example");
+    let mut specific = row.preview.units[0].clone();
+    specific.school = Some("计算机学院".into());
+    row.preview.units.push(specific);
+    adding(&client, &mut server, &db, vec![row.clone()], vec![]).await;
+    let id = mentor_id(&db, "mentor_one").await;
+    row.preview.units.swap(0, 1);
+    change(&db, row.clone(), 2).await;
+    let groups = updates::list(&db).await.unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].field, updates::Field::PrimaryAffiliation);
+    assert_eq!(groups[0].differences.len(), 1);
+    assert!(groups[0].differences[0].take);
+    assert_eq!(updates::count(&db).await.unwrap(), 1);
+    row.revision = 3;
+    adding(&client, &mut server, &db, vec![row], vec![]).await;
+    let groups = updates::list(&db).await.unwrap();
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].field, updates::Field::PrimaryAffiliation);
+    assert!(groups[0].differences[0].take);
+    updates::apply(
+        &db,
+        &updates::Choices {
+            choices: groups.into_iter().flat_map(|g| g.differences).collect(),
+        },
+        30,
+    )
+    .await
+    .unwrap();
+    let local = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(local.affiliations[0].school.as_deref(), Some("计算机学院"));
+    assert_eq!(updates::count(&db).await.unwrap(), 0);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn compatible_local_units_receive_title_updates_and_prefer_exact_matches(db: SqlitePool) {
     let (client, mut server) = setup(&db).await;
     let mut row = record("mentor_one", "导师", "one@demo.edu.example");

@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT m.id, m.name, m.source_url, d.research,\n            (SELECT address FROM mentor_email WHERE mentor_id = m.id\n                ORDER BY position LIMIT 1) AS \"email?: String\"\n        FROM mentor m JOIN mentor_detail d ON d.mentor_id = m.id\n        WHERE m.id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "source_url",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "source_url"
+          }
+        }
+      },
+      {
+        "name": "research",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_detail",
+            "name": "research"
+          }
+        }
+      },
+      {
+        "name": "email?: String",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor_email",
+            "name": "address"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9d2a72d500fc8e9d111b654c37af1bb48f94f445a78018d3e8aa4f9d3a3aa9cd"
+}
