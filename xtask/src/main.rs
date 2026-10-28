@@ -88,3 +88,11 @@ async fn seed() -> Result {
     println!("已生成 300 位导师、往来邮件、定时任务、追问任务、单独追问草稿和抓取候选");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn generated_types_are_current() -> super::Result {
+        super::types(true)
+    }
+}
