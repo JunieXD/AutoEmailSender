@@ -180,7 +180,7 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
         (
             Ok(RenderedPage {
                 url: site.url("/").as_str().into(),
-                html: include_str!("../../../tests/integration/pages/bupt.html").into(),
+                html: include_str!("../../../tests/pages/bupt.html").into(),
             }),
             "验证",
         ),

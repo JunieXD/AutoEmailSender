@@ -907,10 +907,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls() {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     let site = Site::new().await;
-    site.page(
-        "/",
-        include_str!("../../tests/integration/pages/toronto.html"),
-    );
+    site.page("/", include_str!("../../tests/pages/toronto.html"));
     let mut p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
     let id = queue::start(&db, &[site.url("/")], config, 1)
@@ -2061,10 +2058,7 @@ async fn expect_completed_profile(
 async fn b4_slash_english_from_real_sample_should_complete(db: SqlitePool) {
     let site = Site::new().await;
     site.redirect("/profile", "/profile/");
-    site.page(
-        "/profile/",
-        include_str!("../../tests/integration/pages/nju.html"),
-    );
+    site.page("/profile/", include_str!("../../tests/pages/nju.html"));
     let (claim, server) = profile_from_list(
         &db,
         &site,

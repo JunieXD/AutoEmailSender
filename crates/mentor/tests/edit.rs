@@ -1,7 +1,9 @@
 // Marks the whole file as test code, so clippy's test allowances cover it.
 #![cfg(test)]
 
-use super::common::names;
+mod common;
+
+use common::names;
 use mentor::{Affiliation, MentorFields, MentorForm, SaveError};
 use sqlx::SqlitePool;
 use test_fixtures::mail::mailbox;
