@@ -18,8 +18,10 @@ const USAGE: &str = "Auto Email Sender：联系导师的本机 Agent 接口
 先 list，再 help 查看输入，最后 call。需要确认时请在应用里回答，最多等 5 分钟。
 使用 list、help 和 call 前，请打开应用并在设置里允许 Agent 连接。";
 
-// PowerShell decodes piped native output with the console code page, which is GBK on Chinese Windows.
-const POWERSHELL_HINT: &str = "在 PowerShell 里把输出交给其他命令（如 ConvertFrom-Json）或存进变量时，
+// PowerShell decodes native output that it pipes, captures or (before 7.4) redirects with the
+// console code page, which is GBK on Chinese Windows.
+const POWERSHELL_HINT: &str =
+    "在 PowerShell 里把输出交给其他命令（如 ConvertFrom-Json）、存进变量或用 > 写进文件时，
 先运行 [Console]::OutputEncoding = [Text.Encoding]::UTF8，否则中文会乱码。";
 
 #[tokio::main(flavor = "current_thread")]
