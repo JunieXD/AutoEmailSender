@@ -53,6 +53,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 - [导师抓取 Skill](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)
 - [下载桌面版](https://github.com/JunieXD/AutoEmailSender/releases)
 - [问题反馈](https://github.com/JunieXD/AutoEmailSender/issues)
+- [在爱发电赞助](https://afdian.com/a/juniexd)：本地功能一直免费，赞助用来支付服务器和导师库的整理
 - QQ 交流群：`952383261`
 
 ## 交流与反馈
