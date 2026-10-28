@@ -1,7 +1,7 @@
 ; Macros expand inside the generated installer script, so capture this file's directory here.
 !define HOOKS_DIR "${__FILEDIR__}"
 
-; Updates uninstall with /UPDATE and reinstall in place, so they keep the login item and the CLI.
+; Like the template's own cleanup, keep the login item and the CLI when uninstalling with /UPDATE.
 !macro NSIS_HOOK_POSTUNINSTALL
   ${If} $UpdateMode <> 1
     ; tauri-plugin-autostart names the login item after the bundle identifier.
