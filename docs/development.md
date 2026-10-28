@@ -58,6 +58,7 @@
 - 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
 - `pnpm check` 先用迁移重建 `target/sqlx.db`，再让 clippy 的同一次编译连接这个本地库，将所有 target 的查询元数据写进 `target/sqlx-check`，与 `.sqlx` 的文件集合和 JSON 内容比较；缺失、多余或内容不同都报错，不再单独运行一次 `cargo sqlx prepare --check`。检查脚本与 SQLx CLI 一样更新 workspace target 入口文件的修改时间，确保增量编译也重新执行查询宏；平常的开发编译仍然离线。
+- 工作区没有文档测试；`pnpm check` 的 Rust 测试显式选择 `--lib --bins --tests`，避免为每个 library 启动一次 rustdoc。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 - 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
 - CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
