@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
+import type { Duration, Sponsor, SponsorTier } from "@/api/types";
 import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
@@ -27,9 +28,7 @@ export function AccountSection() {
       {account.error && <p className="text-sm text-destructive">账号未能读取：{errorMessage(account.error)}</p>}
       {state?.kind === "loggedOut" && (
         <>
-          <p className="text-sm text-muted-foreground">
-            登录后可以用导师库、官方模型额度和手机远程；赞助者还有邮件追踪、云端定时发送和云端备份。本机的功能都不用登录。
-          </p>
+          <p className="text-sm text-muted-foreground">本机的功能都不用登录。登录后还能用导师库。</p>
           <div className="flex gap-2">
             <Button onClick={() => setDialog("login")}>登录</Button>
             <Button variant="quiet" onClick={() => setDialog("register")}>
@@ -43,7 +42,12 @@ export function AccountSection() {
           <Row label="账号">
             <p className="text-sm break-all text-muted-foreground">{state.email}</p>
           </Row>
-          {state.kind === "loggedIn" && <SponsorRow key={state.email} email={state.email} />}
+          {state.kind === "loggedIn" && (
+            <>
+              <SponsorRow key={state.email} email={state.email} />
+              <InviteRow key={`invite ${state.email}`} email={state.email} />
+            </>
+          )}
           {state.kind === "expired" ? (
             <div className="flex items-center gap-4">
               <p className="text-sm text-warning">登录已失效，请重新登录。</p>
@@ -79,18 +83,16 @@ export function AccountSection() {
 /**
  * Sponsorship lives only on the server; paying happens in the browser, so coming back re-reads it.
  * It is kept per account, so another login never shows this one's period.
+ * Only the perks already built are named here; docs/ui.md has the full list.
  */
 function SponsorRow({ email }: { email: string }) {
   const sponsor = useQuery({ queryKey: ["getSponsor", email], queryFn: () => call("getSponsor", {}) });
+  const tiers = useQuery({ queryKey: ["getSponsorTiers", email], queryFn: () => call("getSponsorTiers", {}) });
   const now = useNow();
-  const [claiming, setClaiming] = useState(false);
-  const link = useMutation({
-    mutationFn: async () => {
-      const [tier] = await call("getSponsorTiers", {});
-      if (!tier) throw new Error("暂无可用的赞助方案。");
-      await openUrl(tier.url);
-    },
-  });
+  const showSponsor = useShowSponsor(email);
+  const [dialog, setDialog] = useState<"claim" | "redeem" | null>(null);
+  const [redeemed, setRedeemed] = useState<number | null>(null);
+  const open = useMutation({ mutationFn: (tier: SponsorTier) => openUrl(tier.url) });
   const { refetch } = sponsor;
   useEffect(() => {
     const refresh = () => void refetch({ cancelRefetch: false });
@@ -99,6 +101,10 @@ function SponsorRow({ email }: { email: string }) {
   }, [refetch]);
   const until = sponsor.data?.sponsorUntil;
   const active = until != null && until > now;
+  const cheapest =
+    tiers.data && tiers.data.length > 1
+      ? tiers.data.reduce((best, tier) => (perDay(tier) < perDay(best) ? tier : best))
+      : undefined;
   return (
     <Row label="赞助">
       {sponsor.error ? (
@@ -110,22 +116,100 @@ function SponsorRow({ email }: { email: string }) {
       ) : (
         <p className="text-sm text-muted-foreground">正在读取…</p>
       )}
+      {redeemed != null && <p className="text-sm text-success">兑换成功，加了 {redeemed} 天赞助。</p>}
       <p className="text-sm text-muted-foreground">
-        赞助者导师库不限数量、官方模型额度更高，还能用邮件追踪、云端定时发送和云端备份；这些要靠服务器长期运行和持续整理数据。
+        本机的功能一直免费。赞助用来支付服务器和导师库的整理，赞助期内导师库不限数量。
       </p>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <Button disabled={link.isPending} onClick={() => link.mutate()}>
-          {active ? "续赞助" : "去爱发电赞助"}
-        </Button>
-        <Button variant="ghost" onClick={() => setClaiming(true)}>
+      {tiers.error ? (
+        <p className="text-sm text-destructive">{errorMessage(tiers.error)}</p>
+      ) : (
+        tiers.data && (
+          <>
+            <p className="mt-1 text-sm font-medium">{active ? "续赞助" : "选一种时长"}</p>
+            <div className="grid max-w-md grid-cols-3 gap-2">
+              {tiers.data.map((tier) => (
+                <Button
+                  key={tier.url}
+                  variant="quiet"
+                  className="relative h-auto flex-col items-start gap-0.5 px-3 py-2.5 text-left font-normal whitespace-normal"
+                  disabled={open.isPending}
+                  onClick={() => open.mutate(tier)}
+                >
+                  {tier === cheapest && (
+                    <span className="absolute -top-2 right-2 rounded-full bg-selected px-1.5 text-xs text-brand-text">
+                      最划算
+                    </span>
+                  )}
+                  <span className="text-sm">{durationLabel(tier.duration)}</span>
+                  <span className="text-lg font-semibold">{tier.price / 100} 元</span>
+                  <span className="text-xs text-muted-foreground">约每天 {perDay(tier).toFixed(2)} 元</span>
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              不自动续费，到期不会扣款。链接带着你的账号编号，用来付款后自动开通。
+            </p>
+          </>
+        )
+      )}
+      {open.error && <p className="text-sm text-destructive">未能打开爱发电：{errorMessage(open.error)}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="ghost" onClick={() => setDialog("claim")}>
           付款后没开通？
         </Button>
+        <Button variant="ghost" onClick={() => setDialog("redeem")}>
+          有兑换码？
+        </Button>
       </div>
-      <p className="text-xs text-muted-foreground">在浏览器打开爱发电；链接带着你的账号编号，用来付款后自动开通。</p>
-      {link.error && <p className="text-sm text-destructive">未能打开赞助页：{errorMessage(link.error)}</p>}
-      {claiming && <ClaimDialog email={email} onClose={() => setClaiming(false)} />}
+      {dialog === "claim" && (
+        <CodeDialog
+          title="用订单号开通"
+          intro="没从应用的链接付款，或付款几分钟后还没开通时，填爱发电“我的订单”里这笔订单的订单号。"
+          label="订单号"
+          action="开通"
+          submit={async (orderNumber) => showSponsor(await call("claimSponsorOrder", { orderNumber }))}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "redeem" && (
+        <CodeDialog
+          title="兑换赞助"
+          intro="填社群活动或别人送你的兑换码，兑换后得到赞助天数。"
+          label="兑换码"
+          action="兑换"
+          submit={async (code) => {
+            const result = await call("redeemCode", { code });
+            await showSponsor({ sponsorUntil: result.sponsorUntil });
+            setRedeemed(result.days);
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </Row>
   );
+}
+
+/** Shows a period the server just returned, and the library quota that follows it. */
+function useShowSponsor(email: string) {
+  const queryClient = useQueryClient();
+  return async (sponsor: Sponsor) => {
+    // A read already on its way may carry the period from before.
+    await queryClient.cancelQueries({ queryKey: ["getSponsor", email] });
+    queryClient.setQueryData(["getSponsor", email], sponsor);
+    void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
+  };
+}
+
+function durationLabel(duration: Duration): string {
+  if ("days" in duration) return duration.days === 7 ? "一周" : `${duration.days} 天`;
+  if (duration.months === 1) return "一个月";
+  return duration.months === 3 ? "三个月" : `${duration.months} 个月`;
+}
+
+/** Yuan per day, counting a month as its average length. */
+function perDay(tier: SponsorTier): number {
+  const days = "days" in tier.duration ? tier.duration.days : tier.duration.months * 30.44;
+  return tier.price / 100 / days;
 }
 
 /** "1月28日", or the time as well when it ends today. */
@@ -134,55 +218,139 @@ function endOf(until: number): string {
   return date === "今天" ? `今天 ${time(until)}` : date;
 }
 
-/** Claiming an order paid without the app's link, by the number 爱发电 shows for it. */
-function ClaimDialog({ email, onClose }: { email: string; onClose: () => void }) {
-  const [orderNumber, setOrderNumber] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+/** Inviting is per account like sponsorship; filling in a friend's code is open for a week after registering. */
+function InviteRow({ email }: { email: string }) {
+  const invite = useQuery({ queryKey: ["getInvite", email], queryFn: () => call("getInvite", {}) });
+  const now = useNow();
+  const showSponsor = useShowSponsor(email);
   const queryClient = useQueryClient();
-  const claim = useMutation({
-    mutationFn: () => call("claimSponsorOrder", { orderNumber }),
+  const [code, setCode] = useState("");
+  const copy = useMutation({ mutationFn: (text: string) => navigator.clipboard.writeText(text) });
+  const fill = useMutation({
+    mutationFn: () => call("fillInvite", { code }),
     onSuccess: async (sponsor) => {
-      // A read already on its way may carry the period from before the claim.
-      await queryClient.cancelQueries({ queryKey: ["getSponsor", email] });
-      queryClient.setQueryData(["getSponsor", email], sponsor);
-      void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
-      onClose();
+      await showSponsor(sponsor);
+      void queryClient.invalidateQueries({ queryKey: ["getInvite", email] });
     },
   });
+  const state = invite.data;
   return (
-    <Dialog open onOpenChange={formClose(orderNumber !== "", claim.isPending, onClose)}>
+    <Row label="邀请同学">
+      {invite.error ? (
+        <p className="text-sm text-destructive">邀请未能读取：{errorMessage(invite.error)}</p>
+      ) : !state ? (
+        <p className="text-sm text-muted-foreground">正在读取…</p>
+      ) : state.status === "ineligible" ? (
+        <p className="text-sm text-muted-foreground">
+          用常用邮箱（QQ、163、Gmail 等）或学校邮箱注册的账号才能参加邀请。
+        </p>
+      ) : (
+        <>
+          {state.invited < 4 ? (
+            <>
+              <p className="text-sm text-muted-foreground">
+                同学注册后填你的邀请码，你们各得 3 天赞助者。最多邀请 4 位，已邀请 {state.invited} 位。
+              </p>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-lg tracking-widest select-all">{state.code}</span>
+                <Button variant="quiet" size="sm" onClick={() => copy.mutate(state.code)}>
+                  {copy.isSuccess ? "已复制" : "复制"}
+                </Button>
+              </div>
+              {copy.error && <p className="text-sm text-destructive">未能复制：{errorMessage(copy.error)}</p>}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">已邀请 4 位，谢谢你的推荐。</p>
+          )}
+          {fill.isSuccess ? (
+            <p className="text-sm text-success">领取成功，你们各得 3 天赞助者。</p>
+          ) : (
+            state.fillUntil != null &&
+            state.fillUntil > now && (
+              <form
+                className="mt-1 flex flex-col gap-1.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  fill.mutate();
+                }}
+              >
+                <label htmlFor="invite-code" className="text-sm">
+                  有同学的邀请码？
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    id="invite-code"
+                    className="w-40"
+                    autoComplete="off"
+                    disabled={fill.isPending}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                  />
+                  <Button type="submit" variant="quiet" disabled={fill.isPending || code.trim() === ""}>
+                    {fill.isPending ? "正在领取…" : "领取"}
+                  </Button>
+                </div>
+                {fill.error && <p className="text-sm text-destructive">{errorMessage(fill.error)}</p>}
+              </form>
+            )
+          )}
+        </>
+      )}
+    </Row>
+  );
+}
+
+/** One code typed in to extend sponsorship: an 爱发电 order number or a redeem code. */
+function CodeDialog({
+  title,
+  intro,
+  label,
+  action,
+  submit,
+  onClose,
+}: {
+  title: string;
+  intro: string;
+  label: string;
+  action: string;
+  submit: (code: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [code, setCode] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const run = useMutation({ mutationFn: () => submit(code), onSuccess: onClose });
+  return (
+    <Dialog open onOpenChange={formClose(code !== "", run.isPending, onClose)}>
       <DialogContent className="w-[460px]" initialFocus={inputRef}>
         <form
           className="flex min-h-0 flex-1 flex-col"
           onSubmit={(e) => {
             e.preventDefault();
-            claim.mutate();
+            run.mutate();
           }}
         >
-          <DialogHeader>用订单号开通</DialogHeader>
+          <DialogHeader>{title}</DialogHeader>
           <DialogBody>
-            <fieldset disabled={claim.isPending} className="flex min-w-0 flex-col gap-3.5">
-              <p className="text-sm">
-                没从应用的链接付款，或付款几分钟后还没开通时，填爱发电“我的订单”里这笔订单的订单号。
-              </p>
-              <Field label="订单号" id="sponsor-order">
+            <fieldset disabled={run.isPending} className="flex min-w-0 flex-col gap-3.5">
+              <p className="text-sm">{intro}</p>
+              <Field label={label} id="sponsor-code">
                 <Input
                   ref={inputRef}
-                  id="sponsor-order"
+                  id="sponsor-code"
                   autoComplete="off"
-                  value={orderNumber}
-                  onChange={(e) => setOrderNumber(e.target.value)}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
                 />
               </Field>
             </fieldset>
           </DialogBody>
           <DialogFooter>
             <p className="grow text-sm text-destructive" role="alert">
-              {claim.error && errorMessage(claim.error)}
+              {run.error && errorMessage(run.error)}
             </p>
             <DialogClose render={<Button variant="ghost" />}>取消</DialogClose>
-            <Button type="submit" disabled={claim.isPending || orderNumber.trim() === ""}>
-              {claim.isPending ? "正在开通…" : "开通"}
+            <Button type="submit" disabled={run.isPending || code.trim() === ""}>
+              {run.isPending ? `正在${action}…` : action}
             </Button>
           </DialogFooter>
         </form>
