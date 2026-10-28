@@ -18,6 +18,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      # Each test creates its own SQLite database in a temporary directory; on the Windows
+      # runner's system drive that made the tests take ten times as long as on macOS.
+      - if: runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@v4
+        with:
+          env-mapping: |
+            TMP,{{ DEV_DRIVE }}/tmp
+            TEMP,{{ DEV_DRIVE }}/tmp
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
