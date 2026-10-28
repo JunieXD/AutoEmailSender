@@ -57,9 +57,9 @@
 
 - 开发版的数据在仓库的 `.dev-data` 里，应用标识也单独一个（`crates/app/tauri.dev.conf.json`），和装好的应用互不干扰。
 - 查询在编译时检查：编译读 `.sqlx` 里的元数据，不用连数据库。改了 SQL 没重新生成，编译会报错。
-- `pnpm check` 先用迁移重建 `target/sqlx.db`，再让 clippy 的同一次编译连接这个本地库，将所有 target 的查询元数据写进 `target/sqlx-check`，与 `.sqlx` 的文件集合和 JSON 内容比较；缺失、多余或内容不同都报错，不再单独运行一次 `cargo sqlx prepare --check`。检查脚本与 SQLx CLI 一样更新 workspace target 入口文件的修改时间，确保增量编译也重新执行查询宏；平常的开发编译仍然离线。
-- 生成的 TypeScript 类型是否最新，由 `xtask` 的测试调用同一个类型生成函数检查，复用已编译的测试程序，避免为检查类型另外编译和链接一次 `xtask` 命令行。
-- 工作区没有文档测试；`pnpm check` 的 Rust 测试显式选择 `--lib --bins --tests`，避免为每个 library 启动一次 rustdoc。
+- `pnpm check` 检查 `.sqlx` 是否最新时不另外编译：先用迁移重建 `target/sqlx.db`，clippy 那次编译连上它，把所有 target 的查询元数据写进 `target/sqlx-check`，再和 `.sqlx` 比较，缺、多或内容不同都报错（`tools/check-rust.mjs`）。和 SQLx CLI 一样，编译前更新各 target 入口文件的修改时间，让增量编译也重新展开查询宏；平常的开发编译仍然离线。
+- 生成的 TypeScript 类型是否最新由 `xtask` 的测试检查，用的是 `cargo test` 已经编译好的测试程序，不用再编译、链接一次 `xtask`。
+- 工作区没有文档测试，`pnpm check` 只跑 `--lib --bins --tests`，省得为每个 library 启动一次 rustdoc。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 - 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
 - CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，master 要求两个都通过才能合并。PR 准备好后用 `gh pr merge --auto --squash` 设成自动合并，不用等 CI 跑完。
@@ -191,7 +191,7 @@
 
 - 打开第一个连接前，`db` 先在一个线程上调用一次 `sqlite3_initialize()`，避开 SQLite 在 ARM 上多个线程同时首次初始化的竞争：`db::open` 建池前调用；测试经由 `db::MIGRATOR`（sqlx 建测试库前会先读它）触发，自己开第一个池的测试先 `LazyLock::force(&db::MIGRATOR)`。
 - 迁移只往后加，已经执行过的迁移不能修改，开发版和预览版也一样；sqlx 会校验迁移内容，修改旧迁移会让已有数据库无法打开。
-- 迁移也设置 WAL 日志模式，使直接用迁移建库的 `sqlx::test` 与应用一致，避免读写互相等待；`synchronous` 是连接级设置，应用仍由 `db::open` 设置为 NORMAL。
+- 迁移也把日志模式设成 WAL：`sqlx::test` 直接用迁移建库，这样测试和应用一样读写不互相等待。`synchronous` 是连接级的设置，迁移设不了，应用的 NORMAL 由 `db::open` 设置。
 - 每次发布前，用上一版的真实数据库（去掉个人信息后作为测试数据）测一遍升级。
 - 新的高频查询先用 `EXPLAIN QUERY PLAN` 确认走了索引；列表只取要显示的列，并且分页。
 - 编号用 `INTEGER PRIMARY KEY AUTOINCREMENT`：删掉的编号不再分配给新的一行，界面里按编号缓存的数据和进行中的保存就不会把两样东西混在一起。

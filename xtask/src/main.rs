@@ -9,8 +9,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "用法：cargo xtask <命令>\n\
     \n  \
-    types [--check]  生成界面用的 TypeScript 类型（ui/src/api/types.ts）；--check \
-    只检查是否最新\n  \
+    types            生成界面用的 TypeScript 类型（ui/src/api/types.ts）\n  \
     seed             给开发版（.dev-data）填上示例数据\n  \
     web              启动浏览器预览（真实核心，不运行后台工作）\n  \
     bench            按 docs/data-model.md 的规模生成数据，测首页查询和写邮件状态的耗时";
@@ -21,7 +20,6 @@ async fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let result = match args.as_slice() {
         ["types"] => types(false),
-        ["types", "--check"] => types(true),
         ["seed"] => seed().await,
         ["web"] => web::run().await,
         ["bench"] => bench::run(&root().join("target/bench.db")).await,
