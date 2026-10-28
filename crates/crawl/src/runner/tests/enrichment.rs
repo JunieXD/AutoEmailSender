@@ -1095,7 +1095,7 @@ async fn enrichment_child_with_same_names_requires_unique_email_evidence(db: Sql
         site.page(
             "/contacts",
             if multiple {
-                include_str!("../../../tests/pages/enrich-same-name.html")
+                include_str!("../../../tests/integration/pages/enrich-same-name.html")
             } else {
                 "<table><tr><td>张三</td><td>计算机学院</td><td>cs@example.edu</td></tr></table>"
             },

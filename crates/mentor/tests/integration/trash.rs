@@ -1,10 +1,9 @@
 // Marks the whole file as test code, so clippy's test allowances cover the helpers too.
 #![cfg(test)]
 
-mod common;
 use std::num::NonZeroU32;
 
-use common::names;
+use super::common::names;
 use mentor::MentorFields;
 use mentor::trash::{self, TrashQuery};
 use sqlx::SqlitePool;

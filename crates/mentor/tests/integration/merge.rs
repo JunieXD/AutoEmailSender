@@ -1,9 +1,7 @@
 // Marks the whole file as test code, so clippy's test allowances cover the helpers too.
 #![cfg(test)]
 
-mod common;
-
-use common::names;
+use super::common::names;
 use mentor::merge::{self, MergeError};
 use mentor::{Affiliation, MentorFields};
 use sqlx::SqlitePool;
