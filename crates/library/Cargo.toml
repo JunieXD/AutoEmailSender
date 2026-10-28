@@ -23,5 +23,6 @@ ts-rs.workspace = true
 url = "2.5.8"
 
 [dev-dependencies]
+db = { workspace = true, features = ["testing"] }
 net.workspace = true
 test-fixtures = { path = "../test-fixtures" }

@@ -30,6 +30,7 @@ ts-rs.workspace = true
 writing.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["testing"] }
 fakemail.workspace = true
 mailbox.workspace = true
 matching.workspace = true

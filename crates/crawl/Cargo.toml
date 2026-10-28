@@ -29,6 +29,7 @@ ts-rs.workspace = true
 url = { version = "2.5.8", default-features = false }
 
 [dev-dependencies]
+db = { workspace = true, features = ["testing"] }
 email.workspace = true
 matching.workspace = true
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "ring"] }

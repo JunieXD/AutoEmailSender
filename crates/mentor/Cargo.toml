@@ -18,7 +18,7 @@ email.workspace = true
 cloud-api = { workspace = true, features = ["ts-rs"] }
 
 [dev-dependencies]
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 profile = { path = "../profile" }
 test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["macros", "rt"] }

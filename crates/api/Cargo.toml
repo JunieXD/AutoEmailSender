@@ -44,6 +44,7 @@ library.workspace = true
 cloud-api = { workspace = true, features = ["ts-rs"] }
 
 [dev-dependencies]
+db = { workspace = true, features = ["testing"] }
 fakemail.workspace = true
 office_oxide = "0.1"
 test-fixtures = { path = "../test-fixtures" }
