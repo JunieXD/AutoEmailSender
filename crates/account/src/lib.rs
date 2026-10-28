@@ -1,6 +1,7 @@
 //! Official account access. Passwords live only for derivation; saved tokens never reach callers.
 
 mod key;
+pub use cloud_api::Sponsor;
 pub use key::login_key;
 
 use std::time::Duration;
@@ -26,12 +27,6 @@ pub enum State {
     LoggedOut,
     LoggedIn { email: String },
     Expired { email: String },
-}
-
-#[derive(Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct Sponsor {
-    pub sponsor_until: Option<i64>,
 }
 
 pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
@@ -179,11 +174,47 @@ impl Client {
         })
     }
 
-    pub async fn sponsor_link(&self, db: &SqlitePool) -> Result<String, Error> {
-        let link: cloud_api::SponsorLink = self
-            .authenticated(db, Method::GET, path::SPONSOR_LINK, None::<&Empty>)
+    pub async fn sponsor_tiers(
+        &self,
+        db: &SqlitePool,
+    ) -> Result<Vec<cloud_api::SponsorTier>, Error> {
+        let tiers: cloud_api::SponsorTiers = self
+            .authenticated(db, Method::GET, path::SPONSOR_TIERS, None::<&Empty>)
             .await?;
-        Ok(link.url)
+        Ok(tiers.tiers)
+    }
+
+    pub async fn invite(&self, db: &SqlitePool) -> Result<cloud_api::Invite, Error> {
+        self.authenticated(db, Method::GET, path::INVITE, None::<&Empty>)
+            .await
+    }
+
+    pub async fn fill_invite(&self, db: &SqlitePool, code: &str) -> Result<Sponsor, Error> {
+        let code = cloud_api::normalize_code(code);
+        if code.is_empty() {
+            return Err(Error::Invalid("请输入邀请码"));
+        }
+        self.authenticated(
+            db,
+            Method::POST,
+            path::INVITE,
+            Some(&cloud_api::CodeRequest { code }),
+        )
+        .await
+    }
+
+    pub async fn redeem(&self, db: &SqlitePool, code: &str) -> Result<cloud_api::Redeemed, Error> {
+        let code = cloud_api::normalize_code(code);
+        if code.is_empty() {
+            return Err(Error::Invalid("请输入兑换码"));
+        }
+        self.authenticated(
+            db,
+            Method::POST,
+            path::REDEEM,
+            Some(&cloud_api::CodeRequest { code }),
+        )
+        .await
     }
 
     pub async fn claim_sponsor_order(
@@ -407,6 +438,18 @@ impl Error {
                     "这笔订单不是赞助方案，请在爱发电的赞助方案付款后再开通。".into()
                 }
                 ErrorCode::SponsorUnavailable => "赞助暂时不可用，请稍后重试。".into(),
+                ErrorCode::InviteNotFound => "没有这个邀请码，请检查后重试。".into(),
+                ErrorCode::InviteFull => "这个邀请码已经邀请满 4 位同学了。".into(),
+                ErrorCode::InviteOwn => "不能填自己的邀请码。".into(),
+                ErrorCode::InviteExpired => "注册超过 7 天，不能再填邀请码了。".into(),
+                ErrorCode::InviteUsed => "这个邮箱已经领过邀请奖励了。".into(),
+                ErrorCode::CodeNotFound => "没有这个兑换码，请检查后重试。".into(),
+                ErrorCode::CodeUsedUp => "这个兑换码已经被领完了。".into(),
+                ErrorCode::CodeExpired => "这个兑换码已经过期了。".into(),
+                ErrorCode::CodeUsed => "你已经用过这个兑换码了。".into(),
+                ErrorCode::EmailIneligible => {
+                    "用常用邮箱（QQ、163、Gmail 等）或学校邮箱注册的账号才能参加。".into()
+                }
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()
                 }

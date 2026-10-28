@@ -19,7 +19,7 @@ async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePo
     let calls = async {
         assert_eq!(client.get_sponsor(&db).await.unwrap().sponsor_until, None);
         assert_eq!(
-            client.sponsor_link(&db).await.unwrap(),
+            client.sponsor_tiers(&db).await.unwrap()[0].url,
             "https://afdian.com/order/create?custom_order_id=123"
         );
         assert_eq!(
@@ -46,8 +46,8 @@ async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePo
             ),
             (
                 "GET",
-                path::SPONSOR_LINK,
-                json!({"url":"https://afdian.com/order/create?custom_order_id=123"}),
+                path::SPONSOR_TIERS,
+                json!({"tiers":[{"duration":{"days":7},"price":660,"url":"https://afdian.com/order/create?custom_order_id=123"}]}),
             ),
             (
                 "POST",
@@ -118,6 +118,113 @@ async fn sponsorship_preserves_server_error_codes(db: SqlitePool) {
         }
     };
     tokio::join!(calls, replies);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        "INSERT INTO account (id, email, token) VALUES (1, 'student@qq.com', 'code-token')",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let calls = async {
+        assert!(matches!(
+            client.invite(&db).await.unwrap(),
+            cloud_api::Invite::Eligible {
+                invited: 1,
+                fill_until: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            client
+                .fill_invite(&db, "  ａｂｃｄ-２３４５ ")
+                .await
+                .unwrap()
+                .sponsor_until,
+            Some(1800000000000)
+        );
+        let redeemed = client
+            .redeem(&db, " ａｂｃｄ ２３４５-ｅｆｇｈ ")
+            .await
+            .unwrap();
+        assert_eq!(redeemed.days, 7);
+        assert_eq!(redeemed.sponsor_until, 1800604800000);
+        let error = client.fill_invite(&db, "ABCDEFGH").await.unwrap_err();
+        assert!(matches!(error, Error::Server(ref error) if error.code == ErrorCode::InviteFull));
+        assert!(error.message().contains("4 位"));
+        let error = client.redeem(&db, "ABCDEFGH2345").await.unwrap_err();
+        assert!(matches!(error, Error::Server(ref error) if error.code == ErrorCode::CodeUsed));
+        assert!(error.message().contains("已经用过"));
+        assert!(matches!(
+            client.fill_invite(&db, " - ").await,
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(
+            client.redeem(&db, " - ").await,
+            Err(Error::Invalid(_))
+        ));
+    };
+    let replies = async {
+        for (method, path, code, status, body) in [
+            (
+                "GET",
+                path::INVITE,
+                None,
+                200,
+                json!({"status":"eligible","code":"ABCDEFGH","invited":1,"fillUntil":null}),
+            ),
+            (
+                "POST",
+                path::INVITE,
+                Some("ABCD2345"),
+                200,
+                json!({"sponsorUntil":1800000000000_i64}),
+            ),
+            (
+                "POST",
+                path::REDEEM,
+                Some("ABCD2345EFGH"),
+                200,
+                json!({"days":7,"sponsorUntil":1800604800000_i64}),
+            ),
+            (
+                "POST",
+                path::INVITE,
+                Some("ABCDEFGH"),
+                409,
+                json!({"code":"invite_full"}),
+            ),
+            (
+                "POST",
+                path::REDEEM,
+                Some("ABCDEFGH2345"),
+                409,
+                json!({"code":"code_used"}),
+            ),
+        ] {
+            let request = server.requests.recv().await.unwrap();
+            assert!(request.line.starts_with(&format!("{method} {path} ")));
+            assert_eq!(request.authorization, "Bearer code-token");
+            if let Some(code) = code {
+                assert_eq!(request.body, json!({"code":code}));
+            }
+            request
+                .respond
+                .send(Response::Raw {
+                    status,
+                    content: body.to_string(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+    assert!(server.requests.try_recv().is_err());
 }
 
 #[tokio::test]

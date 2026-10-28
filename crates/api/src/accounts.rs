@@ -31,8 +31,29 @@ pub async fn get_sponsor(ctx: &Context, _: Nothing) -> Result<account::Sponsor, 
     Ok(ctx.account.get_sponsor(&ctx.db).await?)
 }
 
-pub async fn sponsor_link(ctx: &Context, _: Nothing) -> Result<String, CallError> {
-    Ok(ctx.account.sponsor_link(&ctx.db).await?)
+pub async fn get_sponsor_tiers(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Vec<cloud_api::SponsorTier>, CallError> {
+    Ok(ctx.account.sponsor_tiers(&ctx.db).await?)
+}
+
+pub async fn get_invite(ctx: &Context, _: Nothing) -> Result<cloud_api::Invite, CallError> {
+    Ok(ctx.account.invite(&ctx.db).await?)
+}
+
+pub async fn fill_invite(
+    ctx: &Context,
+    input: cloud_api::CodeRequest,
+) -> Result<account::Sponsor, CallError> {
+    Ok(ctx.account.fill_invite(&ctx.db, &input.code).await?)
+}
+
+pub async fn redeem_code(
+    ctx: &Context,
+    input: cloud_api::CodeRequest,
+) -> Result<cloud_api::Redeemed, CallError> {
+    Ok(ctx.account.redeem(&ctx.db, &input.code).await?)
 }
 
 pub async fn claim_sponsor_order(

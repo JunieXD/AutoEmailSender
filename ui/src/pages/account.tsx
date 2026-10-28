@@ -84,7 +84,13 @@ function SponsorRow({ email }: { email: string }) {
   const sponsor = useQuery({ queryKey: ["getSponsor", email], queryFn: () => call("getSponsor", {}) });
   const now = useNow();
   const [claiming, setClaiming] = useState(false);
-  const link = useMutation({ mutationFn: async () => openUrl(await call("sponsorLink", {})) });
+  const link = useMutation({
+    mutationFn: async () => {
+      const [tier] = await call("getSponsorTiers", {});
+      if (!tier) throw new Error("暂无可用的赞助方案。");
+      await openUrl(tier.url);
+    },
+  });
   const { refetch } = sponsor;
   useEffect(() => {
     const refresh = () => void refetch({ cancelRefetch: false });

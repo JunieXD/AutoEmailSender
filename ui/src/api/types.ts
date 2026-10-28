@@ -62,6 +62,8 @@ export type CandidateRow = { id: number, crawlId: number | null, name: string, e
 
 export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
+export type CodeRequest = { code: string, };
+
 export type Column = { header: string, field: Field | null, };
 
 export type ConfirmationLetter = { mentorId: number, mentorName: string, address: string | null, mailboxId: number | null, mailboxAddress: string | null, sendAt: SendAt, subject: string, bodyMd: string, attachments: Array<SelectedAttachment>,
@@ -145,6 +147,8 @@ export type DraftState = "generating" | "generation_failed" | "review" | "approv
 export type DraftSummary = { id: number, mentorId: number, name: string, state: DraftState, problems: number, };
 
 export type DraftsFinished = { taskId: number, name: string, generated: number, failed: number, };
+
+export type Duration = { "days": number } | { "months": number };
 
 export type Email = { id: number, kind: DraftKind, plannedAt: number | null, latestAt: number | null, subject: string, bodyMd: string, attachments: Array<Attachment>,
 /**
@@ -235,6 +239,8 @@ export type ImportSetup = { sheet: number | null, columns: Array<Field | null> |
 export type Imported = { created: number, updated: number, };
 
 export type IntakePreview = { created: number, supplemented: number, updated: number, unchanged: number, differences: Array<Difference>, additions: Array<Addition>, maybeSame: Array<MaybeSame>, trashed: Array<Trashed>, errors: Array<RowError>, };
+
+export type Invite = { "status": "ineligible" } | { "status": "eligible", code: string, invited: number, fillUntil: number | null, };
 
 export type Kind = "first" | "follow_up";
 
@@ -634,6 +640,8 @@ export type Range = "week" | "month" | "quarter" | "all";
 
 export type ReceiveStatus = { receivedAt: number | null, };
 
+export type Redeemed = { days: number, sponsorUntil: number, };
+
 export type RenderedApproval = { attachments: Array<number>, id: number,
 /**
  * Agent approvals receive these from the confirmation dialog.
@@ -725,6 +733,8 @@ url: string, } | { "kind": "unsupported", reason: string, };
 export type Sponsor = { sponsorUntil: number | null, };
 
 export type SponsorOrder = { orderNumber: string, };
+
+export type SponsorTier = { duration: Duration, price: number, url: string, };
 
 export type StatsPeriod = { range: Range, timezone: string, now: number, };
 
@@ -859,7 +869,10 @@ export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490"
 export interface Operations {
   getAccount: { input: Nothing; output: AccountState };
   getSponsor: { input: Nothing; output: Sponsor };
-  sponsorLink: { input: Nothing; output: string };
+  getSponsorTiers: { input: Nothing; output: Array<SponsorTier> };
+  getInvite: { input: Nothing; output: Invite };
+  fillInvite: { input: CodeRequest; output: Sponsor };
+  redeemCode: { input: CodeRequest; output: Redeemed };
   claimSponsorOrder: { input: SponsorOrder; output: Sponsor };
   sendRegistrationCode: { input: AccountEmail; output: null };
   registerAccount: { input: AccountVerification; output: AccountState };

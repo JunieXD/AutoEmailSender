@@ -360,8 +360,14 @@ operations! {
         "getAccount" [none] => get_account(Nothing) -> account::State;
         /// 读取服务器上的赞助到期时间。
         "getSponsor" [none] => get_sponsor(Nothing) -> account::Sponsor;
-        /// 获取带当前账号编号的爱发电赞助链接。
-        "sponsorLink" [none] => sponsor_link(Nothing) -> String;
+        /// 读取赞助时长、价格和带当前账号编号的爱发电链接。
+        "getSponsorTiers" [none] => get_sponsor_tiers(Nothing) -> Vec<cloud_api::SponsorTier>;
+        /// 读取邀请码、已邀请人数和填写期限。
+        "getInvite" [none] => get_invite(Nothing) -> cloud_api::Invite;
+        /// 填写同学的邀请码，双方各得 3 天赞助。
+        "fillInvite" [none] => fill_invite(cloud_api::CodeRequest) -> account::Sponsor;
+        /// 兑换赞助天数，返回天数和新的到期时间。
+        "redeemCode" [none] => redeem_code(cloud_api::CodeRequest) -> cloud_api::Redeemed;
         /// 用爱发电订单号开通赞助，返回新的到期时间。
         "claimSponsorOrder" [none] => claim_sponsor_order(SponsorOrder) -> account::Sponsor;
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。

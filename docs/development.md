@@ -71,7 +71,8 @@
 - `Client::authenticated` 是官方服务共用的带令牌请求入口。实际访问服务器时发现 `session_expired`，只清掉本次使用的令牌，保留邮箱并返回 `SignedOut`，随后读取本机状态得到 `expired`；不自动重放请求。实际清掉令牌后通过 Tokio watch 通知订阅者，桌面宿主转成 `account-changed` 事件，界面收到后重新读取 `getAccount`，覆盖界面、后台导师库同步和失败的 Agent 调用。操作错误码 `signed_out` 保留供调用方区分；旧令牌的响应没有清掉任何记录时不发通知。账号变更在同一个客户端内串行执行，避免旧登录覆盖新状态。
 - 操作组“账号”：`getAccount {}`、`sendRegistrationCode { email }`、`registerAccount { email, code, password }`、`loginAccount { email, password }`、`sendPasswordResetCode { email }`、`resetAccountPassword { email, code, password }`、`logoutAccount {}`、`deleteAccount { email, password }`。注册和登录返回 `State`，其余写操作返回 `null`。Agent 注销必须确认，说明使用输入的邮箱和删除效果，不含密码。注销绑定用户确认的邮箱；取得账号变更锁后，按共享规则规范化输入邮箱并核对当前登录账号，不同就拒绝，不访问服务器。
 - 重置密码后所有设备会话失效；本机正是该邮箱时立即清令牌。退出登录只有服务器撤销会话成功或确认会话已失效后才清本机记录，网络失败会明确报错。注销成功只删除本机账号记录，不动导师、邮件等本机数据。错误中文由 `account::Error::message` 统一提供。
-- 赞助状态只在服务器上，不存本机。操作组“账号”另有 `getSponsor {}` 返回 `{ sponsorUntil }`（读 `GET /v1/account`），`sponsorLink {}` 返回服务器生成的爱发电链接，界面用系统浏览器打开；`claimSponsorOrder { orderNumber }` 认领订单，返回新的 `{ sponsorUntil }`。三者都经 `Client::authenticated`，Agent 调用不用确认。
+- 赞助状态只在服务器上，不存本机。操作组“账号”提供 `getSponsor {}` 返回 `{ sponsorUntil }`（读 `GET /v1/account`），`getSponsorTiers {}` 返回时长、价格（分）和服务器生成的爱发电型号链接，界面用系统浏览器打开；`claimSponsorOrder { orderNumber }` 认领订单，返回新的 `{ sponsorUntil }`。
+- `getInvite {}` 读取邀请资格、邀请码、已邀请人数和填写期限；`fillInvite { code }` 返回 `{ sponsorUntil }`，`redeemCode { code }` 返回 `{ days, sponsorUntil }`。桌面和服务端共用 `cloud_api::normalize_code` 规范化邀请码和兑换码。上述操作都经 `Client::authenticated`，Agent 调用不用确认。
 
 ### 导师库
 
