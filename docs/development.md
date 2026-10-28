@@ -64,7 +64,7 @@
 ### 官方账号
 
 - `crates/cloud-api` 默认只依赖 serde，统一 `/v1/` 的 JSON 协议、路径和错误码；桌面端开启可选的 `ts-rs` 特性，从同一份导师库协议生成界面类型。官方服务端按公开仓库提交号引用。服务端的表、验证码和限流细节在私有服务端仓库的 `docs/account.md`。
-- `crates/account` 经 `net` 的系统代理和系统证书访问服务器，保留连接池但禁止重定向，避免把凭据转交给别的地址。默认地址常量为 `http://127.0.0.1:8787`，构造客户端时读取环境变量 `AUTOEMAIL_SERVER_URL`，存在时使用该值，否则使用默认地址。正式服务地址还未确定，部署时替换常量。
+- `crates/account` 经 `net` 的系统代理和系统证书访问服务器，保留连接池但禁止重定向，避免把凭据转交给别的地址。默认地址在正式构建里是 `https://api.auto-email-sender.cn`，开发构建里是服务端仓库 `cargo xtask dev` 起的 `http://127.0.0.1:8787`，避免试用时在正式服务上建账号；构造客户端时读取环境变量 `AUTOEMAIL_SERVER_URL`，存在时使用该值。
 - 邮箱去首尾空白、折叠全角英文字母／数字／`＠`／`．` 后转小写。`cloud_api::normalize_email` 是桌面与服务端的同一份规则；规范化结果也用于密码盐。
 - 密码不上传、不保存、不记日志。Argon2id v19，`m = 65,536 KiB`、`t = 3`、`p = 4`，盐为 UTF-8 的 `auto-email-sender:` 加规范化邮箱，输出 32 字节主钥匙；HKDF-SHA256 使用空盐（`None`）、info 的 UTF-8 字节 `login`，输出 32 字节登录钥匙，以无填充 base64url 上传。上述参数和规范化规则改变时必须迁移。
 - 本机 `account` 表最多一行，令牌只在单独的 `token` 列中。`State`（生成的 TypeScript 类型为 `AccountState`）是 `loggedOut`、`loggedIn { email }`、`expired { email }`。`account::state` 只读本机邮箱和令牌是否存在，不连接服务器、不获取账号变更锁，断网时也能显示邮箱。恢复备份清掉令牌，保留邮箱，状态为 `expired`。

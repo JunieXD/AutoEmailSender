@@ -13,8 +13,13 @@ use sqlx::SqlitePool;
 use tokio::sync::{Mutex, watch};
 use ts_rs::TS;
 
-/// The production address will be set when the official service is deployed.
-const SERVER_URL: &str = "http://127.0.0.1:8787";
+/// Development builds use the local server from the server repository's `cargo xtask dev`,
+/// so trying things out never creates accounts on the official service.
+const SERVER_URL: &str = if cfg!(debug_assertions) {
+    "http://127.0.0.1:8787"
+} else {
+    "https://api.auto-email-sender.cn"
+};
 
 #[derive(Debug, Serialize, TS)]
 #[serde(
