@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { Duration, Sponsor, SponsorTier } from "@/api/types";
+import type { Duration, SponsorTier } from "@/api/types";
 import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
@@ -89,7 +89,7 @@ function SponsorRow({ email }: { email: string }) {
   const sponsor = useQuery({ queryKey: ["getSponsor", email], queryFn: () => call("getSponsor", {}) });
   const tiers = useQuery({ queryKey: ["getSponsorTiers", email], queryFn: () => call("getSponsorTiers", {}) });
   const now = useNow();
-  const showSponsor = useShowSponsor(email);
+  const refreshSponsor = useRefreshSponsor(email);
   const [dialog, setDialog] = useState<"claim" | "redeem" | null>(null);
   const [redeemed, setRedeemed] = useState<number | null>(null);
   const open = useMutation({ mutationFn: (tier: SponsorTier) => openUrl(tier.url) });
@@ -152,7 +152,9 @@ function SponsorRow({ email }: { email: string }) {
           </>
         )
       )}
-      {open.error && <p className="text-sm text-destructive">未能打开爱发电：{errorMessage(open.error)}</p>}
+      {open.error && (
+        <p className="text-sm text-destructive">未能打开爱发电：{errorMessage(open.error)}。请检查默认浏览器后再试。</p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" onClick={() => setDialog("claim")}>
           付款后没开通？
@@ -167,7 +169,10 @@ function SponsorRow({ email }: { email: string }) {
           intro="没从应用的链接付款，或付款几分钟后还没开通时，填爱发电“我的订单”里这笔订单的订单号。"
           label="订单号"
           action="开通"
-          submit={async (orderNumber) => showSponsor(await call("claimSponsorOrder", { orderNumber }))}
+          submit={async (orderNumber) => {
+            await call("claimSponsorOrder", { orderNumber });
+            await refreshSponsor();
+          }}
           onClose={() => setDialog(null)}
         />
       )}
@@ -179,7 +184,7 @@ function SponsorRow({ email }: { email: string }) {
           action="兑换"
           submit={async (code) => {
             const result = await call("redeemCode", { code });
-            await showSponsor({ sponsorUntil: result.sponsorUntil });
+            await refreshSponsor();
             setRedeemed(result.days);
           }}
           onClose={() => setDialog(null)}
@@ -189,14 +194,15 @@ function SponsorRow({ email }: { email: string }) {
   );
 }
 
-/** Shows a period the server just returned, and the library quota that follows it. */
-function useShowSponsor(email: string) {
+/**
+ * Reads the period again after a grant, with the library quota that follows it.
+ * Invalidating cancels a read already on its way, so with grants racing the last read still sees them all.
+ */
+function useRefreshSponsor(email: string) {
   const queryClient = useQueryClient();
-  return async (sponsor: Sponsor) => {
-    // A read already on its way may carry the period from before.
-    await queryClient.cancelQueries({ queryKey: ["getSponsor", email] });
-    queryClient.setQueryData(["getSponsor", email], sponsor);
+  return async () => {
     void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
+    await queryClient.invalidateQueries({ queryKey: ["getSponsor", email] });
   };
 }
 
@@ -222,15 +228,15 @@ function endOf(until: number): string {
 function InviteRow({ email }: { email: string }) {
   const invite = useQuery({ queryKey: ["getInvite", email], queryFn: () => call("getInvite", {}) });
   const now = useNow();
-  const showSponsor = useShowSponsor(email);
+  const refreshSponsor = useRefreshSponsor(email);
   const queryClient = useQueryClient();
   const [code, setCode] = useState("");
   const copy = useMutation({ mutationFn: (text: string) => navigator.clipboard.writeText(text) });
   const fill = useMutation({
     mutationFn: () => call("fillInvite", { code }),
-    onSuccess: async (sponsor) => {
-      await showSponsor(sponsor);
+    onSuccess: async () => {
       void queryClient.invalidateQueries({ queryKey: ["getInvite", email] });
+      await refreshSponsor();
     },
   });
   const state = invite.data;
@@ -257,7 +263,7 @@ function InviteRow({ email }: { email: string }) {
                   {copy.isSuccess ? "已复制" : "复制"}
                 </Button>
               </div>
-              {copy.error && <p className="text-sm text-destructive">未能复制：{errorMessage(copy.error)}</p>}
+              {copy.error && <p className="text-sm text-destructive">未能复制，请选中邀请码手动复制。</p>}
             </>
           ) : (
             <p className="text-sm text-muted-foreground">已邀请 4 位，谢谢你的推荐。</p>
