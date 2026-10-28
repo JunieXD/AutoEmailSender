@@ -431,7 +431,7 @@ V3 的产品范围和全局决定。
 - 安装包和更新文件放在 GitHub Releases。不做代码签名：macOS 用 ad-hoc 签名，Windows 不签名。
 - 两个平台都用 Tauri 自带的更新器，用单独的签名密钥校验更新包，更新清单是 `latest.json`。Windows 用 NSIS 安装包，macOS 用 DMG。不签名时更新器有已知问题要绕开，搭项目时先做实验验证。
 - 每次发布前按[手动检查](development.md#手动检查)过一遍，包括在 Windows 虚拟机里全新安装、升级和卸载。
-- V3 的应用 ID、安装目录和数据目录与 V2（`auto-email-sender-desktop`）不同，两者可以同时安装，V3 不覆盖 V2。
+- V3 的应用 ID、安装目录和数据目录与 V2（`auto-email-sender-desktop`）不同，V3 不动 V2 的数据。两者显示的名字都是 Auto Email Sender：Windows 上装 V3 会顶掉 V2 的开始菜单和桌面快捷方式，卸载 V3 时连同 V2 的开机自启一起删掉；macOS 上拖进"应用程序"会替换 V2。V2 已停止维护，不为同时使用两者改名；要留着 V2 的，先把它改名。
 - V3 的更新文件不能叫 `latest.yml` 或 `appcast.xml`：没升级到 2.6.5 的 V2 客户端还会从 GitHub 的最新 Release 读这两个文件。
 - 官网保留 V2 应用链接到的地址：首页、`/docs/first-run`（含锚点 `#mail-authorization-code` 和 `#llm-configuration`）、`/docs/mentor-crawler-skill`、`/acknowledgements`。
 - V2 社区仓库 `JunieXD/AutoEmailSender-MentorData` 冻结，继续供 V2 读取，不改它的格式。
