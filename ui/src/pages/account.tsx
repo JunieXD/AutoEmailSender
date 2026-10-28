@@ -194,14 +194,14 @@ function SponsorRow({ email }: { email: string }) {
   );
 }
 
-/**
- * Reads the period again after a grant, with the library quota that follows it.
- * Invalidating cancels a read already on its way, so with grants racing the last read still sees them all.
- */
+/** Reads the period again after a grant, with the library quota that follows it. */
 function useRefreshSponsor(email: string) {
   const queryClient = useQueryClient();
   return async () => {
     void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
+    // A read on its way started before the grant; invalidating alone would reuse it on the first load
+    // or once the page is left, so drop it and read again now or when the page comes back.
+    await queryClient.cancelQueries({ queryKey: ["getSponsor", email] });
     await queryClient.invalidateQueries({ queryKey: ["getSponsor", email] });
   };
 }
