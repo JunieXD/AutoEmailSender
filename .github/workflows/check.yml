@@ -18,15 +18,40 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          fetch-depth: 2
+      # Nothing below reads these files, so a change touching only them skips the rest. The steps
+      # are skipped rather than the job, because the required checks need the job to report.
+      - id: changes
+        shell: bash
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -qvE '^(docs/|[^/]+\.md$|LICENSE$|\.github/FUNDING\.yml$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Each test creates its own SQLite database in a temporary directory; on the Windows
+      # runner's system drive that made the tests take ten times as long as on macOS.
+      - if: steps.changes.outputs.code && runner.os == 'Windows'
+        uses: samypr100/setup-dev-drive@v4
+        with:
+          env-mapping: |
+            TMP,{{ DEV_DRIVE }}/
+            TEMP,{{ DEV_DRIVE }}/
+      - if: steps.changes.outputs.code
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite,sqlx-toml --locked
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - if: steps.changes.outputs.code
+        uses: Swatinem/rust-cache@v2
+      - if: steps.changes.outputs.code
+        run: cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite,sqlx-toml --locked
+      - if: steps.changes.outputs.code
+        uses: pnpm/action-setup@v6
+      - if: steps.changes.outputs.code
+        uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - if: steps.changes.outputs.code
+        run: pnpm install --frozen-lockfile
+      - if: steps.changes.outputs.code
+        run: pnpm check
