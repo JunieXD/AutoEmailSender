@@ -24,8 +24,8 @@ jobs:
         uses: samypr100/setup-dev-drive@v4
         with:
           env-mapping: |
-            TMP,{{ DEV_DRIVE }}/tmp
-            TEMP,{{ DEV_DRIVE }}/tmp
+            TMP,{{ DEV_DRIVE }}/
+            TEMP,{{ DEV_DRIVE }}/
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
