@@ -37,7 +37,7 @@ fn initialize_sqlite() {
                 reason = "SQLite's extension registration has no safe binding"
             )]
             // SAFETY: the callback has SQLite's required ABI and lives for the whole process.
-            let result = unsafe { libsqlite3_sys::sqlite3_auto_extension(Some(test_connection)) };
+            let result = unsafe { libsqlite3_sys::sqlite3_auto_extension(Some(skip_sync)) };
             assert_eq!(
                 result,
                 libsqlite3_sys::SQLITE_OK,
@@ -49,7 +49,7 @@ fn initialize_sqlite() {
 
 #[cfg(feature = "testing")]
 #[expect(unsafe_code, reason = "SQLite calls this extension through its C API")]
-unsafe extern "C" fn test_connection(
+unsafe extern "C" fn skip_sync(
     db: *mut libsqlite3_sys::sqlite3,
     error: *mut *mut std::ffi::c_char,
     _api: *const libsqlite3_sys::sqlite3_api_routines,
