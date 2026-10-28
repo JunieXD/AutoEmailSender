@@ -43,6 +43,8 @@ jobs:
       - if: steps.changes.outputs.code
         uses: Swatinem/rust-cache@v2
       - if: steps.changes.outputs.code
+        uses: taiki-e/install-action@nextest
+      - if: steps.changes.outputs.code
         run: cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite,sqlx-toml --locked
       - if: steps.changes.outputs.code
         uses: pnpm/action-setup@v6
