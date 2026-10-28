@@ -9,14 +9,20 @@ const USAGE: &str = "Auto Email Sender：联系导师的本机 Agent 接口
 
 用法：
   autoemail list                       按组列出操作及确认方式
-  autoemail help <操作名>               查看操作说明及输入输出类型
-  autoemail call <操作名> [JSON 输入]   调用操作，省略输入时为 {}
+  autoemail help <操作名>              查看操作说明及输入输出类型
+  autoemail call <操作名> [JSON 输入]  调用操作，省略输入时为 {}
   autoemail mcp                        启动标准输入输出 MCP 服务器
   autoemail --help                     显示帮助
   autoemail --version                  显示命令行版本
 
 先 list，再 help 查看输入，最后 call。需要确认时请在应用里回答，最多等 5 分钟。
 使用 list、help 和 call 前，请打开应用并在设置里允许 Agent 连接。";
+
+// PowerShell decodes native output that it pipes, captures or (before 7.4) redirects with the
+// console code page, which is GBK on Chinese Windows.
+const POWERSHELL_HINT: &str =
+    "在 PowerShell 里把输出交给其他命令（如 ConvertFrom-Json）、存进变量或用 > 写进文件时，
+先运行 [Console]::OutputEncoding = [Text.Encoding]::UTF8，否则中文会乱码。";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -35,6 +41,7 @@ async fn run() -> Result<bool, String> {
     let args = args.iter().map(String::as_str).collect::<Vec<_>>();
     // Rust writes Unicode directly to Windows consoles; redirected output remains UTF-8.
     match args.as_slice() {
+        ["--help"] if cfg!(windows) => println!("{USAGE}\n{POWERSHELL_HINT}"),
         ["--help"] => println!("{USAGE}"),
         ["--version"] => println!("autoemail {}", env!("CARGO_PKG_VERSION")),
         ["mcp"] => mcp::run().await?,
