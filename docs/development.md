@@ -68,9 +68,11 @@
 - 邮箱去首尾空白、折叠全角英文字母／数字／`＠`／`．` 后转小写。`cloud_api::normalize_email` 是桌面与服务端的同一份规则；规范化结果也用于密码盐。
 - 密码不上传、不保存、不记日志。Argon2id v19，`m = 65,536 KiB`、`t = 3`、`p = 4`，盐为 UTF-8 的 `auto-email-sender:` 加规范化邮箱，输出 32 字节主钥匙；HKDF-SHA256 使用空盐（`None`）、info 的 UTF-8 字节 `login`，输出 32 字节登录钥匙，以无填充 base64url 上传。上述参数和规范化规则改变时必须迁移。
 - 本机 `account` 表最多一行，令牌只在单独的 `token` 列中。`State`（生成的 TypeScript 类型为 `AccountState`）是 `loggedOut`、`loggedIn { email }`、`expired { email }`。`account::state` 只读本机邮箱和令牌是否存在，不连接服务器、不获取账号变更锁，断网时也能显示邮箱。恢复备份清掉令牌，保留邮箱，状态为 `expired`。
-- `Client::authenticated` 是官方服务共用的带令牌请求入口。实际访问服务器时发现 `session_expired`，只清掉本次使用的令牌，保留邮箱并返回 `SignedOut`，随后读取本机状态得到 `expired`；不自动重放请求。账号变更在同一个客户端内串行执行，避免旧登录覆盖新状态。
+- `Client::authenticated` 是官方服务共用的带令牌请求入口。实际访问服务器时发现 `session_expired`，只清掉本次使用的令牌，保留邮箱并返回 `SignedOut`，随后读取本机状态得到 `expired`；不自动重放请求。实际清掉令牌后通过 Tokio watch 通知订阅者，桌面宿主转成 `account-changed` 事件，界面收到后重新读取 `getAccount`，覆盖界面、后台导师库同步和失败的 Agent 调用。操作错误码 `signed_out` 保留供调用方区分；旧令牌的响应没有清掉任何记录时不发通知。账号变更在同一个客户端内串行执行，避免旧登录覆盖新状态。
 - 操作组“账号”：`getAccount {}`、`sendRegistrationCode { email }`、`registerAccount { email, code, password }`、`loginAccount { email, password }`、`sendPasswordResetCode { email }`、`resetAccountPassword { email, code, password }`、`logoutAccount {}`、`deleteAccount { email, password }`。注册和登录返回 `State`，其余写操作返回 `null`。Agent 注销必须确认，说明使用输入的邮箱和删除效果，不含密码。注销绑定用户确认的邮箱；取得账号变更锁后，按共享规则规范化输入邮箱并核对当前登录账号，不同就拒绝，不访问服务器。
 - 重置密码后所有设备会话失效；本机正是该邮箱时立即清令牌。退出登录只有服务器撤销会话成功或确认会话已失效后才清本机记录，网络失败会明确报错。注销成功只删除本机账号记录，不动导师、邮件等本机数据。错误中文由 `account::Error::message` 统一提供。
+- 赞助状态只在服务器上，不存本机。操作组“账号”提供 `getSponsor {}` 返回 `{ sponsorUntil }`（读 `GET /v1/account`），`getSponsorTiers {}` 返回时长、价格（分）和服务器生成的爱发电型号链接，界面用系统浏览器打开；`claimSponsorOrder { orderNumber }` 认领订单，返回新的 `{ sponsorUntil }`。
+- `getInvite {}` 读取邀请资格、邀请码、已邀请人数和填写期限；`fillInvite { code }` 返回 `{ sponsorUntil }`，`redeemCode { code }` 返回 `{ days, sponsorUntil }`。桌面和服务端共用 `cloud_api::normalize_code` 规范化邀请码和兑换码。上述操作都经 `Client::authenticated`，Agent 调用不用确认。
 
 ### 导师库
 
@@ -117,7 +119,7 @@
 - 使用当前工作树的 `.dev-data`，与桌面开发版共用数据目录锁和核心初始化，不能同时运行。界面的编辑会保存到这份真实数据里。
 - 核心 HTTP 服务和 Vite 都只监听 `127.0.0.1`，启动时各自分配空闲端口，多个工作树可同时预览。Vite 通过 `--strictPort` 使用分配到的端口；请求必须同时带有本次启动的随机令牌和这个 Vite 页面的 Origin。令牌放在网址片段里，打开后从地址栏移除，保存在当前标签页的会话存储中以支持刷新。
 - 不运行发信、收信、匹配、抓取、草稿生成、回信处理和待办提醒的后台循环；排队工作保留原状态，之后启动桌面开发版会继续处理。手动收信明确提示预览不支持；其他操作仍调用真实核心，主动测试连接或调用模型仍可能访问外部服务。
-- Tauri 事件的注册和注销为空操作，不推送事件；界面原有的轮询、操作后刷新照常工作。
+- 用 Tauri 官方的模拟接口代替桌面端的窗口和事件；核心不向页面推送事件，只有操作返回 `signed_out` 时由调用桥发出 `account-changed`，代替桌面版清除失效令牌时的通知。界面原有的轮询、操作后刷新照常工作。
 - 启动状态返回成功，数据位置和版本来自本次核心；导出日志、导出表格、打开数据目录等原生能力明确提示预览不支持。外部链接交给浏览器打开。
 - 仅在 Vite 的 `preview` 开发模式注入调用桥；正式 `pnpm --dir ui build` 和打包不会包含它。
 

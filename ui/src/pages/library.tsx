@@ -5,7 +5,7 @@ import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { LibraryAddPreview, LibraryAdded, LibraryMentor, LibraryOrg } from "@/api/types";
 import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
-import { addedMessage, LibraryAddDialog, needsChoices, refreshLibrary, useAccountRecheck } from "@/components/library";
+import { addedMessage, LibraryAddDialog, needsChoices, refreshLibrary } from "@/components/library";
 import { ExternalLink, Missing, placeOf } from "@/components/mentor";
 import { Pager, useLastPage } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
@@ -82,7 +82,6 @@ function Library() {
     onSuccess: (r) => (r.added ? done(r.added) : setChoosing(r)),
     onSettled: () => refreshLibrary(client),
   });
-  useAccountRecheck(orgs.error ?? list.error ?? quota.error ?? add.error);
   useLastPage(list.isSuccess && !list.isFetching ? list.data.total : undefined, s.page, (page) =>
     navigate({ search: (old) => ({ ...old, page }), replace: true }),
   );
@@ -395,7 +394,6 @@ function Preview({ id }: { id: string }) {
     queryKey: ["previewLibraryMentor", id],
     queryFn: () => call("previewLibraryMentor", { id }),
   });
-  useAccountRecheck(preview.error);
   if (preview.error) return <Retry error={preview.error} onRetry={() => void preview.refetch()} />;
   const p = preview.data;
   if (!p) return null;

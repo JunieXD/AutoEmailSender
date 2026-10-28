@@ -1,4 +1,9 @@
 // Loaded only by Vite's preview mode, before the app entry point.
+import type { InvokeArgs } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import type { CallError } from "./api/types";
+
 declare global {
   interface ImportMetaEnv {
     readonly AES_PREVIEW_API: string;
@@ -15,20 +20,13 @@ if (incomingToken) {
   history.replaceState(null, "", location.pathname + location.search);
 }
 const token = sessionStorage.getItem(storageKey);
-let callbackId = 0;
 
-Object.assign(window, {
-  __TAURI_INTERNALS__: {
-    // What `getCurrentWindow()` reads; the desktop app has one window, "main".
-    metadata: { currentWindow: { label: "main" } },
-    invoke,
-    transformCallback: () => ++callbackId,
-    unregisterCallback: () => {},
-  },
-  __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
-});
+// The desktop app has one window, "main". The core cannot push events to a browser page; the only
+// one delivered is raised by the call bridge below.
+mockWindows("main");
+mockIPC(invoke, { shouldMockEvents: true });
 
-async function invoke(command: string, args: Record<string, unknown> = {}): Promise<unknown> {
+async function invoke(command: string, args?: InvokeArgs): Promise<unknown> {
   switch (command) {
     case "call": {
       if (!token) throw new Error("缺少预览令牌，请打开终端打印的完整网址。");
@@ -37,9 +35,11 @@ async function invoke(command: string, args: Record<string, unknown> = {}): Prom
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(args),
       });
-      const result: unknown = await response.json();
-      if (!response.ok) throw result;
-      return result;
+      if (response.ok) return response.json();
+      const error: CallError = await response.json();
+      // The desktop app hears this from the core when it clears the rejected token.
+      if (error.code === "signed_out") void emit("account-changed");
+      throw error;
     }
     case "startup_failure":
       return null;
@@ -51,13 +51,10 @@ async function invoke(command: string, args: Record<string, unknown> = {}): Prom
       return import.meta.env.AES_PREVIEW_DATA;
     case "plugin:app|version":
       return import.meta.env.AES_PREVIEW_VERSION;
-    case "plugin:event|listen":
-      return args.handler;
-    case "plugin:event|unlisten":
     case "plugin:window|set_theme":
       return undefined;
     case "plugin:opener|open_url": {
-      if (typeof args.url !== "string") throw new Error("链接无效。");
+      if (!args || !("url" in args) || typeof args.url !== "string") throw new Error("链接无效。");
       const url = new URL(args.url);
       if (!["http:", "https:", "mailto:"].includes(url.protocol)) throw new Error("预览不支持打开这种链接。");
       window.open(url.href, "_blank", "noopener,noreferrer");

@@ -155,6 +155,7 @@ impl From<library::Error> for CallError {
                 code: cloud_api::ErrorCode::NotFound,
                 ..
             })) => ErrorCode::NotFound,
+            library::Error::Account(account::Error::SignedOut) => ErrorCode::SignedOut,
             library::Error::Account(_) => ErrorCode::External,
             _ => ErrorCode::Internal,
         };

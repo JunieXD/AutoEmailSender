@@ -1,6 +1,7 @@
 //! Official account access. Passwords live only for derivation; saved tokens never reach callers.
 
 mod key;
+pub use cloud_api::Sponsor;
 pub use key::login_key;
 
 use std::time::Duration;
@@ -9,7 +10,7 @@ use cloud_api::{ApiError, Empty, ErrorCode, Session, path};
 use reqwest::{Method, RequestBuilder};
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::SqlitePool;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 use ts_rs::TS;
 
 /// The production address will be set when the official service is deployed.
@@ -47,6 +48,7 @@ pub struct Client {
     change: Mutex<()>,
     address: String,
     http: reqwest::Client,
+    changed: watch::Sender<()>,
 }
 
 impl Client {
@@ -67,7 +69,12 @@ impl Client {
             address: address.trim_end_matches('/').into(),
             change: Mutex::new(()),
             http,
+            changed: watch::channel(()).0,
         }
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<()> {
+        self.changed.subscribe()
     }
 
     fn request(&self, method: Method, path: &str) -> RequestBuilder {
@@ -158,6 +165,87 @@ impl Client {
         Ok(())
     }
 
+    pub async fn get_sponsor(&self, db: &SqlitePool) -> Result<Sponsor, Error> {
+        let account: cloud_api::Account = self
+            .authenticated(db, Method::GET, path::ACCOUNT, None::<&Empty>)
+            .await?;
+        Ok(Sponsor {
+            sponsor_until: account.sponsor_until,
+        })
+    }
+
+    pub async fn sponsor_tiers(
+        &self,
+        db: &SqlitePool,
+    ) -> Result<Vec<cloud_api::SponsorTier>, Error> {
+        let tiers: cloud_api::SponsorTiers = self
+            .authenticated(db, Method::GET, path::SPONSOR_TIERS, None::<&Empty>)
+            .await?;
+        Ok(tiers.tiers)
+    }
+
+    pub async fn invite(&self, db: &SqlitePool) -> Result<cloud_api::Invite, Error> {
+        self.authenticated(db, Method::GET, path::INVITE, None::<&Empty>)
+            .await
+    }
+
+    pub async fn fill_invite(&self, db: &SqlitePool, code: &str) -> Result<Sponsor, Error> {
+        let code = cloud_api::normalize_code(code);
+        if code.is_empty() {
+            return Err(Error::Invalid("请输入邀请码"));
+        }
+        self.authenticated(
+            db,
+            Method::POST,
+            path::INVITE,
+            Some(&cloud_api::CodeRequest { code }),
+        )
+        .await
+    }
+
+    pub async fn redeem(&self, db: &SqlitePool, code: &str) -> Result<cloud_api::Redeemed, Error> {
+        let code = cloud_api::normalize_code(code);
+        if code.is_empty() {
+            return Err(Error::Invalid("请输入兑换码"));
+        }
+        self.authenticated(
+            db,
+            Method::POST,
+            path::REDEEM,
+            Some(&cloud_api::CodeRequest { code }),
+        )
+        .await
+    }
+
+    pub async fn claim_sponsor_order(
+        &self,
+        db: &SqlitePool,
+        order_number: &str,
+    ) -> Result<Sponsor, Error> {
+        let order_number = order_number.trim();
+        if order_number.is_empty() {
+            return Err(Error::Invalid("请填写爱发电的订单号。"));
+        }
+        if order_number.len() > 64 || !order_number.bytes().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(Error::Invalid(
+                "订单号只有字母和数字，请从爱发电的“我的订单”里复制。",
+            ));
+        }
+        let account: cloud_api::Account = self
+            .authenticated(
+                db,
+                Method::POST,
+                path::SPONSOR_CLAIM,
+                Some(&cloud_api::ClaimRequest {
+                    order_number: order_number.into(),
+                }),
+            )
+            .await?;
+        Ok(Sponsor {
+            sponsor_until: account.sponsor_until,
+        })
+    }
+
     pub async fn delete(
         &self,
         db: &SqlitePool,
@@ -209,9 +297,13 @@ impl Client {
                 code: ErrorCode::SessionExpired,
                 ..
             })) => {
-                sqlx::query!("UPDATE account SET token = NULL WHERE token = ?", token)
-                    .execute(db)
-                    .await?;
+                let cleared =
+                    sqlx::query!("UPDATE account SET token = NULL WHERE token = ?", token)
+                        .execute(db)
+                        .await?;
+                if cleared.rows_affected() > 0 {
+                    self.changed.send_replace(());
+                }
                 Err(Error::SignedOut)
             }
             result => result,
@@ -338,6 +430,26 @@ impl Error {
                 ErrorCode::MailUnavailable => "验证码暂时无法发送，请稍后重试。".into(),
                 ErrorCode::Internal => "服务器暂时无法处理，请稍后重试。".into(),
                 ErrorCode::QuotaExceeded => "今天还能添加的数量不够了，少选几位或明天再来。".into(),
+                ErrorCode::OrderNotFound => {
+                    "查不到这笔订单，请检查订单号；刚付款请稍等几分钟再试。".into()
+                }
+                ErrorCode::OrderClaimed => "这笔订单已经给别的账号开通过赞助。".into(),
+                ErrorCode::OrderNotSponsorship => {
+                    "这笔订单不是赞助方案，请在爱发电的赞助方案付款后再开通。".into()
+                }
+                ErrorCode::SponsorUnavailable => "赞助暂时不可用，请稍后重试。".into(),
+                ErrorCode::InviteNotFound => "没有这个邀请码，请检查后重试。".into(),
+                ErrorCode::InviteFull => "这个邀请码已经邀请满 4 位同学了。".into(),
+                ErrorCode::InviteOwn => "不能填自己的邀请码。".into(),
+                ErrorCode::InviteExpired => "注册超过 7 天，不能再填邀请码了。".into(),
+                ErrorCode::InviteUsed => "这个邮箱已经领过邀请奖励了。".into(),
+                ErrorCode::CodeNotFound => "没有这个兑换码，请检查后重试。".into(),
+                ErrorCode::CodeUsedUp => "这个兑换码已经被领完了。".into(),
+                ErrorCode::CodeExpired => "这个兑换码已经过期了。".into(),
+                ErrorCode::CodeUsed => "你已经用过这个兑换码了。".into(),
+                ErrorCode::EmailIneligible => {
+                    "用常用邮箱（QQ、163、Gmail 等）或学校邮箱注册的账号才能参加。".into()
+                }
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()
                 }

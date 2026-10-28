@@ -21,6 +21,51 @@ pub struct AccountVerification {
     pub password: String,
 }
 
+#[derive(Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SponsorOrder {
+    pub order_number: String,
+}
+
+pub async fn get_sponsor(ctx: &Context, _: Nothing) -> Result<account::Sponsor, CallError> {
+    Ok(ctx.account.get_sponsor(&ctx.db).await?)
+}
+
+pub async fn get_sponsor_tiers(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Vec<cloud_api::SponsorTier>, CallError> {
+    Ok(ctx.account.sponsor_tiers(&ctx.db).await?)
+}
+
+pub async fn get_invite(ctx: &Context, _: Nothing) -> Result<cloud_api::Invite, CallError> {
+    Ok(ctx.account.invite(&ctx.db).await?)
+}
+
+pub async fn fill_invite(
+    ctx: &Context,
+    input: cloud_api::CodeRequest,
+) -> Result<account::Sponsor, CallError> {
+    Ok(ctx.account.fill_invite(&ctx.db, &input.code).await?)
+}
+
+pub async fn redeem_code(
+    ctx: &Context,
+    input: cloud_api::CodeRequest,
+) -> Result<cloud_api::Redeemed, CallError> {
+    Ok(ctx.account.redeem(&ctx.db, &input.code).await?)
+}
+
+pub async fn claim_sponsor_order(
+    ctx: &Context,
+    input: SponsorOrder,
+) -> Result<account::Sponsor, CallError> {
+    Ok(ctx
+        .account
+        .claim_sponsor_order(&ctx.db, &input.order_number)
+        .await?)
+}
+
 pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {
     Ok(account::state(&ctx.db).await?)
 }
@@ -80,6 +125,7 @@ impl From<account::Error> for CallError {
         let code = match error {
             account::Error::Invalid(_) | account::Error::AccountChanged => ErrorCode::Invalid,
             account::Error::Database(_) | account::Error::Worker(_) => ErrorCode::Internal,
+            account::Error::SignedOut => ErrorCode::SignedOut,
             _ => ErrorCode::External,
         };
         Self {

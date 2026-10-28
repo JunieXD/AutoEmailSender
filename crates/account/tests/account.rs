@@ -4,6 +4,229 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use test_fixtures::provider::{Provider, Response};
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'student@example.invalid', 'sponsor-token')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let calls = async {
+        assert_eq!(client.get_sponsor(&db).await.unwrap().sponsor_until, None);
+        assert_eq!(
+            client.sponsor_tiers(&db).await.unwrap()[0].url,
+            "https://afdian.com/order/create?custom_order_id=123"
+        );
+        assert_eq!(
+            client
+                .claim_sponsor_order(&db, "  AbC123\n")
+                .await
+                .unwrap()
+                .sponsor_until,
+            Some(1_800_000_000_000)
+        );
+        for invalid in ["", "   ", "订单号", "abc-123", &"a".repeat(65)] {
+            assert!(matches!(
+                client.claim_sponsor_order(&db, invalid).await,
+                Err(Error::Invalid(_))
+            ));
+        }
+    };
+    let replies = async {
+        for (method, path, body) in [
+            (
+                "GET",
+                path::ACCOUNT,
+                json!({"email":"student@example.invalid", "sponsorUntil":null}),
+            ),
+            (
+                "GET",
+                path::SPONSOR_TIERS,
+                json!({"tiers":[{"duration":{"days":7},"price":660,"url":"https://afdian.com/order/create?custom_order_id=123"}]}),
+            ),
+            (
+                "POST",
+                path::SPONSOR_CLAIM,
+                json!({"email":"student@example.invalid", "sponsorUntil":1_800_000_000_000_i64}),
+            ),
+        ] {
+            let request = server.requests.recv().await.unwrap();
+            assert!(request.line.starts_with(&format!("{method} {path} ")));
+            assert_eq!(request.authorization, "Bearer sponsor-token");
+            if method == "POST" {
+                let claim: cloud_api::ClaimRequest = serde_json::from_value(request.body).unwrap();
+                assert_eq!(claim.order_number, "AbC123");
+            }
+            request
+                .respond
+                .send(Response::Raw {
+                    status: 200,
+                    content: body.to_string(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+    assert!(server.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn sponsorship_preserves_server_error_codes(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        r#"INSERT INTO account (id, email, token)
+        VALUES (1, 'student@example.invalid', 'sponsor-token')"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    const CODES: [ErrorCode; 4] = [
+        ErrorCode::OrderNotFound,
+        ErrorCode::OrderClaimed,
+        ErrorCode::OrderNotSponsorship,
+        ErrorCode::SponsorUnavailable,
+    ];
+    let calls = async {
+        for code in CODES {
+            let error = client.claim_sponsor_order(&db, "abc123").await.unwrap_err();
+            assert!(matches!(error, Error::Server(ref error) if error.code == code));
+        }
+    };
+    let replies = async {
+        for code in CODES {
+            let request = server.requests.recv().await.unwrap();
+            request
+                .respond
+                .send(Response::Raw {
+                    status: 400,
+                    content: serde_json::to_string(&ApiError {
+                        code,
+                        retry_after_seconds: None,
+                    })
+                    .unwrap(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    sqlx::query(
+        "INSERT INTO account (id, email, token) VALUES (1, 'student@qq.com', 'code-token')",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let calls = async {
+        assert!(matches!(
+            client.invite(&db).await.unwrap(),
+            cloud_api::Invite::Eligible {
+                invited: 1,
+                fill_until: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            client
+                .fill_invite(&db, "  ａｂｃｄ-２３４５ ")
+                .await
+                .unwrap()
+                .sponsor_until,
+            Some(1800000000000)
+        );
+        let redeemed = client
+            .redeem(&db, " ａｂｃｄ ２３４５-ｅｆｇｈ ")
+            .await
+            .unwrap();
+        assert_eq!(redeemed.days, 7);
+        assert_eq!(redeemed.sponsor_until, 1800604800000);
+        let error = client.fill_invite(&db, "ABCDEFGH").await.unwrap_err();
+        assert!(matches!(error, Error::Server(ref error) if error.code == ErrorCode::InviteFull));
+        assert!(error.message().contains("4 位"));
+        let error = client.redeem(&db, "ABCDEFGH2345").await.unwrap_err();
+        assert!(matches!(error, Error::Server(ref error) if error.code == ErrorCode::CodeUsed));
+        assert!(error.message().contains("已经用过"));
+        assert!(matches!(
+            client.fill_invite(&db, " - ").await,
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(
+            client.redeem(&db, " - ").await,
+            Err(Error::Invalid(_))
+        ));
+    };
+    let replies = async {
+        for (method, path, code, status, body) in [
+            (
+                "GET",
+                path::INVITE,
+                None,
+                200,
+                json!({"status":"eligible","code":"ABCDEFGH","invited":1,"fillUntil":null}),
+            ),
+            (
+                "POST",
+                path::INVITE,
+                Some("ABCD2345"),
+                200,
+                json!({"sponsorUntil":1800000000000_i64}),
+            ),
+            (
+                "POST",
+                path::REDEEM,
+                Some("ABCD2345EFGH"),
+                200,
+                json!({"days":7,"sponsorUntil":1800604800000_i64}),
+            ),
+            (
+                "POST",
+                path::INVITE,
+                Some("ABCDEFGH"),
+                409,
+                json!({"code":"invite_full"}),
+            ),
+            (
+                "POST",
+                path::REDEEM,
+                Some("ABCDEFGH2345"),
+                409,
+                json!({"code":"code_used"}),
+            ),
+        ] {
+            let request = server.requests.recv().await.unwrap();
+            assert!(request.line.starts_with(&format!("{method} {path} ")));
+            assert_eq!(request.authorization, "Bearer code-token");
+            if let Some(code) = code {
+                assert_eq!(request.body, json!({"code":code}));
+            }
+            request
+                .respond
+                .send(Response::Raw {
+                    status,
+                    content: body.to_string(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+    assert!(server.requests.try_recv().is_err());
+}
+
 #[tokio::test]
 async fn derivation_matches_an_independent_argon2_and_hkdf_vector_and_normalizes_email() {
     let password = "fixed-password-123";
