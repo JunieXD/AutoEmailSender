@@ -21,7 +21,7 @@ ts-rs.workspace = true
 url = "2.5.8"
 
 [dev-dependencies]
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 profile.workspace = true
 test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

@@ -24,6 +24,6 @@ ts-rs.workspace = true
 zeroize = "1.8"
 
 [dev-dependencies]
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 serde_json.workspace = true
 test-fixtures = { path = "../test-fixtures" }

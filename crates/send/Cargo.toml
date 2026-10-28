@@ -25,6 +25,7 @@ tracing.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["testing"] }
 base64 = "0.22"
 fakemail.workspace = true
 receive.workspace = true

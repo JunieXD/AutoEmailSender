@@ -14,6 +14,6 @@ sqlx.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 profile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

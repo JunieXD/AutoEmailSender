@@ -25,6 +25,7 @@ ts-rs.workspace = true
 db.workspace = true
 
 [dev-dependencies]
+db = { workspace = true, features = ["testing"] }
 test-fixtures = { path = "../test-fixtures" }
 fakemail.workspace = true
 tokio = { workspace = true, features = ["rt", "io-util", "net", "rt-multi-thread", "test-util"] }

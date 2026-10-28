@@ -23,6 +23,6 @@ tracing.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }

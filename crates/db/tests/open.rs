@@ -7,6 +7,39 @@ use std::path::Path;
 
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{Connection, SqliteConnection};
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn test_connections_skip_sync_but_app_connections_keep_normal(pool: SqlitePool) {
+    let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(synchronous, 0);
+
+    let (dir, app) = test_fixtures::db::open().await.unwrap();
+    let mut connection = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(dir.path().join("unmigrated.db"))
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(synchronous, 0);
+
+    let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+        .fetch_one(&app)
+        .await
+        .unwrap();
+    assert_eq!(synchronous, 1);
+    connection.close().await.unwrap();
+    app.close().await;
+    dir.close().unwrap();
+}
 
 #[tokio::test]
 async fn failed_upgrade_keeps_a_copy() {

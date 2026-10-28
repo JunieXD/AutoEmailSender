@@ -18,7 +18,7 @@ sqlx.workspace = true
 ts-rs.workspace = true
 
 [dev-dependencies]
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 mentor.workspace = true
 test-fixtures = { path = "../test-fixtures" }
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -17,6 +17,6 @@ ts-rs.workspace = true
 
 [dev-dependencies]
 chrono-tz = "0.10.4"
-db.workspace = true
+db = { workspace = true, features = ["testing"] }
 mentor.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -29,7 +29,42 @@ fn initialize_sqlite() {
         unsafe {
             libsqlite3_sys::sqlite3_initialize();
         }
+        // SQLx creates test databases without db::open, so set their defaults before migrations.
+        #[cfg(feature = "testing")]
+        {
+            #[expect(
+                unsafe_code,
+                reason = "SQLite's extension registration has no safe binding"
+            )]
+            // SAFETY: the callback has SQLite's required ABI and lives for the whole process.
+            let result = unsafe { libsqlite3_sys::sqlite3_auto_extension(Some(test_connection)) };
+            assert_eq!(
+                result,
+                libsqlite3_sys::SQLITE_OK,
+                "register test SQLite setup"
+            );
+        }
     });
+}
+
+#[cfg(feature = "testing")]
+#[expect(unsafe_code, reason = "SQLite calls this extension through its C API")]
+unsafe extern "C" fn test_connection(
+    db: *mut libsqlite3_sys::sqlite3,
+    error: *mut *mut std::ffi::c_char,
+    _api: *const libsqlite3_sys::sqlite3_api_routines,
+) -> std::ffi::c_int {
+    // SAFETY: SQLite supplies an open connection and an error output it frees after this call.
+    // The SQL is a static C string; no callback or callback data is used.
+    unsafe {
+        libsqlite3_sys::sqlite3_exec(
+            db,
+            c"PRAGMA synchronous = OFF".as_ptr(),
+            None,
+            std::ptr::null_mut(),
+            error,
+        )
+    }
 }
 
 /// Copies taken before upgrades are named with this and a millisecond timestamp; the newest
