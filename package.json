@@ -9,7 +9,7 @@
     "preview": "cargo xtask web",
     "check": "cargo fmt --check && pnpm sqlx:db && node tools/check-rust.mjs && cargo test --workspace --lib --bins --tests && pnpm --dir ui check",
     "fmt": "cargo fmt && pnpm --dir ui exec prettier --write .",
-    "sqlx:db": "cargo sqlx database reset -y --source crates/db/migrations -D sqlite:target/sqlx.db",
+    "sqlx:db": "node -e \"require('node:fs').mkdirSync('target', { recursive: true })\" && cargo sqlx database reset -y --source crates/db/migrations -D sqlite:target/sqlx.db",
     "sqlx": "pnpm sqlx:db && cargo sqlx prepare --workspace -D sqlite:target/sqlx.db -- --all-targets"
   },
   "devDependencies": {
