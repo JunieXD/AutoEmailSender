@@ -33,6 +33,8 @@ jobs:
       - if: steps.changes.outputs.code && runner.os == 'Windows'
         uses: samypr100/setup-dev-drive@v4
         with:
+          drive-size: 20GB
+          workspace-copy: true
           env-mapping: |
             TMP,{{ DEV_DRIVE }}/
             TEMP,{{ DEV_DRIVE }}/
@@ -42,6 +44,8 @@ jobs:
           components: clippy, rustfmt
       - if: steps.changes.outputs.code
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.DEV_DRIVE_WORKSPACE || '.' }} -> target
       - if: steps.changes.outputs.code
         run: cargo install sqlx-cli --version 0.9.0 --no-default-features --features sqlite,sqlx-toml --locked
       - if: steps.changes.outputs.code
@@ -53,5 +57,7 @@ jobs:
           cache: pnpm
       - if: steps.changes.outputs.code
         run: pnpm install --frozen-lockfile
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       - if: steps.changes.outputs.code
         run: pnpm check
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
