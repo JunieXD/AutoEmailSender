@@ -34,8 +34,9 @@ pub async fn export_backup(
     app: AppHandle,
     ctx: tauri::State<'_, std::sync::Arc<api::Context>>,
 ) -> Result<bool, String> {
-    let (db, materials) = (ctx.db.clone(), ctx.materials.clone());
+    let db = ctx.db.clone();
     blocking(app, move |app| {
+        let dir = crate::data_dir(app).map_err(|e| format!("数据目录无法使用：{e}"))?;
         let now = now();
         let date: String = tauri::async_runtime::block_on(
             sqlx::query_scalar("SELECT date(? / 1000, 'unixepoch', 'localtime')")
@@ -58,7 +59,7 @@ pub async fn export_backup(
         let target = target
             .into_path()
             .map_err(|e| format!("无法保存到这个位置：{e}，请选择其他位置。"))?;
-        tauri::async_runtime::block_on(api::backup::export(&db, &materials, &target, now))
+        tauri::async_runtime::block_on(api::backup::export(&db, &dir, &target, now))
             .map_err(failure)?;
         Ok(true)
     })
@@ -121,11 +122,13 @@ pub async fn cancel_restore(app: AppHandle) -> Result<(), String> {
 pub async fn restore_backup(
     app: AppHandle,
     ctx: tauri::State<'_, std::sync::Arc<api::Context>>,
+    exported_at: i64,
 ) -> Result<(), String> {
     let db = ctx.db.clone();
     blocking(app.clone(), move |app| {
         let dir = crate::data_dir(app).map_err(|e| format!("数据目录无法使用：{e}"))?;
-        tauri::async_runtime::block_on(api::backup::confirm(&db, &dir, now())).map_err(failure)
+        tauri::async_runtime::block_on(api::backup::confirm(&db, &dir, exported_at, now()))
+            .map_err(failure)
     })
     .await?;
     app.restart();

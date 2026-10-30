@@ -118,31 +118,32 @@ fn database_version() -> i64 {
     db::MIGRATOR.iter().map(|m| m.version).max().unwrap_or(0)
 }
 
-/// The caller serializes backup commands. Material files are immutable; a concurrent deletion
-/// can fail this export, but never produce an archive with missing files.
-pub async fn export(db: &SqlitePool, materials: &Path, target: &Path, now: i64) -> Result<()> {
-    let parent = target
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let stage = tempfile::Builder::new()
-        .prefix(".aes-snapshot-")
-        .tempdir_in(parent)?;
-    let path = stage.path().join("app.db");
-    let snapshot = snapshot(db, &path).await?;
-    let manifest = Manifest {
-        application: APPLICATION.into(),
-        app_version: env!("CARGO_PKG_VERSION").into(),
-        database_version: snapshot.version,
-        exported_at: now,
-    };
-    let ids: Vec<i64> = snapshot.materials.iter().map(|(id, _)| *id).collect();
-    let (materials, target) = (materials.to_owned(), target.to_owned());
-    tokio::task::spawn_blocking(move || {
-        archive::write(&target, &path, &materials, &ids, &manifest)
-    })
-    .await??;
-    Ok(())
+/// Exports the data in the data directory `dir`. The caller serializes backup commands. Material
+/// files are immutable; a concurrent deletion can fail this export, but never produce an archive
+/// with missing files.
+pub async fn export(db: &SqlitePool, dir: &Path, target: &Path, now: i64) -> Result<()> {
+    // Credentials stay in the copy until it is scrubbed: never beside the target, which may be a
+    // synced or shared folder. A killed export leaves it here for the next one to replace.
+    let path = dir.join("export.db");
+    remove_file(&path)?;
+    let exported = async {
+        let snapshot = snapshot(db, &path).await?;
+        let manifest = Manifest {
+            application: APPLICATION.into(),
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            database_version: snapshot.version,
+            exported_at: now,
+        };
+        let ids: Vec<i64> = snapshot.materials.iter().map(|(id, _)| *id).collect();
+        let (path, materials, target) = (path.clone(), dir.join("materials"), target.to_owned());
+        tokio::task::spawn_blocking(move || {
+            archive::write(&target, &path, &materials, &ids, &manifest)
+        })
+        .await?
+    }
+    .await;
+    remove_file(&path)?;
+    exported
 }
 
 /// What a snapshot holds, besides the database file itself.
@@ -406,8 +407,9 @@ fn ensure_not_pending(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The live database remains untouched until the next process has acquired its data lock.
-pub async fn confirm(db: &SqlitePool, dir: &Path, now: i64) -> Result<()> {
+/// Confirms the restore the user was shown, known by when it was exported. The live database
+/// remains untouched until the next process has acquired its data lock.
+pub async fn confirm(db: &SqlitePool, dir: &Path, exported_at: i64, now: i64) -> Result<()> {
     ensure_not_pending(dir)?;
     let stage = dir.join("restore");
     let manifest = archive::manifest(&stage.join("manifest.json")).map_err(|e| match e {
@@ -416,11 +418,17 @@ pub async fn confirm(db: &SqlitePool, dir: &Path, now: i64) -> Result<()> {
         }
         e => e,
     })?;
+    // Another restore checked or downloaded meanwhile has taken the stage.
+    if manifest.exported_at != exported_at {
+        return Err(Error::Invalid(
+            "要恢复的备份已经换成了另一份，请关掉这个窗口，重新选择备份。".into(),
+        ));
+    }
     inspect(dir, &stage, &manifest).await?;
     let backups = dir.join("backups");
     fs::create_dir_all(&backups)?;
     let target = backups.join(format!("{BACKUP_PREFIX}{now}.zip"));
-    export(db, &dir.join("materials"), &target, now).await?;
+    export(db, dir, &target, now).await?;
     let dir = dir.to_owned();
     tokio::task::spawn_blocking(move || {
         prune(&dir.join("backups"), &target)?;
@@ -510,6 +518,13 @@ fn rename(from: &Path, to: &Path) -> io::Result<()> {
         sync_dir(parent)?;
     }
     Ok(())
+}
+
+fn remove_file(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
 }
 
 fn remove_dir(path: &Path) -> io::Result<()> {
