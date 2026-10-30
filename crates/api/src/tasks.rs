@@ -184,7 +184,7 @@ pub async fn stop_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
     Ok(())
 }
 pub async fn delete_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
-    task::delete(&ctx.db, key.id).await?;
+    task::delete(&ctx.db, key.id, now()).await?;
     ctx.generator.wake();
     Ok(())
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT latest_at, mailbox_id, from_address, to_address, message_id, sent_at,\n             updated_at\n           FROM email\n           WHERE id = ?",
+  "query": "SELECT latest_at, mailbox_id, from_address, to_address, message_id, copy_message_id,\n             sent_at, updated_at\n           FROM email\n           WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -59,8 +59,19 @@
         }
       },
       {
-        "name": "sent_at",
+        "name": "copy_message_id",
         "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "copy_message_id"
+          }
+        }
+      },
+      {
+        "name": "sent_at",
+        "ordinal": 6,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -71,7 +82,7 @@
       },
       {
         "name": "updated_at",
-        "ordinal": 6,
+        "ordinal": 7,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -91,8 +102,9 @@
       true,
       true,
       true,
+      true,
       false
     ]
   },
-  "hash": "4b79bf2cc85d01b47fa7862ad44167a12d65b67165f444cf8a613607513b1f0d"
+  "hash": "160783840f942fb7828a385ee4fad6c168d4e1a7b0e6b1db3268bbdb3fe18efc"
 }

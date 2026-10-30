@@ -346,7 +346,15 @@ async fn send<T: chrono::TimeZone>(
         })
         .await
     {
-        Ok(SendStatus::Expired) => return m.before.restore(&mut *db.acquire().await?, id).await,
+        Ok(SendStatus::Expired) => {
+            // Left sending, the email would wait for a restart to be taken as maybe sent.
+            writes
+                .retry("restore expired email", || async {
+                    m.before.restore(&mut *db.acquire().await?, id).await
+                })
+                .await;
+            return Ok(());
+        }
         Ok(SendStatus::Sent) => {
             tracing::info!("email {id} sent from mailbox {mailbox_id}");
             Outcome::Sent
@@ -408,6 +416,7 @@ struct BeforeHandover {
     from_address: Option<String>,
     to_address: Option<String>,
     message_id: Option<String>,
+    copy_message_id: Option<String>,
     sent_at: Option<i64>,
     updated_at: i64,
 }
@@ -426,12 +435,13 @@ impl BeforeHandover {
         sqlx::query!(
             r#"UPDATE email SET mailbox_id = (SELECT id FROM mailbox WHERE id = ?1),
                  from_address = ?2, to_address = ?3, message_id = coalesce(?4, message_id),
-                 sent_at = ?5
-               WHERE id = ?6 AND state IN ('failed', 'canceled')"#,
+                 copy_message_id = ?5, sent_at = ?6
+               WHERE id = ?7 AND state IN ('failed', 'canceled')"#,
             self.mailbox_id,
             self.from_address,
             self.to_address,
             self.message_id,
+            self.copy_message_id,
             self.sent_at,
             id,
         )
@@ -447,15 +457,16 @@ impl BeforeHandover {
                  planned_at = CASE WHEN cancel_reason IS NULL THEN planned_at END,
                  latest_at = CASE WHEN cancel_reason IS NULL THEN ?1 END,
                  mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
-                 from_address = ?3, to_address = ?4, message_id = ?5, sent_at = ?6,
-                 error = NULL,
-                 updated_at = CASE WHEN cancel_reason IS NULL THEN ?7 ELSE updated_at END
-               WHERE id = ?8 AND state = 'sending'"#,
+                 from_address = ?3, to_address = ?4, message_id = ?5, copy_message_id = ?6,
+                 sent_at = ?7, error = NULL,
+                 updated_at = CASE WHEN cancel_reason IS NULL THEN ?8 ELSE updated_at END
+               WHERE id = ?9 AND state = 'sending'"#,
             self.latest_at,
             self.mailbox_id,
             self.from_address,
             self.to_address,
             self.message_id,
+            self.copy_message_id,
             self.sent_at,
             self.updated_at,
             id,
@@ -487,8 +498,8 @@ async fn mark_sending(
     let at = now();
     let Some(before) = sqlx::query_as!(
         BeforeHandover,
-        r#"SELECT latest_at, mailbox_id, from_address, to_address, message_id, sent_at,
-             updated_at
+        r#"SELECT latest_at, mailbox_id, from_address, to_address, message_id, copy_message_id,
+             sent_at, updated_at
            FROM email
            WHERE id = ?"#,
         id

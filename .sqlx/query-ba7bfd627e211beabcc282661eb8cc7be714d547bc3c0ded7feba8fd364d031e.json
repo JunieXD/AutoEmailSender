@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET mailbox_id = (SELECT id FROM mailbox WHERE id = ?1),\n                 from_address = ?2, to_address = ?3, message_id = coalesce(?4, message_id),\n                 copy_message_id = ?5, sent_at = ?6\n               WHERE id = ?7 AND state IN ('failed', 'canceled')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "ba7bfd627e211beabcc282661eb8cc7be714d547bc3c0ded7feba8fd364d031e"
+}

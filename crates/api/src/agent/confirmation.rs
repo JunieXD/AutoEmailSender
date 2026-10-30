@@ -503,7 +503,7 @@ async fn describe(
                 r#"SELECT count(*) AS "count!: i64" FROM email
                 WHERE task_id = ? AND NOT (
                     state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')
-                    OR (state = 'canceled' AND sent_at IS NOT NULL))"#,
+                    OR sent_at IS NOT NULL)"#,
                 input.id
             )
             .fetch_one(&mut *conn)

@@ -126,14 +126,14 @@ pub async fn approve(
         > 0)
 }
 
+/// For a task whose unsent emails were canceled.
 pub async fn delete(conn: &mut SqliteConnection, task: i64) -> Result<(), sqlx::Error> {
-    // `state = 'canceled' AND sent_at IS NOT NULL` retains a prior attempt's delivery evidence;
-    // cleanup must preserve it for late copies and bounces, just as copied/copy_candidates/bounced
-    // do.
+    // A canceled email with `sent_at` keeps a prior attempt's delivery evidence; cleanup must
+    // preserve it for late copies and bounces, just as copied/copy_candidates/bounced do.
     sqlx::query!(
         "DELETE FROM email WHERE task_id = ?
            AND NOT (state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')
-             OR (state = 'canceled' AND sent_at IS NOT NULL))",
+             OR sent_at IS NOT NULL)",
         task
     )
     .execute(conn)

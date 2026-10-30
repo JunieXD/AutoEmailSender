@@ -1547,7 +1547,7 @@ async fn stop_remove_trash_and_delete_preserve_only_delivery_evidence(db: Sqlite
         items(&db, task).await[1].cancel_reason.as_deref(),
         Some("任务停止")
     );
-    delete(&db, task).await.unwrap();
+    delete(&db, task, T).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM email")
             .fetch_one(&db)
@@ -1580,14 +1580,14 @@ async fn stop_remove_trash_and_delete_preserve_only_delivery_evidence(db: Sqlite
     .execute(&db)
     .await
     .unwrap();
-    assert!(delete(&db, task).await.is_err());
+    assert!(delete(&db, task, T).await.is_err());
     assert_eq!(items(&db, task).await.len(), 2);
     email::sent(&mut db.acquire().await.unwrap(), ds[0].id, T)
         .await
         .unwrap();
     mentor::trash::trash(&db, &[b], T).await.unwrap();
     assert_eq!(items(&db, task).await[1].state, DraftState::Canceled);
-    delete(&db, task).await.unwrap();
+    delete(&db, task, T).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT count(*) FROM email WHERE task_id IS NULL AND state='sent'"
@@ -3025,7 +3025,7 @@ async fn restart_refuses_a_deleted_source_after_changing_template(db: SqlitePool
         .unwrap();
         assert_eq!(items(&db, old).await[0].state, DraftState::Sent);
         assert!(plan(&db, &next).await.unwrap().mentors[0].reason.is_some());
-        delete(&db, old).await.unwrap();
+        delete(&db, old, T).await.unwrap();
         assert!(get(&db, old).await.unwrap().is_none());
 
         let planned = plan(&db, &next).await;

@@ -757,7 +757,8 @@ pub struct Attached {
 /// Marks an approved email as being handed to SMTP from this mailbox, and returns what was
 /// approved: read together, so that what goes out is the latest approval. None when it is no longer
 /// approved, as when it was taken back or its mentor moved to the trash meanwhile. An email that
-/// already has a Message-ID keeps it.
+/// already has a Message-ID keeps it; the copy found of a try to an address since changed is
+/// forgotten, so that the copy of this one can be found.
 pub async fn start_sending(
     conn: &mut SqliteConnection,
     id: i64,
@@ -770,6 +771,9 @@ pub async fn start_sending(
         r#"UPDATE email SET state = 'sending', latest_at = NULL, error = NULL, mailbox_id = ?1,
              from_address = ?2, to_address = (SELECT address FROM mentor_email WHERE mentor_id =
              email.mentor_id ORDER BY POSITION LIMIT 1), message_id = coalesce(message_id, ?3),
+             copy_message_id = CASE WHEN to_address IS (SELECT address FROM mentor_email
+               WHERE mentor_id = email.mentor_id ORDER BY POSITION LIMIT 1)
+               THEN copy_message_id END,
              sent_at = ?4, updated_at = ?4
            WHERE id = ?5
              AND state = 'approved'
