@@ -38,7 +38,7 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
         .await
         .map_err(Error::Database)?;
     let net = net::Net::new(Vec::new()).map_err(Error::Net)?;
-    Ok((Context::new(db, net, dir.join("materials")), restored))
+    Ok((Context::new(db, net, dir), restored))
 }
 
 #[derive(Debug)]

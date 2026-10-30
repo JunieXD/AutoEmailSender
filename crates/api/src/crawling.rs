@@ -267,7 +267,7 @@ mod tests {
         let ctx = Context::new(
             db.clone(),
             net::Net::new(vec![]).unwrap(),
-            Default::default(),
+            std::path::Path::new(""),
         );
         sqlx::query!("UPDATE profile SET default_model_config_id = ?", ids[1])
             .execute(&db)
@@ -339,7 +339,7 @@ mod tests {
         let ctx = Context::new(
             db.clone(),
             net::Net::new(vec![]).unwrap(),
-            Default::default(),
+            std::path::Path::new(""),
         );
         let error = enrich_candidates(&ctx, CandidateIds { ids: vec![id] })
             .await

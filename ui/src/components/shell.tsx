@@ -266,6 +266,13 @@ function useBackground() {
     // Only a synchronization, at most hourly, adds to it; changes the user makes refresh it directly.
     refetchInterval: 60_000,
   });
+  const cloud = useQuery({
+    queryKey: ["getCloudBackup"],
+    queryFn: () => call("getCloudBackup", {}),
+    // Backups run at most hourly; the backup page refreshes it after its own.
+    refetchInterval: 60_000,
+  });
+  const cloudFailure = cloud.data?.enabled ? cloud.data.failure : null;
   const storage = useQuery({
     queryKey: ["storageFailure"],
     queryFn: () => call("storageFailure", {}),
@@ -291,6 +298,11 @@ function useBackground() {
     receiving: (mailboxes.data?.length ?? 0) > 0,
     repliesPaused: replies.data?.pause ?? null,
     libraryUpdates: library.data ?? 0,
+    // A day's missed backup is retried hourly; only a lasting failure needs the user.
+    cloudFailure:
+      cloudFailure && cloud.dataUpdatedAt - cloudFailure.since >= 3 * 86_400_000
+        ? { days: Math.floor((cloud.dataUpdatedAt - cloudFailure.since) / 86_400_000), message: cloudFailure.message }
+        : null,
     marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
     crawled:
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
@@ -308,6 +320,7 @@ function useBackground() {
       mailboxes.error ??
       replies.error ??
       library.error ??
+      cloud.error ??
       done.error,
   };
   return {
@@ -327,7 +340,8 @@ function useBackground() {
       work.crawlsPending.length +
       (work.matching > 0 && work.matchingPause ? 1 : 0) +
       (work.repliesPaused ? 1 : 0) +
-      (work.libraryUpdates > 0 ? 1 : 0),
+      (work.libraryUpdates > 0 ? 1 : 0) +
+      (work.cloudFailure ? 1 : 0),
   };
 }
 
@@ -477,6 +491,11 @@ function Background({ className }: { className?: string }) {
               >
                 <Entry title={`导师库有 ${work.libraryUpdates} 位导师的资料有更新`} detail="打开去选" />
               </button>
+            )}
+            {work.cloudFailure && (
+              <Link to="/settings/backup" className={ITEM}>
+                <Entry title={`云端备份 ${work.cloudFailure.days} 天没成功`} detail={work.cloudFailure.message} />
+              </Link>
             )}
           </Group>
         )}

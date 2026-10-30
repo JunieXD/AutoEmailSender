@@ -10,8 +10,10 @@ use mailbox::{MailboxForm, Security, Server};
 use serde_json::json;
 use sqlx::SqlitePool;
 
-fn context(db: SqlitePool, materials: &Path) -> Context {
-    Context::new(db, net::Net::new(Vec::new()).unwrap(), materials.to_owned())
+fn context(db: SqlitePool, data: &Path) -> Context {
+    let ctx = Context::new(db, net::Net::new(Vec::new()).unwrap(), data);
+    std::fs::create_dir(&ctx.materials).unwrap();
+    ctx
 }
 
 async fn mailbox(ctx: &mut Context, secret: &str) -> (i64, Inbox) {

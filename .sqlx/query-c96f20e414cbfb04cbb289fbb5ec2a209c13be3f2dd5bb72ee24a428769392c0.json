@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO cloud_backup_material (material_id, object, size, uploaded)\n            SELECT ?, ?, ?, 0 WHERE EXISTS (SELECT 1 FROM material WHERE id = ?)\n                AND EXISTS (SELECT 1 FROM account WHERE backup_key = ?)\n            ON CONFLICT (material_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "c96f20e414cbfb04cbb289fbb5ec2a209c13be3f2dd5bb72ee24a428769392c0"
+}

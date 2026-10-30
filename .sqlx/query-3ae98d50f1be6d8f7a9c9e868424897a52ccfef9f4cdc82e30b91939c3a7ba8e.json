@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_backup_commit, cloud_backup_replace FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "cloud_backup_commit",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup_commit"
+          }
+        }
+      },
+      {
+        "name": "cloud_backup_replace",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup_replace"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "3ae98d50f1be6d8f7a9c9e868424897a52ccfef9f4cdc82e30b91939c3a7ba8e"
+}

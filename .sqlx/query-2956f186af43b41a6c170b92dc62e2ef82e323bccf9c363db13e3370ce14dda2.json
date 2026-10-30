@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_backup AS \"enabled: bool\" FROM profile\n        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)",
+  "describe": {
+    "columns": [
+      {
+        "name": "enabled: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "2956f186af43b41a6c170b92dc62e2ef82e323bccf9c363db13e3370ce14dda2"
+}

@@ -13,6 +13,8 @@ pub mod libraries;
 use libraries::*;
 pub mod backup;
 use accounts::*;
+mod cloud_backups;
+use cloud_backups::*;
 mod crawling;
 mod fact_check;
 mod mail_domains;
@@ -51,12 +53,14 @@ pub struct Context {
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
     pub mail_domains: MailDomains,
+    pub cloud_backup: backup::cloud::CloudBackup,
     /// Where material files are kept.
     pub materials: std::path::PathBuf,
 }
 
 impl Context {
-    pub fn new(db: SqlitePool, net: net::Net, materials: std::path::PathBuf) -> Self {
+    /// `data` is the data directory.
+    pub fn new(db: SqlitePool, net: net::Net, data: &std::path::Path) -> Self {
         let writes = db::Writes::default();
         Self {
             account: account::Client::new(&net),
@@ -67,7 +71,8 @@ impl Context {
             writes,
             db,
             net,
-            materials,
+            cloud_backup: backup::cloud::CloudBackup::new(data),
+            materials: data.join("materials"),
             sender: Default::default(),
             receiver: Default::default(),
             matcher: Default::default(),
@@ -384,6 +389,21 @@ operations! {
         "logoutAccount" [none] => logout_account(Nothing) -> ();
         /// 输入邮箱和密码注销账号，删除服务器上的全部账号数据，本机数据保留。
         "deleteAccount" [confirm] => delete_account(AccountCredentials) -> ();
+    }
+    "云端备份" {
+        /// 读取本机的云端备份设置、上次备份的时间和最近的失败，不连接服务器。
+        "getCloudBackup" [none] => get_cloud_backup(Nothing) -> backup::cloud::Status;
+        /// 读取赞助到期时间和云端那份备份：大小、是不是这台电脑的、导出时间和导师、邮件数。
+        "getCloudBackupServer" [none] => get_cloud_backup_server(Nothing) -> backup::cloud::Server;
+        /// 开启每天自动备份，把加密后的数据上传到官方服务器。云端是另一台电脑的备份时返回它的信息，
+        /// 用 replace 带上它的 committedAt 再调用一次才替换。没有备份钥匙时要带上账号密码。
+        "enableCloudBackup" [confirm] => enable_cloud_backup(backup::cloud::Enable) -> backup::cloud::Enabled;
+        /// 关闭自动备份，云端已有的备份保留。
+        "disableCloudBackup" [none] => disable_cloud_backup(Nothing) -> ();
+        /// 立即备份到云端，数据没变时不上传。
+        "backUpToCloud" [none] => back_up_to_cloud(Nothing) -> ();
+        /// 删除云端的备份并关闭自动备份，本机数据不动。
+        "deleteCloudBackup" [confirm] => delete_cloud_backup(Nothing) -> ();
     }
     "导师库" {
         /// 读取导师库的机构和人数。
@@ -2941,7 +2961,7 @@ mod writing_tests {
         )
         .await
         .unwrap();
-        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
         let (old_address, old_received) = provider::scripted(vec![(
             "<subject>申请</subject><body>旧地址的信</body>",
             "stop",
@@ -3041,7 +3061,7 @@ mod writing_tests {
         )
         .await
         .unwrap();
-        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
         // Follow-ups share checkReplyDraft with replies; all entry points reach check::letter.
         for op in ["checkFirstDraft", "checkReplyDraft"] {
             let problems = call(
@@ -3112,7 +3132,7 @@ mod reply_outcome_tests {
                 .unwrap();
             ids.push(id);
         }
-        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
         assert_eq!(
             call(&ctx, "getAiReplyOutcome", json!({})).await.unwrap(),
             false

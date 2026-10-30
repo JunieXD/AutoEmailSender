@@ -14,7 +14,7 @@ const LETTER: &str = "<subject>申请</subject><body>王老师：您好，我希
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn today_work_counts_generated_drafts_retained_matches_and_confirmed_sends(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let (address, _) = provider::scripted(vec![(LETTER, "stop"); 2]).await.unwrap();
     sqlx::query(
         r#"INSERT INTO model_config (provider, base_url, model, api_key, agreed, created_at)

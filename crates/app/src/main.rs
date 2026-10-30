@@ -169,6 +169,7 @@ fn main() -> tauri::Result<()> {
             export_mentors,
             backup::export_backup,
             backup::prepare_restore,
+            backup::prepare_cloud_restore,
             backup::cancel_restore,
             backup::restore_backup,
             data_location,
@@ -263,6 +264,7 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
     .map_err(StartupError::Agent)?;
     app.manage(agent);
     tauri::async_runtime::spawn(api::libraries::run(ctx.clone()));
+    tauri::async_runtime::spawn(api::backup::cloud::run(ctx.clone()));
     let api::Context {
         writes,
         db,

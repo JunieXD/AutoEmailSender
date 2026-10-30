@@ -22,7 +22,7 @@ async fn list_and_export_validate_filters_at_the_boundary(db: SqlitePool) {
     )
     .await
     .unwrap();
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     for score in [0, 101, 255] {
         let filter = json!({"matching": {"kind": "atLeast", "score": score}});
         let mut query = filter.clone();

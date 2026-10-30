@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT token FROM account WHERE token IS NOT NULL",
+  "query": "SELECT cloud_backup_device FROM profile",
   "describe": {
     "columns": [
       {
-        "name": "token",
+        "name": "cloud_backup_device",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "account",
-            "name": "token"
+            "table": "profile",
+            "name": "cloud_backup_device"
           }
         }
       }
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "44a21f836761f8c93db00f2f270fa6d6974c0b1b27ba1dc7665cbf19927794f0"
+  "hash": "e813980176b881441187244c77d513bf66d9f41467a90e0f7e3420b8d717edbb"
 }

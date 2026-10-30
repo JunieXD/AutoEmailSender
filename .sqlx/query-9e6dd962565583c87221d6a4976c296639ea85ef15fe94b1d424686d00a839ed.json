@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM cloud_backup_material\n        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key IS ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9e6dd962565583c87221d6a4976c296639ea85ef15fe94b1d424686d00a839ed"
+}
