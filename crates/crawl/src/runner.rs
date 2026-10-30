@@ -101,12 +101,17 @@ impl Pages {
         db: &SqlitePool,
         c: &Claim,
         target: &PageTarget,
+        cooldown: &Cooldown,
     ) -> Result<Material, ReadError> {
-        let fetched = self
-            .http
-            .fetch(target)
-            .await
-            .map_err(|e| ReadError::Failed(e.message()))?;
+        let fetched = self.http.fetch(target).await.map_err(|e| match e {
+            // Like a model's rate limit: no new pages start until then, and this one goes again.
+            crate::CrawlError::SlowDown(wait) => {
+                tracing::info!(wait_ms = wait.as_millis(), "website rate limited");
+                cooldown.defer(wait);
+                ReadError::RateLimit
+            }
+            e => ReadError::Failed(e.message()),
+        })?;
         let mut m = fetched.material;
         if !c.steps.is_empty() && m.needs_browser.is_none() {
             m.needs_browser = Some(crate::BrowserReason::Pagination);
@@ -513,7 +518,7 @@ async fn read(
             .page(c.url.clone())
             .map_err(|e| ReadError::Failed(e.message()))?
     };
-    let m = fetcher.fetch(db, c, &target).await?;
+    let m = fetcher.fetch(db, c, &target, cooldown).await?;
     let reader = Reader {
         writes: &fetcher.writes,
         db,

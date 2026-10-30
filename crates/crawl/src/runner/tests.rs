@@ -2923,6 +2923,34 @@ async fn regression_supplement_preview_names_target_and_added_content(db: Sqlite
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_website_asking_to_slow_down_holds_new_pages_and_keeps_the_page(db: SqlitePool) {
+    let site = Site::new().await;
+    site.pages
+        .lock()
+        .unwrap()
+        .insert("/list".into(), (429, "<p>请稍后再试</p>".into()));
+    let p = Provider::start().await.unwrap();
+    let config = config(&db, &p.address).await;
+    queue::start(&db, &[site.url("/list")], config, 1)
+        .await
+        .unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let cooldown = Cooldown::default();
+    let outcome = process(
+        &db,
+        &net::Net::new(vec![]).unwrap(),
+        &Pages::local(site.port),
+        &Limit::default(),
+        &claim,
+        &cooldown,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(outcome, Outcome::RateLimit));
+    assert!(cooldown.until().is_some());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePool) {
     let site = Site::new().await;
     for path in ["/a", "/b"] {

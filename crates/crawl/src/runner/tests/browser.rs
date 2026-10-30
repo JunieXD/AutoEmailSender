@@ -228,7 +228,10 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
         ),
     ] {
         browser.results.lock().unwrap().push_back(result);
-        let Err(ReadError::Failed(error)) = pages.fetch(&db, &claim, &target).await else {
+        let Err(ReadError::Failed(error)) = pages
+            .fetch(&db, &claim, &target, &Cooldown::default())
+            .await
+        else {
             panic!("browser should fail");
         };
         assert!(error.contains(reason), "{error}");
@@ -247,7 +250,7 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
         claim = queue::next(&db).await.unwrap().unwrap();
     }
     let m = Pages::local(site.port)
-        .fetch(&db, &claim, &target)
+        .fetch(&db, &claim, &target, &Cooldown::default())
         .await
         .unwrap_or_else(|_| panic!("preview HTTP material"));
     assert_eq!(m.needs_browser, Some(crate::BrowserReason::Challenge));
@@ -270,7 +273,8 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
             browser: Some(browser.clone()),
         };
         let target = Scope::new(&claim.scope).page(claim.url.clone()).unwrap();
-        let read = pages.fetch(&db, &claim, &target);
+        let cooldown = Cooldown::default();
+        let read = pages.fetch(&db, &claim, &target, &cooldown);
         tokio::pin!(read);
         tokio::select! {
             _ = browser.entered.notified() => {},

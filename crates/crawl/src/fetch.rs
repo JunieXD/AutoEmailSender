@@ -14,6 +14,10 @@ pub const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const PAGE_TIMEOUT: Duration = Duration::from_secs(40);
 const REQUEST_INTERVAL: Duration = Duration::from_millis(300);
+/// A website asking to slow down without saying for how long waits this long, and a stated wait
+/// is kept within bounds.
+const SLOW_DOWN: Duration = Duration::from_secs(60);
+const SLOW_DOWN_LIMITS: (Duration, Duration) = (Duration::from_secs(5), Duration::from_secs(600));
 pub const MAX_REDIRECTS: usize = 5;
 
 struct SiteLimit {
@@ -163,6 +167,7 @@ impl Fetcher {
                 .get(header::CONTENT_TYPE)
                 .and_then(|h| h.to_str().ok())
                 .map(str::to_owned);
+            let retry_after = net::retry_after(&response);
             let mut response = response;
             let mut bytes = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(CrawlError::Http)? {
@@ -180,7 +185,18 @@ impl Fetcher {
                 })
             })
             .await
-            .map_err(CrawlError::Worker)??;
+            .map_err(CrawlError::Worker)?;
+            // Asked to slow down rather than to pass a challenge; 503 alone is a broken server.
+            let material = match (material, retry_after) {
+                (Err(CrawlError::Status(429)), wait)
+                | (Err(CrawlError::Status(503)), wait @ Some(_)) => {
+                    let (least, most) = SLOW_DOWN_LIMITS;
+                    Err(CrawlError::SlowDown(
+                        wait.unwrap_or(SLOW_DOWN).clamp(least, most),
+                    ))
+                }
+                (material, _) => material,
+            }?;
             return Ok(FetchedPage {
                 material,
                 status: status.as_u16(),
