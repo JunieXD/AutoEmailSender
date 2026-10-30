@@ -346,8 +346,9 @@ pub async fn disable(db: &SqlitePool) -> Result<()> {
 }
 
 pub async fn delete(ctx: &Context) -> Result<()> {
-    let _running = ctx.cloud_backup.running.lock().await;
+    // The account the user was asked about, even if another logs in while a backup holds the lock.
     let login = account::saved_login(&ctx.db).await?;
+    let _running = ctx.cloud_backup.running.lock().await;
     ctx.account
         .send(
             &ctx.db,
@@ -451,19 +452,25 @@ async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64)
                 code: ErrorCode::BackupIncomplete | ErrorCode::BackupChanged,
                 ..
             }))) if !retried => {
-                let key = key.as_slice();
-                sqlx::query!(
-                    r#"DELETE FROM cloud_backup_material
-                    WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
-                    key
-                )
-                .execute(&ctx.db)
-                .await?;
+                forget_uploads(&ctx.db, key).await?;
                 retried = true;
             }
             result => return result,
         }
     }
+}
+
+/// Forgets which materials this login's key has uploaded, so that they all go again.
+async fn forget_uploads(db: &SqlitePool, key: &[u8; 32]) -> Result<()> {
+    let key = key.as_slice();
+    sqlx::query!(
+        r#"DELETE FROM cloud_backup_material
+        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
+        key
+    )
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64) -> Result<()> {
@@ -490,6 +497,15 @@ async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64
         // This computer's backup without its commit recorded: interrupted right after
         // committing, or encrypted before a password reset, which only the user may replace.
         contents(ctx, login, key, &current.manifest).await?;
+    }
+    // Another computer's commit removed this one's uploads: sending them all at once keeps a
+    // commit missing them from leaving its database behind, filling the room for a new backup.
+    if status
+        .current
+        .as_ref()
+        .is_some_and(|current| current.device_id != device)
+    {
+        forget_uploads(&ctx.db, key).await?;
     }
     let dir = &ctx.cloud_backup.dir;
     fs::create_dir_all(dir)?;

@@ -347,7 +347,10 @@ pub async fn start(
             }
         }
     } else {
-        Files(dir.clone()).remove().map_err(CallError::internal)?;
+        // A token left behind opens nothing while nobody listens; turning it on replaces it.
+        if let Err(error) = Files(dir.clone()).remove() {
+            tracing::warn!("remove agent files: {error}");
+        }
         None
     };
     let (commands, changes) = mpsc::channel(1);

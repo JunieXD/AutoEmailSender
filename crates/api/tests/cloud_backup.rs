@@ -183,6 +183,46 @@ async fn materials_removed_by_another_commit_are_uploaded_again(db: SqlitePool) 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn replacing_another_computers_backup_uploads_everything_at_once(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    cloud::back_up(&setup.ctx, NOW).await.unwrap();
+    // Another computer's commit: its backup is current, and this one's objects are gone.
+    {
+        let mut state = setup.server.state.lock().unwrap();
+        let current = state.current.as_mut().unwrap();
+        current.device_id = "0".repeat(32);
+        let manifest = current.manifest.clone();
+        state.objects.retain(|id, _| *id == manifest);
+    }
+    let Enabled::Replace { backup } = cloud::enable(
+        &setup.ctx,
+        Enable {
+            password: None,
+            replace: None,
+        },
+        NOW,
+    )
+    .await
+    .unwrap() else {
+        panic!("replacing another computer's backup needs consent");
+    };
+    cloud::enable(
+        &setup.ctx,
+        Enable {
+            password: None,
+            replace: Some(backup.committed_at),
+        },
+        NOW,
+    )
+    .await
+    .unwrap();
+    setup.add_mentor().await;
+    cloud::back_up(&setup.ctx, NOW + 1).await.unwrap();
+    // The material, database and manifest once; no commit missing the material first.
+    assert_eq!(setup.uploads(), 3 + 3);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn an_upload_whose_reply_was_lost_goes_again_under_the_same_id(db: SqlitePool) {
     let setup = Setup::new(db).await;
     cloud::back_up(&setup.ctx, NOW).await.unwrap();
