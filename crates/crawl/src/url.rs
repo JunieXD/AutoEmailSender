@@ -134,7 +134,7 @@ fn public_v6(ip: Ipv6Addr) -> bool {
 
 /// A front-end route (`#/staff/5`, `#!/staff/5`) names a page of its own; other fragments are
 /// places within one.
-pub(crate) fn route(fragment: &str) -> bool {
+fn route(fragment: &str) -> bool {
     fragment.starts_with('/') || fragment.starts_with("!/")
 }
 

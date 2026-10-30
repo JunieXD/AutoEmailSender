@@ -1,6 +1,6 @@
 //! Spreadsheet bytes and cells, independent of the records they represent.
 
-use calamine::{Data, Dimensions, ExcelDateTime, Reader, Xls, Xlsx};
+use calamine::{Data, Dimensions, ExcelDateTime, Reader, SheetType, Xls, Xlsx};
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
 use std::io::Cursor;
 
@@ -81,58 +81,91 @@ pub fn read(file_name: &str, data: &[u8]) -> Result<Vec<Sheet>, ReadError> {
             }])
         }
         Some("xlsx") => workbook(
-            Xlsx::new(Cursor::new(data)).map_err(|e| ReadError::Damaged(e.to_string()))?,
-            |book, name| book.merge_cells_by_sheet_name(name),
+            Xlsx::new(Cursor::new(data)).map_err(damaged)?,
+            |book, name| {
+                // Only the cells that are there: one stray space far down would otherwise
+                // spread the sheet into millions of empty cells.
+                let merged = book.merge_cells_by_sheet_name(name)?;
+                let mut cells = Vec::new();
+                let mut reader = book.worksheet_cells_reader(name)?;
+                while let Some(cell) = reader.next_cell()? {
+                    if let Some(text) = text(cell.get_value().clone().into()) {
+                        cells.push((cell.get_position(), text));
+                    }
+                }
+                Ok((cells, merged))
+            },
         ),
+        // XLS has no cell reader; the format holds at most 65536 rows and 256 columns.
         Some("xls") => workbook(
-            Xls::new(Cursor::new(data)).map_err(|e| ReadError::Damaged(e.to_string()))?,
-            |book, name| book.merge_cells_by_sheet_name(name),
+            Xls::new(Cursor::new(data)).map_err(damaged)?,
+            |book, name| {
+                let range = book.worksheet_range(name)?;
+                let (top, left) = range.start().unwrap_or_default();
+                let cells = range
+                    .used_cells()
+                    .filter_map(|(row, column, value)| {
+                        text(value.clone())
+                            .map(|text| ((top + row as u32, left + column as u32), text))
+                    })
+                    .collect();
+                Ok((cells, book.merge_cells_by_sheet_name(name)?))
+            },
         ),
         _ => Err(ReadError::Format),
     }
 }
 
+fn damaged(error: impl std::fmt::Display) -> ReadError {
+    ReadError::Damaged(error.to_string())
+}
+
+/// A sheet's cells that are not empty, by row and column, and its merged regions.
+type Cells = (Vec<((u32, u32), String)>, Vec<Dimensions>);
+
 fn workbook<R: Reader<Cursor<T>>, T: AsRef<[u8]>>(
     mut reader: R,
-    merged: impl Fn(&mut R, &str) -> Result<Vec<Dimensions>, R::Error>,
+    sheet: impl Fn(&mut R, &str) -> Result<Cells, R::Error>,
 ) -> Result<Vec<Sheet>, ReadError>
 where
     R::Error: std::fmt::Display,
 {
-    reader
-        .sheet_names()
-        .to_vec()
+    let names: Vec<_> = reader
+        .sheets_metadata()
+        .iter()
+        .filter(|s| s.typ == SheetType::WorkSheet)
+        .map(|s| s.name.clone())
+        .collect();
+    names
         .into_iter()
         .map(|name| {
-            let range = reader
-                .worksheet_range(&name)
-                .map_err(|e| ReadError::Damaged(e.to_string()))?;
-            let (top, left) = range.start().unwrap_or((0, 0));
-            let mut rows = vec![Vec::new(); top as usize];
-            for row in range.rows() {
-                let mut cells = vec![String::new(); left as usize];
-                cells.extend(
-                    row.iter()
-                        .map(|v| match v {
-                            Data::Float(n) if n.fract() == 0.0 => format!("{n:.0}"),
-                            Data::DateTime(d) if d.is_datetime() => date(d),
-                            _ => v.to_string(),
-                        })
-                        .map(|s| s.trim().to_owned()),
-                );
-                rows.push(cells);
+            let (cells, merged) = sheet(&mut reader, &name).map_err(damaged)?;
+            let mut rows: Vec<Vec<String>> = Vec::new();
+            for ((row, column), text) in cells {
+                let (row, column) = (row as usize, column as usize);
+                if rows.len() <= row {
+                    rows.resize(row + 1, Vec::new());
+                }
+                let cells = &mut rows[row];
+                if cells.len() <= column {
+                    cells.resize(column + 1, String::new());
+                }
+                cells[column] = text;
             }
             // A merged cell shows its value in every cell it covers, such as one school for
             // several rows of mentors.
-            for region in
-                merged(&mut reader, &name).map_err(|e| ReadError::Damaged(e.to_string()))?
-            {
+            let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+            for region in merged {
                 let (top, left) = (region.start.0 as usize, region.start.1 as usize);
                 let Some(value) = rows.get(top).and_then(|row| row.get(left)).cloned() else {
                     continue;
                 };
+                let end = (region.end.1 as usize + 1).min(width);
                 for row in rows.iter_mut().take(region.end.0 as usize + 1).skip(top) {
-                    for cell in row.iter_mut().take(region.end.1 as usize + 1).skip(left) {
+                    if row.len() < end {
+                        row.resize(end, String::new());
+                    }
+                    for cell in &mut row[left..end] {
                         cell.clone_from(&value);
                     }
                 }
@@ -142,7 +175,17 @@ where
         .collect()
 }
 
-/// Excel stores dates as day numbers; they read as they are shown, like `2026-10-31 08:30`.
+fn text(value: Data) -> Option<String> {
+    let text = match value {
+        Data::Float(n) if n.fract() == 0.0 => format!("{n:.0}"),
+        Data::DateTime(d) if d.is_datetime() => date(&d),
+        _ => value.to_string(),
+    };
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// Excel stores dates as day numbers; they read as `2026-10-31`, with the time when there is one.
 fn date(value: &ExcelDateTime) -> String {
     let (year, month, day, hour, minute, second, _) = value.to_ymd_hms_milli();
     let time = match second {
@@ -278,6 +321,21 @@ mod tests {
         assert!(text.starts_with("\u{feff}'=1,'+1,'-1,'@a,"));
         assert!(text.contains("''=备注"));
         assert_eq!(read("a.csv", &csv).unwrap()[0].rows[0], rows[0]);
+    }
+    #[test]
+    fn a_stray_space_far_down_does_not_spread_the_sheet() {
+        let mut book = Workbook::new();
+        let page = book.add_worksheet();
+        page.write_string(0, 0, "姓名").unwrap();
+        page.write_string(0, 19, "备注").unwrap();
+        page.write_string(1, 0, "张三").unwrap();
+        page.write_string(499_999, 0, " ").unwrap();
+        let rows = read("a.xlsx", &book.save_to_buffer().unwrap())
+            .unwrap()
+            .remove(0)
+            .rows;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1], ["张三"]);
     }
     #[test]
     fn merged_cells_fill_what_they_cover_and_dates_read_as_shown() {

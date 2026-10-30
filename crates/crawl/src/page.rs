@@ -8,7 +8,6 @@ use crate::{
     PageUrl,
     email::{EMAILS, Emails, cloudflare},
     pagination::{self, Control, input_button},
-    url::route,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,17 +187,18 @@ fn block(name: &str) -> bool {
     )
 }
 
-/// Whether an `href` leads to another page: not empty and not a place within this one.
-fn linked(href: &str) -> bool {
+/// The page an `href` leads to; none when it is empty or a place within this page.
+fn linked(href: &str, base: &PageUrl, page: &PageUrl) -> Option<PageUrl> {
     let href = href.trim();
-    !href.is_empty() && href.strip_prefix('#').is_none_or(route)
+    let target = base.join(href).ok()?;
+    (!href.is_empty() && !(href.starts_with('#') && target == *page)).then_some(target)
 }
 
-fn navigation(script: &str, pattern: &Regex, url: &PageUrl) -> Option<PageUrl> {
+fn navigation(script: &str, pattern: &Regex, base: &PageUrl, page: &PageUrl) -> Option<PageUrl> {
     let found = pattern.captures(script)?;
     let target = found.iter().skip(1).flatten().next()?.as_str();
-    let target = url.join(target).ok()?;
-    (target.website() == url.website()).then_some(target)
+    let target = base.join(target).ok()?;
+    (target.website() == page.website()).then_some(target)
 }
 
 pub(crate) fn visible_text(element: ElementRef<'_>) -> String {
@@ -400,17 +400,17 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                 {
                     current.text.push_str(&text);
                 }
-                let direct = href.filter(|h| linked(h)).and_then(|h| base.join(h).ok());
+                let direct = href.and_then(|h| linked(h, base, url));
                 let link = direct
                     .or_else(|| {
                         element
                             .value()
                             .attr("onclick")
-                            .and_then(|s| navigation(s, &NAVIGATION, base))
+                            .and_then(|s| navigation(s, &NAVIGATION, base, url))
                     })
                     .or_else(|| {
                         href.filter(|h| h.trim().to_lowercase().starts_with("javascript:"))
-                            .and_then(|s| navigation(s, &NAVIGATION, base))
+                            .and_then(|s| navigation(s, &NAVIGATION, base, url))
                     });
                 let control = if element.value().name() == "input" {
                     input_button(element)
@@ -518,7 +518,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                 && child
                     .value()
                     .attr("href")
-                    .is_some_and(|href| linked(href) && base.join(href).is_ok())
+                    .is_some_and(|href| linked(href, base, url).is_some())
         })
     };
     let dynamic_list = !teacher_regions.iter().any(has_profile_links)

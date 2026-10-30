@@ -953,24 +953,35 @@ fn image_pagination_fixtures_preserve_control_labels_and_profile_material() {
 
 #[test]
 fn links_resolve_against_the_base_element_and_keep_front_end_routes() {
-    let page = parse(
-        &url(),
-        "<head><base target=\"_blank\"><base href=\"/faculty/zhang/\"><base href=\"/other/\">\
-        </head><a href=\"contact.html\">联系方式</a><a href=\"#/staff/6\">李四</a>\
-        <a href=\"#bio\">简介</a>",
-    );
-    let links: Vec<_> = page
-        .units
-        .iter()
-        .flat_map(|u| &u.links)
-        .map(|l| l.url.as_str())
-        .collect();
+    let links = |html: &str| -> Vec<String> {
+        parse(&url(), html)
+            .units
+            .iter()
+            .flat_map(|u| &u.links)
+            .map(|l| l.url.as_str().to_owned())
+            .collect()
+    };
     assert_eq!(
-        links,
+        links("<a href=\"#bio\">简介</a><a href=\"#/staff/6\">李四</a>"),
+        ["https://cs.pku.edu.cn/teachers/list.htm#/staff/6"]
+    );
+    // As in a browser, an anchor under a base names a place in the base's page.
+    assert_eq!(
+        links(
+            "<head><base target=\"_blank\"><base href=\"/faculty/zhang/\"><base href=\"/other/\">\
+            </head><a href=\"contact.html\">联系方式</a><a href=\"#bio\">简介</a>"
+        ),
         [
             "https://cs.pku.edu.cn/faculty/zhang/contact.html",
-            "https://cs.pku.edu.cn/faculty/zhang/#/staff/6",
+            "https://cs.pku.edu.cn/faculty/zhang/",
         ]
+    );
+    assert_eq!(
+        links(
+            "<base href=\"https://assets.example.org/shared/\">\
+            <a onclick=\"location.href='https://cs.pku.edu.cn/teachers/zhang'\">张三</a>"
+        ),
+        ["https://cs.pku.edu.cn/teachers/zhang"]
     );
 }
 
