@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM email WHERE task_id = ?\n           AND NOT (state IN ('sending', 'cloud', 'maybe_sent', 'sent', 'bounced')\n             OR sent_at IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f2c6b4e32f9cfbe75b902bdcd855266c9f8717fce9c9f57ad288648cc0103bb7"
+}

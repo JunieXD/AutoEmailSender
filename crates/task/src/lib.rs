@@ -587,7 +587,7 @@ pub async fn stop(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
     tx.commit().await?;
     Ok(())
 }
-pub async fn delete(db: &SqlitePool, id: i64) -> Result<()> {
+pub async fn delete(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     if sqlx::query_scalar!(
         "SELECT id FROM email WHERE task_id = ? AND state IN ('sending','cloud') LIMIT 1",
@@ -601,6 +601,17 @@ pub async fn delete(db: &SqlitePool, id: i64) -> Result<()> {
             "有正在发送的邮件，请发送结束后再删除。".into(),
         ));
     }
+    // A retry waiting to go keeps an earlier attempt's delivery evidence; canceled, it stays.
+    email::cancel(
+        &mut tx,
+        email::CancelScope::Task {
+            task: id,
+            email: None,
+        },
+        "任务删除",
+        now,
+    )
+    .await?;
     emails::delete(&mut tx, id).await?;
     sqlx::query!("DELETE FROM task WHERE id = ?", id)
         .execute(&mut *tx)

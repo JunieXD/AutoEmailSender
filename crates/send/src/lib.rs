@@ -346,7 +346,15 @@ async fn send<T: chrono::TimeZone>(
         })
         .await
     {
-        Ok(SendStatus::Expired) => return m.before.restore(&mut *db.acquire().await?, id).await,
+        Ok(SendStatus::Expired) => {
+            // Left sending, the email would wait for a restart to be taken as maybe sent.
+            writes
+                .retry("restore expired email", || async {
+                    m.before.restore(&mut *db.acquire().await?, id).await
+                })
+                .await;
+            return Ok(());
+        }
         Ok(SendStatus::Sent) => {
             tracing::info!("email {id} sent from mailbox {mailbox_id}");
             Outcome::Sent

@@ -32,4 +32,4 @@ receive.workspace = true
 task.workspace = true
 tempfile = "3"
 test-fixtures = { path = "../test-fixtures" }
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }

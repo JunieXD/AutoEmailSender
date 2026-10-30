@@ -2998,7 +2998,7 @@ async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) 
         ("canceled".into(), None)
     );
     cancel_task_retry(&db, &net, &envelope, task, id, T).await;
-    task::delete(&db, task).await.unwrap();
+    task::delete(&db, task, T).await.unwrap();
     assert!(
         sqlx::query_scalar::<_, i64>("SELECT id FROM email WHERE id = ?")
             .bind(never)
@@ -3009,6 +3009,97 @@ async fn task_deletion_preserves_canceled_mail_for_late_bounces(db: SqlitePool) 
     );
     late_bounce_after_cleanup(&db, &receiving, id, mentor, None, T, 1).await;
     assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn task_deletion_keeps_a_waiting_retrys_earlier_attempt(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let receiving = bounce_mailbox(&db).await;
+    let mentor = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    let task = immediate_task(&db, &[id]).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    assert!(email::retry(&db, id, T + MINUTE).await.unwrap());
+    assert!(
+        email::schedule::reschedule(&db, id, T + DAY, T + MINUTE)
+            .await
+            .unwrap()
+    );
+    task::delete(&db, task, T + MINUTE).await.unwrap();
+    late_bounce_after_cleanup(&db, &receiving, id, mentor, None, T, 1).await;
+    assert_eq!(
+        send::step(&db, &writes, &net, nowhere(), || T + DAY)
+            .await
+            .unwrap(),
+        Next::Idle
+    );
+    assert_eq!(inbox.lock().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_expired_claim_is_restored_once_storage_works_again(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let clock = Arc::new(AtomicI64::new(T));
+    let advancing = clock.clone();
+    let (net, inbox) = mailbox_with_hooks(
+        &db,
+        SECRET,
+        move || {
+            advancing.store(T + 3_600_000, Ordering::SeqCst);
+            std::future::ready(())
+        },
+        || std::future::ready(()),
+        || std::future::ready(()),
+    )
+    .await;
+    let mentor = approve(&db, "wang@example.edu.cn", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    email::schedule::reschedule(&db, id, T, T).await.unwrap();
+    sqlx::query(
+        r#"CREATE TRIGGER block_restore BEFORE UPDATE OF state ON email
+        WHEN OLD.state = 'sending'
+        BEGIN
+            SELECT RAISE(FAIL, 'storage unavailable');
+        END"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    let guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    let sending = send::step(&db, &writes, &net, nowhere(), || {
+        clock.load(Ordering::SeqCst)
+    });
+    tokio::pin!(sending);
+    tokio::select! {
+        result = &mut sending => panic!("gave up restoring the email: {result:?}"),
+        () = async {
+            while writes.failure().is_none() {
+                tokio::task::yield_now().await;
+            }
+        } => {}
+    }
+    assert!(inbox.lock().unwrap().is_empty());
+    sqlx::query("DROP TRIGGER block_restore")
+        .execute(&db)
+        .await
+        .unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(5)).await;
+    tokio::time::resume();
+    sending.await.unwrap();
+    guard.abort();
+    assert_eq!(writes.failure(), None);
+    assert!(inbox.lock().unwrap().is_empty());
+    let email = first_email(&db, mentor).await;
+    assert_eq!(email.delivery, Delivery::Approved);
+    assert_eq!(email.latest_at, Some(T + 3_600_000));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -3026,7 +3117,7 @@ async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
         if state == "canceled" {
             let task = immediate_task(&db, &[id]).await;
             cancel_task_retry(&db, &net, &envelope, task, id, at).await;
-            task::delete(&db, task).await.unwrap();
+            task::delete(&db, task, T).await.unwrap();
         } else {
             send::step(&db, &writes, &net, nowhere(), || at)
                 .await
