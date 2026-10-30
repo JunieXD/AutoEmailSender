@@ -1013,8 +1013,9 @@ pub async fn copied(
 
 /// Marks the email that went out with this Message-ID, or whose copy had it, as bounced for this
 /// reason, unless the bounce names `recipients` without the address it last went to: then it is of
-/// an earlier try, to an address since changed; one being sent to no address cannot bounce. False
-/// when it was marked already, or the app sent no such email.
+/// an earlier try, to an address since changed; one being sent to no address cannot bounce. One
+/// waiting to be sent again bounces like `copied` confirms it: only while it would go to the same
+/// address. False when it was marked already, or the app sent no such email.
 pub async fn bounced(
     conn: &mut SqliteConnection,
     message_id: &str,
@@ -1026,10 +1027,17 @@ pub async fn bounced(
     // Sending too, as for a copy in the sent folder.
     let done = sqlx::query!(
         r#"UPDATE email SET state = 'bounced', planned_at = coalesce(planned_at, sent_at),
-           error = ?1, cancel_reason = NULL, updated_at = ?2
+           latest_at = NULL, error = ?1, cancel_reason = NULL, updated_at = ?2
          WHERE (message_id = ?3 OR copy_message_id = ?3)
            AND (state IN ('sending', 'maybe_sent', 'sent')
-             OR (state = 'canceled' AND sent_at IS NOT NULL))
+             OR (state = 'canceled' AND sent_at IS NOT NULL)
+             OR (state = 'approved' AND sent_at IS NOT NULL AND to_address = (
+               SELECT address
+               FROM mentor_email
+               WHERE mentor_id = email.mentor_id
+               ORDER BY position
+               LIMIT 1
+             )))
            AND to_address IS NOT NULL
            AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))"#,
         reason,

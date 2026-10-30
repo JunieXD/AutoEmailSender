@@ -693,6 +693,44 @@ Message-ID: <w1@example.com>
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_late_bounce_ends_a_retry_to_the_same_address(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    let li = mentor(&db, "李明", "li@pku.edu.cn").await;
+    let email = sent_email(&db, li, "maybe_sent", "<e1@example.com>").await;
+    round(&db, &net, T).await;
+    // Waits for the mailbox to send again when the first try's bounce comes in.
+    assert!(email::retry(&db, email, T).await.unwrap());
+    store.deliver(
+        "INBOX",
+        T + MINUTE,
+        "From: MAILER-DAEMON@mx.example.com
+Subject: Undelivered Mail Returned to Sender
+Message-ID: <b1@mx.example.com>
+Content-Type: multipart/report; report-type=delivery-status; boundary=r
+
+--r
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; li@pku.edu.cn
+Action: failed
+Status: 5.1.1
+Diagnostic-Code: smtp; 550 5.1.1 User unknown
+--r
+Content-Type: text/rfc822-headers
+
+Message-ID: <e1@example.com>
+--r--
+",
+    );
+    round(&db, &net, T + 2 * MINUTE).await;
+
+    assert!(matches!(
+        email::list(&db, li).await.unwrap()[0].delivery,
+        Delivery::Bounced { .. }
+    ));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn earlier_mail_is_looked_up_once_per_address(db: SqlitePool) {
     let pki = fakemail::pki();
     let (port, store) = fakemail::imap(&pki, false).await;
