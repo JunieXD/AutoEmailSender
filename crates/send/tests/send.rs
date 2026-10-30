@@ -3103,6 +3103,67 @@ async fn an_expired_claim_is_restored_once_storage_works_again(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_copy_of_a_try_to_an_old_address_leaves_room_for_the_new_ones(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    let (receiving, store) = bounce_mailbox(&db).await;
+    store.create("Sent", true);
+    receive::round(&db, &receiving, T).await.unwrap();
+    let mentor = approve(&db, "hangup@old.example.edu", &[], T).await;
+    let id = first_email(&db, mentor).await.id;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    let fields = MentorFields {
+        name: "王伟".into(),
+        emails: vec![
+            "wang@new.example.edu".into(),
+            "hangup@old.example.edu".into(),
+        ],
+        ..MentorFields::default()
+    };
+    assert!(mentor::update(&db, mentor, &fields, T).await.unwrap());
+    assert!(email::retry(&db, id, T + MINUTE).await.unwrap());
+    assert!(
+        email::schedule::reschedule(&db, id, T + DAY, T + MINUTE)
+            .await
+            .unwrap()
+    );
+    // The provider files each try under a Message-ID of its own.
+    let copy = |n: usize, copy_id: &str| {
+        let sent = inbox.lock().unwrap()[n].clone();
+        sent.replace(
+            &format!("Message-ID: {}", header(&sent, "Message-ID: ")),
+            &format!("Message-ID: {copy_id}"),
+        )
+        .replace("\r\n", "\n")
+    };
+    store.deliver("Sent", T, &copy(0, "<provider-old@example.com>"));
+    receive::round(&db, &receiving, T + MINUTE).await.unwrap();
+    assert_eq!(first_email(&db, mentor).await.delivery, Delivery::Approved);
+    send::step(&db, &writes, &net, nowhere(), || T + DAY)
+        .await
+        .unwrap();
+    store.deliver("Sent", T + DAY, &copy(1, "<provider-new@example.com>"));
+    receive::round(&db, &receiving, T + DAY).await.unwrap();
+    assert_eq!(
+        sqlx::query_as::<_, (String, String, Option<String>)>(
+            "SELECT state, to_address, copy_message_id FROM email WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap(),
+        (
+            "sent".into(),
+            "wang@new.example.edu".into(),
+            Some("<provider-new@example.com>".into())
+        )
+    );
+    assert!(receive::list(&db, mentor).await.unwrap().is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
     let writes = db::Writes::default();
     for (offset, state) in ["canceled", "maybe_sent", "sent"].into_iter().enumerate() {
