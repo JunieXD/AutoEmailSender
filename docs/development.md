@@ -209,6 +209,7 @@
 ## 数据库
 
 - 打开第一个连接前，`db` 先在一个线程上调用一次 `sqlite3_initialize()`，避开 SQLite 在 ARM 上多个线程同时首次初始化的竞争：`db::open` 建池前调用；测试经由 `db::MIGRATOR`（sqlx 建测试库前会先读它）触发，自己开第一个池的测试先 `LazyLock::force(&db::MIGRATOR)`。
+- 各连接的页面缓存各自淘汰：libsqlite3-sys 编译 SQLite 时默认打开 `SQLITE_ENABLE_MEMORY_MANAGEMENT`，所有连接的页面缓存共用一个总预算和一条最久未用的队列。总数满了以后，页面被别的连接挤走的连接新读的页一用完就被丢掉，每次查询都把同一批页重新读一遍，基准里“系所未填写”的首页因此超出预算。`.cargo/config.toml` 用 `LIBSQLITE3_FLAGS` 去掉这个选项。
 - 迁移只往后加，已经执行过的迁移不能修改，开发版和预览版也一样；sqlx 会校验迁移内容，修改旧迁移会让已有数据库无法打开。
 - 迁移也把日志模式设成 WAL：`sqlx::test` 直接用迁移建库，这样测试和应用一样读写不互相等待。`synchronous` 是连接级的设置，迁移设不了，应用的 NORMAL 由 `db::open` 设置。
 - SQLite 测试在开发依赖里打开 `db` 的 `testing` 功能，它在上面那次初始化里注册一个连接入口，让新连接默认 `synchronous = OFF`：测试建库不经过 `db::open`，刷盘让 Windows 上的测试慢好几倍，而断电后的持久性测试本来也测不出。`db::open` 显式设的 NORMAL 照样生效；正式构建不带开发依赖，没有这个入口。

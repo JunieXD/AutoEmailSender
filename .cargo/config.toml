@@ -4,3 +4,5 @@ xtask = "run --quiet --package xtask --"
 [env]
 # Queries are checked at compile time against the metadata in .sqlx; `pnpm sqlx` refreshes it.
 SQLX_OFFLINE = "true"
+# Keeps page-cache eviction independent between connections; see docs/development.md#数据库.
+LIBSQLITE3_FLAGS = "-USQLITE_ENABLE_MEMORY_MANAGEMENT"
