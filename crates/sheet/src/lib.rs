@@ -157,15 +157,18 @@ where
             let width = rows.iter().map(Vec::len).max().unwrap_or(0);
             for region in merged {
                 let (top, left) = (region.start.0 as usize, region.start.1 as usize);
-                let Some(value) = rows.get(top).and_then(|row| row.get(left)).cloned() else {
-                    continue;
-                };
+                // A blank one clears the values it hides, which some programs keep.
+                let value = rows
+                    .get(top)
+                    .and_then(|row| row.get(left))
+                    .cloned()
+                    .unwrap_or_default();
                 let end = (region.end.1 as usize + 1).min(width);
                 for row in rows.iter_mut().take(region.end.0 as usize + 1).skip(top) {
-                    if row.len() < end {
+                    if !value.is_empty() && row.len() < end {
                         row.resize(end, String::new());
                     }
-                    for cell in &mut row[left..end] {
+                    for cell in row.iter_mut().take(end).skip(left) {
                         cell.clone_from(&value);
                     }
                 }
@@ -348,6 +351,8 @@ mod tests {
         page.merge_range(1, 1, 2, 1, "甲大学", &Format::new())
             .unwrap();
         page.write_string(3, 1, "乙大学").unwrap();
+        page.merge_range(1, 3, 2, 3, "", &Format::new()).unwrap();
+        page.write_string(2, 3, "被合并盖住的旧学校").unwrap();
         for (row, value, format) in [
             (1, 46326.0, "yyyy-mm-dd"),
             (2, 46326.5, "yyyy-mm-dd hh:mm"),
@@ -363,9 +368,9 @@ mod tests {
         assert_eq!(
             rows[1..],
             [
-                ["王明", "甲大学", "2026-10-31"],
-                ["李明", "甲大学", "2026-10-31 12:00"],
-                ["张华", "乙大学", "12:00"],
+                vec!["王明", "甲大学", "2026-10-31"],
+                vec!["李明", "甲大学", "2026-10-31 12:00", ""],
+                vec!["张华", "乙大学", "12:00"],
             ]
         );
     }
