@@ -198,24 +198,33 @@ fn email_evidence_never_joins_surrounding_sentence_punctuation() {
 
 #[test]
 fn mailto_and_cloudflare_have_attribute_evidence() {
-    let address = "protected@school.edu.cn";
-    let encoded = format!(
-        "42{}",
-        address
-            .bytes()
-            .map(|b| format!("{:02x}", b ^ 0x42))
-            .collect::<String>()
-    );
+    let encode = |address: &str| {
+        format!(
+            "42{}",
+            address
+                .bytes()
+                .map(|b| format!("{:02x}", b ^ 0x42))
+                .collect::<String>()
+        )
+    };
+    let (address, linked) = ("protected@school.edu.cn", "linked@school.edu.cn");
     let page = parse(
         &url(),
         &format!(
             "<a href=\"MAILTO:First%40school.edu.cn,second@school.edu.cn?subject=ignore@evil.edu\">\
-            联系</a><span data-cfemail=\"{encoded}\">[email protected]</span><span \
-            data-cfemail=\"0zz\"></span>"
+            联系</a><span data-cfemail=\"{}\">[email protected]</span><span \
+            data-cfemail=\"0zz\"></span><a href=\"/cdn-cgi/l/email-protection#{}\">联系本人</a>",
+            encode(address),
+            encode(linked),
         ),
     );
     let unit = &page.units[0];
-    for expected in ["first@school.edu.cn", "second@school.edu.cn", address] {
+    for expected in [
+        "first@school.edu.cn",
+        "second@school.edu.cn",
+        address,
+        linked,
+    ] {
         assert!(
             unit.emails
                 .iter()
@@ -940,6 +949,40 @@ fn image_pagination_fixtures_preserve_control_labels_and_profile_material() {
                 .any(|l| l.text == name && l.url == url().join(path).unwrap())
         );
     }
+}
+
+#[test]
+fn links_resolve_against_the_base_element_and_keep_front_end_routes() {
+    let links = |html: &str| -> Vec<String> {
+        parse(&url(), html)
+            .units
+            .iter()
+            .flat_map(|u| &u.links)
+            .map(|l| l.url.as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        links("<a href=\"#bio\">简介</a><a href=\"#/staff/6\">李四</a>"),
+        ["https://cs.pku.edu.cn/teachers/list.htm#/staff/6"]
+    );
+    // As in a browser, an anchor under a base names a place in the base's page.
+    assert_eq!(
+        links(
+            "<head><base target=\"_blank\"><base href=\"/faculty/zhang/\"><base href=\"/other/\">\
+            </head><a href=\"contact.html\">联系方式</a><a href=\"#bio\">简介</a>"
+        ),
+        [
+            "https://cs.pku.edu.cn/faculty/zhang/contact.html",
+            "https://cs.pku.edu.cn/faculty/zhang/",
+        ]
+    );
+    assert_eq!(
+        links(
+            "<base href=\"https://assets.example.org/shared/\">\
+            <a onclick=\"location.href='https://cs.pku.edu.cn/teachers/zhang'\">张三</a>"
+        ),
+        ["https://cs.pku.edu.cn/teachers/zhang"]
+    );
 }
 
 #[test]

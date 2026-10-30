@@ -173,6 +173,22 @@ async fn duplicate_profiles_and_name_email_overlap_merge_and_keep_first_values(d
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn front_end_routes_are_different_profiles(db: SqlitePool) {
+    let batch = [
+        ("张三", "zhang@example.edu", 5),
+        ("李四", "li@example.edu", 6),
+    ]
+    .map(|(name, email, id)| {
+        let mut c = candidate(name, email);
+        c["profileUrl"] = json!(format!("http://sim.example.edu/#/staff/detail/{id}"));
+        c
+    })
+    .to_vec();
+    let result = submit(&db, None, batch, 1).await.unwrap();
+    assert_eq!((result.added, result.merged, result.total), (2, 0, 2));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn renamed_profile_keeps_list_identity_when_resubmitted(db: SqlitePool) {
     let first = candidate("张三", "x@example.edu");
     let mut linked = first.clone();

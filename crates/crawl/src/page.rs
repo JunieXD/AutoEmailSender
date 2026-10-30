@@ -92,6 +92,7 @@ impl Material {
 }
 
 struct Selectors {
+    base: Selector,
     scripts: Selector,
     title: Selector,
     mounts: Selector,
@@ -105,6 +106,7 @@ static SELECTORS: LazyLock<Selectors> = LazyLock::new(|| {
         Selector::parse(value).unwrap_or_else(|_| unreachable!("fixed page selector is valid"))
     };
     Selectors {
+        base: compile("base[href]"),
         scripts: compile("script"),
         title: compile("title"),
         mounts: compile("#root, #app, #__next, #__nuxt, [data-reactroot], [ng-app]"),
@@ -185,11 +187,18 @@ fn block(name: &str) -> bool {
     )
 }
 
-fn navigation(script: &str, pattern: &Regex, url: &PageUrl) -> Option<PageUrl> {
+/// The page an `href` leads to; none when it is empty or a place within this page.
+fn linked(href: &str, base: &PageUrl, page: &PageUrl) -> Option<PageUrl> {
+    let href = href.trim();
+    let target = base.join(href).ok()?;
+    (!href.is_empty() && !(href.starts_with('#') && target == *page)).then_some(target)
+}
+
+fn navigation(script: &str, pattern: &Regex, base: &PageUrl, page: &PageUrl) -> Option<PageUrl> {
     let found = pattern.captures(script)?;
     let target = found.iter().skip(1).flatten().next()?.as_str();
-    let target = url.join(target).ok()?;
-    (target.website() == url.website()).then_some(target)
+    let target = base.join(target).ok()?;
+    (target.website() == page.website()).then_some(target)
 }
 
 pub(crate) fn visible_text(element: ElementRef<'_>) -> String {
@@ -294,6 +303,13 @@ pub fn parse(url: &PageUrl, html: &str) -> Material {
 
 fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
     let document = Html::parse_document(html);
+    // Relative links resolve against the first `<base href>`, as in a browser.
+    let base = document
+        .select(&SELECTORS.base)
+        .next()
+        .and_then(|e| e.value().attr("href"))
+        .and_then(|href| url.join(href.trim()).ok());
+    let base = base.as_ref().unwrap_or(url);
     let emails = &*EMAILS;
     let has_scripts = document.select(&SELECTORS.scripts).any(executable_script);
     let title = document.select(&SELECTORS.title).next().map(|e| {
@@ -326,7 +342,17 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                 let element_index = ordinal;
                 ordinal += 1;
                 path.push(element_index);
-                if matches!(element.value().name(), "footer" | "nav") {
+                // Many sites mark their footer only by its id or class.
+                if matches!(element.value().name(), "footer" | "nav")
+                    || matches!(
+                        element.value().attr("role"),
+                        Some("contentinfo" | "navigation")
+                    )
+                    || ["id", "class"]
+                        .iter()
+                        .filter_map(|a| element.value().attr(a))
+                        .any(|s| s.to_lowercase().contains("footer"))
+                {
                     regions.push(element_index);
                 }
                 let decrypted = rendered && encrypted_field(element) && !hidden(element);
@@ -374,19 +400,17 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                 {
                     current.text.push_str(&text);
                 }
-                let direct = href
-                    .filter(|h| !h.trim().is_empty() && !h.trim().starts_with('#'))
-                    .and_then(|h| url.join(h).ok());
+                let direct = href.and_then(|h| linked(h, base, url));
                 let link = direct
                     .or_else(|| {
                         element
                             .value()
                             .attr("onclick")
-                            .and_then(|s| navigation(s, &NAVIGATION, url))
+                            .and_then(|s| navigation(s, &NAVIGATION, base, url))
                     })
                     .or_else(|| {
                         href.filter(|h| h.trim().to_lowercase().starts_with("javascript:"))
-                            .and_then(|s| navigation(s, &NAVIGATION, url))
+                            .and_then(|s| navigation(s, &NAVIGATION, base, url))
                     });
                 let control = if element.value().name() == "input" {
                     input_button(element)
@@ -491,10 +515,10 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
     let has_profile_links = |e: &ElementRef<'_>| {
         e.descendants().filter_map(ElementRef::wrap).any(|child| {
             child.value().name() == "a"
-                && child.value().attr("href").is_some_and(|href| {
-                    let href = href.trim();
-                    !href.is_empty() && !href.starts_with('#') && url.join(href).is_ok()
-                })
+                && child
+                    .value()
+                    .attr("href")
+                    .is_some_and(|href| linked(href, base, url).is_some())
         })
     };
     let dynamic_list = !teacher_regions.iter().any(has_profile_links)

@@ -93,6 +93,19 @@ impl Emails {
     }
 
     pub fn mailto(&self, href: &str, element: usize, offset: usize) -> Vec<EmailEvidence> {
+        let evidence = |address| EmailEvidence {
+            address,
+            location: EmailLocation::Attribute {
+                element,
+                attribute: "href".into(),
+                raw: href.into(),
+                offset,
+            },
+        };
+        // Cloudflare's email protection replaces a mailto link with this one.
+        if let Some((_, encoded)) = href.split_once("/cdn-cgi/l/email-protection#") {
+            return cloudflare(encoded).map(evidence).into_iter().collect();
+        }
         let Some((scheme, rest)) = href.split_once(':') else {
             return Vec::new();
         };
@@ -103,15 +116,7 @@ impl Emails {
         let addresses = percent_encoding::percent_decode_str(addresses).decode_utf8_lossy();
         self.text(&addresses)
             .into_iter()
-            .map(|mut evidence| {
-                evidence.location = EmailLocation::Attribute {
-                    element,
-                    attribute: "href".into(),
-                    raw: href.into(),
-                    offset,
-                };
-                evidence
-            })
+            .map(|found| evidence(found.address))
             .collect()
     }
 }
