@@ -6,8 +6,14 @@ use zeroize::Zeroizing;
 
 use crate::Error;
 
+/// The login key goes to the server; the backup key never leaves this computer.
+pub struct Keys {
+    pub login: String,
+    pub backup: [u8; 32],
+}
+
 /// These parameters and the email normalization are part of the account's persistent identity.
-pub async fn login_key(email: &str, password: String) -> Result<String, Error> {
+pub async fn keys(email: &str, password: String) -> Result<Keys, Error> {
     let salt = format!("auto-email-sender:{}", cloud_api::normalize_email(email));
     let password = Zeroizing::new(password);
     tokio::task::spawn_blocking(move || {
@@ -17,11 +23,18 @@ pub async fn login_key(email: &str, password: String) -> Result<String, Error> {
         Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             .hash_password_into(password.as_bytes(), salt.as_bytes(), master.as_mut())
             .unwrap_or_else(|_| unreachable!("the salt and output length satisfy Argon2"));
-        let mut login = Zeroizing::new([0; 32]);
-        Hkdf::<Sha256>::new(None, master.as_ref())
-            .expand(b"login", login.as_mut())
-            .unwrap_or_else(|_| unreachable!("32 bytes fit within HKDF-SHA256's output limit"));
-        BASE64_URL_SAFE_NO_PAD.encode(login.as_ref())
+        let hkdf = Hkdf::<Sha256>::new(None, master.as_ref());
+        let expand = |info: &[u8]| {
+            let mut key = [0; 32];
+            hkdf.expand(info, &mut key)
+                .unwrap_or_else(|_| unreachable!("32 bytes fit within HKDF-SHA256's output limit"));
+            key
+        };
+        let login = Zeroizing::new(expand(b"login"));
+        Keys {
+            login: BASE64_URL_SAFE_NO_PAD.encode(login.as_ref()),
+            backup: expand(b"backup"),
+        }
     })
     .await
     .map_err(Error::Worker)

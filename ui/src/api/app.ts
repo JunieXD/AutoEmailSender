@@ -53,6 +53,11 @@ export function prepareRestore(): Promise<RestoreInfo | null> {
   return invoke<RestoreInfo | null>("prepare_restore");
 }
 
+/** Downloads and checks the cloud backup, staged for restoreBackup like a chosen file. */
+export function prepareCloudRestore(): Promise<RestoreInfo> {
+  return invoke<RestoreInfo>("prepare_cloud_restore");
+}
+
 /** Discards the unconfirmed restore. */
 export function cancelRestore(): Promise<void> {
   return invoke<void>("cancel_restore");

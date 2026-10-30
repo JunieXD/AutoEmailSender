@@ -296,6 +296,21 @@ async fn describe(
                 input.email,
             )
         }
+        "enableCloudBackup" => {
+            let input: crate::backup::cloud::Enable = parse(input)?;
+            object(
+                "开启云端备份，把导师、邮件、模板和材料等数据加密后上传到官方服务器",
+                if input.replace.is_some() {
+                    "换掉云端另一台电脑的备份".into()
+                } else {
+                    "每天自动备份，数据有变化才上传".into()
+                },
+            )
+        }
+        "deleteCloudBackup" => object(
+            "删除云端备份并关闭自动备份，本机数据不动",
+            "官方服务器上的云端备份".into(),
+        ),
         "approveTaskEmails" => {
             let input: task::TaskApprovals = parse(input)?;
             let ids = input
@@ -1031,6 +1046,7 @@ mod tests {
                 "approveTaskEmails",
                 "changeTaskSchedule",
                 "deleteAccount",
+                "deleteCloudBackup",
                 "deleteCrawl",
                 "deleteMailbox",
                 "deleteMaterial",
@@ -1040,6 +1056,7 @@ mod tests {
                 "deleteTask",
                 "deleteTemplate",
                 "deleteTodo",
+                "enableCloudBackup",
                 "mergeMentors",
                 "rescheduleEmail",
                 "resendEmail",

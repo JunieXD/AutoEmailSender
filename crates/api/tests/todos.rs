@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 fn context(db: SqlitePool) -> Context {
-    Context::new(db, net::Net::new(vec![]).unwrap(), Default::default())
+    Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""))
 }
 
 async fn mentor(db: &SqlitePool) -> i64 {

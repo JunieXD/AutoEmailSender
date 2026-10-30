@@ -1,6 +1,7 @@
 //! Local snapshots and restart-time replacement; archive contents are validated at the boundary.
 
 mod archive;
+pub mod cloud;
 
 use std::fs::{self, File};
 use std::io;
@@ -127,43 +128,66 @@ pub async fn export(db: &SqlitePool, materials: &Path, target: &Path, now: i64) 
     let stage = tempfile::Builder::new()
         .prefix(".aes-snapshot-")
         .tempdir_in(parent)?;
-    let snapshot = stage.path().join("app.db");
-    let name = snapshot
+    let path = stage.path().join("app.db");
+    let snapshot = snapshot(db, &path).await?;
+    let manifest = Manifest {
+        application: APPLICATION.into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        database_version: snapshot.version,
+        exported_at: now,
+    };
+    let ids: Vec<i64> = snapshot.materials.iter().map(|(id, _)| *id).collect();
+    let (materials, target) = (materials.to_owned(), target.to_owned());
+    tokio::task::spawn_blocking(move || {
+        archive::write(&target, &path, &materials, &ids, &manifest)
+    })
+    .await??;
+    Ok(())
+}
+
+/// What a snapshot holds, besides the database file itself.
+struct Snapshot {
+    version: i64,
+    /// Ids and file names.
+    materials: Vec<(i64, String)>,
+    mentors: i64,
+    emails: i64,
+}
+
+/// Copies the database to the new file at `path` and scrubs the copy.
+async fn snapshot(db: &SqlitePool, path: &Path) -> Result<Snapshot> {
+    let name = path
         .to_str()
         .ok_or_else(|| Error::Invalid("保存位置不能用于 SQLite 备份，请选择其他目录。".into()))?;
     sqlx::query("VACUUM INTO ?").bind(name).execute(db).await?;
     let mut conn = SqliteConnection::connect_with(
         &SqliteConnectOptions::new()
-            .filename(&snapshot)
+            .filename(path)
             .journal_mode(SqliteJournalMode::Delete),
     )
     .await?;
-    let snapshot_data = async {
+    let snapshot = async {
         scrub(&mut conn).await?;
-        let version: i64 =
-            sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations WHERE success = 1")
+        Ok::<_, Error>(Snapshot {
+            version: sqlx::query_scalar(
+                "SELECT max(version) FROM _sqlx_migrations WHERE success = 1",
+            )
+            .fetch_one(&mut conn)
+            .await?,
+            materials: sqlx::query_as("SELECT id, file_name FROM material ORDER BY id")
+                .fetch_all(&mut conn)
+                .await?,
+            mentors: sqlx::query_scalar("SELECT count(*) FROM mentor")
                 .fetch_one(&mut conn)
-                .await?;
-        let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM material ORDER BY id")
-            .fetch_all(&mut conn)
-            .await?;
-        Ok::<_, Error>((version, ids))
+                .await?,
+            emails: sqlx::query_scalar("SELECT count(*) FROM email")
+                .fetch_one(&mut conn)
+                .await?,
+        })
     }
     .await;
     conn.close().await?;
-    let (version, ids) = snapshot_data?;
-    let manifest = Manifest {
-        application: APPLICATION.into(),
-        app_version: env!("CARGO_PKG_VERSION").into(),
-        database_version: version,
-        exported_at: now,
-    };
-    let (materials, target) = (materials.to_owned(), target.to_owned());
-    tokio::task::spawn_blocking(move || {
-        archive::write(&target, &snapshot, &materials, &ids, &manifest)
-    })
-    .await??;
-    Ok(())
+    snapshot
 }
 
 async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
@@ -172,7 +196,11 @@ async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
         SET secret = NULL;
         UPDATE model_config
         SET api_key = CASE WHEN provider = 'custom' AND api_key = '' THEN '' END;
-        UPDATE account SET token = NULL;
+        UPDATE account SET token = NULL, backup_key = NULL, library_checked_at = NULL;
+        UPDATE profile SET cloud_backup = 0, last_backup_at = NULL, cloud_backup_device = NULL,
+          cloud_backup_commit = NULL, cloud_backup_replace = NULL, cloud_backup_failed_at = NULL,
+          cloud_backup_error = NULL;
+        DELETE FROM cloud_backup_material;
         UPDATE crawl_page
         SET text = CASE WHEN status = 'success' THEN '' END;
         VACUUM;"#,
@@ -182,14 +210,22 @@ async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-/// Stages only a checked archive. Failed checks leave no prepared restore to confirm.
 pub async fn prepare(dir: &Path, source: &Path) -> Result<RestoreInfo> {
+    let source = source.to_owned();
+    stage(dir, move |stage| archive::unpack(&source, stage)).await
+}
+
+/// Stages only a checked restore: `fill` writes app.db and materials/ into the empty stage.
+/// Failed checks leave no prepared restore to confirm.
+async fn stage(
+    dir: &Path,
+    fill: impl FnOnce(&Path) -> Result<Manifest> + Send + 'static,
+) -> Result<RestoreInfo> {
     ensure_not_pending(dir)?;
     cancel(dir)?;
     let stage = dir.join("restore");
-    let (destination, source) = (stage.clone(), source.to_owned());
-    let unpacked =
-        tokio::task::spawn_blocking(move || archive::unpack(&source, &destination)).await?;
+    let destination = stage.clone();
+    let unpacked = tokio::task::spawn_blocking(move || fill(&destination)).await?;
     let result = match unpacked {
         Ok(mut manifest) => {
             async {

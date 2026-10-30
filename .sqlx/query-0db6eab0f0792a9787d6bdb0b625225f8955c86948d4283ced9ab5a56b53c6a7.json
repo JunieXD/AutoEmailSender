@@ -1,0 +1,69 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_backup AS \"enabled: bool\", last_backup_at, cloud_backup_failed_at,\n            cloud_backup_error,\n            (SELECT backup_key IS NULL FROM account WHERE token IS NOT NULL)\n                AS \"needs_password: bool\"\n        FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "enabled: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup"
+          }
+        }
+      },
+      {
+        "name": "last_backup_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "last_backup_at"
+          }
+        }
+      },
+      {
+        "name": "cloud_backup_failed_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup_failed_at"
+          }
+        }
+      },
+      {
+        "name": "cloud_backup_error",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup_error"
+          }
+        }
+      },
+      {
+        "name": "needs_password: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "0db6eab0f0792a9787d6bdb0b625225f8955c86948d4283ced9ab5a56b53c6a7"
+}

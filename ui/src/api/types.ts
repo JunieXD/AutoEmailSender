@@ -62,6 +62,38 @@ export type CandidateRow = { id: number, crawlId: number | null, name: string, e
 
 export type Capacity = { windows: number, emails: number, nextChangeAt: number | null, };
 
+export type CloudBackup = { enabled: boolean, running: boolean,
+/**
+ * Logged in before cloud backup existed, so the password must derive the key once.
+ */
+needsPassword: boolean,
+/**
+ * The last successful backup, whether it uploaded or found nothing changed.
+ */
+lastBackupAt: number | null, failure: CloudBackupFailure | null, };
+
+export type CloudBackupCopy = { committedAt: number, size: number, thisDevice: boolean,
+/**
+ * None when this account's key cannot read it, such as before a password reset.
+ */
+summary: CloudBackupSummary | null, };
+
+export type CloudBackupEnabled = { "kind": "enabled" } | { "kind": "replace", backup: CloudBackupCopy, };
+
+export type CloudBackupFailure = {
+/**
+ * Failing since then.
+ */
+since: number, message: string, };
+
+export type CloudBackupServer = { sponsorUntil: number | null,
+/**
+ * When a backup whose sponsorship has ended is deleted.
+ */
+deleteAt: number | null, backup: CloudBackupCopy | null, };
+
+export type CloudBackupSummary = { deviceName: string | null, exportedAt: number, mentorCount: number, emailCount: number, };
+
 export type CodeRequest = { code: string, };
 
 export type Column = { header: string, field: Field | null, };
@@ -161,6 +193,16 @@ resendOf: number | null,
 resent: boolean, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, } | { "state": "canceled", cancelReason: string, });
 
 export type EmailId = { id: number, };
+
+export type EnableCloudBackup = {
+/**
+ * For a login without a backup key.
+ */
+password?: string,
+/**
+ * The `committedAt` of another computer's backup the user agreed to replace.
+ */
+replace?: number, };
 
 export type EnrichChange = { field: EnrichField, value: unknown, };
 
@@ -881,6 +923,12 @@ export interface Operations {
   resetAccountPassword: { input: AccountVerification; output: null };
   logoutAccount: { input: Nothing; output: null };
   deleteAccount: { input: AccountCredentials; output: null };
+  getCloudBackup: { input: Nothing; output: CloudBackup };
+  getCloudBackupServer: { input: Nothing; output: CloudBackupServer };
+  enableCloudBackup: { input: EnableCloudBackup; output: CloudBackupEnabled };
+  disableCloudBackup: { input: Nothing; output: null };
+  backUpToCloud: { input: Nothing; output: null };
+  deleteCloudBackup: { input: Nothing; output: null };
   getLibraryOrgs: { input: Nothing; output: LibraryOrgs };
   listLibraryMentors: { input: LibraryListRequest; output: LibraryMentors };
   previewLibraryMentor: { input: LibraryId; output: LibraryMentorPreview };

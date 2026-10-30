@@ -15,7 +15,7 @@ fn context() -> Context {
     Context::new(
         SqlitePool::connect_lazy("sqlite::memory:").unwrap(),
         net::Net::new(vec![]).unwrap(),
-        Default::default(),
+        std::path::Path::new(""),
     )
 }
 

@@ -1,8 +1,14 @@
-use account::{Client, Error, State, login_key};
+use account::{Client, Error, State, keys};
 use cloud_api::{Account, ApiError, ErrorCode, LoginRequest, Session, path};
 use serde_json::json;
 use sqlx::SqlitePool;
 use test_fixtures::provider::{Provider, Response};
+
+/// HKDF-SHA256 with info `backup` over the same Argon2id output as the login key.
+const BACKUP_KEY: [u8; 32] = [
+    0x21, 0x91, 0xd8, 0x48, 0x59, 0x0a, 0xf8, 0x12, 0x69, 0x12, 0x01, 0x2d, 0xf6, 0xfa, 0x04, 0x59,
+    0xf7, 0x73, 0xf7, 0x21, 0xa4, 0x2a, 0x92, 0x5e, 0x9a, 0xe9, 0x5a, 0x18, 0x22, 0xee, 0xee, 0x1d,
+];
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePool) {
@@ -230,13 +236,14 @@ async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db
 #[tokio::test]
 async fn derivation_matches_an_independent_argon2_and_hkdf_vector_and_normalizes_email() {
     let password = "fixed-password-123";
-    let expected = "pA21weRBxCiXsgzURi-C1Ry8eGXU3408uxsQSdp-hRY";
     for email in [
         "student@example.invalid",
         "  Student@EXAMPLE.invalid  ",
         "Ｓｔｕｄｅｎｔ＠ＥＸＡＭＰＬＥ．ｉｎｖａｌｉｄ",
     ] {
-        assert_eq!(login_key(email, password.into()).await.unwrap(), expected);
+        let keys = keys(email, password.into()).await.unwrap();
+        assert_eq!(keys.login, "pA21weRBxCiXsgzURi-C1Ry8eGXU3408uxsQSdp-hRY");
+        assert_eq!(keys.backup, BACKUP_KEY);
     }
 }
 
@@ -278,13 +285,14 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         assert!(matches!(error, Error::SignedOut));
         let expired = account::state(&db).await.unwrap();
         assert!(matches!(expired, State::Expired { email } if email == "student@example.invalid"));
-        let (email, token): (String, Option<String>) =
-            sqlx::query_as("SELECT email, token FROM account")
+        let (email, token, backup_key): (String, Option<String>, Vec<u8>) =
+            sqlx::query_as("SELECT email, token, backup_key FROM account")
                 .fetch_one(&db)
                 .await
                 .unwrap();
         assert_eq!(email, "student@example.invalid");
         assert!(token.is_none());
+        assert_eq!(backup_key, BACKUP_KEY);
         assert!(matches!(
             account::state(&db).await.unwrap(),
             State::Expired { .. }

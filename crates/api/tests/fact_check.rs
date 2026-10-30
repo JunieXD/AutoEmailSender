@@ -7,7 +7,7 @@ use test_fixtures::provider;
 const T: i64 = 1_800_000_000_000;
 
 fn context(db: SqlitePool) -> Context {
-    Context::new(db, net::Net::new(vec![]).unwrap(), Default::default())
+    Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""))
 }
 async fn config(db: &SqlitePool, address: &str) -> i64 {
     sqlx::query_scalar(

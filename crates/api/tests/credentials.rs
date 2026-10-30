@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn restored_credentials_must_be_refilled_before_editing_or_testing(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mailbox = json!({
         "address": "me@example.invalid",
         "senderName": "学生",

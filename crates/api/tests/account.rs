@@ -10,7 +10,7 @@ use test_fixtures::provider::{Provider, Response};
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn background_library_expiration_notifies_account_subscribers(db: SqlitePool) {
     let mut server = Provider::start().await.unwrap();
-    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(

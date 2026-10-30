@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod contact;
 pub mod db;
 pub mod mail;

@@ -121,7 +121,7 @@ mod tests {
 
     #[sqlx::test(migrator = "db::MIGRATOR")]
     async fn known_mail_domains_count_in_task_lists_and_bulk_review(db: SqlitePool) {
-        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
         // Keep the unknown domain in flight so this test never starts a real DNS lookup.
         let (_answer, waiting) = watch::channel(false);
         ctx.mail_domains.results().extend([

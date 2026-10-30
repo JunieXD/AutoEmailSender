@@ -32,7 +32,7 @@ fn library_record(emails: &[&str]) -> cloud_api::library::Record {
 
 async fn library_context(db: SqlitePool) -> (Context, test_fixtures::provider::Provider, i64) {
     let server = test_fixtures::provider::Provider::start().await.unwrap();
-    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
@@ -320,7 +320,7 @@ async fn allow_after_change(
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn account_deletion_confirmation_uses_the_input_email_without_the_password(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let (registered, waiting) = tokio::sync::oneshot::channel();
     let calling = call_agent(
         &ctx,
@@ -356,7 +356,7 @@ async fn account_deletion_confirmation_uses_the_input_email_without_the_password
 async fn library_addition_confirms_before_changing_an_approved_recipient(db: SqlitePool) {
     use test_fixtures::provider::{Provider, Response};
     let mut server = Provider::start().await.unwrap();
-    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
@@ -405,7 +405,7 @@ async fn library_addition_confirms_before_changing_an_approved_recipient(db: Sql
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn library_update_confirms_before_reordering_an_approved_recipient(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -463,7 +463,7 @@ async fn library_update_confirms_before_reordering_an_approved_recipient(db: Sql
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn task_candidates_warn_about_library_status_but_not_removed_records(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -505,7 +505,7 @@ async fn task_candidates_warn_about_library_status_but_not_removed_records(db: S
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -546,7 +546,7 @@ async fn empty_save_does_not_delete_a_draft_edited_while_waiting(db: SqlitePool)
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn empty_save_does_not_delete_a_draft_whose_attachment_was_swapped(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -590,7 +590,7 @@ async fn empty_save_does_not_delete_a_draft_whose_attachment_was_swapped(db: Sql
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn resume_task_rechecks_the_pending_recipient_address(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -650,7 +650,7 @@ async fn resume_task_rechecks_the_pending_recipient_address(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn resume_task_rechecks_a_plan_changed_to_immediate_sending(db: SqlitePool) {
     const AT: i64 = 4_000_000_000_000;
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -701,7 +701,7 @@ async fn resume_task_rechecks_a_plan_changed_to_immediate_sending(db: SqlitePool
 async fn changing_an_active_mailbox_address_requires_confirmation_for_approved_mail(
     db: SqlitePool,
 ) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     for assigned in [true, false] {
         let before = format!("before{assigned}@example.invalid");
         let after = format!("after{assigned}@example.invalid");
@@ -769,7 +769,7 @@ async fn changing_an_active_mailbox_address_requires_confirmation_for_approved_m
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn recipient_edits_recheck_schedules_including_unassigned_task_mail(db: SqlitePool) {
     const AT: i64 = 4_000_000_000_000;
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     for (n, (op, planned)) in [
         ("updateMentor", Some(AT)),
         ("updateMentor", None),
@@ -842,7 +842,7 @@ async fn recipient_edits_recheck_schedules_including_unassigned_task_mail(db: Sq
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn retry_rechecks_the_task_arrangement_that_will_assign_its_new_time(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -894,7 +894,7 @@ async fn retry_rechecks_the_task_arrangement_that_will_assign_its_new_time(db: S
 }
 
 async fn mailbox_change_is_confirmed(db: SqlitePool, automatic: bool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
         .await
         .unwrap();
@@ -965,7 +965,7 @@ async fn changing_from_a_paused_mailbox_to_automatic_requires_confirmation(db: S
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn resuming_a_mailbox_is_not_invalidated_by_an_imap_port_change(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
         .await
         .unwrap();
@@ -997,11 +997,8 @@ async fn first_approval_previews_the_whole_letter_and_sends_the_dialog_rendering
     let dir = tempfile::tempdir().unwrap();
     let pki = fakemail::pki();
     let (port, inbox) = fakemail::smtp(&pki, false).await;
-    let ctx = Context::new(
-        db,
-        net::Net::new(vec![pki.root]).unwrap(),
-        dir.path().into(),
-    );
+    let ctx = Context::new(db, net::Net::new(vec![pki.root]).unwrap(), dir.path());
+    std::fs::create_dir(&ctx.materials).unwrap();
     call(
         &ctx,
         "addMailbox",
@@ -1032,7 +1029,7 @@ async fn first_approval_previews_the_whole_letter_and_sends_the_dialog_rendering
     .fetch_one(&ctx.db)
     .await
     .unwrap();
-    std::fs::write(material::file(dir.path(), material), b"pdf").unwrap();
+    std::fs::write(material::file(&ctx.materials, material), b"pdf").unwrap();
     let same_name = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO material (file_name, size, for_matching, for_writing, attach_by_default, created_at)
         VALUES ('简历.pdf', 5, 0, 0, 0, 0) RETURNING id"#,
@@ -1041,7 +1038,7 @@ async fn first_approval_previews_the_whole_letter_and_sends_the_dialog_rendering
     .await
     .unwrap();
     let chosen_data = b"pdf\x80\x81";
-    std::fs::write(material::file(dir.path(), same_name), chosen_data).unwrap();
+    std::fs::write(material::file(&ctx.materials, same_name), chosen_data).unwrap();
     let (registered, waiting) = tokio::sync::oneshot::channel();
     let calling = call_agent(
         &ctx,
@@ -1090,7 +1087,7 @@ async fn first_approval_previews_the_whole_letter_and_sends_the_dialog_rendering
         .unwrap();
     };
     tokio::join!(calling, answer).0.unwrap();
-    send::step(&ctx.db, &ctx.writes, &ctx.net, dir.path(), || AT)
+    send::step(&ctx.db, &ctx.writes, &ctx.net, &ctx.materials, || AT)
         .await
         .unwrap();
     let attachments = sqlx::query_as::<_, (i64, String, i64)>(
@@ -1113,7 +1110,7 @@ async fn first_approval_previews_the_whole_letter_and_sends_the_dialog_rendering
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn missing_or_mismatched_rendering_cannot_approve_a_letter(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -1189,7 +1186,7 @@ async fn missing_or_mismatched_rendering_cannot_approve_a_letter(db: SqlitePool)
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn task_approval_keeps_input_order_and_exposes_the_full_sending_window(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
         .await
         .unwrap();
@@ -1280,7 +1277,7 @@ async fn task_approval_keeps_input_order_and_exposes_the_full_sending_window(db:
 async fn reply_and_follow_up_preview_the_subject_and_quote_and_use_dialog_rendering(
     db: SqlitePool,
 ) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
         .await
         .unwrap();
@@ -1382,7 +1379,7 @@ async fn reply_and_follow_up_preview_the_subject_and_quote_and_use_dialog_render
 async fn resume_mailbox_rechecks_recipients_and_deleting_a_task_rechecks_its_email_set(
     db: SqlitePool,
 ) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     test_fixtures::mail::mailbox(&mut ctx.db.acquire().await.unwrap())
         .await
         .unwrap();
@@ -1460,7 +1457,7 @@ async fn resume_mailbox_rechecks_recipients_and_deleting_a_task_rechecks_its_ema
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn editing_a_mailbox_requires_confirmation_only_while_its_pause_is_active(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mut edit = json!({
         "address":"me@example.invalid", "senderName":"学生", "provider":"custom",
         "smtp":{"host":"localhost", "port":1, "security":"tls"},
@@ -1506,7 +1503,7 @@ async fn editing_a_mailbox_requires_confirmation_only_while_its_pause_is_active(
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn empty_saves_require_confirmation_only_when_they_would_delete_a_draft(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     for (op, kind) in [("saveFirstDraft", "first"), ("saveReplyDraft", "reply")] {
         let mentor = mentor::create(
             &ctx.db,
@@ -1559,7 +1556,7 @@ async fn empty_saves_require_confirmation_only_when_they_would_delete_a_draft(db
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqlitePool) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     for (n, op) in [
         "updateMentor",
         "addMentorEmail",
@@ -1664,7 +1661,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
 async fn approval_rechecks_changed_candidate_addresses_and_allows_effects_no_longer_needing_confirmation(
     db: SqlitePool,
 ) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let before = "old@example.invalid";
     let mentor = mentor::create(
         &ctx.db,
@@ -1759,7 +1756,7 @@ async fn refuses_changed_candidate_recipient(
     shown: &str,
     changed: &str,
 ) {
-    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mut mentors = Vec::new();
     let mut candidates = Vec::new();
     for i in 0..count {

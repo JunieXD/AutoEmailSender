@@ -2,7 +2,7 @@
 
 mod key;
 pub use cloud_api::Sponsor;
-pub use key::login_key;
+pub use key::{Keys, keys};
 
 use std::time::Duration;
 
@@ -48,6 +48,20 @@ pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
     })
 }
 
+/// Read once by operations that must keep using one account throughout.
+pub async fn saved_login(db: &SqlitePool) -> Result<Login, Error> {
+    let row = sqlx::query!(
+        r#"SELECT token AS "token!", backup_key FROM account WHERE token IS NOT NULL"#
+    )
+    .fetch_optional(db)
+    .await?
+    .ok_or(Error::SignedOut)?;
+    Ok(Login {
+        token: row.token,
+        backup_key: row.backup_key.and_then(|key| key.try_into().ok()),
+    })
+}
+
 pub struct Client {
     // Serializing account changes prevents an old response from replacing a newer login.
     change: Mutex<()>,
@@ -82,7 +96,7 @@ impl Client {
         self.changed.subscribe()
     }
 
-    fn request(&self, method: Method, path: &str) -> RequestBuilder {
+    pub fn request(&self, method: Method, path: &str) -> RequestBuilder {
         self.http
             .request(method, format!("{}{path}", self.address))
             .timeout(Duration::from_secs(30))
@@ -111,13 +125,15 @@ impl Client {
     ) -> Result<State, Error> {
         let _guard = self.change.lock().await;
         let email = checked_email(email)?;
-        let login_key = login_key(&email, password).await?;
-        let session: Session = response(
-            self.request(Method::POST, path::LOGIN)
-                .json(&cloud_api::LoginRequest { email, login_key }),
-        )
+        let keys = keys(&email, password).await?;
+        let session: Session = response(self.request(Method::POST, path::LOGIN).json(
+            &cloud_api::LoginRequest {
+                email,
+                login_key: keys.login,
+            },
+        ))
         .await?;
-        save_session(db, session).await
+        save_session(db, session, &keys.backup).await
     }
 
     pub async fn register(
@@ -128,10 +144,10 @@ impl Client {
         password: String,
     ) -> Result<State, Error> {
         let _guard = self.change.lock().await;
-        let request = verified(email, code, password).await?;
+        let (request, backup) = verified(email, code, password).await?;
         let session: Session =
             response(self.request(Method::POST, path::REGISTER).json(&request)).await?;
-        save_session(db, session).await
+        save_session(db, session, &backup).await
     }
 
     pub async fn reset_password(
@@ -142,7 +158,7 @@ impl Client {
         password: String,
     ) -> Result<(), Error> {
         let _guard = self.change.lock().await;
-        let request = verified(email, code, password).await?;
+        let (request, _) = verified(email, code, password).await?;
         response::<Empty>(
             self.request(Method::POST, path::RESET_PASSWORD)
                 .json(&request),
@@ -267,7 +283,7 @@ impl Client {
         if current_email != email {
             return Err(Error::AccountChanged);
         }
-        let login_key = login_key(&email, password).await?;
+        let login_key = keys(&email, password).await?.login;
         self.authenticated::<Empty>(
             db,
             Method::DELETE,
@@ -279,8 +295,6 @@ impl Client {
         Ok(())
     }
 
-    /// All official services use this: an expired session clears only that token, retaining the
-    /// email for the next login. A response for an older token cannot clear a newer login.
     pub async fn authenticated<T: DeserializeOwned>(
         &self,
         db: &SqlitePool,
@@ -288,24 +302,37 @@ impl Client {
         path: &str,
         body: Option<&impl Serialize>,
     ) -> Result<T, Error> {
-        let token = sqlx::query_scalar!("SELECT token FROM account WHERE token IS NOT NULL")
-            .fetch_optional(db)
-            .await?
-            .flatten()
-            .ok_or(Error::SignedOut)?;
-        let mut request = self.request(method, path).bearer_auth(&token);
+        let login = saved_login(db).await?;
+        let mut request = self.request(method, path);
         if let Some(body) = body {
             request = request.json(body);
         }
-        match response(request).await {
+        self.send(db, &login, request)
+            .await?
+            .json()
+            .await
+            .map_err(Error::Network)
+    }
+
+    /// All official services use this: an expired session clears only that token, retaining the
+    /// email for the next login. A response for an older token cannot clear a newer login.
+    pub async fn send(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+        request: RequestBuilder,
+    ) -> Result<reqwest::Response, Error> {
+        match checked(request.bearer_auth(&login.token)).await {
             Err(Error::Server(ApiError {
                 code: ErrorCode::SessionExpired,
                 ..
             })) => {
-                let cleared =
-                    sqlx::query!("UPDATE account SET token = NULL WHERE token = ?", token)
-                        .execute(db)
-                        .await?;
+                let cleared = sqlx::query!(
+                    "UPDATE account SET token = NULL WHERE token = ?",
+                    login.token
+                )
+                .execute(db)
+                .await?;
                 if cleared.rows_affected() > 0 {
                     self.changed.send_replace(());
                 }
@@ -316,15 +343,26 @@ impl Client {
     }
 }
 
-async fn response<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, Error> {
+/// A saved login. Without Debug, so that neither secret ends up in a log.
+pub struct Login {
+    token: String,
+    /// Missing for logins from before cloud backup; logging in again derives it.
+    pub backup_key: Option<[u8; 32]>,
+}
+
+async fn checked(request: RequestBuilder) -> Result<reqwest::Response, Error> {
     let response = request.send().await.map_err(Error::Network)?;
     if response.status().is_success() {
-        response.json().await.map_err(Error::Network)
+        Ok(response)
     } else {
         Err(Error::Server(
             response.json().await.map_err(Error::Network)?,
         ))
     }
+}
+
+async fn response<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, Error> {
+    checked(request).await?.json().await.map_err(Error::Network)
 }
 
 fn checked_email(email: &str) -> Result<String, Error> {
@@ -339,7 +377,7 @@ async fn verified(
     email: &str,
     code: &str,
     password: String,
-) -> Result<cloud_api::VerifyRequest, Error> {
+) -> Result<(cloud_api::VerifyRequest, [u8; 32]), Error> {
     let email = checked_email(email)?;
     if password.chars().count() < 8 {
         return Err(Error::Invalid("密码至少需要 8 位。"));
@@ -348,27 +386,41 @@ async fn verified(
     if code.len() != 6 || !code.bytes().all(|c| c.is_ascii_digit()) {
         return Err(Error::Invalid("请填写 6 位数字验证码。"));
     }
-    let login_key = login_key(&email, password).await?;
-    Ok(cloud_api::VerifyRequest {
-        email,
-        code: code.into(),
-        login_key,
-    })
+    let keys = keys(&email, password).await?;
+    Ok((
+        cloud_api::VerifyRequest {
+            email,
+            code: code.into(),
+            login_key: keys.login,
+        },
+        keys.backup,
+    ))
 }
 
-async fn save_session(db: &SqlitePool, session: Session) -> Result<State, Error> {
+/// Another account's row goes first, taking its library progress and cloud backup state along.
+async fn save_session(
+    db: &SqlitePool,
+    session: Session,
+    backup_key: &[u8; 32],
+) -> Result<State, Error> {
+    let backup_key = backup_key.as_slice();
+    let mut tx = db.begin().await?;
     sqlx::query!(
-        r#"INSERT INTO account (id, email, token) VALUES (1, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET email = excluded.email, token = excluded.token,
-            library_revision = CASE WHEN account.email = excluded.email
-                THEN account.library_revision ELSE 0 END,
-            library_checked_at = CASE WHEN account.email = excluded.email
-                THEN account.library_checked_at ELSE NULL END"#,
-        session.account.email,
-        session.token
+        "DELETE FROM account WHERE email <> ?",
+        session.account.email
     )
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+    sqlx::query!(
+        r#"INSERT INTO account (id, email, token, backup_key) VALUES (1, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET token = excluded.token, backup_key = excluded.backup_key"#,
+        session.account.email,
+        session.token,
+        backup_key
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
     Ok(State::LoggedIn {
         email: session.account.email,
     })
@@ -454,6 +506,16 @@ impl Error {
                 ErrorCode::CodeUsed => "你已经用过这个兑换码了。".into(),
                 ErrorCode::EmailIneligible => {
                     "用常用邮箱（QQ、163、Gmail 等）或学校邮箱注册的账号才能参加。".into()
+                }
+                ErrorCode::SponsorRequired => "赞助已到期，云端备份已停止。".into(),
+                ErrorCode::BackupNotFound => {
+                    "云端的备份刚被另一台电脑替换或删除了，请刷新后重试。".into()
+                }
+                ErrorCode::BackupIncomplete => {
+                    "另一台电脑同时在备份，这次没能传完，稍后会再试。".into()
+                }
+                ErrorCode::BackupTooLarge => {
+                    "云端备份的空间暂时满了：没传完的数据一天内会清掉，之后再试。".into()
                 }
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()

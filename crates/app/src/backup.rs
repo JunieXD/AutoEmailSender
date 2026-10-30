@@ -89,6 +89,25 @@ pub async fn prepare_restore(app: AppHandle) -> Result<Option<api::backup::Resto
     .await
 }
 
+/// Downloads the cloud backup into the same staged restore that `restore_backup` confirms.
+#[tauri::command]
+pub async fn prepare_cloud_restore(
+    app: AppHandle,
+    ctx: tauri::State<'_, std::sync::Arc<api::Context>>,
+) -> Result<api::backup::RestoreInfo, String> {
+    let ctx = ctx.inner().clone();
+    blocking(app, move |app| {
+        let dir = crate::data_dir(app).map_err(|e| format!("数据目录无法使用：{e}"))?;
+        tauri::async_runtime::block_on(api::backup::cloud::prepare_restore(&ctx, &dir)).map_err(
+            |e| {
+                tracing::error!(error = %e, "cloud restore failed");
+                e.message()
+            },
+        )
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn cancel_restore(app: AppHandle) -> Result<(), String> {
     blocking(app, |app| {

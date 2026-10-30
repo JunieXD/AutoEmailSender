@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod backup;
 pub mod library;
 
 pub mod path {
@@ -22,6 +23,9 @@ pub mod path {
     pub const LIBRARY_QUOTA: &str = "/v1/library/quota";
     pub const LIBRARY_FETCH: &str = "/v1/library/fetch";
     pub const LIBRARY_CHANGES: &str = "/v1/library/changes";
+    pub const BACKUP: &str = "/v1/backup";
+    /// Followed by `/{id}`.
+    pub const BACKUP_OBJECTS: &str = "/v1/backup/objects";
 }
 
 #[derive(Serialize, Deserialize)]
@@ -162,6 +166,10 @@ pub enum ErrorCode {
     CodeExpired,
     CodeUsed,
     EmailIneligible,
+    SponsorRequired,
+    BackupNotFound,
+    BackupIncomplete,
+    BackupTooLarge,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

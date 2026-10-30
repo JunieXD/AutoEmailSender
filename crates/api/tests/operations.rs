@@ -8,7 +8,7 @@ type Result<T = ()> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn invalid_nested_input_reports_the_field_path(db: SqlitePool) -> Result {
-    let ctx = Context::new(db, net::Net::new(vec![])?, Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![])?, std::path::Path::new(""));
     let error = api::call(
         &ctx,
         "submitCandidates",
@@ -30,7 +30,7 @@ async fn invalid_nested_input_reports_the_field_path(db: SqlitePool) -> Result {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn catalog_only_lists_agent_operations(db: SqlitePool) -> Result {
-    let ctx = Context::new(db, net::Net::new(vec![])?, Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![])?, std::path::Path::new(""));
     let catalog = call_agent(
         &ctx,
         "listOperations",
@@ -57,7 +57,7 @@ async fn catalog_only_lists_agent_operations(db: SqlitePool) -> Result {
 async fn description_provides_input_types_and_keeps_ui_operations_private(
     db: SqlitePool,
 ) -> Result {
-    let ctx = Context::new(db, net::Net::new(vec![])?, Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![])?, std::path::Path::new(""));
     let description = call_agent(
         &ctx,
         "describeOperation",

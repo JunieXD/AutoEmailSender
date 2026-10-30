@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT material_id, object, size FROM cloud_backup_material",
+  "describe": {
+    "columns": [
+      {
+        "name": "material_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "cloud_backup_material",
+            "name": "material_id"
+          }
+        }
+      },
+      {
+        "name": "object",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cloud_backup_material",
+            "name": "object"
+          }
+        }
+      },
+      {
+        "name": "size",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "cloud_backup_material",
+            "name": "size"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "552f85459fb7b0b2262fe4e3d54564c3ba062d03f7a9568ccadcb6683ec95b3c"
+}

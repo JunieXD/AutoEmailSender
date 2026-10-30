@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET cloud_backup = 0, last_backup_at = NULL, cloud_backup_commit = NULL,\n            cloud_backup_replace = NULL, cloud_backup_failed_at = NULL, cloud_backup_error = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "cdd384734b184b5756e8b0ab3c309af9f5e78464ba9a4f349ff4edcc714da87a"
+}

@@ -6,7 +6,7 @@ use sqlx::SqlitePool;
 async fn installation_and_configuration_are_only_available_to_the_ui(
     db: SqlitePool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let ctx = Context::new(db, net::Net::new(vec![])?, Default::default());
+    let ctx = Context::new(db, net::Net::new(vec![])?, std::path::Path::new(""));
     let catalog = api::call(&ctx, "listOperations", json!({}))
         .await
         .map_err(|e| e.message)?;

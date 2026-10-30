@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET cloud_backup_device = coalesce(cloud_backup_device, ?)\n        RETURNING cloud_backup_device AS \"device!\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "device!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup_device"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "363d1b749c32e5c29d949aab738ab742e2414dcb76d5138e8bd39f7b72a59350"
+}
