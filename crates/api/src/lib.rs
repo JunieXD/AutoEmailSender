@@ -1373,7 +1373,10 @@ async fn resume_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError
 
 async fn delete_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError> {
     let _held = ctx.receiver.hold().await;
-    Ok(mailbox::delete(&ctx.db, input.id).await?)
+    mailbox::delete(&ctx.db, input.id).await?;
+    // Its mentors' first emails can now go from the other mailboxes, and replies from it fail.
+    ctx.sender.wake();
+    Ok(())
 }
 
 async fn test_sending(ctx: &Context, input: MailboxTest) -> Result<(), CallError> {
