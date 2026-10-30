@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT cloud_backup AS \"enabled: bool\", last_backup_at, cloud_backup_failed_at,\n            cloud_backup_error,\n            (SELECT backup_key IS NULL FROM account WHERE token IS NOT NULL)\n                AS \"needs_password: bool\"\n        FROM profile",
+  "query": "SELECT cloud_backup AS \"enabled: bool\", last_backup_at, cloud_backup_replace,\n            cloud_backup_failed_at, cloud_backup_error,\n            (SELECT backup_key IS NULL FROM account WHERE token IS NOT NULL)\n                AS \"needs_password: bool\"\n        FROM profile",
   "describe": {
     "columns": [
       {
@@ -26,8 +26,19 @@
         }
       },
       {
-        "name": "cloud_backup_failed_at",
+        "name": "cloud_backup_replace",
         "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "cloud_backup_replace"
+          }
+        }
+      },
+      {
+        "name": "cloud_backup_failed_at",
+        "ordinal": 3,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "cloud_backup_error",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -49,7 +60,7 @@
       },
       {
         "name": "needs_password: bool",
-        "ordinal": 4,
+        "ordinal": 5,
         "type_info": "Integer",
         "origin": "Expression"
       }
@@ -62,8 +73,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "0db6eab0f0792a9787d6bdb0b625225f8955c86948d4283ced9ab5a56b53c6a7"
+  "hash": "d1895fe7328a3d8740b4d1a769e757b9b3f7e6829ac207736971302fa02d28d0"
 }

@@ -169,6 +169,7 @@ pub enum ErrorCode {
     SponsorRequired,
     BackupNotFound,
     BackupIncomplete,
+    BackupChanged,
     BackupTooLarge,
 }
 

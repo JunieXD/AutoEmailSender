@@ -28,7 +28,7 @@ export function AccountSection() {
       {account.error && <p className="text-sm text-destructive">账号未能读取：{errorMessage(account.error)}</p>}
       {state?.kind === "loggedOut" && (
         <>
-          <p className="text-sm text-muted-foreground">本机的功能都不用登录。登录后还能用导师库。</p>
+          <p className="text-sm text-muted-foreground">本机的功能都不用登录。登录后还能用导师库和云端备份。</p>
           <div className="flex gap-2">
             <Button onClick={() => setDialog("login")}>登录</Button>
             <Button variant="quiet" onClick={() => setDialog("register")}>

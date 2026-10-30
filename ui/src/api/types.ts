@@ -70,7 +70,11 @@ needsPassword: boolean,
 /**
  * The last successful backup, whether it uploaded or found nothing changed.
  */
-lastBackupAt: number | null, failure: CloudBackupFailure | null, };
+lastBackupAt: number | null,
+/**
+ * The `committedAt` of the cloud's backup the user agreed to replace, until it is replaced.
+ */
+replace: number | null, failure: CloudBackupFailure | null, };
 
 export type CloudBackupCopy = { committedAt: number, size: number, thisDevice: boolean,
 /**

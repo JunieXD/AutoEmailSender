@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use chacha20poly1305::aead::{Aead, Payload};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
-use cloud_api::backup::{self as wire, LIMIT, RETENTION};
+use cloud_api::backup::{self as wire, LIMIT, OBJECTS, RETENTION};
 use cloud_api::{ApiError, Empty, ErrorCode, path};
 use reqwest::{Method, header};
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,9 @@ pub enum Error {
     Database(sqlx::Error),
     Io(io::Error),
     NeedsPassword,
+    /// The account changed while the operation waited for the server.
+    AccountChanged,
+    Disabled,
     SponsorRequired,
     OtherDevice,
     TooLarge(String),
@@ -107,6 +110,8 @@ impl std::fmt::Display for Error {
             Self::Database(e) => write!(f, "cloud backup database: {e}"),
             Self::Io(e) => write!(f, "cloud backup file: {e}"),
             Self::NeedsPassword => write!(f, "cloud backup: no backup key"),
+            Self::AccountChanged => write!(f, "cloud backup: account changed"),
+            Self::Disabled => write!(f, "cloud backup: turned off"),
             Self::SponsorRequired => write!(f, "cloud backup: not sponsoring"),
             Self::OtherDevice => write!(f, "cloud backup: from another computer"),
             Self::TooLarge(_) => write!(f, "cloud backup: over the limit"),
@@ -128,12 +133,14 @@ impl Error {
                 "云端备份未能完成，请重试；仍然失败时导出日志发给开发者。".into()
             }
             Self::NeedsPassword => "请先输入账号密码，算出这台电脑的备份钥匙。".into(),
+            Self::AccountChanged => "登录的账号刚刚变了，请重试。".into(),
+            Self::Disabled => "云端备份没有开启。".into(),
             Self::SponsorRequired => "赞助已到期，云端备份已停止。".into(),
             Self::OtherDevice => "云端备份来自另一台电脑，这台电脑不再自动备份。".into(),
             Self::TooLarge(message) => message.clone(),
             Self::NotFound => "云端没有备份。".into(),
             Self::OldPassword => {
-                "这份备份是用旧密码加密的，解不开了。请在还有数据的电脑上用新密码登录，重新备份。"
+                "云端备份是用旧密码加密的，解不开了。在还有数据的电脑上用新密码登录，确认替换后重新备份。"
                     .into()
             }
             Self::Corrupted => "云端备份已损坏，无法恢复。请在还有数据的电脑上重新备份。".into(),
@@ -155,6 +162,8 @@ pub struct Status {
     pub needs_password: bool,
     /// The last successful backup, whether it uploaded or found nothing changed.
     pub last_backup_at: Option<i64>,
+    /// The `committedAt` of the cloud's backup the user agreed to replace, until it is replaced.
+    pub replace: Option<i64>,
     pub failure: Option<Failure>,
 }
 
@@ -241,8 +250,8 @@ struct Contents {
 
 pub async fn status(ctx: &Context) -> Result<Status> {
     let profile = sqlx::query!(
-        r#"SELECT cloud_backup AS "enabled: bool", last_backup_at, cloud_backup_failed_at,
-            cloud_backup_error,
+        r#"SELECT cloud_backup AS "enabled: bool", last_backup_at, cloud_backup_replace,
+            cloud_backup_failed_at, cloud_backup_error,
             (SELECT backup_key IS NULL FROM account WHERE token IS NOT NULL)
                 AS "needs_password: bool"
         FROM profile"#
@@ -254,6 +263,7 @@ pub async fn status(ctx: &Context) -> Result<Status> {
         running: ctx.cloud_backup.running.try_lock().is_err(),
         needs_password: profile.needs_password.unwrap_or(false),
         last_backup_at: profile.last_backup_at,
+        replace: profile.cloud_backup_replace,
         failure: profile
             .cloud_backup_failed_at
             .zip(profile.cloud_backup_error)
@@ -300,19 +310,26 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
     }
     let device = device(&ctx.db).await?;
     if let Some(current) = &status.current
-        && current.device_id != device
         && input.replace != Some(current.committed_at)
     {
-        return Ok(Enabled::Replace {
-            backup: describe(ctx, &login, current, Some(&device)).await?,
-        });
+        let backup = describe(ctx, &login, current, Some(&device)).await?;
+        // Only this computer's own backup that the key still reads is continued without asking.
+        if !backup.this_device || backup.summary.is_none() {
+            return Ok(Enabled::Replace { backup });
+        }
     }
-    sqlx::query!(
-        "UPDATE profile SET cloud_backup = 1, cloud_backup_replace = ?",
-        input.replace
+    let key = login.backup_key.as_ref().map(|key| key.as_slice());
+    let enabled = sqlx::query!(
+        r#"UPDATE profile SET cloud_backup = 1, cloud_backup_replace = ?
+        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
+        input.replace,
+        key
     )
     .execute(&ctx.db)
     .await?;
+    if enabled.rows_affected() == 0 {
+        return Err(Error::AccountChanged);
+    }
     Ok(Enabled::Enabled)
 }
 
@@ -336,16 +353,24 @@ pub async fn delete(ctx: &Context) -> Result<()> {
             ctx.account.request(Method::DELETE, path::BACKUP),
         )
         .await?;
+    // Logging out or into another account clears all of this already.
+    let key = login.backup_key.as_ref().map(|key| key.as_slice());
     let mut tx = ctx.db.begin().await?;
     sqlx::query!(
         r#"UPDATE profile SET cloud_backup = 0, last_backup_at = NULL, cloud_backup_commit = NULL,
-            cloud_backup_replace = NULL, cloud_backup_failed_at = NULL, cloud_backup_error = NULL"#
+            cloud_backup_replace = NULL, cloud_backup_failed_at = NULL, cloud_backup_error = NULL
+        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key IS ?)"#,
+        key
     )
     .execute(&mut *tx)
     .await?;
-    sqlx::query!("DELETE FROM cloud_backup_material")
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        r#"DELETE FROM cloud_backup_material
+        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key IS ?)"#,
+        key
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -353,6 +378,13 @@ pub async fn delete(ctx: &Context) -> Result<()> {
 /// Backs up now, recording the outcome for the backup page.
 pub async fn back_up(ctx: &Context, now: i64) -> Result<()> {
     let _running = ctx.cloud_backup.running.lock().await;
+    // Turning it on is where the user agrees to send the data.
+    if !sqlx::query_scalar!(r#"SELECT cloud_backup AS "enabled: bool" FROM profile"#)
+        .fetch_one(&ctx.db)
+        .await?
+    {
+        return Err(Error::Disabled);
+    }
     let login = account::saved_login(&ctx.db).await?;
     let key = login.backup_key.ok_or(Error::NeedsPassword)?;
     let result = upload(ctx, &login, &key, now).await;
@@ -398,6 +430,31 @@ pub async fn back_up(ctx: &Context, now: i64) -> Result<()> {
 }
 
 async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64) -> Result<()> {
+    let mut retried = false;
+    loop {
+        match attempt(ctx, login, key, now).await {
+            // Another computer's commit removed this one's uploads or replaced the backup it saw;
+            // look at the cloud again, so that replacing another computer's backup still asks.
+            Err(Error::Account(account::Error::Server(ApiError {
+                code: ErrorCode::BackupIncomplete | ErrorCode::BackupChanged,
+                ..
+            }))) if !retried => {
+                let key = key.as_slice();
+                sqlx::query!(
+                    r#"DELETE FROM cloud_backup_material
+                    WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
+                    key
+                )
+                .execute(&ctx.db)
+                .await?;
+                retried = true;
+            }
+            result => return result,
+        }
+    }
+}
+
+async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64) -> Result<()> {
     let status = remote(ctx, login).await?;
     if !status.sponsor_until.is_some_and(|until| until > now) {
         return Err(Error::SponsorRequired);
@@ -406,11 +463,21 @@ async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64)
     let profile = sqlx::query!("SELECT cloud_backup_commit, cloud_backup_replace FROM profile")
         .fetch_one(&ctx.db)
         .await?;
+    // The cloud still holds this computer's last backup, made with the current key; the key's
+    // trigger clears the commit when it changes.
+    let ours = status.current.as_ref().is_some_and(|current| {
+        current.device_id == device && Some(current.committed_at) == profile.cloud_backup_commit
+    });
     if let Some(current) = &status.current
-        && current.device_id != device
+        && !ours
         && profile.cloud_backup_replace != Some(current.committed_at)
     {
-        return Err(Error::OtherDevice);
+        if current.device_id != device {
+            return Err(Error::OtherDevice);
+        }
+        // This computer's backup without its commit recorded: interrupted right after
+        // committing, or encrypted before a password reset, which only the user may replace.
+        contents(ctx, login, key, &current.manifest).await?;
     }
     let dir = &ctx.cloud_backup.dir;
     fs::create_dir_all(dir)?;
@@ -420,42 +487,43 @@ async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64)
         _ => {}
     }
     let snapshot = super::snapshot(&ctx.db, &next).await?;
-    // Unchanged bytes are the same data only while the cloud still holds this computer's last
-    // backup, made with the current key; the key's trigger clears the commit when it changes.
-    let ours = status.current.as_ref().is_some_and(|current| {
-        current.device_id == device && Some(current.committed_at) == profile.cloud_backup_commit
-    });
+    // Unchanged bytes are the same data only while the cloud holds this computer's last backup.
     let compared = (next.clone(), last.clone());
     if ours && tokio::task::spawn_blocking(move || same_file(&compared.0, &compared.1)).await?? {
         fs::remove_file(&next)?;
         return Ok(());
     }
-    let mut retried = false;
-    let committed_at = loop {
-        match send(ctx, login, key, &device, &snapshot, &next, now).await {
-            Err(Error::Account(account::Error::Server(ApiError {
-                code: ErrorCode::BackupIncomplete,
-                ..
-            }))) if !retried => {
-                // Another computer's commit removed what this one had uploaded.
-                sqlx::query!("DELETE FROM cloud_backup_material")
-                    .execute(&ctx.db)
-                    .await?;
-                retried = true;
-            }
-            result => break result?,
-        }
+    let (manifest, objects) = send_objects(ctx, login, key, &snapshot, &next, now).await?;
+    let commit = wire::Commit {
+        device_id: device,
+        manifest,
+        objects,
+        replaces: status.current.map(|current| current.manifest),
     };
+    let committed: wire::Committed = ctx
+        .account
+        .send(
+            &ctx.db,
+            login,
+            ctx.account
+                .request(Method::POST, path::BACKUP)
+                .json(&commit),
+        )
+        .await?
+        .json()
+        .await
+        .map_err(account::Error::Network)?;
+    // Renamed before the commit is recorded: an interruption in between only uploads again.
+    fs::rename(&next, &last)?;
     let key = key.as_slice();
     sqlx::query!(
         r#"UPDATE profile SET cloud_backup_commit = ?, cloud_backup_replace = NULL
         WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
-        committed_at,
+        committed.committed_at,
         key
     )
     .execute(&ctx.db)
     .await?;
-    fs::rename(&next, &last)?;
     Ok(())
 }
 
@@ -469,15 +537,15 @@ struct Sealed {
     manifest: (String, Vec<u8>),
 }
 
-async fn send(
+/// Uploads what the cloud does not have yet, returning the manifest and the other objects.
+async fn send_objects(
     ctx: &Context,
     login: &account::Login,
     key: &[u8; 32],
-    device: &str,
     snapshot: &Snapshot,
     next: &Path,
     now: i64,
-) -> Result<i64> {
+) -> Result<(String, Vec<String>)> {
     let uploaded: HashMap<i64, (String, i64)> =
         sqlx::query!("SELECT material_id, object, size FROM cloud_backup_material")
             .fetch_all(&ctx.db)
@@ -532,24 +600,7 @@ async fn send(
     objects.push(database);
     let (manifest, data) = sealed.manifest;
     put(ctx, login, &manifest, data).await?;
-    let committed: wire::Committed = ctx
-        .account
-        .send(
-            &ctx.db,
-            login,
-            ctx.account
-                .request(Method::POST, path::BACKUP)
-                .json(&wire::Commit {
-                    device_id: device.into(),
-                    manifest,
-                    objects,
-                }),
-        )
-        .await?
-        .json()
-        .await
-        .map_err(account::Error::Network)?;
-    Ok(committed.committed_at)
+    Ok((manifest, objects))
 }
 
 fn seal_all(
@@ -560,6 +611,13 @@ fn seal_all(
     names: &[(i64, String)],
     uploaded: &HashMap<i64, (String, i64)>,
 ) -> Result<Sealed> {
+    // The manifest and the database are objects too.
+    if names.len() + 2 > OBJECTS {
+        return Err(Error::TooLarge(format!(
+            "材料超过 {} 份，云端备份放不下。删掉一些不用的材料再备份。",
+            OBJECTS - 2
+        )));
+    }
     let database_data = seal(
         key,
         Kind::Database,

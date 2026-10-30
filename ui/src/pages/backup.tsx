@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { cancelRestore, exportBackup, prepareCloudRestore, prepareRestore, restoreBackup } from "@/api/app";
@@ -88,8 +88,11 @@ function CloudBackup({ email }: { email: string }) {
   const now = useNow();
   const local = useQuery({ queryKey: ["getCloudBackup"], queryFn: () => call("getCloudBackup", {}) });
   const server = useQuery({
-    queryKey: ["getCloudBackupServer", email],
+    // A scheduled backup changes what the cloud holds as well.
+    queryKey: ["getCloudBackupServer", email, local.data?.lastBackupAt],
     queryFn: () => call("getCloudBackupServer", {}),
+    enabled: local.data !== undefined,
+    placeholderData: keepPreviousData,
   });
   const refresh = () =>
     Promise.all([
@@ -101,23 +104,46 @@ function CloudBackup({ email }: { email: string }) {
   const restore = useMutation({ mutationFn: prepareCloudRestore });
   const [dialog, setDialog] = useState<"enable" | "replace" | "delete" | null>(null);
 
-  const error = local.error ?? server.error;
-  if (error) {
+  const unreadable = (error: Error) => (
+    <div className="flex items-center gap-3">
+      <p className="text-sm text-destructive">云端备份未能读取：{errorMessage(error)}</p>
+      <Button variant="quiet" size="sm" onClick={() => void refresh()}>
+        重试
+      </Button>
+    </div>
+  );
+  if (local.error) return unreadable(local.error);
+  if (!local.data) return <p className="text-sm text-muted-foreground">正在读取…</p>;
+  const status = local.data;
+  const autoBackup = (
+    <div className="flex items-center justify-between gap-4">
+      <span className="text-sm">每天自动备份</span>
+      <SwitchButton
+        label="每天自动备份"
+        checked={status.enabled}
+        disabled={disable.isPending}
+        onClick={() => (status.enabled ? disable.mutate() : setDialog("enable"))}
+      />
+    </div>
+  );
+  // Offline, automatic backups can still be turned off.
+  if (server.error) {
     return (
-      <div className="flex items-center gap-3">
-        <p className="text-sm text-destructive">云端备份未能读取：{errorMessage(error)}</p>
-        <Button variant="quiet" size="sm" onClick={() => void refresh()}>
-          重试
-        </Button>
-      </div>
+      <>
+        {status.enabled && autoBackup}
+        {unreadable(server.error)}
+        {disable.error && <p className="text-sm text-destructive">未能关闭：{errorMessage(disable.error)}</p>}
+      </>
     );
   }
-  if (!local.data || !server.data) return <p className="text-sm text-muted-foreground">正在读取…</p>;
-  const status = local.data;
+  if (!server.data) return <p className="text-sm text-muted-foreground">正在读取…</p>;
   const { sponsorUntil, deleteAt, backup } = server.data;
   const sponsored = sponsorUntil != null && sponsorUntil > now;
-  const other = backup && !backup.thisDevice ? backup : null;
-  const paused = other != null && status.enabled && sponsored;
+  // Another computer's backup, or one this account's key cannot read: replaced only with consent.
+  const other = backup && !(backup.thisDevice && backup.summary) ? backup : null;
+  const backingUp = status.enabled && sponsored;
+  const replacing = other != null && backingUp && status.replace === other.committedAt;
+  const paused = other != null && backingUp && !replacing;
   const running = backUp.isPending || status.running;
   const failure = status.failure
     ? `${scheduledAt(status.failure.since)} 起备份没有成功：${status.failure.message}`
@@ -126,15 +152,7 @@ function CloudBackup({ email }: { email: string }) {
     <>
       {sponsored ? (
         <>
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-sm">每天自动备份</span>
-            <SwitchButton
-              label="每天自动备份"
-              checked={status.enabled}
-              disabled={disable.isPending}
-              onClick={() => (status.enabled ? disable.mutate() : setDialog("enable"))}
-            />
-          </div>
+          {autoBackup}
           <p className="text-sm text-muted-foreground">
             在这台电脑上压缩、加密后上传，数据有变化才上传，每个账号最多 30 MB。
           </p>
@@ -155,7 +173,7 @@ function CloudBackup({ email }: { email: string }) {
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm">
             {copyText(other, "云端现在是", status.needsPassword)}
-            {paused && "，这台电脑不再自动备份。"}
+            {paused ? "，这台电脑不再自动备份。" : replacing ? "，下次备份时换成这台电脑的数据。" : "。"}
           </p>
           {paused && (
             <Button variant="quiet" size="sm" onClick={() => setDialog("replace")}>
@@ -168,12 +186,12 @@ function CloudBackup({ email }: { email: string }) {
           上次备份：{scheduledAt(status.lastBackupAt ?? backup.committedAt)} · 已用 {fileSize(backup.size)} / 30 MB
         </p>
       ) : (
-        status.enabled && sponsored && <p className="text-sm">还没有备份</p>
+        backingUp && <p className="text-sm">还没有备份</p>
       )}
       {failure && !paused && <p className="text-sm text-destructive">{failure}</p>}
-      {((status.enabled && sponsored && !other) || backup) && (
+      {((backingUp && !paused) || backup) && (
         <div className="mt-1.5 flex flex-wrap gap-2">
-          {status.enabled && sponsored && !other && (
+          {backingUp && !paused && (
             <Button disabled={running} onClick={() => backUp.mutate()}>
               {running ? "正在备份…" : "立即备份"}
             </Button>

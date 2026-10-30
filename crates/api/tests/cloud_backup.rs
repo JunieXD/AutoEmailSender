@@ -261,18 +261,38 @@ async fn tampered_objects_and_other_keys_cannot_restore(db: SqlitePool) {
         .objects
         .insert(material, original);
 
-    // A password reset changes the key: the old backup cannot be read, and all is uploaded again.
+    // A password reset changes the key: the old backup cannot be read, and replacing it with
+    // everything encrypted anew waits for the user, even from the computer that made it.
     sqlx::query("UPDATE account SET backup_key = ?")
         .bind([8u8; 32].as_slice())
         .execute(&setup.ctx.db)
         .await
         .unwrap();
-    let server = cloud::server(&setup.ctx, NOW).await.unwrap();
-    assert!(server.backup.unwrap().summary.is_none());
+    let backup = cloud::server(&setup.ctx, NOW)
+        .await
+        .unwrap()
+        .backup
+        .unwrap();
+    assert!(backup.this_device && backup.summary.is_none());
     assert!(matches!(
         cloud::prepare_restore(&setup.ctx, setup.dir.path()).await,
         Err(Error::OldPassword)
     ));
+    assert!(matches!(
+        cloud::back_up(&setup.ctx, NOW + 1).await,
+        Err(Error::OldPassword)
+    ));
+    let enable = |replace| Enable {
+        password: None,
+        replace,
+    };
+    let Enabled::Replace { backup } = cloud::enable(&setup.ctx, enable(None), NOW).await.unwrap()
+    else {
+        panic!("replacing a backup the key cannot read needs consent");
+    };
+    cloud::enable(&setup.ctx, enable(Some(backup.committed_at)), NOW)
+        .await
+        .unwrap();
     cloud::back_up(&setup.ctx, NOW + 1).await.unwrap();
     assert_eq!(setup.uploads(), 6);
     cloud::prepare_restore(&setup.ctx, setup.dir.path())
@@ -281,8 +301,36 @@ async fn tampered_objects_and_other_keys_cannot_restore(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn ended_sponsorship_pauses_backups_and_logging_out_turns_them_off(db: SqlitePool) {
+async fn another_computers_commit_during_a_backup_is_not_replaced(db: SqlitePool) {
     let setup = Setup::new(db).await;
+    cloud::back_up(&setup.ctx, NOW).await.unwrap();
+    setup.add_mentor().await;
+    setup.server.state.lock().unwrap().before_commit = Some(Box::new(|state| {
+        let current = state.current.as_mut().unwrap();
+        current.device_id = "0".repeat(32);
+        current.manifest = "1".repeat(32);
+    }));
+    assert!(matches!(
+        cloud::back_up(&setup.ctx, NOW + 1).await,
+        Err(Error::OtherDevice)
+    ));
+    let current = setup.server.state.lock().unwrap().current.take().unwrap();
+    assert_eq!(current.manifest, "1".repeat(32));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn backups_stop_when_off_unsponsored_or_logged_out(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    cloud::disable(&setup.ctx.db).await.unwrap();
+    // Turning it on is where the user agrees, so nothing goes out while it is off.
+    assert!(matches!(
+        cloud::back_up(&setup.ctx, NOW).await,
+        Err(Error::Disabled)
+    ));
+    sqlx::query("UPDATE profile SET cloud_backup = 1")
+        .execute(&setup.ctx.db)
+        .await
+        .unwrap();
     setup.server.state.lock().unwrap().sponsor_until = Some(NOW);
     assert!(matches!(
         cloud::back_up(&setup.ctx, NOW).await,

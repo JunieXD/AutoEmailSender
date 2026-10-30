@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use cloud_api::backup::{Commit, Committed, Current, LIMIT, Status};
+use cloud_api::backup::{Commit, Committed, Current, LIMIT, OBJECTS, Status};
 use serde_json::json;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -22,7 +22,11 @@ pub struct State {
     pub current: Option<Current>,
     /// The ids of every upload, in order.
     pub uploads: Vec<String>,
+    /// Runs once on the next commit before it is checked, as another computer would act meanwhile.
+    pub before_commit: Option<Change>,
 }
+
+pub type Change = Box<dyn FnOnce(&mut State) + Send>;
 
 pub struct Server {
     pub address: String,
@@ -148,9 +152,18 @@ fn respond(
             if !sponsored {
                 return error(403, "sponsor_required");
             }
+            if let Some(before) = state.before_commit.take() {
+                before(state);
+            }
             let commit: Commit = serde_json::from_slice(&body).unwrap();
+            if commit.replaces.as_ref() != state.current.as_ref().map(|current| &current.manifest) {
+                return error(409, "backup_changed");
+            }
             let mut referenced = commit.objects;
             referenced.push(commit.manifest.clone());
+            if referenced.len() > OBJECTS {
+                return error(413, "backup_too_large");
+            }
             let Some(sizes) = referenced
                 .iter()
                 .map(|id| state.objects.get(id).map(|data| data.len() as u64))

@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// The most one backup's objects may take together, in bytes; the interface calls it 30 MB.
 pub const LIMIT: u64 = 30 * 1024 * 1024;
+/// The most objects in one backup: its manifest, its database and the materials.
+pub const OBJECTS: usize = 500;
 /// How long a backup is kept after sponsorship ends, in milliseconds.
 pub const RETENTION: i64 = 90 * 24 * 60 * 60 * 1000;
 
@@ -40,6 +42,9 @@ pub struct Commit {
     pub manifest: String,
     /// The backup's other objects: the database and the materials.
     pub objects: Vec<String>,
+    /// The manifest of the current backup this one replaces, none when there is none; the commit
+    /// fails with `backup_changed` when another has become current since.
+    pub replaces: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

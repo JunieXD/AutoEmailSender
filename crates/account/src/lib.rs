@@ -511,7 +511,7 @@ impl Error {
                 ErrorCode::BackupNotFound => {
                     "云端的备份刚被另一台电脑替换或删除了，请刷新后重试。".into()
                 }
-                ErrorCode::BackupIncomplete => {
+                ErrorCode::BackupIncomplete | ErrorCode::BackupChanged => {
                     "另一台电脑同时在备份，这次没能传完，稍后会再试。".into()
                 }
                 ErrorCode::BackupTooLarge => {
