@@ -111,7 +111,12 @@ pub fn classify(error: ModelError, access: &Access) -> Failure {
         Failure::Pause(
             "服务商找不到这个模型。请在“设置 › AI › 模型”里检查模型名或更换模型后继续。".into(),
         )
-    } else if status.is_some_and(|s| matches!(s, 401..=404)) {
+    } else if status.is_some_and(|s| matches!(s, 401..=404))
+        // Bailian answers 429 when the service was never ordered or the budget set there is used.
+        || ["commoditynotpurchased", "budgetlimitexceeded"]
+            .iter()
+            .any(|s| reply.contains(s))
+    {
         Failure::Pause(message)
     } else if status == Some(429) {
         Failure::RateLimit(retry_after.unwrap_or(Duration::from_secs(30)))
@@ -183,6 +188,24 @@ mod tests {
             (
                 "qwen",
                 refused(429, "PrepaidBillOverdue", "The prepaid bill is overdue."),
+                "pause",
+            ),
+            (
+                "qwen",
+                refused(
+                    429,
+                    "CommodityNotPurchased",
+                    "Commodity has not purchased yet.",
+                ),
+                "pause",
+            ),
+            (
+                "qwen",
+                refused(
+                    429,
+                    "BudgetLimitExceeded",
+                    "The budget configured in Budget Management has been exhausted.",
+                ),
                 "pause",
             ),
             (
