@@ -413,7 +413,7 @@ V3 的产品范围和全局决定。
 - 导师库：机构、导师记录和每个账号取过哪些记录存在 PostgreSQL。每天的数量按账号计数；记录每改一次换一个递增的版本号，桌面端按版本号拉取更新。维护者用服务端的命令行导入和更新数据。
 - 手机网页：服务器按版本托管界面文件，手机打开的界面和电脑上应用的版本一致。
 - 单机单实例，不用 Redis：限流计数和设备在线状态放内存。
-- 部署：GitHub Actions 构建 Docker 镜像推到 GHCR，服务器上用 docker compose 运行，前面用 OpenResty 做 HTTPS 反向代理。
+- 部署：本机构建 Docker 镜像，经 SSH 传到服务器（服务器连不上 GitHub），用 docker compose 运行，前面用 OpenResty 做 HTTPS 反向代理。
 
 ### 低耦合
 
