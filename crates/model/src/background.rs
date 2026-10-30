@@ -86,6 +86,7 @@ pub fn classify(error: ModelError, access: &Access) -> Failure {
         "arrearage",
         "account is in good standing",
         "overdue",
+        "free trial quota",
     ];
     // What OpenAI says when the balance is used up, and some providers when a limit is hit.
     let quota = [
@@ -112,8 +113,9 @@ pub fn classify(error: ModelError, access: &Access) -> Failure {
             "服务商找不到这个模型。请在“设置 › AI › 模型”里检查模型名或更换模型后继续。".into(),
         )
     } else if status.is_some_and(|s| matches!(s, 401..=404))
-        // Bailian answers 429 when the service was never ordered or the budget set there is used.
-        || ["commoditynotpurchased", "budgetlimitexceeded"]
+        // Bailian and Ark answer 429 when the service was never ordered or a limit the user set
+        // there is reached.
+        || ["commoditynotpurchased", "budgetlimitexceeded", "setlimitexceeded"]
             .iter()
             .any(|s| reply.contains(s))
     {
@@ -207,6 +209,33 @@ mod tests {
                     "The budget configured in Budget Management has been exhausted.",
                 ),
                 "pause",
+            ),
+            (
+                "doubao",
+                refused(
+                    429,
+                    "SetLimitExceeded",
+                    "Your account has reached the set inference limit for the model, and the model service has been paused.",
+                ),
+                "pause",
+            ),
+            (
+                "doubao",
+                refused(
+                    429,
+                    "QuotaExceeded",
+                    "Your account has exhausted its free trial quota for the model.",
+                ),
+                "pause",
+            ),
+            (
+                "doubao",
+                refused(
+                    429,
+                    "RateLimitExceeded.EndpointTPMExceeded",
+                    "TPM limit exceeded",
+                ),
+                "wait",
             ),
             (
                 "deepseek",
