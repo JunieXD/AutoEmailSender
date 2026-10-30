@@ -1,7 +1,7 @@
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Check, RotateCcw, Send, Undo2 } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Email, Entry, MentorDetail, Message, FollowUpEntry, ReplyOutcome, Todo } from "@/api/types";
 import { Attachments } from "@/components/attachments";
@@ -208,7 +208,8 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
 
 /**
  * Opening the correspondence reads the mentor's new replies: their red dot goes from the list, and
- * stays beside them here until the page is opened again. Returns those replies.
+ * stays beside them here until the page is opened again. Replies arriving while the window is hidden
+ * or behind another are read when it comes back to the front. Returns those replies.
  */
 function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
   const queryClient = useQueryClient();
@@ -236,10 +237,26 @@ function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
     },
   });
   const read = useEffectEvent(() => markRead.mutate());
+  const inFront = useSyncExternalStore(onFrontChange, isInFront);
   useEffect(() => {
-    if (unread) read();
-  }, [unread]);
+    if (unread && inFront) read();
+  }, [unread, inFront]);
   return [...fresh, ...added];
+}
+
+function isInFront(): boolean {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+function onFrontChange(changed: () => void): () => void {
+  document.addEventListener("visibilitychange", changed);
+  window.addEventListener("focus", changed);
+  window.addEventListener("blur", changed);
+  return () => {
+    document.removeEventListener("visibilitychange", changed);
+    window.removeEventListener("focus", changed);
+    window.removeEventListener("blur", changed);
+  };
 }
 
 function onTheWay(e: Email): boolean {

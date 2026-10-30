@@ -9,6 +9,7 @@ import type {
   FactCheck,
   Letter,
   MentorDetail,
+  Message,
   PlanEmail,
   ReplyDraft,
   ReplyDraftEdit,
@@ -82,6 +83,12 @@ vi.mock("@/api/call", () => ({
         .map((f) => ({ kind: "unsupported_claim", ...f }));
     }
     if (op === "listCorrespondence") return remote.entries;
+    if (op === "markRead") {
+      remote.entries = remote.entries.map((e) =>
+        "message" in e && e.message.kind === "reply" ? { message: { ...e.message, unread: false } } : e,
+      );
+      return null;
+    }
     if (op === "getFirstDraft" || op === "getFollowUpDraft" || op === "getFollowUpEntry") return null;
     if (op === "sendingPlan") {
       const emails = input.column === "pending" && remote.plan && !remote.withdrawn ? [remote.plan] : [];
@@ -157,23 +164,23 @@ const firstEmail: Email = {
   error: "发送失败",
 };
 
-const received: Entry = {
-  message: {
-    id: 1,
-    kind: "reply",
-    fromAddress: "mentor@example.edu",
-    subject: "面谈",
-    sentAt: 1,
-    text: "来信",
-    quote: null,
-    truncated: false,
-    unread: false,
-    canReply: true,
-    outcome: null,
-    marking: null,
-    todoExtraction: null,
-  },
+const reply: Extract<Message, { kind: "reply" }> = {
+  id: 1,
+  kind: "reply",
+  fromAddress: "mentor@example.edu",
+  subject: "面谈",
+  sentAt: 1,
+  text: "来信",
+  quote: null,
+  truncated: false,
+  unread: false,
+  canReply: true,
+  outcome: null,
+  marking: null,
+  todoExtraction: null,
 };
+
+const received: Entry = { message: reply };
 
 function button(name: string) {
   const node = Array.from(document.querySelectorAll("button")).find((b) => b.textContent === name);
@@ -451,6 +458,29 @@ it("keeps a failed empty reply's error and original target after new mail and le
     expect(remote.draft).toBeNull();
   } finally {
     remote.target = original;
+    await view.close();
+  }
+});
+
+it("leaves a reply that arrives while the window is in the background unread until it comes back", async () => {
+  remote.entries = [received];
+  const view = setup(true);
+  const inFront = vi.spyOn(document, "hasFocus").mockReturnValue(false);
+  const unread = () => remote.entries.some((e) => "message" in e && e.message.kind === "reply" && e.message.unread);
+  try {
+    await view.render();
+    await vi.waitFor(() => expect(view.container.textContent).toContain("来信"));
+    remote.entries = [received, { message: { ...reply, id: 2, text: "新来信", sentAt: 2, unread: true } }];
+    await act(async () => {
+      await view.client.invalidateQueries({ queryKey: ["listCorrespondence"] });
+    });
+    await vi.waitFor(() => expect(view.container.textContent).toContain("新来信"));
+    expect(unread()).toBe(true);
+    inFront.mockReturnValue(true);
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    await vi.waitFor(() => expect(unread()).toBe(false));
+  } finally {
+    inFront.mockRestore();
     await view.close();
   }
 });
