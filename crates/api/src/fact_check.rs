@@ -26,7 +26,7 @@ pub async fn fact_check_email(
     .fetch_optional(&ctx.db)
     .await?
     .ok_or_else(|| CallError::invalid("这封邮件已不在待审核状态，请刷新后重试。".into()))?;
-    let result: Result<FactCheck, CallError> = async {
+    let result: Result<Option<FactCheck>, CallError> = async {
         let (chosen, references) = if let Some(task_id) = row.task_id {
             let config =
                 sqlx::query_scalar!("SELECT model_config_id FROM task WHERE id = ?", task_id)
@@ -73,6 +73,7 @@ pub async fn fact_check_email(
             },
             &chosen,
             &references,
+            || profile::ai_fact_check(&ctx.db),
             |usage| {
                 model::usage::record_for_email(
                     &ctx.db,
@@ -86,11 +87,16 @@ pub async fn fact_check_email(
             },
         )
         .await?;
-        Ok(FactCheck::Completed { findings })
+        Ok(findings.map(|findings| FactCheck::Completed { findings }))
     }
     .await;
+    // Turned off while checking: nothing is shown, so nothing is kept.
+    if !profile::ai_fact_check(&ctx.db).await? {
+        return Ok(None);
+    }
     let stored = match &result {
-        Ok(checked) => checked.clone(),
+        Ok(Some(checked)) => checked.clone(),
+        Ok(None) => return Ok(None),
         Err(error) => FactCheck::Failed {
             reason: error.message.clone(),
         },
@@ -100,7 +106,7 @@ pub async fn fact_check_email(
             "这封邮件已重新生成或不在待审核状态，核对结果未保存。".into(),
         ));
     }
-    result.map(Some)
+    result
 }
 
 impl From<writing::fact_check::Error> for CallError {

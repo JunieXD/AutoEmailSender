@@ -369,7 +369,7 @@ impl Reader<'_> {
                     model::ModelError::Refused { status, .. } => Some(*status),
                     _ => None,
                 };
-                let failure = model::background::classify(e);
+                let failure = model::background::classify(e, &self.chosen.access);
                 let action = match &failure {
                     Failure::Pause(_) => "pause",
                     Failure::RateLimit(_) => "cooldown",

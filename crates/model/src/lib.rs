@@ -111,12 +111,14 @@ impl Source {
                 api_key,
                 no_thinking: p.no_thinking,
                 json_mode: p.json_mode,
+                quota_is_rate_limit: p.quota_is_rate_limit,
             },
             Source::Custom(url) => Access {
                 base_url: url.clone(),
                 api_key,
                 no_thinking: None,
                 json_mode: false,
+                quota_is_rate_limit: false,
             },
         }
     }

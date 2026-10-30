@@ -154,55 +154,72 @@ async fn generate(
                 if !emails::valid(db, claim).await? {
                     return Ok(Outcome::Requeue);
                 }
-                let check_config = model::selected(db, t.model_config_id).await?;
-                let result = match &check_config {
-                    Some(chosen) => {
+                match model::selected(db, t.model_config_id).await? {
+                    Some(check_config) => {
                         let at = now();
-                        writing::fact_check::check(
+                        let result = writing::fact_check::check(
                             db,
                             net,
                             claim.id,
                             &l,
-                            chosen,
+                            &check_config,
                             &refs,
-                            |usage| async move {
-                                writes
-                                    .retry("record fact check usage", || {
-                                        model::usage::record_for_email(
-                                            db,
-                                            chosen.id,
-                                            &chosen.model,
-                                            model::usage::Purpose::FactCheck,
-                                            Some(claim.id),
-                                            usage,
-                                            at,
-                                        )
-                                    })
-                                    .await;
-                                Ok(())
+                            || async move {
+                                Ok(profile::ai_fact_check(db).await?
+                                    && emails::valid(db, claim).await?)
+                            },
+                            |usage| {
+                                let chosen = &check_config;
+                                async move {
+                                    writes
+                                        .retry("record fact check usage", || {
+                                            model::usage::record_for_email(
+                                                db,
+                                                chosen.id,
+                                                &chosen.model,
+                                                model::usage::Purpose::FactCheck,
+                                                Some(claim.id),
+                                                usage,
+                                                at,
+                                            )
+                                        })
+                                        .await;
+                                    Ok(())
+                                }
                             },
                         )
-                        .await
+                        .await;
+                        match result {
+                            // Stopped or paused while checking: as before the check.
+                            Ok(None) if !emails::valid(db, claim).await? => {
+                                return Ok(Outcome::Requeue);
+                            }
+                            Ok(findings) => findings.map(|findings| {
+                                email::fact_check::FactCheck::Completed { findings }
+                            }),
+                            Err(writing::fact_check::Error::Db(error)) => return Err(error),
+                            Err(writing::fact_check::Error::Model(error)) => {
+                                let message = error.message();
+                                let classified =
+                                    model::background::classify(error, &check_config.access);
+                                let reason = match &classified {
+                                    Failure::Pause(reason) | Failure::Failed(reason) => {
+                                        reason.clone()
+                                    }
+                                    Failure::RateLimit(_) => message,
+                                };
+                                failure = Some((classified, check_config));
+                                Some(email::fact_check::FactCheck::Failed { reason })
+                            }
+                            Err(error) => Some(email::fact_check::FactCheck::Failed {
+                                reason: error.message(),
+                            }),
+                        }
                     }
-                    None => Err(writing::fact_check::Error::NoModel),
-                };
-                Some(match result {
-                    Ok(findings) => email::fact_check::FactCheck::Completed { findings },
-                    Err(writing::fact_check::Error::Db(error)) => return Err(error),
-                    Err(writing::fact_check::Error::Model(error)) => {
-                        let message = error.message();
-                        let classified = model::background::classify(error);
-                        let reason = match &classified {
-                            Failure::Pause(reason) | Failure::Failed(reason) => reason.clone(),
-                            Failure::RateLimit(_) => message,
-                        };
-                        failure = check_config.map(|config| (classified, config));
-                        email::fact_check::FactCheck::Failed { reason }
-                    }
-                    Err(error) => email::fact_check::FactCheck::Failed {
-                        reason: error.message(),
-                    },
-                })
+                    None => Some(email::fact_check::FactCheck::Failed {
+                        reason: writing::fact_check::Error::NoModel.message(),
+                    }),
+                }
             } else {
                 None
             };
@@ -213,11 +230,13 @@ async fn generate(
                 failure,
             }
         }
-        Err(writing::Error::Model(error)) => match model::background::classify(error) {
-            Failure::Pause(reason) => Outcome::Pause(reason, Some(chosen)),
-            Failure::RateLimit(wait) => Outcome::RateLimit(wait),
-            Failure::Failed(reason) => Outcome::Failed(reason),
-        },
+        Err(writing::Error::Model(error)) => {
+            match model::background::classify(error, &chosen.access) {
+                Failure::Pause(reason) => Outcome::Pause(reason, Some(chosen)),
+                Failure::RateLimit(wait) => Outcome::RateLimit(wait),
+                Failure::Failed(reason) => Outcome::Failed(reason),
+            }
+        }
         Err(writing::Error::NotALetter { .. }) => {
             Outcome::Failed("模型未能写出完整的草稿，请重试或换个模型。".into())
         }

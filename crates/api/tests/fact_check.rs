@@ -201,6 +201,32 @@ async fn only_review_drafts_accept_results_even_if_state_changes_during_check(db
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn turning_checks_off_during_a_check_neither_asks_again_nor_keeps_a_result(db: SqlitePool) {
+    let ctx = context(db);
+    let mut p = Provider::start().await.unwrap();
+    config(&ctx.db, &p.address).await;
+    // A malformed answer would be asked for again; a good one would be kept.
+    for answer in ["不是 JSON", "[]"] {
+        profile::set_ai_fact_check(&ctx.db, true).await.unwrap();
+        let id = draft(&ctx.db).await;
+        let checking = call(&ctx, "factCheckEmail", json!({"id":id}));
+        tokio::pin!(checking);
+        let request = tokio::select! {
+            request = p.requests.recv() => request.unwrap(),
+            _ = &mut checking => panic!("checked without asking"),
+        };
+        profile::set_ai_fact_check(&ctx.db, false).await.unwrap();
+        request.respond.send(Response::answer(answer)).ok().unwrap();
+        let result = tokio::select! {
+            result = &mut checking => result,
+            _ = p.requests.recv() => panic!("asked again after checks were turned off"),
+        };
+        assert_eq!(result.unwrap(), Value::Null);
+        assert_eq!(stored(&ctx.db, id).await, Value::Null);
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn waiting_for_capacity_rechecks_consent_before_reading_configuration(db: SqlitePool) {
     use std::{future::Future, task::Poll};
     let ctx = context(db);
