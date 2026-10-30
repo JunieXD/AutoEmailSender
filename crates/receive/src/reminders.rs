@@ -34,12 +34,41 @@ pub async fn run(
             () = scheduler.0.notified() => {},
             () = async {
                 if let Some(at) = result.next_at {
-                    tokio::time::sleep(Duration::from_millis(
-                        at.saturating_sub(super::outcome::now()).max(0) as u64,
-                    ))
-                    .await;
+                    until(at, super::outcome::now).await;
                 }
             }, if result.next_at.is_some() => {},
         }
+    }
+}
+
+/// Returns once `now` reaches `at`. The timer stands still while the computer sleeps, so the clock
+/// is read again every minute; a reminder due during the sleep comes soon after waking.
+async fn until(at: i64, now: impl Fn() -> i64) {
+    loop {
+        let left = at.saturating_sub(now());
+        if left <= 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(left.unsigned_abs()).min(MINUTE)).await;
+    }
+}
+
+const MINUTE: Duration = Duration::from_secs(60);
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    use super::*;
+
+    const HOUR: i64 = 3_600_000;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reminder_due_while_the_computer_slept_comes_within_a_minute_of_waking() {
+        let clock = AtomicI64::new(0);
+        let started = tokio::time::Instant::now();
+        // Reads 08:00 for a 09:00 reminder, then sleeps until 10:00 without the timer counting.
+        until(HOUR, || clock.swap(2 * HOUR, Ordering::Relaxed)).await;
+        assert!(started.elapsed() <= MINUTE);
     }
 }
