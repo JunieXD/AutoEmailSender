@@ -320,6 +320,23 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
             return Ok(Enabled::Replace { backup });
         }
     }
+    // The other computer's commit removed this one's uploads. Forgetting them on the first consent
+    // to replace its backup sends them all in the first attempt, so that a commit missing them
+    // does not leave its database behind, filling the room for a new backup; uploads made after
+    // the consent stay to be resumed, also when the same consent is given again.
+    if status.current.as_ref().is_some_and(|current| {
+        input.replace == Some(current.committed_at) && current.device_id != device
+    }) {
+        sqlx::query!(
+            r#"DELETE FROM cloud_backup_material
+            WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)
+                AND (SELECT cloud_backup_replace FROM profile) IS NOT ?"#,
+            key.as_slice(),
+            input.replace
+        )
+        .execute(&ctx.db)
+        .await?;
+    }
     let enabled = sqlx::query!(
         r#"UPDATE profile SET cloud_backup = 1, cloud_backup_replace = ?
         WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
@@ -330,14 +347,6 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
     .await?;
     if enabled.rows_affected() == 0 {
         return Err(Error::AccountChanged);
-    }
-    // The other computer's commit removed this one's uploads. Sending them all in the first
-    // attempt keeps a commit missing them from leaving its database behind, filling the room for
-    // a new backup; uploads made after this consent stay to be resumed.
-    if status.current.as_ref().is_some_and(|current| {
-        input.replace == Some(current.committed_at) && current.device_id != device
-    }) {
-        forget_uploads(&ctx.db, &key).await?;
     }
     Ok(Enabled::Enabled)
 }
@@ -459,25 +468,19 @@ async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64)
                 code: ErrorCode::BackupIncomplete | ErrorCode::BackupChanged,
                 ..
             }))) if !retried => {
-                forget_uploads(&ctx.db, key).await?;
+                let key = key.as_slice();
+                sqlx::query!(
+                    r#"DELETE FROM cloud_backup_material
+                    WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
+                    key
+                )
+                .execute(&ctx.db)
+                .await?;
                 retried = true;
             }
             result => return result,
         }
     }
-}
-
-/// Forgets which materials this login's key has uploaded, so that they all go again.
-async fn forget_uploads(db: &SqlitePool, key: &[u8; 32]) -> Result<()> {
-    let key = key.as_slice();
-    sqlx::query!(
-        r#"DELETE FROM cloud_backup_material
-        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
-        key
-    )
-    .execute(db)
-    .await?;
-    Ok(())
 }
 
 async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64) -> Result<()> {

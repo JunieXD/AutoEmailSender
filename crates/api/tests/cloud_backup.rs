@@ -226,6 +226,18 @@ async fn replacing_another_computers_backup_uploads_everything_once(db: SqlitePo
     .execute(&setup.ctx.db)
     .await
     .unwrap();
+    // Turned off and on again, agreeing to replace the same backup.
+    cloud::disable(&setup.ctx.db).await.unwrap();
+    cloud::enable(
+        &setup.ctx,
+        Enable {
+            password: None,
+            replace: Some(backup.committed_at),
+        },
+        NOW,
+    )
+    .await
+    .unwrap();
     setup.add_mentor().await;
     cloud::back_up(&setup.ctx, NOW + 1).await.unwrap();
     // The material, under the id it went with, then the database and manifest; no commit missing
