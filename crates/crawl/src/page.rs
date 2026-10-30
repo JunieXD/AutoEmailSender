@@ -8,6 +8,7 @@ use crate::{
     PageUrl,
     email::{EMAILS, Emails, cloudflare},
     pagination::{self, Control, input_button},
+    url::route,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +93,7 @@ impl Material {
 }
 
 struct Selectors {
+    base: Selector,
     scripts: Selector,
     title: Selector,
     mounts: Selector,
@@ -105,6 +107,7 @@ static SELECTORS: LazyLock<Selectors> = LazyLock::new(|| {
         Selector::parse(value).unwrap_or_else(|_| unreachable!("fixed page selector is valid"))
     };
     Selectors {
+        base: compile("base[href]"),
         scripts: compile("script"),
         title: compile("title"),
         mounts: compile("#root, #app, #__next, #__nuxt, [data-reactroot], [ng-app]"),
@@ -183,6 +186,12 @@ fn block(name: &str) -> bool {
             | "details"
             | "summary"
     )
+}
+
+/// Whether an `href` leads to another page: not empty and not a place within this one.
+fn linked(href: &str) -> bool {
+    let href = href.trim();
+    !href.is_empty() && href.strip_prefix('#').is_none_or(route)
 }
 
 fn navigation(script: &str, pattern: &Regex, url: &PageUrl) -> Option<PageUrl> {
@@ -294,6 +303,13 @@ pub fn parse(url: &PageUrl, html: &str) -> Material {
 
 fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
     let document = Html::parse_document(html);
+    // Relative links resolve against the first `<base href>`, as in a browser.
+    let base = document
+        .select(&SELECTORS.base)
+        .next()
+        .and_then(|e| e.value().attr("href"))
+        .and_then(|href| url.join(href.trim()).ok());
+    let base = base.as_ref().unwrap_or(url);
     let emails = &*EMAILS;
     let has_scripts = document.select(&SELECTORS.scripts).any(executable_script);
     let title = document.select(&SELECTORS.title).next().map(|e| {
@@ -326,7 +342,17 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                 let element_index = ordinal;
                 ordinal += 1;
                 path.push(element_index);
-                if matches!(element.value().name(), "footer" | "nav") {
+                // Many sites mark their footer only by its id or class.
+                if matches!(element.value().name(), "footer" | "nav")
+                    || matches!(
+                        element.value().attr("role"),
+                        Some("contentinfo" | "navigation")
+                    )
+                    || ["id", "class"]
+                        .iter()
+                        .filter_map(|a| element.value().attr(a))
+                        .any(|s| s.to_lowercase().contains("footer"))
+                {
                     regions.push(element_index);
                 }
                 let decrypted = rendered && encrypted_field(element) && !hidden(element);
@@ -374,19 +400,17 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                 {
                     current.text.push_str(&text);
                 }
-                let direct = href
-                    .filter(|h| !h.trim().is_empty() && !h.trim().starts_with('#'))
-                    .and_then(|h| url.join(h).ok());
+                let direct = href.filter(|h| linked(h)).and_then(|h| base.join(h).ok());
                 let link = direct
                     .or_else(|| {
                         element
                             .value()
                             .attr("onclick")
-                            .and_then(|s| navigation(s, &NAVIGATION, url))
+                            .and_then(|s| navigation(s, &NAVIGATION, base))
                     })
                     .or_else(|| {
                         href.filter(|h| h.trim().to_lowercase().starts_with("javascript:"))
-                            .and_then(|s| navigation(s, &NAVIGATION, url))
+                            .and_then(|s| navigation(s, &NAVIGATION, base))
                     });
                 let control = if element.value().name() == "input" {
                     input_button(element)
@@ -491,10 +515,10 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
     let has_profile_links = |e: &ElementRef<'_>| {
         e.descendants().filter_map(ElementRef::wrap).any(|child| {
             child.value().name() == "a"
-                && child.value().attr("href").is_some_and(|href| {
-                    let href = href.trim();
-                    !href.is_empty() && !href.starts_with('#') && url.join(href).is_ok()
-                })
+                && child
+                    .value()
+                    .attr("href")
+                    .is_some_and(|href| linked(href) && base.join(href).is_ok())
         })
     };
     let dynamic_list = !teacher_regions.iter().any(has_profile_links)

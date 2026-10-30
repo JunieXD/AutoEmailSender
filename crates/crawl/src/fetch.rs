@@ -130,7 +130,14 @@ impl Fetcher {
                     .get(header::LOCATION)
                     .and_then(|h| h.to_str().ok())
                     .ok_or(CrawlError::Redirect)?;
-                let next = target.redirect(&url, location);
+                // A location without a fragment keeps the requested one (RFC 9110), so a
+                // front-end route survives the redirect.
+                let next = match url.parsed().fragment() {
+                    Some(route) if !location.contains('#') => {
+                        target.redirect(&url, &format!("{location}#{route}"))
+                    }
+                    _ => target.redirect(&url, location),
+                };
                 let destination = match &next {
                     Ok(url) => Some(url.as_str()),
                     Err(_) => None,

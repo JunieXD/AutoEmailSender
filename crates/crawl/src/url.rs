@@ -65,7 +65,9 @@ impl PageUrl {
             Host::Ipv6(ip) if !public_v6(ip) => return Err(CrawlError::Url),
             _ => {}
         }
-        url.set_fragment(None);
+        if !url.fragment().is_some_and(route) {
+            url.set_fragment(None);
+        }
         Ok(Self(url))
     }
 
@@ -92,6 +94,7 @@ impl PageUrl {
             && from.path().strip_suffix('/').unwrap_or(from.path())
                 == to.path().strip_suffix('/').unwrap_or(to.path())
             && from.query() == to.query()
+            && from.fragment() == to.fragment()
     }
 
     pub(crate) fn website(&self) -> String {
@@ -127,6 +130,12 @@ fn public_v6(ip: Ipv6Addr) -> bool {
     let first = ip.segments()[0];
     // Only global unicast; excludes unique-local, link-local, multicast and unspecified addresses.
     (0x2000..=0x3fff).contains(&first)
+}
+
+/// A front-end route (`#/staff/5`, `#!/staff/5`) names a page of its own; other fragments are
+/// places within one.
+pub(crate) fn route(fragment: &str) -> bool {
+    fragment.starts_with('/') || fragment.starts_with("!/")
 }
 
 /// The website selected by the user. A linked external profile grants only that page.
@@ -236,6 +245,23 @@ mod tests {
     }
 
     #[test]
+    fn front_end_routes_are_pages_of_their_own() {
+        let url = |s| PageUrl::parse(s).unwrap();
+        assert_eq!(
+            url("http://sim.example.edu/#/staff/detail/5").as_str(),
+            "http://sim.example.edu/#/staff/detail/5"
+        );
+        assert_eq!(
+            url("http://sim.example.edu/#!/staff/5").as_str(),
+            "http://sim.example.edu/#!/staff/5"
+        );
+        assert_eq!(
+            url("http://sim.example.edu/staff#bio").as_str(),
+            "http://sim.example.edu/staff"
+        );
+    }
+
+    #[test]
     fn normalization_does_not_hide_other_url_changes() {
         let requested = PageUrl::parse("https://school.example.edu/profile?id=1").unwrap();
         for destination in [
@@ -248,6 +274,7 @@ mod tests {
             "https://other.school.example.edu/profile?id=1",
             "https://www.www.school.example.edu/profile?id=1",
             "https://school.example.edu:8443/profile?id=1",
+            "https://school.example.edu/profile?id=1#/staff/2",
         ] {
             assert!(
                 !PageUrl::parse(destination)

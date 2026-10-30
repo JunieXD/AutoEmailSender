@@ -187,6 +187,31 @@ async fn redirects_are_checked_at_every_hop_and_preserve_the_final_source() {
 }
 
 #[tokio::test]
+async fn a_redirect_keeps_the_front_end_route() {
+    let mut server = Server::start(false).await;
+    let fetcher = server.fetcher();
+    let target = server.target("/#/staff/detail/5", false);
+    let responder = tokio::spawn(async move {
+        let first = server.requests.recv().await.unwrap();
+        assert_eq!(first.path, "/");
+        first
+            .respond
+            .send(reply(302, "Location: /home\r\n", ""))
+            .unwrap();
+        let second = server.requests.recv().await.unwrap();
+        second.respond.send(reply(200, "", "<p>App</p>")).unwrap();
+    });
+    let page = fetcher.fetch(&target).await.unwrap();
+    assert!(
+        page.material
+            .url
+            .as_str()
+            .ends_with("/home#/staff/detail/5")
+    );
+    responder.await.unwrap();
+}
+
+#[tokio::test]
 async fn redirects_cannot_leave_the_site_or_reach_a_private_address() {
     for location in [
         "https://evil.edu/",

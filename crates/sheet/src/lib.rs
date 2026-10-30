@@ -1,6 +1,6 @@
 //! Spreadsheet bytes and cells, independent of the records they represent.
 
-use calamine::{Data, Reader, Xls, Xlsx};
+use calamine::{Data, Dimensions, ExcelDateTime, Reader, Xls, Xlsx};
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
 use std::io::Cursor;
 
@@ -80,17 +80,22 @@ pub fn read(file_name: &str, data: &[u8]) -> Result<Vec<Sheet>, ReadError> {
                 rows,
             }])
         }
-        Some("xlsx") => {
-            workbook(Xlsx::new(Cursor::new(data)).map_err(|e| ReadError::Damaged(e.to_string()))?)
-        }
-        Some("xls") => {
-            workbook(Xls::new(Cursor::new(data)).map_err(|e| ReadError::Damaged(e.to_string()))?)
-        }
+        Some("xlsx") => workbook(
+            Xlsx::new(Cursor::new(data)).map_err(|e| ReadError::Damaged(e.to_string()))?,
+            |book, name| book.merge_cells_by_sheet_name(name),
+        ),
+        Some("xls") => workbook(
+            Xls::new(Cursor::new(data)).map_err(|e| ReadError::Damaged(e.to_string()))?,
+            |book, name| book.merge_cells_by_sheet_name(name),
+        ),
         _ => Err(ReadError::Format),
     }
 }
 
-fn workbook<R: Reader<Cursor<T>>, T: AsRef<[u8]>>(mut reader: R) -> Result<Vec<Sheet>, ReadError>
+fn workbook<R: Reader<Cursor<T>>, T: AsRef<[u8]>>(
+    mut reader: R,
+    merged: impl Fn(&mut R, &str) -> Result<Vec<Dimensions>, R::Error>,
+) -> Result<Vec<Sheet>, ReadError>
 where
     R::Error: std::fmt::Display,
 {
@@ -110,15 +115,47 @@ where
                     row.iter()
                         .map(|v| match v {
                             Data::Float(n) if n.fract() == 0.0 => format!("{n:.0}"),
+                            Data::DateTime(d) if d.is_datetime() => date(d),
                             _ => v.to_string(),
                         })
                         .map(|s| s.trim().to_owned()),
                 );
                 rows.push(cells);
             }
+            // A merged cell shows its value in every cell it covers, such as one school for
+            // several rows of mentors.
+            for region in
+                merged(&mut reader, &name).map_err(|e| ReadError::Damaged(e.to_string()))?
+            {
+                let (top, left) = (region.start.0 as usize, region.start.1 as usize);
+                let Some(value) = rows.get(top).and_then(|row| row.get(left)).cloned() else {
+                    continue;
+                };
+                for row in rows.iter_mut().take(region.end.0 as usize + 1).skip(top) {
+                    for cell in row.iter_mut().take(region.end.1 as usize + 1).skip(left) {
+                        cell.clone_from(&value);
+                    }
+                }
+            }
             Ok(Sheet { name, rows })
         })
         .collect()
+}
+
+/// Excel stores dates as day numbers; they read as they are shown, like `2026-10-31 08:30`.
+fn date(value: &ExcelDateTime) -> String {
+    let (year, month, day, hour, minute, second, _) = value.to_ymd_hms_milli();
+    let time = match second {
+        0 => format!("{hour:02}:{minute:02}"),
+        _ => format!("{hour:02}:{minute:02}:{second:02}"),
+    };
+    if value.as_f64() < 1.0 {
+        time
+    } else if (hour, minute, second) == (0, 0, 0) {
+        format!("{year:04}-{month:02}-{day:02}")
+    } else {
+        format!("{year:04}-{month:02}-{day:02} {time}")
+    }
 }
 
 pub fn write_xlsx(sheets: &[Sheet]) -> Result<Vec<u8>, XlsxError> {
@@ -241,5 +278,37 @@ mod tests {
         assert!(text.starts_with("\u{feff}'=1,'+1,'-1,'@a,"));
         assert!(text.contains("''=备注"));
         assert_eq!(read("a.csv", &csv).unwrap()[0].rows[0], rows[0]);
+    }
+    #[test]
+    fn merged_cells_fill_what_they_cover_and_dates_read_as_shown() {
+        let mut book = Workbook::new();
+        let page = book.add_worksheet();
+        for (row, name) in [(0, "姓名"), (1, "王明"), (2, "李明"), (3, "张华")] {
+            page.write_string(row, 0, name).unwrap();
+        }
+        page.write_string(0, 1, "学校").unwrap();
+        page.merge_range(1, 1, 2, 1, "甲大学", &Format::new())
+            .unwrap();
+        page.write_string(3, 1, "乙大学").unwrap();
+        for (row, value, format) in [
+            (1, 46326.0, "yyyy-mm-dd"),
+            (2, 46326.5, "yyyy-mm-dd hh:mm"),
+            (3, 0.5, "hh:mm"),
+        ] {
+            page.write_number_with_format(row, 2, value, &Format::new().set_num_format(format))
+                .unwrap();
+        }
+        let rows = read("a.xlsx", &book.save_to_buffer().unwrap())
+            .unwrap()
+            .remove(0)
+            .rows;
+        assert_eq!(
+            rows[1..],
+            [
+                ["王明", "甲大学", "2026-10-31"],
+                ["李明", "甲大学", "2026-10-31 12:00"],
+                ["张华", "乙大学", "12:00"],
+            ]
+        );
     }
 }

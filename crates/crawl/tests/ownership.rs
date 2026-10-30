@@ -293,13 +293,19 @@ fn chinese_nonleading_mention_cannot_claim_an_email_in_the_same_block() {
 
 #[test]
 fn footer_and_navigation_contacts_do_not_extend_a_flat_list() {
-    for region in ["footer", "nav"] {
+    for (region, end) in [
+        ("footer", "footer"),
+        ("nav", "nav"),
+        ("div class=\"footer pagecontainer\"", "div"),
+        ("div id=\"footer-container\"", "div"),
+        ("div role=\"contentinfo\"", "div"),
+    ] {
         for contact in [
             "学院邮箱: office@pku.edu.cn",
             "<p>学院邮箱: office@pku.edu.cn</p>",
         ] {
             let html = format!(
-                "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p><{region}>{contact}</{region}></main>"
+                "<main><h2>Alice</h2><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p><{region}>{contact}</{end}></main>"
             );
             check(
                 &html,
