@@ -164,10 +164,12 @@ async fn check(app: &AppHandle) -> Result<UpdateStatus, String> {
         .updater_builder()
         .timeout(Duration::from_secs(30))
         .configure_client(move |builder| net.configure_http(builder))
-        // Replaces the plugin's own hook, so its cleanup runs here too.
+        // Replaces the plugin's hook, which runs Tauri's cleanup_before_exit. That cannot be
+        // undone, yet on Windows the hook runs before the installer starts, and the app goes on
+        // when Windows refuses to start it. Hiding the tray icon is all the exit needs.
         .on_before_exit(move || {
             crate::before_exit(&exit_app);
-            exit_app.cleanup_before_exit();
+            show_tray(&exit_app, false);
         })
         .build()
         .map_err(check_error)?
@@ -280,12 +282,21 @@ pub async fn restart_update(app: AppHandle) -> Result<(), String> {
         let (update, bytes) = state.phase().installation()?;
         update.install(&*bytes).map_err(|error| {
             tracing::error!("update installation failed: {error}");
+            show_tray(&install_app, true);
             "更新未能安装，请检查应用所在目录的权限后重试。".to_owned()
         })?;
         install_app.restart();
     })
     .await
     .map_err(|error| format!("更新处理未能完成：{error}，请重试。"))?
+}
+
+fn show_tray(app: &AppHandle, visible: bool) {
+    if let Some(tray) = app.tray_by_id(crate::background::TRAY)
+        && let Err(error) = tray.set_visible(visible)
+    {
+        tracing::warn!("show tray icon: {error}");
+    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,8 @@ use tauri::{AppHandle, Manager, Window, WindowEvent};
 
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
+pub const TRAY: &str = "main";
+
 #[derive(Default)]
 struct CloseInProgress(AtomicBool);
 
@@ -17,7 +19,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let icon = tauri::include_image!("icons/tray.png");
     #[cfg(not(target_os = "macos"))]
     let icon = tauri::include_image!("icons/32x32.png");
-    let tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::with_id(TRAY)
         .icon(icon)
         .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("Auto Email Sender")

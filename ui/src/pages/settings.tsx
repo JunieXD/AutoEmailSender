@@ -198,7 +198,9 @@ function CheckUpdate() {
       <Button variant="quiet" disabled={check.isPending} onClick={() => check.mutate()}>
         {check.isPending ? "正在检查…" : "检查更新"}
       </Button>
-      {check.data?.kind === "current" && <span className="text-sm text-muted-foreground">已是最新版本</span>}
+      {check.isSuccess && status?.kind === "current" && (
+        <span className="text-sm text-muted-foreground">已是最新版本</span>
+      )}
       {check.isError && <span className="text-sm text-destructive">{errorMessage(check.error)}</span>}
       {open && status && status.kind !== "current" && <UpdateDialog status={status} onClose={() => setOpen(false)} />}
     </div>
