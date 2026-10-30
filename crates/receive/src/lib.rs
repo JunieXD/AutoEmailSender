@@ -98,13 +98,15 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
         // Before taking the lock, so that a hold asked for meanwhile still stops the round.
         let stop = shared.stop.notified();
         let busy = shared.busy.lock().await;
+        // Kept when the round stops or fails partway: the replies stored so far are still new.
+        let mut r = Round::default();
         let done = tokio::select! {
-            done = round(&db, &net, now()) => Some(done),
+            done = receive_all(&db, &net, now(), &mut r) => Some(done),
             () = stop => None,
         };
         drop(busy);
         let wait = match done {
-            Some(Ok(r)) => {
+            Some(Ok(())) => {
                 shared.ended.send_replace(Ended {
                     received_at: Some(now()),
                     error: None,
@@ -118,7 +120,7 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
             // while.
             Some(Err(e)) => {
                 tracing::error!("receive: {e}");
-                changed(Vec::new());
+                changed(r.replies);
                 shared
                     .ended
                     .send_modify(|ended| ended.error = Some(Arc::new(e)));
@@ -127,7 +129,7 @@ pub async fn run(db: SqlitePool, net: Net, receiver: Receiver, changed: impl Fn(
             // Stopped for a mailbox to change, perhaps after storing mail. Every write is safe to
             // stop at, and the next round starts once the change is made.
             None => {
-                changed(Vec::new());
+                changed(r.replies);
                 continue;
             }
         };
@@ -158,8 +160,18 @@ pub struct NewReply {
 /// why in its settings; the others go on.
 pub async fn round(db: &SqlitePool, net: &Net, now: i64) -> Result<Round, sqlx::Error> {
     let mut round = Round::default();
+    receive_all(db, net, now, &mut round).await?;
+    Ok(round)
+}
+
+async fn receive_all(
+    db: &SqlitePool,
+    net: &Net,
+    now: i64,
+    round: &mut Round,
+) -> Result<(), sqlx::Error> {
     for id in mailbox::receivable(db, now).await? {
-        match receive(db, net, id, now, &mut round).await {
+        match receive(db, net, id, now, round).await {
             Ok(()) => round.changed |= mailbox::received(db, id).await?,
             Err(Error::Mail(e)) => {
                 tracing::warn!(mailbox = id, "receive: {e}");
@@ -171,7 +183,7 @@ pub async fn round(db: &SqlitePool, net: &Net, now: i64) -> Result<Round, sqlx::
             Err(Error::Db(e)) => return Err(e),
         }
     }
-    Ok(round)
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -941,14 +953,15 @@ pub async fn list_in(
         .collect())
 }
 
-/// Marks the mentor's replies as read, which clears their red dot.
-pub async fn mark_read(db: &SqlitePool, mentor_id: i64, now: i64) -> Result<(), sqlx::Error> {
+/// Marks these replies as read, which clears their red dot. Only the ones shown are given: others
+/// may have come in since.
+pub async fn mark_read(db: &SqlitePool, ids: &[i64], now: i64) -> Result<(), sqlx::Error> {
     sqlx::query!(
         "UPDATE message SET read_at = ?
          WHERE kind = 'reply' AND read_at IS NULL
-           AND id IN (SELECT message_id FROM message_mentor WHERE mentor_id = ?)",
+           AND id IN (SELECT value FROM json_each(?))",
         now,
-        mentor_id
+        Json(ids)
     )
     .execute(db)
     .await?;

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE message SET read_at = ?\n         WHERE kind = 'reply' AND read_at IS NULL\n           AND id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b1fcb1badc1a49138d3033d34e280a7d793318f56b21e13785d62a4ac2d5b517"
+}

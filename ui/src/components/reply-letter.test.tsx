@@ -35,6 +35,7 @@ const remote = vi.hoisted(
     saves: ReplyDraftEdit[];
     write?: (input: ReplyDraftEdit) => Promise<Letter>;
     check?: (draft: ReplyDraft) => Promise<FactCheck>;
+    listing?: Promise<void>;
   } => ({
     target: {
       id: 1,
@@ -62,7 +63,10 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("@/api/call", () => ({
   errorMessage: (error: Error) => error.message,
-  call: async (op: string, input: ReplyDraftEdit & { id?: number; column?: string; draftId?: number }) => {
+  call: async (
+    op: string,
+    input: ReplyDraftEdit & { id?: number; ids?: number[]; column?: string; draftId?: number },
+  ) => {
     if (op === "getReplyDraft") return remote.draft;
     if (op === "getReplyTarget") return remote.target;
     if (op === "writeReply" && remote.write) return remote.write(input);
@@ -82,10 +86,15 @@ vi.mock("@/api/call", () => ({
         .filter((f) => input.bodyMd.includes(f.quote))
         .map((f) => ({ kind: "unsupported_claim", ...f }));
     }
-    if (op === "listCorrespondence") return remote.entries;
+    if (op === "listCorrespondence") {
+      await remote.listing;
+      return remote.entries;
+    }
     if (op === "markRead") {
       remote.entries = remote.entries.map((e) =>
-        "message" in e && e.message.kind === "reply" ? { message: { ...e.message, unread: false } } : e,
+        "message" in e && e.message.kind === "reply" && input.ids?.includes(e.message.id)
+          ? { message: { ...e.message, unread: false } }
+          : e,
       );
       return null;
     }
@@ -214,6 +223,7 @@ function setup(correspondence = false) {
       container.remove();
       remote.write = undefined;
       remote.check = undefined;
+      remote.listing = undefined;
       remote.draft = null;
       remote.entries = [];
       remote.plan = null;
@@ -479,6 +489,32 @@ it("leaves a reply that arrives while the window is in the background unread unt
     inFront.mockReturnValue(true);
     await act(async () => window.dispatchEvent(new Event("focus")));
     await vi.waitFor(() => expect(unread()).toBe(false));
+  } finally {
+    inFront.mockRestore();
+    await view.close();
+  }
+});
+
+it("reads only the replies shown, not one that came in while the list loads again", async () => {
+  const read = { message: { ...reply, unread: true } };
+  remote.entries = [read, { message: { ...reply, id: 2, text: "新来信", sentAt: 2, unread: true } }];
+  let listed: (() => void) | undefined;
+  remote.listing = new Promise((resolve) => {
+    listed = resolve;
+  });
+  const view = setup(true);
+  const inFront = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  const unread = () =>
+    remote.entries.flatMap((e) =>
+      "message" in e && e.message.kind === "reply" && e.message.unread ? [e.message.id] : [],
+    );
+  // Shown from the last visit while the list loads again.
+  view.client.setQueryData(["listCorrespondence", mentor.id], [read]);
+  try {
+    await view.render();
+    await vi.waitFor(() => expect(unread()).toEqual([2]));
+    await act(async () => listed?.());
+    await vi.waitFor(() => expect(unread()).toEqual([]));
   } finally {
     inFront.mockRestore();
     await view.close();

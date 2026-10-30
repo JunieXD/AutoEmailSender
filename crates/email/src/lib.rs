@@ -940,7 +940,7 @@ pub async fn copy_candidates(
               WHERE email_id = email.id) AS "attachments!: Json<Vec<(String, i64)>>"
            FROM email
            WHERE from_address = ?1 COLLATE NOCASE
-             AND (state IN ('approved', 'sending', 'maybe_sent', 'sent', 'bounced')
+             AND (state IN ('approved', 'failed', 'sending', 'maybe_sent', 'sent', 'bounced')
                OR (state = 'canceled' AND sent_at IS NOT NULL))
              AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL
              AND subject = ?4 AND to_address = ?5
@@ -965,9 +965,9 @@ pub async fn copy_candidates(
 
 /// Records the copy found of an email, and that the email went out if that was not known and the
 /// copy is of its last try: maybe sent, still being sent, canceled after a prior attempt, or
-/// waiting to be sent again to the same address. SMTP answering later changes nothing then, as it
-/// only writes to an email still being sent. A copy of an earlier try, to an address since changed,
-/// settles nothing.
+/// waiting to be sent again, or turned down when sent again, to the same address. SMTP answering
+/// later changes nothing then, as it only writes to an email still being sent. A copy of an
+/// earlier try, to an address since changed, settles nothing.
 pub async fn copied(
     conn: &mut SqliteConnection,
     id: i64,
@@ -989,7 +989,7 @@ pub async fn copied(
             latest_at = NULL, error = NULL, cancel_reason = NULL, updated_at = ?1
         WHERE id = ?2 AND to_address IN (SELECT value FROM json_each(?3))
         AND (state IN ('sending', 'maybe_sent') OR (state = 'canceled'
-        AND sent_at IS NOT NULL) OR (state = 'approved' AND sent_at IS NOT NULL
+        AND sent_at IS NOT NULL) OR (state IN ('approved', 'failed') AND sent_at IS NOT NULL
         AND to_address = (
             SELECT address
             FROM mentor_email
@@ -1014,8 +1014,9 @@ pub async fn copied(
 /// Marks the email that went out with this Message-ID, or whose copy had it, as bounced for this
 /// reason, unless the bounce names `recipients` without the address it last went to: then it is of
 /// an earlier try, to an address since changed; one being sent to no address cannot bounce. One
-/// waiting to be sent again bounces like `copied` confirms it: only while it would go to the same
-/// address. False when it was marked already, or the app sent no such email.
+/// waiting to be sent again, or turned down when sent again, bounces like `copied` confirms it:
+/// only while it would go to the same address. False when it was marked already, or the app sent
+/// no such email.
 pub async fn bounced(
     conn: &mut SqliteConnection,
     message_id: &str,
@@ -1031,7 +1032,7 @@ pub async fn bounced(
          WHERE (message_id = ?3 OR copy_message_id = ?3)
            AND (state IN ('sending', 'maybe_sent', 'sent')
              OR (state = 'canceled' AND sent_at IS NOT NULL)
-             OR (state = 'approved' AND sent_at IS NOT NULL AND to_address = (
+             OR (state IN ('approved', 'failed') AND sent_at IS NOT NULL AND to_address = (
                SELECT address
                FROM mentor_email
                WHERE mentor_id = email.mentor_id

@@ -535,6 +535,8 @@ quote: string | null,
  */
 truncated: boolean, } & ({ "kind": "reply", unread: boolean, canReply: boolean, outcome: ReplyOutcome | null, marking: OutcomeMarking | null, todoExtraction: TodoExtraction | null, } | { "kind": "auto_reply" } | { "kind": "sent", bounce: string | null, });
 
+export type MessageIds = { ids: Array<number>, };
+
 export type ModelAgreement = { id: number, provider: string, baseUrl: string | null, };
 
 export type ModelConfig = { id: number,
@@ -1125,7 +1127,7 @@ export interface Operations {
   replyProcessing: { input: Nothing; output: ReplyProcessing };
   resumeReplyProcessing: { input: Nothing; output: null };
   listCorrespondence: { input: MentorId; output: Array<Entry> };
-  markRead: { input: MentorId; output: null };
+  markRead: { input: MessageIds; output: null };
   withdrawEmail: { input: EmailId; output: null };
   retryEmail: { input: EmailId; output: null };
   confirmUnsentEmail: { input: EmailId; output: null };

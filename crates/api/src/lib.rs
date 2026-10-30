@@ -848,8 +848,8 @@ operations! {
     "往来邮件" {
         /// 读取指定导师的往来邮件和状态记录。
         "listCorrespondence" [none] => list_correspondence(MentorId) -> Vec<Entry>;
-        /// 将指定导师的回信标为已读。
-        "markRead" [none] => mark_read(MentorId) -> ();
+        /// 将指定的回信标为已读。
+        "markRead" [none] => mark_read(MessageIds) -> ();
         /// 将尚未发出的邮件撤回为草稿。
         "withdrawEmail" [none] => withdraw_email(EmailId) -> ();
         /// 重试发送指定 id 的失败邮件。
@@ -2653,8 +2653,13 @@ async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry
     Ok(result)
 }
 
-async fn mark_read(ctx: &Context, input: MentorId) -> Result<(), CallError> {
-    Ok(receive::mark_read(&ctx.db, input.id, now()).await?)
+#[derive(Debug, Deserialize, TS)]
+pub struct MessageIds {
+    pub ids: Vec<i64>,
+}
+
+async fn mark_read(ctx: &Context, input: MessageIds) -> Result<(), CallError> {
+    Ok(receive::mark_read(&ctx.db, &input.ids, now()).await?)
 }
 
 #[derive(Debug, Deserialize, TS)]

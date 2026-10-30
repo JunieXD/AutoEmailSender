@@ -208,8 +208,9 @@ export function Correspondence({ mentor }: { mentor: MentorDetail }) {
 
 /**
  * Opening the correspondence reads the mentor's new replies: their red dot goes from the list, and
- * stays beside them here until the page is opened again. Replies arriving while the window is hidden
- * or behind another are read when it comes back to the front. Returns those replies.
+ * stays beside them here until the page is opened again. Only replies shown are read, not ones that
+ * came in since the list was loaded, and those arriving while the window is hidden or behind another
+ * are read when it comes back to the front. Returns those replies.
  */
 function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
   const queryClient = useQueryClient();
@@ -223,9 +224,10 @@ function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
   const added = unreadIds.filter((id) => !fresh.includes(id));
   if (seen.mentorId !== mentorId || added.length > 0) setSeen({ mentorId, ids: [...fresh, ...added] });
   const markRead = useMutation({
-    mutationFn: () => call("markRead", { id: mentorId }),
+    mutationFn: (ids: number[]) => call("markRead", { ids }),
     onSuccess: () => {
       for (const queryKey of [
+        ["listCorrespondence", mentorId],
         ["listMentors"],
         ["listTrash"],
         ["getMentor", mentorId],
@@ -236,7 +238,7 @@ function useMarkRead(mentorId: number, entries: Entry[] | undefined): number[] {
       }
     },
   });
-  const read = useEffectEvent(() => markRead.mutate());
+  const read = useEffectEvent(() => markRead.mutate(unreadIds));
   const inFront = useSyncExternalStore(onFrontChange, isInFront);
   useEffect(() => {
     if (unread && inFront) read();

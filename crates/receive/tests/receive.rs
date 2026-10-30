@@ -459,7 +459,10 @@ async fn mail_with_mentors_is_linked_to_them(db: SqlitePool) {
         Contact::Contacted { .. }
     ));
 
-    receive::mark_read(&db, li, T + 20 * MINUTE).await.unwrap();
+    let shown: Vec<i64> = li_mail.iter().map(|m| m.id).collect();
+    receive::mark_read(&db, &shown, T + 20 * MINUTE)
+        .await
+        .unwrap();
     assert!(matches!(
         contact(&db, li).await,
         Contact::Replied { unread: false, .. }
@@ -693,13 +696,21 @@ Message-ID: <w1@example.com>
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_late_bounce_ends_a_retry_to_the_same_address(db: SqlitePool) {
+async fn an_earlier_try_settles_a_retry_to_the_same_address(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
     let li = mentor(&db, "李明", "li@pku.edu.cn").await;
-    let email = sent_email(&db, li, "maybe_sent", "<e1@example.com>").await;
+    let wang = mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    let waiting = sent_email(&db, li, "maybe_sent", "<e1@example.com>").await;
+    let turned_down = sent_email(&db, wang, "maybe_sent", "<e2@example.com>").await;
     round(&db, &net, T).await;
-    // Waits for the mailbox to send again when the first try's bounce comes in.
-    assert!(email::retry(&db, email, T).await.unwrap());
+    // One waits for the mailbox to send again, the other was turned down when sent again, when the
+    // first tries' bounce and copy come in.
+    assert!(email::retry(&db, waiting, T).await.unwrap());
+    assert!(email::retry(&db, turned_down, T).await.unwrap());
+    let mut conn = db.acquire().await.unwrap();
+    email::failed(&mut conn, turned_down, "邮件太大。", T)
+        .await
+        .unwrap();
     store.deliver(
         "INBOX",
         T + MINUTE,
@@ -722,11 +733,20 @@ Message-ID: <e1@example.com>
 --r--
 ",
     );
+    store.deliver(
+        SENT,
+        T - DAY + MINUTE,
+        "From: me@example.com\nTo: wang@thu.edu.cn\nSubject: 申请读博\nMessage-ID: <e2@example.com>\n\n老师您好",
+    );
     round(&db, &net, T + 2 * MINUTE).await;
 
     assert!(matches!(
         email::list(&db, li).await.unwrap()[0].delivery,
         Delivery::Bounced { .. }
+    ));
+    assert!(matches!(
+        email::list(&db, wang).await.unwrap()[0].delivery,
+        Delivery::Sent { .. }
     ));
 }
 
@@ -1455,6 +1475,41 @@ async fn receive_now_reports_a_failed_round(db: SqlitePool) {
     ));
     assert!(receiver.receive_now().await.is_err());
     assert_eq!(receiver.received_at(), None);
+    task.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn replies_stored_before_a_round_is_stopped_are_still_told(db: SqlitePool) {
+    let (net, store) = mailbox(&db, SECRET).await;
+    mentor(&db, "王伟", "wang@thu.edu.cn").await;
+    round(&db, &net, T).await;
+    store.deliver(
+        "INBOX",
+        T + MINUTE,
+        "From: wang@thu.edu.cn\nSubject: 面谈\nMessage-ID: <r1@thu.edu.cn>\n\n可以面谈。",
+    );
+    // The next mailbox's server takes the connection and never answers, holding the round there.
+    let stalled = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut second = form(stalled.local_addr().unwrap().port());
+    second.address = fakemail::BACKUP_ADDRESS.into();
+    mailbox::create(&db, &second.check().unwrap(), SECRET, 0)
+        .await
+        .unwrap();
+    let receiver = receive::Receiver::default();
+    let (told, mut heard) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(receive::run(db, net, receiver.clone(), move |replies| {
+        told.send(replies).unwrap();
+    }));
+    // The round reaches the second mailbox once the first one's mail is stored.
+    let _connection = stalled.accept().await.unwrap();
+    drop(receiver.hold().await);
+    assert_eq!(
+        heard.recv().await.unwrap(),
+        [NewReply {
+            mentors: vec!["王伟".into()],
+            subject: Some("面谈".into())
+        }]
+    );
     task.abort();
 }
 
