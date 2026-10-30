@@ -378,15 +378,11 @@ pub async fn delete(ctx: &Context) -> Result<()> {
 /// Backs up now, recording the outcome for the backup page.
 pub async fn back_up(ctx: &Context, now: i64) -> Result<()> {
     let _running = ctx.cloud_backup.running.lock().await;
-    // Turning it on is where the user agrees to send the data.
-    if !sqlx::query_scalar!(r#"SELECT cloud_backup AS "enabled: bool" FROM profile"#)
-        .fetch_one(&ctx.db)
-        .await?
-    {
-        return Err(Error::Disabled);
-    }
     let login = account::saved_login(&ctx.db).await?;
     let key = login.backup_key.ok_or(Error::NeedsPassword)?;
+    if !enabled(&ctx.db, &key).await? {
+        return Err(Error::Disabled);
+    }
     let result = upload(ctx, &login, &key, now).await;
     let key = key.as_slice();
     // A run for an account that has changed since must leave the new account's state alone.
@@ -427,6 +423,20 @@ pub async fn back_up(ctx: &Context, now: i64) -> Result<()> {
         }
     }
     result
+}
+
+/// Turning it on is where the user agrees to send the data. Read with the login's key: switching
+/// accounts turns it off, so the new account's data never goes out on the old account's consent.
+async fn enabled(db: &SqlitePool, key: &[u8; 32]) -> Result<bool> {
+    let key = key.as_slice();
+    Ok(sqlx::query_scalar!(
+        r#"SELECT cloud_backup AS "enabled: bool" FROM profile
+        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
+        key
+    )
+    .fetch_optional(db)
+    .await?
+    .unwrap_or(false))
 }
 
 async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64) -> Result<()> {
@@ -762,25 +772,31 @@ pub async fn run(ctx: std::sync::Arc<Context>) {
     loop {
         ticks.tick().await;
         let now = crate::now();
-        let due = sqlx::query_scalar!(
-            r#"SELECT cloud_backup = 1 AND (last_backup_at IS NULL OR last_backup_at <= ?)
-                AND EXISTS (SELECT 1 FROM account
-                    WHERE token IS NOT NULL AND backup_key IS NOT NULL) AS "due!: bool"
-            FROM profile"#,
-            now - DAY
-        )
-        .fetch_one(&ctx.db)
-        .await;
-        // The backup page shows a failure; the next hour tries again.
-        let result = match due {
+        let result = match due(&ctx.db, now).await {
             Ok(true) => back_up(&ctx, now).await,
             Ok(false) => Ok(()),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         };
         if let Err(error) = result {
             tracing::warn!(error = %error, "scheduled cloud backup failed");
         }
     }
+}
+
+/// Whether the hourly check backs up now: a day after the last success, or again after a failure,
+/// which the backup page shows meanwhile.
+pub async fn due(db: &SqlitePool, now: i64) -> Result<bool> {
+    let day_ago = now - DAY;
+    Ok(sqlx::query_scalar!(
+        r#"SELECT cloud_backup = 1
+            AND (last_backup_at IS NULL OR last_backup_at <= ? OR cloud_backup_failed_at IS NOT NULL)
+            AND EXISTS (SELECT 1 FROM account WHERE token IS NOT NULL AND backup_key IS NOT NULL)
+            AS "due!: bool"
+        FROM profile"#,
+        day_ago
+    )
+    .fetch_one(db)
+    .await?)
 }
 
 async fn remote(ctx: &Context, login: &account::Login) -> Result<wire::Status> {

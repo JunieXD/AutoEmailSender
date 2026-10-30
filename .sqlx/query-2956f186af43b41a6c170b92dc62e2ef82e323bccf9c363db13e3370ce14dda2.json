@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT cloud_backup AS \"enabled: bool\" FROM profile",
+  "query": "SELECT cloud_backup AS \"enabled: bool\" FROM profile\n        WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 0
+      "Right": 1
     },
     "nullable": [
       false
     ]
   },
-  "hash": "0dcafc2db7cc50f0b3b2a41b4f965b5384a966b08188185625fb1d54ee62dfe7"
+  "hash": "2956f186af43b41a6c170b92dc62e2ef82e323bccf9c363db13e3370ce14dda2"
 }

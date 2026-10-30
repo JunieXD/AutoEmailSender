@@ -9,7 +9,8 @@ use sqlx::{Connection, SqliteConnection, SqlitePool};
 use test_fixtures::backup::{Server, State};
 
 const NOW: i64 = 1_800_000_000_000;
-const DAY: i64 = 24 * 60 * 60 * 1000;
+const HOUR: i64 = 60 * 60 * 1000;
+const DAY: i64 = 24 * HOUR;
 const KEY: [u8; 32] = [7; 32];
 const RESUME: &[u8] = b"resume";
 
@@ -121,6 +122,7 @@ async fn only_changes_are_uploaded_and_restoring_stages_the_same_data(db: Sqlite
 async fn another_computers_backup_is_replaced_only_with_consent(db: SqlitePool) {
     let setup = Setup::new(db).await;
     cloud::back_up(&setup.ctx, NOW).await.unwrap();
+    assert!(!cloud::due(&setup.ctx.db, NOW + HOUR).await.unwrap());
     let other = "0".repeat(32);
     setup
         .server
@@ -139,6 +141,8 @@ async fn another_computers_backup_is_replaced_only_with_consent(db: SqlitePool) 
     let failure = cloud::status(&setup.ctx).await.unwrap().failure.unwrap();
     assert_eq!(failure.since, NOW + 1);
     assert_eq!(setup.uploads(), 3);
+    // A failure is tried again the next hour, not a day after the last success.
+    assert!(cloud::due(&setup.ctx.db, NOW + HOUR).await.unwrap());
 
     let enable = |replace| Enable {
         password: None,

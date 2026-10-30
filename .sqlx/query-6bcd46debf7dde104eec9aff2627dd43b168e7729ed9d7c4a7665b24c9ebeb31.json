@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_backup = 1\n            AND (last_backup_at IS NULL OR last_backup_at <= ? OR cloud_backup_failed_at IS NOT NULL)\n            AND EXISTS (SELECT 1 FROM account WHERE token IS NOT NULL AND backup_key IS NOT NULL)\n            AS \"due!: bool\"\n        FROM profile",
+  "describe": {
+    "columns": [
+      {
+        "name": "due!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6bcd46debf7dde104eec9aff2627dd43b168e7729ed9d7c4a7665b24c9ebeb31"
+}
