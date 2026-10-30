@@ -183,6 +183,27 @@ async fn materials_removed_by_another_commit_are_uploaded_again(db: SqlitePool) 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_upload_whose_reply_was_lost_goes_again_under_the_same_id(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    cloud::back_up(&setup.ctx, NOW).await.unwrap();
+    let material = setup.server.state.lock().unwrap().uploads[0].clone();
+    // As when the server stored it but the reply never arrived.
+    sqlx::query("UPDATE cloud_backup_material SET uploaded = 0")
+        .execute(&setup.ctx.db)
+        .await
+        .unwrap();
+    setup.add_mentor().await;
+    cloud::back_up(&setup.ctx, NOW + 1).await.unwrap();
+    // A new id would leave the first copy taking up the account's space for a day.
+    assert_eq!(setup.server.state.lock().unwrap().uploads[3], material);
+    assert_eq!(setup.uploads(), 6);
+    let info = cloud::prepare_restore(&setup.ctx, setup.dir.path())
+        .await
+        .unwrap();
+    assert_eq!(info.mentor_count, 2);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn backups_over_the_limit_fail_naming_the_largest_files(db: SqlitePool) {
     let setup = Setup::new(db).await;
     // Random bytes do not compress, as with most PDFs and images.

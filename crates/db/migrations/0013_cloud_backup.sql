@@ -13,11 +13,14 @@ ALTER TABLE profile ADD COLUMN cloud_backup_failed_at INTEGER;
 ALTER TABLE profile ADD COLUMN cloud_backup_error TEXT
   CHECK ((cloud_backup_error IS NULL) = (cloud_backup_failed_at IS NULL));
 
--- Materials already in the cloud, encrypted with the current backup key.
+-- Each material's object in the cloud, encrypted with the current backup key. The id is recorded
+-- before uploading, so an upload whose reply was lost goes again under the same id, which the
+-- server keeps only once; uploaded ones are not sent again.
 CREATE TABLE cloud_backup_material (
   material_id INTEGER PRIMARY KEY REFERENCES material(id) ON DELETE CASCADE,
   object TEXT NOT NULL,
-  size INTEGER NOT NULL
+  size INTEGER NOT NULL,
+  uploaded INTEGER NOT NULL CHECK (uploaded IN (0, 1))
 ) STRICT;
 
 -- Uploaded objects belong to one key: a new one (a changed password) uploads everything again.

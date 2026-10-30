@@ -143,7 +143,9 @@ impl Error {
                 "云端备份是用旧密码加密的，解不开了。在还有数据的电脑上用新密码登录，确认替换后重新备份。"
                     .into()
             }
-            Self::Corrupted => "云端备份已损坏，无法恢复。请在还有数据的电脑上重新备份。".into(),
+            Self::Corrupted => {
+                "云端备份已损坏，无法恢复。请在还有数据的电脑上删除云端备份，再重新开启。".into()
+            }
             Self::Newer => "这份备份来自更新版本的应用，请先升级应用再恢复。".into(),
         }
     }
@@ -540,9 +542,9 @@ async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64
 /// One upload, sealed in advance so that its size is known before anything is sent.
 struct Sealed {
     database: (String, Vec<u8>),
-    /// Materials not in the cloud yet: material id, object id and data.
+    /// Materials to upload: material id, object id and data.
     materials: Vec<(i64, String, Vec<u8>)>,
-    /// Objects of the materials already in the cloud.
+    /// Objects of the materials confirmed uploaded.
     uploaded: Vec<String>,
     manifest: (String, Vec<u8>),
 }
@@ -556,13 +558,15 @@ async fn send_objects(
     next: &Path,
     now: i64,
 ) -> Result<(String, Vec<String>)> {
-    let uploaded: HashMap<i64, (String, i64)> =
-        sqlx::query!("SELECT material_id, object, size FROM cloud_backup_material")
-            .fetch_all(&ctx.db)
-            .await?
-            .into_iter()
-            .map(|row| (row.material_id, (row.object, row.size)))
-            .collect();
+    let mapped: HashMap<i64, (String, i64, bool)> = sqlx::query!(
+        r#"SELECT material_id, object, size, uploaded AS "uploaded: bool"
+        FROM cloud_backup_material"#
+    )
+    .fetch_all(&ctx.db)
+    .await?
+    .into_iter()
+    .map(|row| (row.material_id, (row.object, row.size, row.uploaded)))
+    .collect();
     let contents = Contents {
         app_version: env!("CARGO_PKG_VERSION").into(),
         database_version: snapshot.version,
@@ -582,24 +586,34 @@ async fn send_objects(
         next.to_owned(),
     );
     let sealed = tokio::task::spawn_blocking(move || {
-        seal_all(&key_copy, contents, &next, &materials, &names, &uploaded)
+        seal_all(&key_copy, contents, &next, &materials, &names, &mapped)
     })
     .await??;
     let mut objects = sealed.uploaded;
     for (material, object, data) in sealed.materials {
         let size = data.len() as i64;
-        put(ctx, login, &object, data).await?;
-        // Recorded at once: a later attempt reuses it even if this one never commits.
+        // Recorded before uploading and marked uploaded after: a later attempt reuses the id
+        // whether or not this one hears back, and skips the upload once it is confirmed.
         let key = key.as_slice();
         sqlx::query!(
-            r#"INSERT INTO cloud_backup_material (material_id, object, size)
-            SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM material WHERE id = ?)
-                AND EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
+            r#"INSERT INTO cloud_backup_material (material_id, object, size, uploaded)
+            SELECT ?, ?, ?, 0 WHERE EXISTS (SELECT 1 FROM material WHERE id = ?)
+                AND EXISTS (SELECT 1 FROM account WHERE backup_key = ?)
+            ON CONFLICT (material_id) DO NOTHING"#,
             material,
             object,
             size,
             material,
             key
+        )
+        .execute(&ctx.db)
+        .await?;
+        put(ctx, login, &object, data).await?;
+        sqlx::query!(
+            r#"UPDATE cloud_backup_material SET uploaded = 1
+            WHERE material_id = ? AND object = ?"#,
+            material,
+            object
         )
         .execute(&ctx.db)
         .await?;
@@ -619,7 +633,7 @@ fn seal_all(
     database: &Path,
     materials: &Path,
     names: &[(i64, String)],
-    uploaded: &HashMap<i64, (String, i64)>,
+    mapped: &HashMap<i64, (String, i64, bool)>,
 ) -> Result<Sealed> {
     // The manifest and the database are objects too.
     if names.len() + 2 > OBJECTS {
@@ -638,13 +652,16 @@ fn seal_all(
     let mut sizes = Vec::with_capacity(names.len());
     let (mut new, mut kept) = (Vec::new(), Vec::new());
     for (id, name) in names {
-        let (object, size) = match uploaded.get(id) {
-            Some((object, size)) => {
+        let (object, size) = match mapped.get(id) {
+            Some((object, size, true)) => {
                 kept.push(object.clone());
                 (object.clone(), *size as u64)
             }
-            None => {
-                let object = random_id()?;
+            mapping => {
+                let object = match mapping {
+                    Some((object, ..)) => object.clone(),
+                    None => random_id()?,
+                };
                 let file = File::open(material::file(materials, *id))?;
                 let data = seal(
                     key,

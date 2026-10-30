@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT material_id, object, size FROM cloud_backup_material",
+  "query": "SELECT material_id, object, size, uploaded AS \"uploaded: bool\"\n        FROM cloud_backup_material",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "size"
           }
         }
+      },
+      {
+        "name": "uploaded: bool",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "cloud_backup_material",
+            "name": "uploaded"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "552f85459fb7b0b2262fe4e3d54564c3ba062d03f7a9568ccadcb6683ec95b3c"
+  "hash": "d0edfc093e0618f906ee6e8b2313e934a55545186b5c0ebe78a73894db752c2a"
 }

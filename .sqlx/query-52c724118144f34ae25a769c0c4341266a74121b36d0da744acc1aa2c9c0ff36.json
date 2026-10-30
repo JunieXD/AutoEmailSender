@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE cloud_backup_material SET uploaded = 1\n            WHERE material_id = ? AND object = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "52c724118144f34ae25a769c0c4341266a74121b36d0da744acc1aa2c9c0ff36"
+}
