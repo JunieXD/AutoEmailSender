@@ -69,9 +69,7 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
     .await
     .unwrap();
     let target = dir.path().join("backup.zip");
-    backup::export(&db, &dir.path().join("materials"), &target, NOW)
-        .await
-        .unwrap();
+    backup::export(&db, dir.path(), &target, NOW).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, String>("SELECT secret FROM mailbox")
             .fetch_one(&db)
@@ -146,7 +144,9 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
     fs::write(dir.path().join("app.db"), b"old database").unwrap();
     fs::write(dir.path().join("app.db-wal"), b"old wal").unwrap();
     fs::write(dir.path().join("app.db-shm"), b"old shm").unwrap();
-    backup::confirm(&db, dir.path(), NOW + 1).await.unwrap();
+    backup::confirm(&db, dir.path(), NOW, NOW + 1)
+        .await
+        .unwrap();
     assert!(
         dir.path()
             .join("backups")
@@ -214,9 +214,7 @@ async fn extra_trigger_is_rejected_and_staging_is_removed(db: SqlitePool) {
     .await
     .unwrap();
     let target = dir.path().join("backup.zip");
-    backup::export(&db, &dir.path().join("materials"), &target, NOW)
-        .await
-        .unwrap();
+    backup::export(&db, dir.path(), &target, NOW).await.unwrap();
 
     let error = backup::prepare(dir.path(), &target).await.unwrap_err();
     assert!(matches!(error, backup::Error::Invalid(_)), "{error}");
@@ -232,9 +230,7 @@ async fn changed_migration_checksum_is_rejected_and_staging_is_removed(db: Sqlit
         .await
         .unwrap();
     let target = dir.path().join("backup.zip");
-    backup::export(&db, &dir.path().join("materials"), &target, NOW)
-        .await
-        .unwrap();
+    backup::export(&db, dir.path(), &target, NOW).await.unwrap();
 
     let error = backup::prepare(dir.path(), &target).await.unwrap_err();
     assert!(
@@ -267,9 +263,7 @@ async fn added_missing_and_changed_schema_objects_are_rejected() {
         fixture(&db, dir.path()).await;
         let target = dir.path().join("backup.zip");
         sqlx::raw_sql(change).execute(&db).await.unwrap();
-        backup::export(&db, &dir.path().join("materials"), &target, NOW)
-            .await
-            .unwrap();
+        backup::export(&db, dir.path(), &target, NOW).await.unwrap();
         let error = backup::prepare(dir.path(), &target).await.unwrap_err();
         assert!(matches!(error, backup::Error::Invalid(_)), "{error}");
         assert!(!dir.path().join("restore").exists());
@@ -329,7 +323,7 @@ async fn older_database_is_upgraded_during_prepare_and_starts_after_confirmation
         1
     );
 
-    backup::confirm(&current, dir.path(), NOW + 1)
+    backup::confirm(&current, dir.path(), NOW, NOW + 1)
         .await
         .unwrap();
     current.close().await;
@@ -353,9 +347,7 @@ async fn invalid_archives_are_rejected_and_cleaned_up(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     fixture(&db, dir.path()).await;
     let good = dir.path().join("good.zip");
-    backup::export(&db, &dir.path().join("materials"), &good, NOW)
-        .await
-        .unwrap();
+    backup::export(&db, dir.path(), &good, NOW).await.unwrap();
     let mut zip = ZipArchive::new(fs::File::open(&good).unwrap()).unwrap();
     let mut database = Vec::new();
     zip.by_name("app.db")
@@ -445,7 +437,7 @@ async fn invalid_archives_are_rejected_and_cleaned_up(db: SqlitePool) {
     backup::cancel(dir.path()).unwrap();
     assert!(!dir.path().join("restore").exists());
     assert!(
-        backup::confirm(&db, dir.path(), NOW)
+        backup::confirm(&db, dir.path(), NOW, NOW)
             .await
             .unwrap_err()
             .message()
@@ -454,19 +446,49 @@ async fn invalid_archives_are_rejected_and_cleaned_up(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_interrupted_export_does_not_stop_the_next(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(&db, dir.path()).await;
+    fs::write(dir.path().join("export.db"), b"left by a killed export").unwrap();
+    let target = dir.path().join("backup.zip");
+    backup::export(&db, dir.path(), &target, NOW).await.unwrap();
+    assert!(!dir.path().join("export.db").exists());
+    backup::prepare(dir.path(), &target).await.unwrap();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn only_the_backup_the_user_was_shown_is_restored(db: SqlitePool) {
+    let dir = tempfile::tempdir().unwrap();
+    fixture(&db, dir.path()).await;
+    let (shown, other) = (dir.path().join("shown.zip"), dir.path().join("other.zip"));
+    backup::export(&db, dir.path(), &shown, NOW).await.unwrap();
+    backup::export(&db, dir.path(), &other, NOW + 1)
+        .await
+        .unwrap();
+    let info = backup::prepare(dir.path(), &shown).await.unwrap();
+    // Another restore, checked or downloaded while the first one was shown, takes the stage.
+    backup::prepare(dir.path(), &other).await.unwrap();
+    let error = backup::confirm(&db, dir.path(), info.exported_at, NOW + 2)
+        .await
+        .unwrap_err();
+    assert!(error.message().contains("换成了另一份"), "{error}");
+    assert!(!backup::apply_pending(dir.path()).unwrap());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn before_restore_retention_does_not_touch_upgrade_backups(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();
     fixture(&db, dir.path()).await;
     let target = dir.path().join("backup.zip");
-    backup::export(&db, &dir.path().join("materials"), &target, NOW)
-        .await
-        .unwrap();
+    backup::export(&db, dir.path(), &target, NOW).await.unwrap();
     fs::create_dir(dir.path().join("backups")).unwrap();
     let upgrade = dir.path().join("backups/before-upgrade-1.db");
     fs::write(&upgrade, b"upgrade").unwrap();
     for n in 0..4 {
         backup::prepare(dir.path(), &target).await.unwrap();
-        backup::confirm(&db, dir.path(), NOW + n).await.unwrap();
+        backup::confirm(&db, dir.path(), NOW, NOW + n)
+            .await
+            .unwrap();
         // Model the process having finished installation; keep the test's source pool separate.
         backup::apply_pending(dir.path()).unwrap();
     }
@@ -484,7 +506,9 @@ async fn before_restore_retention_does_not_touch_upgrade_backups(db: SqlitePool)
 
     // The clock put back since: the backup of the data being replaced still stays.
     backup::prepare(dir.path(), &target).await.unwrap();
-    backup::confirm(&db, dir.path(), NOW - 10).await.unwrap();
+    backup::confirm(&db, dir.path(), NOW, NOW - 10)
+        .await
+        .unwrap();
     backup::apply_pending(dir.path()).unwrap();
     for at in [NOW - 10, NOW + 2, NOW + 3] {
         assert!(
@@ -503,7 +527,7 @@ async fn failed_export_preserves_the_previous_file_and_cleans_temporary_files(db
     let target = dir.path().join("backup.zip");
     fs::write(&target, b"previous complete backup").unwrap();
     fs::remove_file(dir.path().join("materials/1")).unwrap();
-    let error = backup::export(&db, &dir.path().join("materials"), &target, NOW)
+    let error = backup::export(&db, dir.path(), &target, NOW)
         .await
         .unwrap_err();
     assert!(matches!(error, backup::Error::Io { .. }));

@@ -336,9 +336,21 @@ pub async fn start(
         .set(Box::new(events))
         .map_err(|_| CallError::internal("agent host already started"))?;
     let running = if profile::agent_access(&ctx.db).await? {
-        Some(listen(&dir)?)
+        // An optional channel must not keep the app from starting, as after restoring onto a
+        // computer whose data directory path is too long; turning it on again says why.
+        match listen(&dir) {
+            Ok(running) => Some(running),
+            Err(error) => {
+                tracing::error!(error = %error.message, "agent channel did not open; turned off");
+                profile::set_agent_access(&ctx.db, false).await?;
+                None
+            }
+        }
     } else {
-        Files(dir.clone()).remove().map_err(CallError::internal)?;
+        // A token left behind opens nothing while nobody listens; turning it on replaces it.
+        if let Err(error) = Files(dir.clone()).remove() {
+            tracing::warn!("remove agent files: {error}");
+        }
         None
     };
     let (commands, changes) = mpsc::channel(1);

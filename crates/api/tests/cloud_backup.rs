@@ -183,6 +183,70 @@ async fn materials_removed_by_another_commit_are_uploaded_again(db: SqlitePool) 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn replacing_another_computers_backup_uploads_everything_once(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    cloud::back_up(&setup.ctx, NOW).await.unwrap();
+    // Another computer's commit: its backup is current, and this one's objects are gone.
+    {
+        let mut state = setup.server.state.lock().unwrap();
+        let current = state.current.as_mut().unwrap();
+        current.device_id = "0".repeat(32);
+        let manifest = current.manifest.clone();
+        state.objects.retain(|id, _| *id == manifest);
+    }
+    let Enabled::Replace { backup } = cloud::enable(
+        &setup.ctx,
+        Enable {
+            password: None,
+            replace: None,
+        },
+        NOW,
+    )
+    .await
+    .unwrap() else {
+        panic!("replacing another computer's backup needs consent");
+    };
+    cloud::enable(
+        &setup.ctx,
+        Enable {
+            password: None,
+            replace: Some(backup.committed_at),
+        },
+        NOW,
+    )
+    .await
+    .unwrap();
+    // As when, after the consent, the material went but its reply did not.
+    let object = "a".repeat(32);
+    sqlx::query(
+        "INSERT INTO cloud_backup_material (material_id, object, size, uploaded)
+        VALUES (1, ?, 0, 0)",
+    )
+    .bind(&object)
+    .execute(&setup.ctx.db)
+    .await
+    .unwrap();
+    // Turned off and on again, agreeing to replace the same backup.
+    cloud::disable(&setup.ctx.db).await.unwrap();
+    cloud::enable(
+        &setup.ctx,
+        Enable {
+            password: None,
+            replace: Some(backup.committed_at),
+        },
+        NOW,
+    )
+    .await
+    .unwrap();
+    setup.add_mentor().await;
+    cloud::back_up(&setup.ctx, NOW + 1).await.unwrap();
+    // The material, under the id it went with, then the database and manifest; no commit missing
+    // the material first.
+    assert_eq!(setup.uploads(), 3 + 3);
+    assert_eq!(setup.server.state.lock().unwrap().uploads[3], object);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn an_upload_whose_reply_was_lost_goes_again_under_the_same_id(db: SqlitePool) {
     let setup = Setup::new(db).await;
     cloud::back_up(&setup.ctx, NOW).await.unwrap();

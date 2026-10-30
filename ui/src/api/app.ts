@@ -63,9 +63,9 @@ export function cancelRestore(): Promise<void> {
   return invoke<void>("cancel_restore");
 }
 
-/** Backs up current data and restarts to install the confirmed restore. */
-export function restoreBackup(): Promise<void> {
-  return invoke<void>("restore_backup");
+/** Backs up current data and restarts to install the restore shown, known by its exportedAt. */
+export function restoreBackup(exportedAt: number): Promise<void> {
+  return invoke<void>("restore_backup", { exportedAt });
 }
 
 /** Current desktop update state; refresh on update-changed. */

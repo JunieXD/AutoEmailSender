@@ -307,10 +307,18 @@ async fn describe(
                 },
             )
         }
-        "deleteCloudBackup" => object(
-            "删除云端备份并关闭自动备份，本机数据不动",
-            "官方服务器上的云端备份".into(),
-        ),
+        "deleteCloudBackup" => {
+            let email = sqlx::query_scalar!("SELECT email FROM account")
+                .fetch_optional(&mut *conn)
+                .await?;
+            object(
+                "删除云端备份并关闭自动备份，本机数据不动",
+                match email {
+                    Some(email) => format!("账号 {email} 在官方服务器上的云端备份"),
+                    None => "官方服务器上的云端备份（现在没有登录）".into(),
+                },
+            )
+        }
         "approveTaskEmails" => {
             let input: task::TaskApprovals = parse(input)?;
             let ids = input

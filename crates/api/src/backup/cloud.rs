@@ -303,9 +303,9 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
         ctx.account.login(&ctx.db, &email, password).await?;
     }
     let login = account::saved_login(&ctx.db).await?;
-    if login.backup_key.is_none() {
+    let Some(key) = login.backup_key else {
         return Err(Error::NeedsPassword);
-    }
+    };
     let status = remote(ctx, &login).await?;
     if !status.sponsor_until.is_some_and(|until| until > now) {
         return Err(Error::SponsorRequired);
@@ -320,12 +320,28 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
             return Ok(Enabled::Replace { backup });
         }
     }
-    let key = login.backup_key.as_ref().map(|key| key.as_slice());
+    // The other computer's commit removed this one's uploads. Forgetting them on the first consent
+    // to replace its backup sends them all in the first attempt, so that a commit missing them
+    // does not leave its database behind, filling the room for a new backup; uploads made after
+    // the consent stay to be resumed, also when the same consent is given again.
+    if status.current.as_ref().is_some_and(|current| {
+        input.replace == Some(current.committed_at) && current.device_id != device
+    }) {
+        sqlx::query!(
+            r#"DELETE FROM cloud_backup_material
+            WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)
+                AND (SELECT cloud_backup_replace FROM profile) IS NOT ?"#,
+            key.as_slice(),
+            input.replace
+        )
+        .execute(&ctx.db)
+        .await?;
+    }
     let enabled = sqlx::query!(
         r#"UPDATE profile SET cloud_backup = 1, cloud_backup_replace = ?
         WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
         input.replace,
-        key
+        key.as_slice()
     )
     .execute(&ctx.db)
     .await?;
@@ -346,8 +362,9 @@ pub async fn disable(db: &SqlitePool) -> Result<()> {
 }
 
 pub async fn delete(ctx: &Context) -> Result<()> {
-    let _running = ctx.cloud_backup.running.lock().await;
+    // The account the user was asked about, even if another logs in while a backup holds the lock.
     let login = account::saved_login(&ctx.db).await?;
+    let _running = ctx.cloud_backup.running.lock().await;
     ctx.account
         .send(
             &ctx.db,

@@ -170,6 +170,26 @@ async fn send(writer: &mut (impl tokio::io::AsyncWrite + Unpin), op: &str, input
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_channel_that_cannot_open_is_turned_off_without_stopping_the_app() -> Result {
+    let root = tempfile::tempdir()?;
+    // Past the 103 bytes macOS allows a socket path.
+    let dir = root.path().join("数据目录".repeat(8));
+    std::fs::create_dir(&dir)?;
+    let _lock = api::startup::DataLock::acquire(&dir)?;
+    let (ctx, _) = api::startup::open(&dir).await?;
+    profile::set_agent_access(&ctx.db, true).await?;
+    let ctx = Arc::new(ctx);
+    let _server = api::agent::start(ctx.clone(), dir.clone(), |_| {})
+        .await
+        .map_err(|e| e.message)?;
+    assert!(!profile::agent_access(&ctx.db).await?);
+    let error = setting(&ctx, true).await.unwrap_err();
+    assert!(error.to_string().contains("103 字节"), "{error}");
+    Ok(())
+}
+
 async fn pending(ctx: &api::Context) -> Result<Vec<Value>> {
     Ok(serde_json::from_value(
         api::call(ctx, "listAgentRequests", json!({}))

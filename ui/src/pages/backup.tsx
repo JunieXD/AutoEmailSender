@@ -375,7 +375,7 @@ function DeleteDialog({ onClose, onDeleted }: { onClose: () => void; onDeleted: 
 /** Confirms replacing all the data with the backup checked, which restarts the app. */
 function RestoreDialog({ info, onClose }: { info: RestoreInfo; onClose: () => void }) {
   const cancel = useMutation({ mutationFn: cancelRestore, onSuccess: onClose });
-  const restore = useMutation({ mutationFn: restoreBackup });
+  const restore = useMutation({ mutationFn: () => restoreBackup(info.exportedAt) });
   const busy = cancel.isPending || restore.isPending;
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && cancel.mutate()}>
