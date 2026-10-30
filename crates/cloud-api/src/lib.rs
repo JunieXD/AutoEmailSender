@@ -183,8 +183,15 @@ pub struct ApiError {
 
 /// This is part of the key derivation protocol; changing it would lock existing accounts out.
 pub fn normalize_email(value: &str) -> String {
+    tidy_email(value.trim()).to_lowercase()
+}
+
+// Formats of a mentor's fields. The desktop checks every mentor with these and the server
+// checks library records with them, so the server never hands out one the desktop refuses.
+
+/// Folds the full-width letters, digits, "＠" and "．" that Chinese input methods type.
+pub fn tidy_email(value: &str) -> String {
     value
-        .trim()
         .chars()
         .map(|c| match c {
             'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
@@ -192,12 +199,8 @@ pub fn normalize_email(value: &str) -> String {
             }
             _ => c,
         })
-        .collect::<String>()
-        .to_lowercase()
+        .collect()
 }
-
-// Formats of a mentor's fields. The desktop checks every mentor with these and the server
-// checks library records with them, so the server never hands out one the desktop refuses.
 
 /// A plain address as people write them: `local@domain`, where the local part is dot-separated
 /// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.

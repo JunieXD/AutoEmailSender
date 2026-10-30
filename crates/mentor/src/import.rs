@@ -3,7 +3,8 @@
 use crate::export::Profile;
 use crate::intake::{self, Row};
 use crate::supplement::append;
-use crate::{Affiliation, MentorForm, tidy_email};
+use crate::{Affiliation, MentorForm};
+use cloud_api::tidy_email;
 use serde::{Deserialize, Serialize};
 use sheet::Sheet;
 use sqlx::{SqliteConnection, SqlitePool};

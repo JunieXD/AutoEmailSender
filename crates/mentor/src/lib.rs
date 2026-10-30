@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
-use cloud_api::{is_alias, is_email, is_web_page};
+use cloud_api::{is_alias, is_email, is_web_page, tidy_email};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
@@ -820,18 +820,6 @@ impl MentorForm {
             research: text(&self.research),
         })
     }
-}
-
-fn tidy_email(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| match c {
-            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
-                (c as u32 - 0xfee0) as u8 as char
-            }
-            _ => c,
-        })
-        .collect()
 }
 
 /// A mentor's own fields, checked: blank ones are None or left out of their lists.
