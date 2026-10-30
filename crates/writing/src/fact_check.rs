@@ -70,15 +70,26 @@ pub fn estimate(
 }
 
 /// The caller controls usage persistence so background retries keep each answer in memory.
-pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
+/// `go_on` says whether the check is still wanted before asking again for a well-formed answer;
+/// None when it no longer is.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the callers' checks and usage records differ; a one-use context would only wrap them"
+)]
+pub async fn check<G, F>(
     db: &SqlitePool,
     net: &net::Net,
     email_id: i64,
     letter: &Letter,
     chosen: &model::Chosen,
     references: &[material::Reference],
+    go_on: impl Fn() -> G,
     record_usage: impl Fn(model::usage::Usage) -> F,
-) -> Result<Vec<Finding>, Error> {
+) -> Result<Option<Vec<Finding>>, Error>
+where
+    G: Future<Output = Result<bool, sqlx::Error>>,
+    F: Future<Output = Result<(), sqlx::Error>>,
+{
     if !chosen.agreed {
         return Err(Error::NotAgreed);
     }
@@ -105,7 +116,8 @@ pub async fn check<F: Future<Output = Result<(), sqlx::Error>>>(
             return Err(Error::InvalidAnswer);
         }
         match parse(&answer.text, letter) {
-            Ok(findings) => return Ok(findings),
+            Ok(findings) => return Ok(Some(findings)),
+            Err(_) if !retried && !go_on().await? => return Ok(None),
             Err(error) if !retried => {
                 retried = true;
                 system = format!(

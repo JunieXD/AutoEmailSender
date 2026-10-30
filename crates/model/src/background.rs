@@ -1,6 +1,6 @@
 //! Shared model capacity and failure policy for persisted background queues.
 
-use crate::{Chosen, ModelError};
+use crate::{Access, Chosen, ModelError};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -38,7 +38,8 @@ pub enum Failure {
     Failed(String),
 }
 
-pub fn classify(error: ModelError) -> Failure {
+/// How background work goes on after `error` from calling through `access`.
+pub fn classify(error: ModelError, access: &Access) -> Failure {
     let message = error.message();
     let (status, reply, retry_after) = match error {
         ModelError::MissingKey | ModelError::Unreachable { .. } | ModelError::TimedOut { .. } => {
@@ -72,21 +73,31 @@ pub fn classify(error: ModelError) -> Failure {
             "资料超出了模型能读取的长度。减少参考材料，或换一个支持更长上下文的模型后重试。".into(),
         );
     }
-    if [
-        "insufficient_quota",
+    let balance = [
         "insufficient balance",
         "insufficient credits",
         "credit balance",
         "余额不足",
         "额度用完",
-        "quota exceeded",
-        "exceeded your current quota",
         "insufficient funds",
         "insufficient account balance",
         "余额已耗尽",
-    ]
-    .iter()
-    .any(|s| reply.contains(s))
+        "欠费",
+        "arrearage",
+        "account is in good standing",
+        "overdue",
+        "free trial quota",
+    ];
+    // What OpenAI says when the balance is used up, and some providers when a limit is hit.
+    let quota = [
+        "insufficient_quota",
+        "quota exceeded",
+        "exceeded your current quota",
+        "exceeded_current_quota",
+    ];
+    let rate_limited = status == Some(429) && access.quota_is_rate_limit;
+    if balance.iter().any(|s| reply.contains(s))
+        || (!rate_limited && quota.iter().any(|s| reply.contains(s)))
     {
         Failure::Pause("模型服务商的账户余额或额度不足。到服务商网站充值或补充额度后继续。".into())
     } else if [
@@ -101,7 +112,13 @@ pub fn classify(error: ModelError) -> Failure {
         Failure::Pause(
             "服务商找不到这个模型。请在“设置 › AI › 模型”里检查模型名或更换模型后继续。".into(),
         )
-    } else if status.is_some_and(|s| matches!(s, 401..=404)) {
+    } else if status.is_some_and(|s| matches!(s, 401..=404))
+        // Bailian and Ark answer 429 when the service was never ordered or a limit the user set
+        // there is reached.
+        || ["commoditynotpurchased", "budgetlimitexceeded", "setlimitexceeded"]
+            .iter()
+            .any(|s| reply.contains(s))
+    {
         Failure::Pause(message)
     } else if status == Some(429) {
         Failure::RateLimit(retry_after.unwrap_or(Duration::from_secs(30)))
@@ -124,4 +141,124 @@ pub fn tokens(text: &str) -> i64 {
         }
     }
     cjk + (other + 3) / 4
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Source;
+
+    fn refused(status: u16, code: &str, reply: &str) -> ModelError {
+        ModelError::Refused {
+            status,
+            reply: reply.into(),
+            retry_after: None,
+            code: Some(code.into()),
+        }
+    }
+
+    #[test]
+    fn a_used_up_balance_pauses_and_a_token_limit_waits() {
+        let access = |provider| {
+            Source::check(provider, "https://relay.example.com/v1")
+                .unwrap()
+                .access(Some("k".into()))
+        };
+        let quota = "You exceeded your current quota, please check your plan and billing details.";
+        for (provider, error, expected) in [
+            ("openai", refused(429, "insufficient_quota", quota), "pause"),
+            ("custom", refused(429, "insufficient_quota", quota), "pause"),
+            ("qwen", refused(429, "insufficient_quota", quota), "wait"),
+            (
+                "qwen",
+                refused(
+                    429,
+                    "Throttling.AllocationQuota",
+                    "Allocated quota exceeded, please increase your quota limit.",
+                ),
+                "wait",
+            ),
+            (
+                "qwen",
+                refused(
+                    400,
+                    "Arrearage",
+                    "Access denied, please make sure your account is in good standing.",
+                ),
+                "pause",
+            ),
+            (
+                "qwen",
+                refused(429, "PrepaidBillOverdue", "The prepaid bill is overdue."),
+                "pause",
+            ),
+            (
+                "qwen",
+                refused(
+                    429,
+                    "CommodityNotPurchased",
+                    "Commodity has not purchased yet.",
+                ),
+                "pause",
+            ),
+            (
+                "qwen",
+                refused(
+                    429,
+                    "BudgetLimitExceeded",
+                    "The budget configured in Budget Management has been exhausted.",
+                ),
+                "pause",
+            ),
+            (
+                "doubao",
+                refused(
+                    429,
+                    "SetLimitExceeded",
+                    "Your account has reached the set inference limit for the model, and the model service has been paused.",
+                ),
+                "pause",
+            ),
+            (
+                "doubao",
+                refused(
+                    429,
+                    "QuotaExceeded",
+                    "Your account has exhausted its free trial quota for the model.",
+                ),
+                "pause",
+            ),
+            (
+                "doubao",
+                refused(
+                    429,
+                    "RateLimitExceeded.EndpointTPMExceeded",
+                    "TPM limit exceeded",
+                ),
+                "wait",
+            ),
+            (
+                "deepseek",
+                refused(402, "invalid_request_error", "Insufficient Balance"),
+                "pause",
+            ),
+            (
+                "glm",
+                refused(429, "1113", "余额不足或无可用资源包,请充值。"),
+                "pause",
+            ),
+            (
+                "glm",
+                refused(429, "1302", "您当前使用该API的并发数过高"),
+                "wait",
+            ),
+        ] {
+            let got = match classify(error, &access(provider)) {
+                Failure::Pause(_) => "pause",
+                Failure::RateLimit(_) => "wait",
+                Failure::Failed(_) => "fail",
+            };
+            assert_eq!(got, expected, "{provider}");
+        }
+    }
 }

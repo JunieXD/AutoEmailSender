@@ -54,6 +54,7 @@ fn access(base_url: String, no_thinking: Option<NoThinking>) -> Access {
         api_key: Some("sk-test".into()),
         no_thinking,
         json_mode: false,
+        quota_is_rate_limit: false,
     }
 }
 

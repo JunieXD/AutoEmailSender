@@ -201,6 +201,32 @@ async fn only_review_drafts_accept_results_even_if_state_changes_during_check(db
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn turning_checks_off_during_a_check_neither_asks_again_nor_keeps_a_result(db: SqlitePool) {
+    let ctx = context(db);
+    let mut p = Provider::start().await.unwrap();
+    config(&ctx.db, &p.address).await;
+    // A malformed answer would be asked for again; a good one would be kept.
+    for answer in ["不是 JSON", "[]"] {
+        profile::set_ai_fact_check(&ctx.db, true).await.unwrap();
+        let id = draft(&ctx.db).await;
+        let checking = call(&ctx, "factCheckEmail", json!({"id":id}));
+        tokio::pin!(checking);
+        let request = tokio::select! {
+            request = p.requests.recv() => request.unwrap(),
+            _ = &mut checking => panic!("checked without asking"),
+        };
+        profile::set_ai_fact_check(&ctx.db, false).await.unwrap();
+        request.respond.send(Response::answer(answer)).ok().unwrap();
+        let result = tokio::select! {
+            result = &mut checking => result,
+            _ = p.requests.recv() => panic!("asked again after checks were turned off"),
+        };
+        assert_eq!(result.unwrap(), Value::Null);
+        assert_eq!(stored(&ctx.db, id).await, Value::Null);
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn waiting_for_capacity_rechecks_consent_before_reading_configuration(db: SqlitePool) {
     use std::{future::Future, task::Poll};
     let ctx = context(db);
@@ -288,7 +314,7 @@ async fn disabling_while_waiting_for_capacity_skips_the_check(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn manual_checks_cannot_overwrite_a_regenerated_drafts_findings(db: SqlitePool) {
+async fn manual_checks_of_a_regenerated_draft_neither_ask_again_nor_overwrite_it(db: SqlitePool) {
     let ctx = context(db);
     let mut p = Provider::start().await.unwrap();
     let config = config(&ctx.db, &p.address).await;
@@ -316,39 +342,38 @@ async fn manual_checks_cannot_overwrite_a_regenerated_drafts_findings(db: Sqlite
                 reason: "材料未提到".into(),
             }],
         };
-        let (result, ()) = tokio::join!(call(&ctx, "factCheckEmail", json!({"id":id})), async {
-            let request = p.requests.recv().await.unwrap();
-            assert_eq!(
-                task::regenerate(&ctx.db, task, Some(id), false, T)
-                    .await
-                    .unwrap(),
-                1
-            );
-            let claim = email::tasks::next(&ctx.db).await.unwrap().unwrap();
-            assert!(
-                email::tasks::complete(
-                    &mut ctx.db.acquire().await.unwrap(),
-                    claim,
-                    "新主题",
-                    "王老师：新增成果",
-                    "fixture",
-                    Some(&fresh),
-                    T
-                )
+        let checking = call(&ctx, "factCheckEmail", json!({"id":id}));
+        tokio::pin!(checking);
+        let request = tokio::select! {
+            request = p.requests.recv() => request.unwrap(),
+            _ = &mut checking => panic!("checked without asking"),
+        };
+        assert_eq!(
+            task::regenerate(&ctx.db, task, Some(id), false, T)
                 .await
-                .unwrap()
-            );
-            request.respond.send(Response::answer(answer)).ok().unwrap();
-            if answer != "[]" {
-                p.requests
-                    .recv()
-                    .await
-                    .unwrap()
-                    .respond
-                    .send(Response::answer(answer))
-                    .unwrap();
-            }
-        });
+                .unwrap(),
+            1
+        );
+        let claim = email::tasks::next(&ctx.db).await.unwrap().unwrap();
+        assert!(
+            email::tasks::complete(
+                &mut ctx.db.acquire().await.unwrap(),
+                claim,
+                "新主题",
+                "王老师：新增成果",
+                "fixture",
+                Some(&fresh),
+                T
+            )
+            .await
+            .unwrap()
+        );
+        // A malformed answer would be asked for again.
+        request.respond.send(Response::answer(answer)).ok().unwrap();
+        let result = tokio::select! {
+            result = &mut checking => result,
+            _ = p.requests.recv() => panic!("asked again for a regenerated draft"),
+        };
         assert!(matches!(result.unwrap_err().code, ErrorCode::Invalid));
         assert_eq!(
             stored(&ctx.db, id).await,

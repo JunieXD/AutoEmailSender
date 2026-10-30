@@ -381,18 +381,28 @@ async fn check(
     chosen: &model::Chosen,
     references: &[material::Reference],
 ) -> Result<Vec<Finding>, writing::fact_check::Error> {
-    writing::fact_check::check(db, net, email, letter, chosen, references, |usage| {
-        model::usage::record_for_email(
-            db,
-            chosen.id,
-            &chosen.model,
-            model::usage::Purpose::FactCheck,
-            Some(email),
-            usage,
-            T,
-        )
-    })
-    .await
+    let findings = writing::fact_check::check(
+        db,
+        net,
+        email,
+        letter,
+        chosen,
+        references,
+        || async { Ok(true) },
+        |usage| {
+            model::usage::record_for_email(
+                db,
+                chosen.id,
+                &chosen.model,
+                model::usage::Purpose::FactCheck,
+                Some(email),
+                usage,
+                T,
+            )
+        },
+    )
+    .await?;
+    Ok(findings.expect("the check stays wanted"))
 }
 
 async fn received_message(

@@ -17,6 +17,18 @@ pub enum FactCheck {
     Failed { reason: String },
 }
 
+/// Whether `save` still accepts an answer for this draft generation.
+pub async fn wanted(db: &SqlitePool, id: i64, generation_claim: i64) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query_scalar!(
+        "SELECT id FROM email WHERE id = ? AND generation_claim = ? AND state = 'review'",
+        id,
+        generation_claim,
+    )
+    .fetch_optional(db)
+    .await?
+    .is_some())
+}
+
 /// Only the same draft generation still under review accepts a late answer.
 pub async fn save(
     db: &SqlitePool,

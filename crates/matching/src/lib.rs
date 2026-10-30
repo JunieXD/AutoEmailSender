@@ -277,7 +277,7 @@ async fn analyze(
 }
 
 fn classify(error: ModelError, chosen: Chosen) -> Outcome {
-    match model::background::classify(error) {
+    match model::background::classify(error, &chosen.access) {
         model::background::Failure::Pause(message) => Outcome::Pause(message, Some(chosen)),
         model::background::Failure::RateLimit(wait) => Outcome::RateLimit(wait),
         model::background::Failure::Failed(message) => Outcome::Failed(message),

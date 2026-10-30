@@ -119,7 +119,7 @@ async fn missing_key_is_distinct_from_a_keyless_model_and_pauses_background_work
     assert!(matches!(error, model::ModelError::MissingKey));
     assert!(error.message().contains("设置 › AI › 模型"));
     assert!(matches!(
-        model::background::classify(error),
+        model::background::classify(error, &chosen.access),
         model::background::Failure::Pause(_)
     ));
     assert!(matches!(

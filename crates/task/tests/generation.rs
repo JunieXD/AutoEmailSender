@@ -1020,6 +1020,65 @@ async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn stopped_or_paused_tasks_do_not_ask_the_check_again(db: SqlitePool) {
+    for stop in [true, false] {
+        let mut p = Provider::start().await.unwrap();
+        let (id, _) = setup(&db, &p.address, 1).await;
+        profile::set_ai_fact_check(&db, true).await.unwrap();
+        let mut run = Runner::start(&db, Default::default());
+        request(&mut p)
+            .await
+            .respond
+            .send(Response::answer(LETTER))
+            .ok()
+            .unwrap();
+        let check = request(&mut p).await;
+        if stop {
+            task::stop(&db, id, 2).await.unwrap();
+        } else {
+            task::pause(&db, id, 2).await.unwrap();
+        }
+        while run.changes.try_recv().is_ok() {}
+        check
+            .respond
+            .send(Response::answer("不是 JSON"))
+            .ok()
+            .unwrap();
+        timeout(GUARD_TIMEOUT, async {
+            tokio::select! {
+                changed = run.changes.recv() => {
+                    changed.unwrap();
+                }
+                request = p.requests.recv() => {
+                    request
+                        .unwrap()
+                        .respond
+                        .send(Response::answer("[]"))
+                        .ok()
+                        .unwrap();
+                    panic!("invalidated work asked the check again");
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(p.requests.try_recv().is_err());
+        let row: (String, Option<String>, Option<i64>) = sqlx::query_as(
+            "SELECT state,fact_check,generation_queued_at FROM email WHERE task_id=?",
+        )
+        .bind(id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(row.0, if stop { "canceled" } else { "generating" });
+        assert_eq!(row.1, None);
+        if !stop {
+            assert!(row.2.is_some());
+        }
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn expired_generation_claim_skips_the_old_letters_check(db: SqlitePool) {
     let mut p = Provider::start().await.unwrap();
     let (id, _) = setup(&db, &p.address, 1).await;

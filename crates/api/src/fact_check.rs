@@ -26,7 +26,8 @@ pub async fn fact_check_email(
     .fetch_optional(&ctx.db)
     .await?
     .ok_or_else(|| CallError::invalid("这封邮件已不在待审核状态，请刷新后重试。".into()))?;
-    let result: Result<FactCheck, CallError> = async {
+    let (id, claim) = (input.id, row.generation_claim);
+    let result: Result<Option<FactCheck>, CallError> = async {
         let (chosen, references) = if let Some(task_id) = row.task_id {
             let config =
                 sqlx::query_scalar!("SELECT model_config_id FROM task WHERE id = ?", task_id)
@@ -73,6 +74,10 @@ pub async fn fact_check_email(
             },
             &chosen,
             &references,
+            || async move {
+                Ok(profile::ai_fact_check(&ctx.db).await?
+                    && email::fact_check::wanted(&ctx.db, id, claim).await?)
+            },
             |usage| {
                 model::usage::record_for_email(
                     &ctx.db,
@@ -86,21 +91,28 @@ pub async fn fact_check_email(
             },
         )
         .await?;
-        Ok(FactCheck::Completed { findings })
+        Ok(findings.map(|findings| FactCheck::Completed { findings }))
     }
     .await;
+    // Turned off while checking: nothing is shown, so nothing is kept.
+    if !profile::ai_fact_check(&ctx.db).await? {
+        return Ok(None);
+    }
     let stored = match &result {
         Ok(checked) => checked.clone(),
-        Err(error) => FactCheck::Failed {
+        Err(error) => Some(FactCheck::Failed {
             reason: error.message.clone(),
-        },
+        }),
     };
-    if !email::fact_check::save(&ctx.db, input.id, row.generation_claim, &stored, now()).await? {
-        return Err(CallError::invalid(
-            "这封邮件已重新生成或不在待审核状态，核对结果未保存。".into(),
-        ));
+    // None: not asked again because the draft is no longer under review.
+    if let Some(stored) = stored
+        && email::fact_check::save(&ctx.db, id, claim, &stored, now()).await?
+    {
+        return result;
     }
-    result.map(Some)
+    Err(CallError::invalid(
+        "这封邮件已重新生成或不在待审核状态，核对结果未保存。".into(),
+    ))
 }
 
 impl From<writing::fact_check::Error> for CallError {

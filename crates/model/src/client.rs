@@ -19,6 +19,7 @@ pub struct Access {
     pub api_key: Option<String>,
     pub no_thinking: Option<NoThinking>,
     pub json_mode: bool,
+    pub quota_is_rate_limit: bool,
 }
 
 /// The names of the models the provider offers, sorted.
