@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
+use cloud_api::{is_alias, is_email, is_web_page, tidy_email};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{Acquire, Sqlite, SqliteConnection, SqlitePool};
@@ -770,7 +771,7 @@ impl MentorForm {
         let name = text(&self.name).ok_or("请填写姓名")?;
         let mut aliases = Vec::new();
         for alias in self.aliases.iter().filter_map(|a| text(a)) {
-            if alias.contains([';', '；', '、']) {
+            if !is_alias(&alias) {
                 return Err("别名不能含分号或顿号，请将不同别名分行填写".into());
             }
             if alias != name && !aliases.contains(&alias) {
@@ -819,49 +820,6 @@ impl MentorForm {
             research: text(&self.research),
         })
     }
-}
-
-fn tidy_email(value: &str) -> String {
-    value
-        .chars()
-        .map(|c| match c {
-            'Ａ'..='Ｚ' | 'ａ'..='ｚ' | '０'..='９' | '＠' | '．' => {
-                (c as u32 - 0xfee0) as u8 as char
-            }
-            _ => c,
-        })
-        .collect()
-}
-
-/// A plain address as people write them: `local@domain`, where the local part is dot-separated
-/// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.
-/// Catches what copying from a web page drags along, such as a trailing "；" or "/people".
-pub fn is_email(s: &str) -> bool {
-    let Some((local, domain)) = s.split_once('@') else {
-        return false;
-    };
-    let atom = |part: &str| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_alphanumeric() || "!#$%&'*+/=?^_`{|}~-".contains(c))
-    };
-    let label = |part: &str| {
-        !part.is_empty()
-            && !part.starts_with('-')
-            && !part.ends_with('-')
-            && part.chars().all(|c| c.is_alphanumeric() || c == '-')
-    };
-    local.split('.').all(atom) && domain.split('.').count() > 1 && domain.split('.').all(label)
-}
-
-/// An http or https address with a host, in any letter case.
-fn is_web_page(s: &str) -> bool {
-    url::Url::parse(s).is_ok_and(|u| {
-        matches!(u.scheme(), "http" | "https")
-            && u.host().is_some()
-            && !s.contains(char::is_whitespace)
-    })
 }
 
 /// A mentor's own fields, checked: blank ones are None or left out of their lists.

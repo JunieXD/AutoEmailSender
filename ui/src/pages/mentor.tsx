@@ -303,13 +303,12 @@ function libraryNote(m: MentorDetail): string {
 
 /** What the library says of a mentor no longer there to write to; a merged mentor may have several records. */
 function LibraryNotice({ mentor: m }: { mentor: MentorDetail }) {
-  const status = m.library.find((r) => r.status !== "active")?.status;
-  if (!status) return null;
+  const status = (["deceased", "departed", "retired"] as const).find((s) => m.library.some((r) => r.status === s));
+  const removed = m.library.length > 0 && m.library.every((r) => r.status === "removed");
+  if (!status && !removed) return null;
   return (
     <p className="bg-muted px-5 py-2 text-sm phone:px-3">
-      {status === "removed"
-        ? "导师库已撤下这位导师的资料，以后不再更新。"
-        : `导师库标注这位导师${LIBRARY_STATUS[status]}。`}
+      {status ? `导师库标注这位导师${LIBRARY_STATUS[status]}。` : "导师库已撤下这位导师的资料，以后不再更新。"}
     </p>
   );
 }

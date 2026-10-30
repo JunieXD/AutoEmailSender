@@ -13,7 +13,6 @@ sheet.workspace = true
 serde.workspace = true
 sqlx.workspace = true
 ts-rs.workspace = true
-url = "2.5.8"
 email.workspace = true
 cloud-api = { workspace = true, features = ["ts-rs"] }
 

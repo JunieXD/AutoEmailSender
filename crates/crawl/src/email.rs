@@ -81,7 +81,7 @@ impl Emails {
                 } else {
                     raw.replacen('#', "@", 1).to_ascii_lowercase()
                 };
-                mentor::is_email(&address).then(|| EmailEvidence {
+                cloud_api::is_email(&address).then(|| EmailEvidence {
                     address,
                     location: EmailLocation::Text {
                         start: positions[start].0,
@@ -130,5 +130,5 @@ pub(crate) fn cloudflare(encoded: &str) -> Option<String> {
         })
         .collect();
     let address = String::from_utf8(decoded?).ok()?.to_lowercase();
-    mentor::is_email(&address).then_some(address)
+    cloud_api::is_email(&address).then_some(address)
 }

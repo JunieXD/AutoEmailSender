@@ -367,7 +367,7 @@ async fn response<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, Err
 
 fn checked_email(email: &str) -> Result<String, Error> {
     let email = cloud_api::normalize_email(email);
-    if email.len() > 254 || !mentor::is_email(&email) {
+    if email.len() > 254 || !cloud_api::is_email(&email) {
         return Err(Error::Invalid("请填写正确的邮箱地址。"));
     }
     Ok(email)
