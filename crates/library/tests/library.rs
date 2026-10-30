@@ -1018,6 +1018,104 @@ async fn compatible_local_units_receive_title_updates_and_prefer_exact_matches(d
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_title_lands_on_the_unit_shown_even_when_the_main_unit_moves_first(db: SqlitePool) {
+    let (client, mut server) = setup(&db).await;
+    let mut row = record("mentor_one", "导师", "one@demo.edu.example");
+    row.preview.units.push(wire::Unit {
+        university: Some("示例大学".into()),
+        school: Some("乙学院".into()),
+        title: Some("讲师".into()),
+        ..Default::default()
+    });
+    adding(&client, &mut server, &db, vec![row.clone()], vec![]).await;
+    let id = mentor_id(&db, "mentor_one").await;
+    let mut fields = mentor::export::profiles(&mut db.acquire().await.unwrap(), &[id])
+        .await
+        .unwrap()
+        .remove(&id)
+        .unwrap()
+        .fields;
+    fields.affiliations[0].school = Some("甲学院".into());
+    mentor::update(&db, id, &fields, 10).await.unwrap();
+    row.preview.units.swap(0, 1);
+    row.preview.units[1].title = Some("教授".into());
+    change(&db, row, 2).await;
+    // The main unit first: it moves 乙学院 ahead of the 甲学院 the title was shown for.
+    let mut choices: Vec<_> = updates::list(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|g| g.differences)
+        .collect();
+    choices.sort_by_key(|d| d.field != updates::Field::PrimaryAffiliation);
+    assert_eq!(choices[1].field, updates::Field::Title);
+    assert_eq!(
+        choices[1].affiliation.as_ref().unwrap().school.as_deref(),
+        Some("甲学院")
+    );
+    updates::apply(&db, &updates::Choices { choices }, 20)
+        .await
+        .unwrap();
+    let local = mentor::get(&db, id).await.unwrap().unwrap();
+    let titles: Vec<_> = local
+        .affiliations
+        .iter()
+        .map(|a| (a.school.as_deref(), a.title.as_deref()))
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            (Some("乙学院"), Some("讲师")),
+            (Some("甲学院"), Some("教授"))
+        ]
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_title_choice_is_refused_once_its_unit_is_another(db: SqlitePool) {
+    let (client, mut server) = setup(&db).await;
+    let mut row = record("mentor_one", "导师", "one@demo.edu.example");
+    adding(&client, &mut server, &db, vec![row.clone()], vec![]).await;
+    let id = mentor_id(&db, "mentor_one").await;
+    let mut fields = mentor::export::profiles(&mut db.acquire().await.unwrap(), &[id])
+        .await
+        .unwrap()
+        .remove(&id)
+        .unwrap()
+        .fields;
+    fields.affiliations[0].school = Some("甲学院".into());
+    fields.affiliations.push(mentor::Affiliation {
+        university: Some("示例大学".into()),
+        school: Some("乙学院".into()),
+        title: Some("副教授".into()),
+        ..Default::default()
+    });
+    mentor::update(&db, id, &fields, 10).await.unwrap();
+    row.preview.units[0].title = Some("教授".into());
+    change(&db, row, 2).await;
+    let choices: Vec<_> = updates::list(&db)
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|g| g.differences)
+        .collect();
+    fields.affiliations.swap(0, 1);
+    mentor::update(&db, id, &fields, 20).await.unwrap();
+    assert!(
+        updates::apply(&db, &updates::Choices { choices }, 30)
+            .await
+            .is_err()
+    );
+    let local = mentor::get(&db, id).await.unwrap().unwrap();
+    assert!(
+        local
+            .affiliations
+            .iter()
+            .all(|a| a.title.as_deref() == Some("副教授"))
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn readding_current_profiles_clears_scalar_pending_updates(db: SqlitePool) {
     let (client, mut server) = setup(&db).await;
     let mut row = record("mentor_one", "原名", "one@demo.edu.example");

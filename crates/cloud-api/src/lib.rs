@@ -196,6 +196,45 @@ pub fn normalize_email(value: &str) -> String {
         .to_lowercase()
 }
 
+// Formats of a mentor's fields. The desktop checks every mentor with these and the server
+// checks library records with them, so the server never hands out one the desktop refuses.
+
+/// A plain address as people write them: `local@domain`, where the local part is dot-separated
+/// runs of letters, digits and the symbols addresses allow, and the domain is two or more labels.
+/// Catches what copying from a web page drags along, such as a trailing "；" or "/people".
+pub fn is_email(s: &str) -> bool {
+    let Some((local, domain)) = s.split_once('@') else {
+        return false;
+    };
+    let atom = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_alphanumeric() || "!#$%&'*+/=?^_`{|}~-".contains(c))
+    };
+    let label = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('-')
+            && !part.ends_with('-')
+            && part.chars().all(|c| c.is_alphanumeric() || c == '-')
+    };
+    local.split('.').all(atom) && domain.split('.').count() > 1 && domain.split('.').all(label)
+}
+
+/// An http or https address with a host, in any letter case.
+pub fn is_web_page(s: &str) -> bool {
+    url::Url::parse(s).is_ok_and(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.host().is_some()
+            && !s.contains(char::is_whitespace)
+    })
+}
+
+/// One alias, not several run together.
+pub fn is_alias(s: &str) -> bool {
+    !s.contains([';', '；', '、'])
+}
+
 pub fn normalize_code(value: &str) -> String {
     value
         .trim()

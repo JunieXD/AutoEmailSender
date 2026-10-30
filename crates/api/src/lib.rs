@@ -1107,7 +1107,7 @@ async fn add_mentor_email(
     input: MentorAddress,
 ) -> Result<mentor::MentorDetail, CallError> {
     let address = input.address.trim();
-    if !mentor::is_email(address) {
+    if !cloud_api::is_email(address) {
         return Err(CallError::invalid(format!("邮箱地址“{address}”格式不正确")));
     }
     let applied = mentor::add_email(&ctx.db, input.id, address, now()).await?;

@@ -332,7 +332,11 @@ export type LibraryStatus = "active" | "retired" | "departed" | "deceased" | "re
 
 export type LibraryUnit = { university: string | null, school: string | null, department: string | null, title: string | null, };
 
-export type LibraryUpdate = { updateId: number, id: number, name: string, field: LibraryUpdateField, affiliation: Affiliation | null, local: string, incoming: string, take: boolean, };
+export type LibraryUpdate = { updateId: number, id: number, name: string, field: LibraryUpdateField,
+/**
+ * For a title, the local unit it is written to.
+ */
+affiliation: Affiliation | null, local: string, incoming: string, take: boolean, };
 
 export type LibraryUpdateChoices = { choices: Array<LibraryUpdate>, };
 

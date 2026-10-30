@@ -72,6 +72,7 @@ pub struct Update {
     pub id: i64,
     pub name: String,
     pub field: Field,
+    /// For a title, the local unit it is written to.
     pub affiliation: Option<Affiliation>,
     pub local: String,
     pub incoming: String,
@@ -201,6 +202,7 @@ async fn current_profiles(
 }
 
 fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
+    let mut affiliation = None;
     let local = match pending.field {
         Field::Name => Value::Text(Some(profile.name.clone())),
         Field::Research => Value::Text(profile.research.clone()),
@@ -214,7 +216,10 @@ fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
             .unwrap_or(Value::Text(None)),
         Field::Title => {
             let position = affiliation_position(&profile.affiliations, pending.unit.as_ref()?)?;
-            Value::Text(profile.affiliations[position].title.clone())
+            // The local unit the title is written to, which the choice is checked against.
+            let unit = &profile.affiliations[position];
+            affiliation = Some(unit.clone());
+            Value::Text(unit.title.clone())
         }
     };
     if pending.incoming.is_current(&local, &profile.affiliations) {
@@ -225,7 +230,7 @@ fn visible(pending: &Pending, profile: &Current) -> Option<Update> {
         id: profile.id,
         name: profile.name.clone(),
         field: pending.field,
-        affiliation: pending.unit.clone(),
+        affiliation,
         local: local.display(),
         incoming: pending.incoming.display(),
         take: pending.original.is_current(&local, &profile.affiliations),
@@ -295,7 +300,10 @@ pub async fn plan(conn: &mut SqliteConnection, choices: &Choices) -> Result<Plan
     let before = mentor::export::profiles(conn, &ids).await?;
     let mut after = before.clone();
     let mut applied = Vec::new();
-    for choice in &choices.choices {
+    // Main units last: titles find their unit in the list as it was shown.
+    let mut ordered: Vec<_> = choices.choices.iter().collect();
+    ordered.sort_by_key(|c| c.field == Field::PrimaryAffiliation);
+    for choice in ordered {
         let row = rows
             .iter()
             .find(|r| r.id == choice.update_id)

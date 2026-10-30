@@ -11,7 +11,6 @@ dependencies = [
  "cloud-api",
  "db",
  "hkdf",
- "mentor",
  "net",
  "reqwest",
  "serde",
@@ -1010,6 +1009,7 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "serde",
  "ts-rs",
+ "url",
 ]
 
 [[package]]
@@ -1170,6 +1170,7 @@ dependencies = [
 name = "crawl"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "cloud-api",
  "db",
  "ego-tree",
  "email",
@@ -3538,7 +3539,6 @@ dependencies = [
  "test-fixtures",
  "tokio",
  "ts-rs",
- "url",
 ]
 
 [[package]]
