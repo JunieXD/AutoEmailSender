@@ -303,9 +303,9 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
         ctx.account.login(&ctx.db, &email, password).await?;
     }
     let login = account::saved_login(&ctx.db).await?;
-    if login.backup_key.is_none() {
+    let Some(key) = login.backup_key else {
         return Err(Error::NeedsPassword);
-    }
+    };
     let status = remote(ctx, &login).await?;
     if !status.sponsor_until.is_some_and(|until| until > now) {
         return Err(Error::SponsorRequired);
@@ -320,17 +320,24 @@ pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
             return Ok(Enabled::Replace { backup });
         }
     }
-    let key = login.backup_key.as_ref().map(|key| key.as_slice());
     let enabled = sqlx::query!(
         r#"UPDATE profile SET cloud_backup = 1, cloud_backup_replace = ?
         WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
         input.replace,
-        key
+        key.as_slice()
     )
     .execute(&ctx.db)
     .await?;
     if enabled.rows_affected() == 0 {
         return Err(Error::AccountChanged);
+    }
+    // The other computer's commit removed this one's uploads. Sending them all in the first
+    // attempt keeps a commit missing them from leaving its database behind, filling the room for
+    // a new backup; uploads made after this consent stay to be resumed.
+    if status.current.as_ref().is_some_and(|current| {
+        input.replace == Some(current.committed_at) && current.device_id != device
+    }) {
+        forget_uploads(&ctx.db, &key).await?;
     }
     Ok(Enabled::Enabled)
 }
@@ -497,15 +504,6 @@ async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64
         // This computer's backup without its commit recorded: interrupted right after
         // committing, or encrypted before a password reset, which only the user may replace.
         contents(ctx, login, key, &current.manifest).await?;
-    }
-    // Another computer's commit removed this one's uploads: sending them all at once keeps a
-    // commit missing them from leaving its database behind, filling the room for a new backup.
-    if status
-        .current
-        .as_ref()
-        .is_some_and(|current| current.device_id != device)
-    {
-        forget_uploads(&ctx.db, key).await?;
     }
     let dir = &ctx.cloud_backup.dir;
     fs::create_dir_all(dir)?;
