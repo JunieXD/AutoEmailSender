@@ -186,7 +186,7 @@ pub async fn attached(conn: &mut SqliteConnection, email_id: i64) -> Result<Vec<
 }
 
 /// The standalone draft an attachment picker belongs to.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, TS, sqlx::Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, TS, sqlx::Type)]
 #[serde(rename_all = "snake_case")]
 #[sqlx(rename_all = "snake_case")]
 pub enum DraftKind {

@@ -671,7 +671,7 @@ async fn describe(
             )
         }
         "mergeMentors" => {
-            let input: crate::MentorMerge = parse(input)?;
+            let crate::PreviewedMerge { pair: input, .. } = parse(input)?;
             let drafts = mentor::merge::conflicting_drafts(conn, input.keep, input.other).await?;
             let canceled = sqlx::query_scalar!(
                 r#"SELECT count(*) AS "count!: i64" FROM email

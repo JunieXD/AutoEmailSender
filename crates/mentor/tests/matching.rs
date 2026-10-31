@@ -102,9 +102,9 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
     profile::update(
         &db,
         &profile::ProfileForm {
-            name: "".into(),
-            research_interests: "视觉".into(),
-            rewrite_preference: "".into(),
+            name: Some("".into()),
+            research_interests: Some("视觉".into()),
+            rewrite_preference: Some("".into()),
         },
         20,
     )
@@ -183,9 +183,9 @@ async fn results_survive_queue_failure_retry_and_cancellation(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn unchanged_interests_do_not_invalidate_a_result(db: SqlitePool) {
     let form = profile::ProfileForm {
-        name: "甲".into(),
-        research_interests: " 视觉 ".into(),
-        rewrite_preference: "".into(),
+        name: Some("甲".into()),
+        research_interests: Some(" 视觉 ".into()),
+        rewrite_preference: Some("".into()),
     };
     profile::update(&db, &form, 10).await.unwrap();
     let id = add(&db, Some("视觉")).await;
@@ -193,7 +193,7 @@ async fn unchanged_interests_do_not_invalidate_a_result(db: SqlitePool) {
     profile::update(
         &db,
         &profile::ProfileForm {
-            name: "乙".into(),
+            name: Some("乙".into()),
             ..form
         },
         30,
@@ -229,9 +229,9 @@ async fn starting_single_or_batch_analysis_resumes_a_paused_queue(db: SqlitePool
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn older_interest_updates_cannot_move_the_basis_time_back(db: SqlitePool) {
     let form = |interests: &str| profile::ProfileForm {
-        name: "".into(),
-        research_interests: interests.into(),
-        rewrite_preference: "".into(),
+        name: Some("".into()),
+        research_interests: Some(interests.into()),
+        rewrite_preference: Some("".into()),
     };
     profile::update(&db, &form("视觉"), 200).await.unwrap();
     let id = add(&db, Some("视觉")).await;

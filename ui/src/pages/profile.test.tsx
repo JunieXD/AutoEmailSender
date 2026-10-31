@@ -141,3 +141,36 @@ it("finishes onboarding after an in-flight profile save and keeps the completed 
     container.remove();
   }
 });
+
+it("saves only the fields typed in and shows what an Agent saved in the others", async () => {
+  const initial: Profile = { name: "林晓", researchInterests: "视觉", rewritePreference: null, onboarded: false };
+  remote.profile = initial;
+  remote.save.mockReset().mockImplementation(async (form) => {
+    remote.profile = { ...remote.profile, ...form };
+    return remote.profile;
+  });
+  const client = new QueryClient();
+  client.setQueryData(["getProfile"], initial);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <Fields />
+        </QueryClientProvider>,
+      ),
+    );
+    // An Agent saves while the page is open.
+    remote.profile = { ...initial, researchInterests: "多模态学习" };
+    await act(async () => client.setQueryData(["getProfile"], remote.profile));
+    await edit("林晓晓");
+    await vi.waitFor(() => expect(remote.save).toHaveBeenCalledWith({ name: "林晓晓" }));
+    expect(document.querySelector<HTMLTextAreaElement>("#profile-research")?.value).toBe("多模态学习");
+  } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    container.remove();
+  }
+});

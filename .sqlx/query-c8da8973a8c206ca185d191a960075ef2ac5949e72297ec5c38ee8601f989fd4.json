@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE profile\n        SET name = ?1, research_interests = ?2, rewrite_preference = ?3,\n            match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(\n            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END\n        RETURNING name, research_interests, rewrite_preference, onboarded AS \"onboarded: bool\"",
+  "query": "UPDATE profile\n        SET name = iif(?1, ?2, name), research_interests = iif(?3, ?4, research_interests),\n            rewrite_preference = iif(?5, ?6, rewrite_preference),\n            match_basis_changed_at = CASE WHEN ?3 AND research_interests IS NOT ?4 THEN max(\n            coalesce(match_basis_changed_at, ?7), ?7) ELSE match_basis_changed_at END\n        RETURNING name, research_interests, rewrite_preference, onboarded AS \"onboarded: bool\"",
   "describe": {
     "columns": [
       {
@@ -49,7 +49,7 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 7
     },
     "nullable": [
       true,
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "96a24702eee8385434e669b392058c3b75158752c2495728db47c7eee34d0319"
+  "hash": "c8da8973a8c206ca185d191a960075ef2ac5949e72297ec5c38ee8601f989fd4"
 }

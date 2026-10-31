@@ -4,7 +4,7 @@
 mod common;
 
 use common::names;
-use mentor::{Affiliation, MentorFields, MentorForm, SaveError};
+use mentor::{Affiliation, Edited, MentorFields, MentorForm, SaveError};
 use sqlx::SqlitePool;
 use test_fixtures::mail::mailbox;
 
@@ -138,6 +138,46 @@ fn lists_keep_their_order_without_blanks_or_repeats() {
     assert_eq!(fields.emails, ["zhang@gmail.com", "zhangwei@pku.edu.cn"]);
     assert_eq!(fields.affiliations, [place("北京大学"), place("清华大学")]);
     assert_eq!(fields.homepages, ["https://x.cn"]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_edit_does_not_undo_what_changed_since_it_began(db: SqlitePool) {
+    let shown = MentorFields {
+        name: "张明".into(),
+        emails: vec!["zhang@pku.edu.cn".into()],
+        ..MentorFields::default()
+    };
+    let id = mentor::create(&db, &shown, 0).await.unwrap();
+    // As a library update or a merge would, while the form was open.
+    assert!(
+        mentor::add_email(&db, id, "zhang@gmail.com", 1)
+            .await
+            .unwrap()
+    );
+    let renamed = |fields: &MentorFields| MentorFields {
+        name: "张明明".into(),
+        ..fields.clone()
+    };
+    assert_eq!(
+        mentor::edit(&db, id, &shown, &renamed(&shown), 2)
+            .await
+            .unwrap(),
+        Edited::Changed
+    );
+    let saved = mentor::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(saved.name, "张明");
+    assert_eq!(saved.emails, ["zhang@pku.edu.cn", "zhang@gmail.com"]);
+    let shown = MentorFields {
+        emails: saved.emails,
+        ..shown
+    };
+    assert_eq!(
+        mentor::edit(&db, id, &shown, &renamed(&shown), 3)
+            .await
+            .unwrap(),
+        Edited::Saved
+    );
+    assert_eq!(mentor::get(&db, id).await.unwrap().unwrap().name, "张明明");
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

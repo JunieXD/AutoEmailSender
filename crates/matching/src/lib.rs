@@ -572,7 +572,7 @@ mod tests {
             enqueue(&db, &[id], true, true, 1).await.unwrap();
             let claim = next(&db).await.unwrap().unwrap();
             if merged {
-                mentor::merge::merge(&db, keep, id, 2).await.unwrap();
+                mentor::merge::merge(&db, keep, id, &[], 2).await.unwrap();
             } else {
                 mentor::trash::trash(&db, &[id], 2).await.unwrap();
                 mentor::trash::delete(&db, &[id]).await.unwrap();

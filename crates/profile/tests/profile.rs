@@ -5,16 +5,24 @@ use profile::{LetterFont, LetterStyle, ProfileForm};
 use sqlx::SqlitePool;
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn blank_fields_are_cleared(db: SqlitePool) {
-    let form = |name: &str| ProfileForm {
-        name: name.into(),
-        research_interests: "自然语言处理\n".into(),
-        rewrite_preference: " ".into(),
+async fn blank_fields_are_cleared_and_missing_ones_stay(db: SqlitePool) {
+    let form = ProfileForm {
+        name: Some(" 林晓 ".into()),
+        research_interests: Some("自然语言处理\n".into()),
+        rewrite_preference: Some(" ".into()),
     };
-    let saved = profile::update(&db, &form(" 林晓 "), 1).await.unwrap();
+    let saved = profile::update(&db, &form, 1).await.unwrap();
     assert_eq!(saved.name.as_deref(), Some("林晓"));
     assert_eq!(saved.research_interests.as_deref(), Some("自然语言处理"));
     assert_eq!(saved.rewrite_preference, None);
+    // The page saves the name while an Agent's new research interests stand.
+    let renamed = ProfileForm {
+        name: Some("林晓晓".into()),
+        ..ProfileForm::default()
+    };
+    let saved = profile::update(&db, &renamed, 2).await.unwrap();
+    assert_eq!(saved.name.as_deref(), Some("林晓晓"));
+    assert_eq!(saved.research_interests.as_deref(), Some("自然语言处理"));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

@@ -190,7 +190,7 @@ async fn newest_first_recovery_trash_merge_and_cascade_preserve_work(db: SqliteP
     )
     .await
     .unwrap();
-    mentor::merge::merge(&db, keep, m, 6).await.unwrap();
+    mentor::merge::merge(&db, keep, m, &[], 6).await.unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
     assert_eq!(claim.id, b);
     assert!(queue::complete(&db, claim, R::Interested).await.unwrap());
@@ -1064,7 +1064,7 @@ async fn shared_reply_todos_choose_the_sender_address_then_lowest_mentor_id(db: 
             .unwrap();
         assert_eq!(actual, owner);
     }
-    mentor::merge::merge(&db, low, high, 5).await.unwrap();
+    mentor::merge::merge(&db, low, high, &[], 5).await.unwrap();
     assert_eq!(email::todos::for_mentor(&db, low).await.unwrap().len(), 2);
     mentor::trash::trash(&db, &[low], 6).await.unwrap();
     mentor::trash::delete(&db, &[low]).await.unwrap();

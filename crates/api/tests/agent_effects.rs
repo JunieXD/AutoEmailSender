@@ -632,6 +632,16 @@ async fn empty_save_does_not_delete_a_draft_whose_attachment_was_swapped(db: Sql
 }
 
 /// A paused task holding one approved first email to the mentor.
+/// The profile dialog's save of the mentor with only its emails changed.
+async fn emails_edit(ctx: &Context, id: i64, emails: &[&str]) -> Value {
+    let m = mentor::get(&ctx.db, id).await.unwrap().unwrap();
+    let before = json!({"name":m.name, "aliases":m.aliases, "emails":m.emails,
+        "affiliations":m.affiliations, "homepages":m.homepages, "research":m.research});
+    json!({"id":id, "before":before, "name":m.name, "aliases":m.aliases, "emails":emails,
+        "affiliations":m.affiliations, "homepages":m.homepages,
+        "research":m.research.unwrap_or_default()})
+}
+
 async fn paused_task(ctx: &Context, mentor: i64) -> (i64, i64) {
     let task = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
@@ -672,8 +682,7 @@ async fn resume_task_rechecks_the_pending_recipient_address(db: SqlitePool) {
         call(
             &ctx,
             "updateMentor",
-            json!({"id":mentor, "name":"王伟", "emails":["new@example.invalid"],
-                "aliases":[], "affiliations":[], "homepages":[], "research":""}),
+            emails_edit(&ctx, mentor, &["new@example.invalid"]).await,
         )
         .await
         .unwrap();
@@ -975,8 +984,7 @@ async fn recipient_edits_recheck_schedules_including_unassigned_task_mail(db: Sq
             .await
             .unwrap();
         let input = if op == "updateMentor" {
-            json!({"id":mentor, "name":name, "emails":[after], "aliases":[],
-                "affiliations":[], "homepages":[], "research":""})
+            emails_edit(&ctx, mentor, &[&after]).await
         } else {
             let candidate = sqlx::query_scalar::<_, i64>(
                 r#"INSERT INTO candidate (name, emails, review, enrich)
@@ -1653,8 +1661,7 @@ async fn resume_mailbox_rechecks_recipients_and_deleting_a_task_rechecks_its_ema
         call(
             &ctx,
             "updateMentor",
-            json!({"id":mentor, "name":"王伟", "emails":["after@example.invalid"],
-            "aliases":[], "affiliations":[], "homepages":[], "research":""}),
+            emails_edit(&ctx, mentor, &["after@example.invalid"]).await,
         )
         .await
         .unwrap();
@@ -1839,10 +1846,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             .unwrap();
         let decisions = json!({"take":[], "matches":[], "restore":[]});
         let input = match op {
-            "updateMentor" => json!({
-                "id":mentor, "name":name, "emails":[after], "aliases":[],
-                "affiliations":[], "homepages":[], "research":""
-            }),
+            "updateMentor" => emails_edit(&ctx, mentor, &[&after]).await,
             "addMentorEmail" => json!({"id":mentor, "address":after}),
             "importMentors" => json!({
                 "fileName":"mentors.csv",
@@ -1901,6 +1905,12 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             .execute(&ctx.db)
             .await
             .unwrap();
+        // The safe edit changed the emails the first one began from.
+        let input = if op == "updateMentor" {
+            emails_edit(&ctx, mentor, &[&after]).await
+        } else {
+            input
+        };
         call_agent(&ctx, op, input, |_| {}, pending())
             .await
             .unwrap();

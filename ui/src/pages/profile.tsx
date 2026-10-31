@@ -22,7 +22,8 @@ export function ProfileSection() {
 const mutationKey = ["updateProfile"];
 
 /**
- * Saves as the user types. Saves run one at a time and outlive this page, so the last text wins
+ * Saves as the user types, only the fields typed in on this visit, so that what an Agent saved
+ * meanwhile in the others stays and shows. Saves run one at a time and outlive this page, so the last text wins
  * even after leaving and coming back quickly, and unsaved text is shown again on return. `basic`
  * leaves out the rewrite preference, as the first-run guide does.
  */
@@ -43,16 +44,10 @@ export function ProfileFields({ profile, basic = false }: { profile: Profile; ba
     select: (m) => m.state,
   }).at(-1);
   const unsaved = last?.status === "success" ? undefined : last?.variables;
-  const [form, setForm] = useState<ProfileForm>(
-    () =>
-      unsaved ?? {
-        name: profile.name ?? "",
-        researchInterests: profile.researchInterests ?? "",
-        rewritePreference: profile.rewritePreference ?? "",
-      },
-  );
-  function edit(next: ProfileForm) {
-    setForm(next);
+  const [typed, setTyped] = useState<ProfileForm>(() => unsaved ?? {});
+  function edit(change: ProfileForm) {
+    const next = { ...typed, ...change };
+    setTyped(next);
     save.mutate(next);
   }
   return (
@@ -61,8 +56,8 @@ export function ProfileFields({ profile, basic = false }: { profile: Profile; ba
         <Input
           id="profile-name"
           autoComplete="off"
-          value={form.name}
-          onChange={(e) => edit({ ...form, name: e.target.value })}
+          value={typed.name ?? profile.name ?? ""}
+          onChange={(e) => edit({ name: e.target.value })}
         />
       </Field>
       <Field label="意向研究方向" id="profile-research">
@@ -70,8 +65,8 @@ export function ProfileFields({ profile, basic = false }: { profile: Profile; ba
           id="profile-research"
           rows={3}
           placeholder="比如：自然语言处理，对话系统和大模型的可解释性"
-          value={form.researchInterests}
-          onChange={(e) => edit({ ...form, researchInterests: e.target.value })}
+          value={typed.researchInterests ?? profile.researchInterests ?? ""}
+          onChange={(e) => edit({ researchInterests: e.target.value })}
         />
         <p className="mt-1.5 text-sm text-muted-foreground">分析匹配度时，和材料一起作为依据。</p>
       </Field>
@@ -81,8 +76,8 @@ export function ProfileFields({ profile, basic = false }: { profile: Profile; ba
             id="profile-rewrite"
             rows={3}
             placeholder="比如：语气正式但不生硬，300 字以内，不用感叹号"
-            value={form.rewritePreference}
-            onChange={(e) => edit({ ...form, rewritePreference: e.target.value })}
+            value={typed.rewritePreference ?? profile.rewritePreference ?? ""}
+            onChange={(e) => edit({ rewritePreference: e.target.value })}
           />
           <p className="mt-1.5 text-sm text-muted-foreground">AI 写草稿和改写时照着做。</p>
         </Field>

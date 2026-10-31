@@ -956,6 +956,41 @@ pub async fn update<'c>(
     Ok(true)
 }
 
+/// What became of an edit made in a form.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Edited {
+    Saved,
+    /// The fields are no longer those the form started from, as after a merge, an import or a
+    /// library update; saving would undo that.
+    Changed,
+    Gone,
+}
+
+/// Saves an edit of the fields `before` showed, unless they have changed since.
+pub async fn edit(
+    db: &SqlitePool,
+    id: i64,
+    before: &MentorFields,
+    after: &MentorFields,
+    now: i64,
+) -> Result<Edited, SaveError> {
+    let mut tx = db.begin().await?;
+    // Writing first holds the write lock from the comparison through the save.
+    let touched = sqlx::query!("UPDATE mentor SET updated_at = ? WHERE id = ?", now, id)
+        .execute(&mut *tx)
+        .await?;
+    if touched.rows_affected() == 0 {
+        return Ok(Edited::Gone);
+    }
+    let current = export::profiles(&mut tx, &[id]).await?;
+    if current.get(&id).map(|p| &p.fields) != Some(before) {
+        return Ok(Edited::Changed);
+    }
+    update(&mut *tx, id, after, now).await?;
+    tx.commit().await?;
+    Ok(Edited::Saved)
+}
+
 /// Writes the mentor's lists in the given order. An address the mentor keeps keeps its row, so
 /// that it is not looked up in the mailboxes again; one another mentor has fails the save.
 async fn save_lists(

@@ -3,7 +3,7 @@ import { Plus, X } from "lucide-react";
 import { type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { errorMessage } from "@/api/call";
-import type { Affiliation, MentorDetail, MentorForm } from "@/api/types";
+import type { Affiliation, MentorDetail, MentorFields, MentorForm } from "@/api/types";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -32,16 +32,21 @@ const text = (label: string, value: string, onChange: (value: string) => void) =
   <Input aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} />
 );
 
-/** The form for a mentor's existing fields; blank ones stay blank. */
-export function formOf(m: MentorDetail): MentorForm {
+/** A mentor's own fields as shown, which an edit starts from. */
+export function fieldsOf(m: MentorDetail): MentorFields {
   return {
     name: m.name,
     aliases: m.aliases,
     emails: m.emails,
     affiliations: m.affiliations,
     homepages: m.homepages,
-    research: m.research ?? "",
+    research: m.research,
   };
+}
+
+/** The form for a mentor's existing fields; blank ones stay blank. */
+export function formOf(m: MentorDetail): MentorForm {
+  return { ...fieldsOf(m), research: m.research ?? "" };
 }
 
 /**

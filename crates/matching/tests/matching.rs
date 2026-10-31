@@ -96,9 +96,9 @@ async fn setup(db: &SqlitePool, address: &str, n: usize) -> Vec<i64> {
     profile::update(
         db,
         &profile::ProfileForm {
-            name: "学生".into(),
-            research_interests: "视觉".into(),
-            rewrite_preference: "".into(),
+            name: Some("学生".into()),
+            research_interests: Some("视觉".into()),
+            rewrite_preference: Some("".into()),
         },
         1,
     )
@@ -413,9 +413,9 @@ async fn absent_model_consent_and_student_basis_are_explained_before_calling(db:
     profile::update(
         &db,
         &profile::ProfileForm {
-            name: "".into(),
-            research_interests: "".into(),
-            rewrite_preference: "".into(),
+            name: Some("".into()),
+            research_interests: Some("".into()),
+            rewrite_preference: Some("".into()),
         },
         30,
     )

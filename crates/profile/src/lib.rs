@@ -14,13 +14,16 @@ pub struct Profile {
     pub onboarded: bool,
 }
 
-/// The profile as typed; blank fields are cleared.
-#[derive(Debug, Deserialize, TS)]
+/// The fields to change, as typed; the others stay, and blank ones are cleared.
+#[derive(Debug, Default, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileForm {
-    pub name: String,
-    pub research_interests: String,
-    pub rewrite_preference: String,
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[ts(optional)]
+    pub research_interests: Option<String>,
+    #[ts(optional)]
+    pub rewrite_preference: Option<String>,
 }
 
 fn filled(text: &str) -> Option<&str> {
@@ -45,21 +48,20 @@ pub async fn finish_onboarding(db: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 pub async fn update(db: &SqlitePool, form: &ProfileForm, now: i64) -> Result<Profile, sqlx::Error> {
-    let (name, research_interests, rewrite_preference) = (
-        filled(&form.name),
-        filled(&form.research_interests),
-        filled(&form.rewrite_preference),
-    );
     sqlx::query_as!(
         Profile,
         r#"UPDATE profile
-        SET name = ?1, research_interests = ?2, rewrite_preference = ?3,
-            match_basis_changed_at = CASE WHEN research_interests IS NOT ?2 THEN max(
-            coalesce(match_basis_changed_at, ?4), ?4) ELSE match_basis_changed_at END
+        SET name = iif(?1, ?2, name), research_interests = iif(?3, ?4, research_interests),
+            rewrite_preference = iif(?5, ?6, rewrite_preference),
+            match_basis_changed_at = CASE WHEN ?3 AND research_interests IS NOT ?4 THEN max(
+            coalesce(match_basis_changed_at, ?7), ?7) ELSE match_basis_changed_at END
         RETURNING name, research_interests, rewrite_preference, onboarded AS "onboarded: bool""#,
-        name,
-        research_interests,
-        rewrite_preference,
+        form.name.is_some(),
+        form.name.as_deref().and_then(filled),
+        form.research_interests.is_some(),
+        form.research_interests.as_deref().and_then(filled),
+        form.rewrite_preference.is_some(),
+        form.rewrite_preference.as_deref().and_then(filled),
         now,
     )
     .fetch_one(db)

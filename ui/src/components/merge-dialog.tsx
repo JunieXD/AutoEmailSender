@@ -2,7 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { MentorDetail, MergePreview } from "@/api/types";
+import type { DraftKind, MentorDetail, MergePreview } from "@/api/types";
 import { ContactLabel, dropDrafts, placeOf, refreshMentors } from "@/components/mentor";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -24,7 +24,9 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
     queryFn: () => call("previewMerge", { keep, other }),
   });
   const merge = useMutation({
-    mutationFn: (pair: { keep: number; other: number }) => call("mergeMentors", pair),
+    mutationFn: (pair: { keep: number; other: number; discardedDrafts: DraftKind[] }) => call("mergeMentors", pair),
+    // Drafts changed since the preview: show the new one before merging.
+    onError: () => void queryClient.invalidateQueries({ queryKey: ["previewMerge"] }),
     onSuccess: async (_, pair) => {
       queryClient.removeQueries({ queryKey: ["getMentor", pair.other] });
       dropDrafts(queryClient, [pair.keep, pair.other]);
@@ -78,7 +80,10 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
             {merge.isError && errorMessage(merge.error)}
           </p>
           <DialogClose render={<Button variant="ghost" />}>取消</DialogClose>
-          <Button disabled={!ready || merge.isPending} onClick={() => merge.mutate({ keep, other })}>
+          <Button
+            disabled={!ready || merge.isPending}
+            onClick={() => ready && merge.mutate({ keep, other, discardedDrafts: ready.discardedDrafts })}
+          >
             合并
           </Button>
         </DialogFooter>
