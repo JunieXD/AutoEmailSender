@@ -268,6 +268,57 @@ async fn an_upload_whose_reply_was_lost_goes_again_under_the_same_id(db: SqliteP
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn uploads_of_attempts_that_never_committed_do_not_fill_the_room(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    cloud::back_up(&setup.ctx, NOW).await.unwrap();
+    fs::write(setup.ctx.materials.join("2"), b"transcript").unwrap();
+    sqlx::query(
+        r#"INSERT INTO material (id, file_name, size, for_matching, for_writing,
+            attach_by_default, created_at)
+        VALUES (2, '成绩单.pdf', 10, 0, 0, 0, 0)"#,
+    )
+    .execute(&setup.ctx.db)
+    .await
+    .unwrap();
+    // The commit is refused, leaving its uploads behind as a lost connection would.
+    setup.server.state.lock().unwrap().before_commit =
+        Some(Box::new(|state| state.sponsor_until = None));
+    assert!(matches!(
+        cloud::back_up(&setup.ctx, NOW + 1).await,
+        Err(Error::SponsorRequired)
+    ));
+    assert_eq!(setup.uploads(), 3 + 3);
+    {
+        let mut state = setup.server.state.lock().unwrap();
+        state.sponsor_until = Some(NOW + DAY);
+        // As the databases of many attempts like it.
+        state.objects.insert(
+            "d".repeat(32),
+            vec![0; 2 * cloud_api::backup::LIMIT as usize],
+        );
+    }
+    cloud::back_up(&setup.ctx, NOW + 2).await.unwrap();
+    // The new material is used again, so only the database and manifest go.
+    assert_eq!(setup.uploads(), 3 + 3 + 2);
+    assert!(
+        !setup
+            .server
+            .state
+            .lock()
+            .unwrap()
+            .objects
+            .contains_key(&"d".repeat(32))
+    );
+    cloud::prepare_restore(&setup.ctx, setup.dir.path())
+        .await
+        .unwrap();
+    assert_eq!(
+        fs::read(setup.dir.path().join("restore/materials/2")).unwrap(),
+        b"transcript"
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn backups_over_the_limit_fail_naming_the_largest_files(db: SqlitePool) {
     let setup = Setup::new(db).await;
     // Random bytes do not compress, as with most PDFs and images.

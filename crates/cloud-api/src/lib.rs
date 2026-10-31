@@ -24,6 +24,7 @@ pub mod path {
     pub const LIBRARY_FETCH: &str = "/v1/library/fetch";
     pub const LIBRARY_CHANGES: &str = "/v1/library/changes";
     pub const BACKUP: &str = "/v1/backup";
+    pub const BACKUP_DISCARD: &str = "/v1/backup/discard";
     /// Followed by `/{id}`.
     pub const BACKUP_OBJECTS: &str = "/v1/backup/objects";
 }
