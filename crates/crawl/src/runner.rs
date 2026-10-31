@@ -103,6 +103,10 @@ impl Pages {
         target: &PageTarget,
         cooldown: &Cooldown,
     ) -> Result<Material, ReadError> {
+        // A limit can begin while this page is being claimed; it then waits its turn again.
+        if cooldown.until().is_some() {
+            return Err(ReadError::RateLimit);
+        }
         let fetched = self.http.fetch(target).await.map_err(|e| match e {
             // Like a model's rate limit: no new pages start until then, and this one goes again.
             crate::CrawlError::SlowDown(wait) => {

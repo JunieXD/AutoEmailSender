@@ -2929,25 +2929,30 @@ async fn a_website_asking_to_slow_down_holds_new_pages_and_keeps_the_page(db: Sq
         .lock()
         .unwrap()
         .insert("/list".into(), (429, "<p>请稍后再试</p>".into()));
+    site.page("/other", "<title>教师名单</title>");
     let p = Provider::start().await.unwrap();
     let config = config(&db, &p.address).await;
-    queue::start(&db, &[site.url("/list")], config, 1)
+    queue::start(&db, &[site.url("/list"), site.url("/other")], config, 1)
         .await
         .unwrap();
-    let claim = queue::next(&db).await.unwrap().unwrap();
     let cooldown = Cooldown::default();
-    let outcome = process(
-        &db,
-        &net::Net::new(vec![]).unwrap(),
-        &Pages::local(site.port),
-        &Limit::default(),
-        &claim,
-        &cooldown,
-    )
-    .await
-    .unwrap();
-    assert!(matches!(outcome, Outcome::RateLimit));
-    assert!(cooldown.until().is_some());
+    // The second is claimed as if the runner had looked before the first was limited.
+    for _ in 0..2 {
+        let claim = queue::next(&db).await.unwrap().unwrap();
+        let outcome = process(
+            &db,
+            &net::Net::new(vec![]).unwrap(),
+            &Pages::local(site.port),
+            &Limit::default(),
+            &claim,
+            &cooldown,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(outcome, Outcome::RateLimit));
+        assert!(cooldown.until().is_some());
+    }
+    assert_eq!(*site.visits.lock().unwrap(), ["/list"]);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

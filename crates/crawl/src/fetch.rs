@@ -156,46 +156,46 @@ impl Fetcher {
                 url = next?;
                 continue;
             }
-            if response
-                .content_length()
-                .is_some_and(|n| n > MAX_PAGE_BYTES as u64)
-            {
-                return Err(CrawlError::TooLarge);
-            }
             let content_type = response
                 .headers()
                 .get(header::CONTENT_TYPE)
                 .and_then(|h| h.to_str().ok())
                 .map(str::to_owned);
             let retry_after = net::retry_after(&response);
-            let mut response = response;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(CrawlError::Http)? {
-                if bytes.len() + chunk.len() > MAX_PAGE_BYTES {
-                    return Err(CrawlError::TooLarge);
-                }
-                bytes.extend_from_slice(&chunk);
-            }
+            let body = body(response).await;
             drop(slot);
-            let url = url.clone();
-            let span = tracing::Span::current();
-            let material = tokio::task::spawn_blocking(move || {
-                span.in_scope(|| {
-                    response_material(&url, status.as_u16(), content_type.as_deref(), &bytes)
-                })
-            })
-            .await
-            .map_err(CrawlError::Worker)?;
-            // Asked to slow down rather than to pass a challenge; 503 alone is a broken server.
-            let material = match (material, retry_after) {
-                (Err(CrawlError::Status(429)), wait)
-                | (Err(CrawlError::Status(503)), wait @ Some(_)) => {
+            let material = match body {
+                Ok(bytes) => {
+                    let url = url.clone();
+                    let span = tracing::Span::current();
+                    tokio::task::spawn_blocking(move || {
+                        span.in_scope(|| {
+                            response_material(
+                                &url,
+                                status.as_u16(),
+                                content_type.as_deref(),
+                                &bytes,
+                            )
+                        })
+                    })
+                    .await
+                    .map_err(CrawlError::Worker)?
+                }
+                Err(error) => Err(error),
+            };
+            // Asked to slow down, rather than to pass a challenge, also when the refusal itself
+            // cannot be read; 503 alone is a broken server.
+            let material = match material {
+                Err(_)
+                    if status == StatusCode::TOO_MANY_REQUESTS
+                        || (status == StatusCode::SERVICE_UNAVAILABLE && retry_after.is_some()) =>
+                {
                     let (least, most) = SLOW_DOWN_LIMITS;
                     Err(CrawlError::SlowDown(
-                        wait.unwrap_or(SLOW_DOWN).clamp(least, most),
+                        retry_after.unwrap_or(SLOW_DOWN).clamp(least, most),
                     ))
                 }
-                (material, _) => material,
+                material => material,
             }?;
             return Ok(FetchedPage {
                 material,
@@ -280,6 +280,23 @@ pub fn decode(bytes: &[u8], content_type: Option<&str>) -> Result<String, CrawlE
         Ok(text) => Ok(text.into()),
         Err(_) => Ok(GBK.decode(bytes).0.into_owned()),
     }
+}
+
+async fn body(mut response: reqwest::Response) -> Result<Vec<u8>, CrawlError> {
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_PAGE_BYTES as u64)
+    {
+        return Err(CrawlError::TooLarge);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(CrawlError::Http)? {
+        if bytes.len() + chunk.len() > MAX_PAGE_BYTES {
+            return Err(CrawlError::TooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// The same boundary is used for fixtures and network responses.
