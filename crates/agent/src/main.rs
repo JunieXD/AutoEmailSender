@@ -64,7 +64,8 @@ async fn run() -> Result<bool, String> {
                 None => "{}".into(),
             };
             // Windows PowerShell 5.1 writes UTF-8 files with a byte order mark.
-            let input = serde_json::from_str::<Value>(input.trim_start_matches('\u{feff}'))
+            let input = input.strip_prefix('\u{feff}').unwrap_or(&input);
+            let input = serde_json::from_str::<Value>(input)
                 .map_err(|error| format!("JSON 输入不正确：{error}"))?;
             let result = call(op, input).await?;
             println!("{result}");
