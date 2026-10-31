@@ -102,8 +102,13 @@ async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<S
             (SELECT address FROM mentor_email
                 WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String",
             count(*) AS "count!: i64",
-            json_group_array(e.planned_at ORDER BY e.id) AS "times!: Json<Vec<Option<i64>>>"
+            json_group_array(e.planned_at ORDER BY e.id) AS "times!: Json<Vec<Option<i64>>>",
+            json_group_array(DISTINCT b.address) AS "senders!: Json<Vec<Option<String>>>",
+            max(own.mailbox_id IS NULL AND e.kind = 'first') AS "automatic!: bool",
+            max(own.mailbox_id IS NULL AND e.kind <> 'first') AS "unowned!: bool"
         FROM email e JOIN mentor m ON m.id = e.mentor_id
+        JOIN email_own_mailbox own ON own.email_id = e.id
+        LEFT JOIN mailbox b ON b.id = own.mailbox_id
         WHERE e.id IN (SELECT value FROM json_each(?))
         GROUP BY m.id ORDER BY m.id"#,
         Json(ids)
@@ -114,10 +119,20 @@ async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<S
         .into_iter()
         .map(|row| {
             let address = row.address.as_deref().unwrap_or("未填写邮箱");
+            let mut senders = row.senders.0.into_iter().flatten().collect::<Vec<_>>();
+            senders.sort();
+            if row.automatic {
+                senders.push("自动选择的邮箱".into());
+            }
+            // Replies and follow-ups stay in their conversation's mailbox and never rotate.
+            if row.unowned {
+                senders.push("没有负责邮箱，要先在导师资料里指定".into());
+            }
             format!(
-                "{}：{address}（{} 封）；原定发送时间：{}",
+                "{}：{address}（{} 封）；发件邮箱：{}；原定发送时间：{}",
                 row.name,
                 row.count,
+                senders.join("、"),
                 sending_times(row.times.0)
             )
         })
@@ -152,16 +167,23 @@ async fn model_target(conn: &mut SqliteConnection, id: i64) -> Result<String, Ca
     .unwrap_or_else(|| "找不到的模型配置（可能已被删除）".into()))
 }
 
-async fn mailbox_emails(conn: &mut SqliteConnection, id: i64) -> Result<Vec<i64>, CallError> {
+/// Approved emails this mailbox may send: those it would send now, or with `paused_tasks` also
+/// those waiting in paused tasks, which its new address would send later.
+async fn mailbox_emails(
+    conn: &mut SqliteConnection,
+    id: i64,
+    paused_tasks: bool,
+) -> Result<Vec<i64>, CallError> {
     Ok(sqlx::query_scalar!(
         r#"SELECT e.id FROM email e
         JOIN email_own_mailbox own ON own.email_id = e.id
         WHERE e.state = 'approved' AND (own.mailbox_id = ?
             OR (own.mailbox_id IS NULL AND e.kind = 'first'))
-            AND (e.task_id IS NULL OR e.task_id IN
+            AND (? OR e.task_id IS NULL OR e.task_id IN
                 (SELECT id FROM task WHERE state = 'active' AND generation_paused_at IS NULL))
         ORDER BY e.id"#,
-        id
+        id,
+        paused_tasks
     )
     .fetch_all(conn)
     .await?)
@@ -298,13 +320,24 @@ async fn describe(
         }
         "enableCloudBackup" => {
             let input: crate::backup::cloud::Enable = parse(input)?;
+            let email = sqlx::query_scalar!("SELECT email FROM account")
+                .fetch_optional(&mut *conn)
+                .await?;
+            let account =
+                email.map_or_else(|| "现在没有登录".into(), |email| format!("账号 {email}"));
             object(
                 "开启云端备份，把导师、邮件、模板和材料等数据加密后上传到官方服务器",
-                if input.replace.is_some() {
-                    "换掉云端另一台电脑的备份".into()
-                } else {
-                    "每天自动备份，数据有变化才上传".into()
+                match input.replace {
+                    Some(at) => format!("{account}：换掉云端 {} 提交的那份备份", display_time(at)),
+                    None => format!("{account}：每天自动备份，数据有变化才上传"),
                 },
+            )
+        }
+        "resetAccountPassword" => {
+            let input: crate::accounts::AccountVerification = parse(input)?;
+            object(
+                "重置账号密码：所有电脑都要重新登录，旧的云端备份用新密码解不开",
+                input.email,
             )
         }
         "deleteCloudBackup" => {
@@ -487,6 +520,9 @@ async fn describe(
             )
             .fetch_all(&mut *conn)
             .await?;
+            if ids.is_empty() {
+                return Ok(None);
+            }
             let target = task_target(conn, id).await?;
             if op == "resumeTask" {
                 sending(conn, "恢复 1 个任务的发信", target, &ids).await?
@@ -523,7 +559,10 @@ async fn describe(
         }
         "resumeMailbox" => {
             let input: crate::MailboxId = parse(input)?;
-            let ids = mailbox_emails(conn, input.id).await?;
+            let ids = mailbox_emails(conn, input.id, false).await?;
+            if ids.is_empty() {
+                return Ok(None);
+            }
             let target = mailbox_target(conn, input.id).await?;
             sending(conn, "恢复 1 个邮箱的发信", target, &ids).await?
         }
@@ -545,8 +584,8 @@ async fn describe(
             if !resumes && !changed {
                 return Ok(None);
             }
-            let ids = mailbox_emails(conn, input.id).await?;
-            if !resumes && ids.is_empty() {
+            let ids = mailbox_emails(conn, input.id, changed).await?;
+            if ids.is_empty() {
                 return Ok(None);
             }
             let target = if changed {
@@ -1052,7 +1091,6 @@ mod tests {
                 "approveFollowUp",
                 "approveReply",
                 "approveTaskEmails",
-                "changeTaskSchedule",
                 "deleteAccount",
                 "deleteCloudBackup",
                 "deleteCrawl",
@@ -1068,8 +1106,7 @@ mod tests {
                 "mergeMentors",
                 "rescheduleEmail",
                 "resendEmail",
-                "resumeMailbox",
-                "resumeTask",
+                "resetAccountPassword",
                 "retryEmail",
                 "sendEmailNow",
             ])
@@ -1086,7 +1123,10 @@ mod tests {
                 "addMentorEmail",
                 "addLibraryMentors",
                 "applyLibraryUpdates",
+                "changeTaskSchedule",
                 "importMentors",
+                "resumeMailbox",
+                "resumeTask",
                 "saveFirstDraft",
                 "saveReplyDraft",
                 "setMentorMailbox",

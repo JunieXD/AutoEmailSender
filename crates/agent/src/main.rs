@@ -1,6 +1,7 @@
 mod client;
 mod mcp;
 
+use std::io::Read;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
@@ -11,6 +12,7 @@ const USAGE: &str = "Auto Email Sender：联系导师的本机 Agent 接口
   autoemail list                       按组列出操作及确认方式
   autoemail help <操作名>              查看操作说明及输入输出类型
   autoemail call <操作名> [JSON 输入]  调用操作，省略输入时为 {}
+  autoemail call <操作名> -            从标准输入读 UTF-8 的 JSON 输入（材料这类大输入用这个）
   autoemail mcp                        启动标准输入输出 MCP 服务器
   autoemail --help                     显示帮助
   autoemail --version                  显示命令行版本
@@ -19,10 +21,13 @@ const USAGE: &str = "Auto Email Sender：联系导师的本机 Agent 接口
 使用 list、help 和 call 前，请打开应用并在设置里允许 Agent 连接。";
 
 // PowerShell decodes native output that it pipes, captures or (before 7.4) redirects with the
-// console code page, which is GBK on Chinese Windows.
+// console code page, which is GBK on Chinese Windows. Windows PowerShell 5.1 encodes what it pipes
+// to native programs with $OutputEncoding, ASCII by default, turning Chinese into question marks.
 const POWERSHELL_HINT: &str =
-    "在 PowerShell 里把输出交给其他命令（如 ConvertFrom-Json）、存进变量或用 > 写进文件时，
-先运行 [Console]::OutputEncoding = [Text.Encoding]::UTF8，否则中文会乱码。";
+    "在 PowerShell 里先运行 $OutputEncoding = [Console]::OutputEncoding = [Text.UTF8Encoding]::new()。
+否则把输出交给其他命令（如 ConvertFrom-Json）、存进变量或用 > 写进文件时中文会乱码；
+用管道把输入交给 call（如 Get-Content -Raw -Encoding UTF8 input.json | autoemail call addMaterial -）时，
+PowerShell 5.1 会把中文换成问号。";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -46,11 +51,22 @@ async fn run() -> Result<bool, String> {
         ["--version"] => println!("autoemail {}", env!("CARGO_PKG_VERSION")),
         ["mcp"] => mcp::run().await?,
         ["call", op, rest @ ..] if rest.len() <= 1 => {
+            // Command lines are too short for Base64 materials: about 1 MB on macOS, 32K on Windows.
             let input = match rest.first() {
-                Some(input) => serde_json::from_str::<Value>(input)
-                    .map_err(|error| format!("JSON 输入不正确：{error}"))?,
-                None => json!({}),
+                Some(&"-") => {
+                    let mut input = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut input)
+                        .map_err(|error| format!("读不了标准输入：{error}"))?;
+                    input
+                }
+                Some(input) => (*input).to_owned(),
+                None => "{}".into(),
             };
+            // Windows PowerShell 5.1 writes UTF-8 files with a byte order mark.
+            let input = input.strip_prefix('\u{feff}').unwrap_or(&input);
+            let input = serde_json::from_str::<Value>(input)
+                .map_err(|error| format!("JSON 输入不正确：{error}"))?;
             let result = call(op, input).await?;
             println!("{result}");
             return Ok(result.get("error").is_none());

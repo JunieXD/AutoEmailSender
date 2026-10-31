@@ -1,6 +1,7 @@
 use std::error::Error;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Output;
+use std::process::{Output, Stdio};
 use std::sync::Arc;
 
 use agent::Credentials;
@@ -31,6 +32,26 @@ async fn cli(dir: &Path, op: &str) -> Result<Output> {
             .output()
     })
     .await??)
+}
+
+/// Input on standard input, as for materials too large for a command line, starting with the byte
+/// order mark Windows PowerShell 5.1 writes.
+async fn cli_stdin(dir: &Path, op: &str, input: Value) -> Result<Output> {
+    let (dir, op): (PathBuf, String) = (dir.to_owned(), op.into());
+    tokio::task::spawn_blocking(move || -> Result<Output> {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_autoemail"))
+            .env("AUTOEMAIL_DATA_DIR", dir)
+            .args(["call", &op, "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut stdin = child.stdin.take().ok_or("missing stdin")?;
+        stdin.write_all(format!("\u{feff}{input}").as_bytes())?;
+        drop(stdin);
+        Ok(child.wait_with_output()?)
+    })
+    .await?
 }
 
 #[tokio::test]
@@ -121,6 +142,19 @@ async fn authentication_permissions_cli_and_switch_share_the_real_local_channel(
     assert!(output.status.success());
     let output: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(output["ok"]["name"], "测试学生");
+    let piped = cli_stdin(
+        dir.path(),
+        "updateProfile",
+        json!({"name":"标准输入", "researchInterests":"人工智能", "rewritePreference":""}),
+    )
+    .await?;
+    assert!(piped.status.success(), "{piped:?}");
+    assert_eq!(
+        api::call(&ctx, "getProfile", json!({}))
+            .await
+            .map_err(|error| error.message)?["name"],
+        "标准输入"
+    );
     let unknown = cli(dir.path(), "notAnOperation").await?;
     assert!(!unknown.status.success());
     let output: Value = serde_json::from_slice(&unknown.stdout)?;
