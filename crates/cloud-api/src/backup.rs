@@ -47,6 +47,14 @@ pub struct Commit {
     pub replaces: Option<String>,
 }
 
+/// Sent before uploading: the account's objects that no committed backup holds are what earlier
+/// attempts left behind, and go, except those the client means to use again.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Discard {
+    pub keep: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Committed {

@@ -1,12 +1,12 @@
 //! An in-memory cloud backup server following the official server's rules (the server
 //! repository's docs/backup.md), without accounts: every request acts for one account.
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io,
     sync::{Arc, Mutex},
 };
 
-use cloud_api::backup::{Commit, Committed, Current, LIMIT, OBJECTS, Status};
+use cloud_api::backup::{Commit, Committed, Current, Discard, LIMIT, OBJECTS, Status};
 use serde_json::json;
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -20,6 +20,8 @@ pub struct State {
     pub sponsor_until: Option<i64>,
     pub objects: BTreeMap<String, Vec<u8>>,
     pub current: Option<Current>,
+    /// The objects the current backup holds.
+    pub referenced: BTreeSet<String>,
     /// The ids of every upload, in order.
     pub uploads: Vec<String>,
     /// Runs once on the next commit before it is checked, as another computer would act meanwhile.
@@ -123,7 +125,7 @@ fn respond(
     body: Vec<u8>,
 ) -> (u16, &'static str, Vec<u8>) {
     let ok = |value: serde_json::Value| (200, "application/json", value.to_string().into_bytes());
-    let sponsored = state.sponsor_until.is_some_and(|until| until > state.now);
+    let sponsored = |state: &State| state.sponsor_until.is_some_and(|until| until > state.now);
     match (method, path.strip_prefix("/v1/backup")) {
         ("GET", Some("")) => ok(serde_json::to_value(Status {
             current: state.current.as_ref().map(|current| Current {
@@ -140,20 +142,33 @@ fn respond(
             None => error(404, "backup_not_found"),
         },
         ("PUT", Some(object)) => {
-            if !sponsored {
+            if !sponsored(state) {
                 return error(403, "sponsor_required");
             }
             let object = object.trim_start_matches("/objects/").to_owned();
+            let stored: usize = state.objects.values().map(Vec::len).sum();
+            if !state.objects.contains_key(&object)
+                && ((stored + body.len()) as u64 > 2 * LIMIT || state.objects.len() >= 2 * OBJECTS)
+            {
+                return error(413, "backup_too_large");
+            }
             state.uploads.push(object.clone());
             state.objects.entry(object).or_insert(body);
             ok(json!({}))
         }
+        ("POST", Some("/discard")) => {
+            let discard: Discard = serde_json::from_slice(&body).unwrap();
+            state
+                .objects
+                .retain(|id, _| state.referenced.contains(id) || discard.keep.contains(id));
+            ok(json!({}))
+        }
         ("POST", Some("")) => {
-            if !sponsored {
-                return error(403, "sponsor_required");
-            }
             if let Some(before) = state.before_commit.take() {
                 before(state);
+            }
+            if !sponsored(state) {
+                return error(403, "sponsor_required");
             }
             let commit: Commit = serde_json::from_slice(&body).unwrap();
             if commit.replaces.as_ref() != state.current.as_ref().map(|current| &current.manifest) {
@@ -177,6 +192,7 @@ fn respond(
             }
             state.now += 1;
             state.objects.retain(|id, _| referenced.contains(id));
+            state.referenced = referenced.into_iter().collect();
             state.current = Some(Current {
                 device_id: commit.device_id,
                 manifest: commit.manifest,
@@ -190,6 +206,7 @@ fn respond(
         }
         ("DELETE", Some("")) => {
             state.objects.clear();
+            state.referenced.clear();
             state.current = None;
             ok(json!({}))
         }

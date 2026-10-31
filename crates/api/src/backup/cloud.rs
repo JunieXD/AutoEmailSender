@@ -584,6 +584,20 @@ async fn send_objects(
     .into_iter()
     .map(|row| (row.material_id, (row.object, row.size, row.uploaded)))
     .collect();
+    // Earlier attempts that never committed would otherwise fill the room kept for this one.
+    let keep = mapped.values().map(|(object, ..)| object.clone()).collect();
+    ctx.account
+        .send(
+            &ctx.db,
+            login,
+            ctx.account
+                .request(Method::POST, path::BACKUP_DISCARD)
+                .json(&wire::Discard { keep }),
+        )
+        .await?
+        .json::<Empty>()
+        .await
+        .map_err(account::Error::Network)?;
     let contents = Contents {
         app_version: env!("CARGO_PKG_VERSION").into(),
         database_version: snapshot.version,
