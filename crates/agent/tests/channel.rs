@@ -34,7 +34,8 @@ async fn cli(dir: &Path, op: &str) -> Result<Output> {
     .await??)
 }
 
-/// Input on standard input, as for materials too large for a command line.
+/// Input on standard input, as for materials too large for a command line, starting with the byte
+/// order mark Windows PowerShell 5.1 writes.
 async fn cli_stdin(dir: &Path, op: &str, input: Value) -> Result<Output> {
     let (dir, op): (PathBuf, String) = (dir.to_owned(), op.into());
     tokio::task::spawn_blocking(move || -> Result<Output> {
@@ -46,7 +47,7 @@ async fn cli_stdin(dir: &Path, op: &str, input: Value) -> Result<Output> {
             .stderr(Stdio::piped())
             .spawn()?;
         let mut stdin = child.stdin.take().ok_or("missing stdin")?;
-        stdin.write_all(input.to_string().as_bytes())?;
+        stdin.write_all(format!("\u{feff}{input}").as_bytes())?;
         drop(stdin);
         Ok(child.wait_with_output()?)
     })

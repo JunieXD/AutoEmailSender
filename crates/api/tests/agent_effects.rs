@@ -1004,6 +1004,70 @@ async fn recipient_edits_recheck_schedules_including_unassigned_task_mail(db: Sq
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn retry_targets_tell_an_automatic_sender_from_a_reply_without_one(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
+    let mentor = mentor::create(
+        &ctx.db,
+        &mentor::MentorFields {
+            name: "王伟".into(),
+            emails: vec!["mentor@example.invalid".into()],
+            ..Default::default()
+        },
+        0,
+    )
+    .await
+    .unwrap();
+    // The reply's original message, and with it the mailbox it came to, is gone.
+    for (kind, reply_to, sender) in [
+        ("first", None, "自动选择的邮箱"),
+        (
+            "reply",
+            Some("<gone@example.invalid>"),
+            "没有负责邮箱，要先在导师资料里指定",
+        ),
+    ] {
+        let email = test_fixtures::mail::first_email(&ctx.db, mentor, "approved", 0)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE email SET kind = ?, reply_to = ?, state = 'failed', error = 'fixture'
+            WHERE id = ?",
+        )
+        .bind(kind)
+        .bind(reply_to)
+        .bind(email)
+        .execute(&ctx.db)
+        .await
+        .unwrap();
+        let (registered, waiting) = tokio::sync::oneshot::channel();
+        let calling = call_agent(
+            &ctx,
+            "retryEmail",
+            json!({"id":email}),
+            |description| registered.send(description.targets.clone()).unwrap(),
+            pending(),
+        );
+        let answer = async {
+            let targets = waiting.await.unwrap();
+            let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+            call(
+                &ctx,
+                "answerAgentRequest",
+                json!({"id":requests[0]["id"], "allow":false}),
+            )
+            .await
+            .unwrap();
+            targets
+        };
+        let (_, targets) = tokio::join!(calling, answer);
+        assert!(
+            targets[0].contains(&format!("发件邮箱：{sender}；")),
+            "{targets:?}"
+        );
+    }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn retry_rechecks_the_task_arrangement_that_will_assign_its_new_time(db: SqlitePool) {
     let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     let mentor = mentor::create(

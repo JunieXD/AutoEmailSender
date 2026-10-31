@@ -103,7 +103,9 @@ async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<S
                 WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String",
             count(*) AS "count!: i64",
             json_group_array(e.planned_at ORDER BY e.id) AS "times!: Json<Vec<Option<i64>>>",
-            json_group_array(DISTINCT b.address) AS "senders!: Json<Vec<Option<String>>>"
+            json_group_array(DISTINCT b.address) AS "senders!: Json<Vec<Option<String>>>",
+            max(own.mailbox_id IS NULL AND e.kind = 'first') AS "automatic!: bool",
+            max(own.mailbox_id IS NULL AND e.kind <> 'first') AS "unowned!: bool"
         FROM email e JOIN mentor m ON m.id = e.mentor_id
         JOIN email_own_mailbox own ON own.email_id = e.id
         LEFT JOIN mailbox b ON b.id = own.mailbox_id
@@ -117,13 +119,15 @@ async fn email_targets(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<S
         .into_iter()
         .map(|row| {
             let address = row.address.as_deref().unwrap_or("未填写邮箱");
-            let mut senders = row
-                .senders
-                .0
-                .into_iter()
-                .map(|sender| sender.unwrap_or_else(|| "自动选择的邮箱".into()))
-                .collect::<Vec<_>>();
+            let mut senders = row.senders.0.into_iter().flatten().collect::<Vec<_>>();
             senders.sort();
+            if row.automatic {
+                senders.push("自动选择的邮箱".into());
+            }
+            // Replies and follow-ups stay in their conversation's mailbox and never rotate.
+            if row.unowned {
+                senders.push("没有负责邮箱，要先在导师资料里指定".into());
+            }
             format!(
                 "{}：{address}（{} 封）；发件邮箱：{}；原定发送时间：{}",
                 row.name,
