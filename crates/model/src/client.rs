@@ -235,18 +235,7 @@ async fn send(
     if status.is_success() {
         return Ok(response);
     }
-    let retry_after = response
-        .headers()
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| {
-            h.parse::<u64>().ok().map(Duration::from_secs).or_else(|| {
-                httpdate::parse_http_date(h).ok().map(|at| {
-                    at.duration_since(std::time::SystemTime::now())
-                        .unwrap_or_default()
-                })
-            })
-        });
+    let retry_after = net::retry_after(&response);
     let body = read(response, access).await?;
     // OpenAI-compatible APIs explain errors in `error.message`.
     let parsed = serde_json::from_str::<Value>(&body).ok();

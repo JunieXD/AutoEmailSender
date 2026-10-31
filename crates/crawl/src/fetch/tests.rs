@@ -187,6 +187,37 @@ async fn redirects_are_checked_at_every_hop_and_preserve_the_final_source() {
 }
 
 #[tokio::test]
+async fn slow_down_answers_say_how_long_to_wait() {
+    let mut server = Server::start(false).await;
+    let fetcher = server.fetcher();
+    let busy = "<p>请稍后再试</p>";
+    let large = "x".repeat(MAX_PAGE_BYTES + 1);
+    for (status, extra, body, wait) in [
+        (429, "Retry-After: 120\r\n", busy, Some(120)),
+        (429, "", busy, Some(60)),
+        (429, "Retry-After: 86400\r\n", busy, Some(600)),
+        (503, "Retry-After: 0\r\n", busy, Some(5)),
+        (503, "", busy, None),
+        // A refusal too large to read still asks to wait.
+        (429, "Retry-After: 120\r\n", large.as_str(), Some(120)),
+    ] {
+        let target = server.target("/busy", false);
+        let respond = async {
+            let request = server.requests.recv().await.unwrap();
+            request.respond.send(reply(status, extra, body)).unwrap();
+        };
+        let (page, ()) = tokio::join!(fetcher.fetch(&target), respond);
+        match (page, wait) {
+            (Err(CrawlError::SlowDown(got)), Some(secs)) => {
+                assert_eq!(got, Duration::from_secs(secs));
+            }
+            (Err(CrawlError::Status(503)), None) => {}
+            (page, _) => panic!("{status} {extra:?}: {page:?}"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_redirect_keeps_the_front_end_route() {
     let mut server = Server::start(false).await;
     let fetcher = server.fetcher();

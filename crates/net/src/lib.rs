@@ -3,6 +3,7 @@
 
 use std::error::Error;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use rustls::ClientConfig;
 use rustls::pki_types::CertificateDer;
@@ -134,6 +135,20 @@ impl rustls::client::danger::ServerCertVerifier for PageCertificate {
             .signature_verification_algorithms
             .supported_schemes()
     }
+}
+
+/// How long a refusing server asked to be left alone, in seconds or until a date.
+pub fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    let value = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?;
+    value.parse().ok().map(Duration::from_secs).or_else(|| {
+        httpdate::parse_http_date(value)
+            .ok()
+            .map(|at| at.duration_since(SystemTime::now()).unwrap_or_default())
+    })
 }
 
 /// Whether the server's certificate was the problem rather than the handshake, however deep the

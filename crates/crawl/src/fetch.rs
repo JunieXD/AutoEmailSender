@@ -14,6 +14,10 @@ pub const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const PAGE_TIMEOUT: Duration = Duration::from_secs(40);
 const REQUEST_INTERVAL: Duration = Duration::from_millis(300);
+/// A website asking to slow down without saying for how long waits this long, and a stated wait
+/// is kept within bounds.
+const SLOW_DOWN: Duration = Duration::from_secs(60);
+const SLOW_DOWN_LIMITS: (Duration, Duration) = (Duration::from_secs(5), Duration::from_secs(600));
 pub const MAX_REDIRECTS: usize = 5;
 
 struct SiteLimit {
@@ -152,35 +156,47 @@ impl Fetcher {
                 url = next?;
                 continue;
             }
-            if response
-                .content_length()
-                .is_some_and(|n| n > MAX_PAGE_BYTES as u64)
-            {
-                return Err(CrawlError::TooLarge);
-            }
             let content_type = response
                 .headers()
                 .get(header::CONTENT_TYPE)
                 .and_then(|h| h.to_str().ok())
                 .map(str::to_owned);
-            let mut response = response;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(CrawlError::Http)? {
-                if bytes.len() + chunk.len() > MAX_PAGE_BYTES {
-                    return Err(CrawlError::TooLarge);
-                }
-                bytes.extend_from_slice(&chunk);
-            }
+            let retry_after = net::retry_after(&response);
+            let body = body(response).await;
             drop(slot);
-            let url = url.clone();
-            let span = tracing::Span::current();
-            let material = tokio::task::spawn_blocking(move || {
-                span.in_scope(|| {
-                    response_material(&url, status.as_u16(), content_type.as_deref(), &bytes)
-                })
-            })
-            .await
-            .map_err(CrawlError::Worker)??;
+            let material = match body {
+                Ok(bytes) => {
+                    let url = url.clone();
+                    let span = tracing::Span::current();
+                    tokio::task::spawn_blocking(move || {
+                        span.in_scope(|| {
+                            response_material(
+                                &url,
+                                status.as_u16(),
+                                content_type.as_deref(),
+                                &bytes,
+                            )
+                        })
+                    })
+                    .await
+                    .map_err(CrawlError::Worker)?
+                }
+                Err(error) => Err(error),
+            };
+            // Asked to slow down, rather than to pass a challenge, also when the refusal itself
+            // cannot be read; 503 alone is a broken server.
+            let material = match material {
+                Err(_)
+                    if status == StatusCode::TOO_MANY_REQUESTS
+                        || (status == StatusCode::SERVICE_UNAVAILABLE && retry_after.is_some()) =>
+                {
+                    let (least, most) = SLOW_DOWN_LIMITS;
+                    Err(CrawlError::SlowDown(
+                        retry_after.unwrap_or(SLOW_DOWN).clamp(least, most),
+                    ))
+                }
+                material => material,
+            }?;
             return Ok(FetchedPage {
                 material,
                 status: status.as_u16(),
@@ -264,6 +280,23 @@ pub fn decode(bytes: &[u8], content_type: Option<&str>) -> Result<String, CrawlE
         Ok(text) => Ok(text.into()),
         Err(_) => Ok(GBK.decode(bytes).0.into_owned()),
     }
+}
+
+async fn body(mut response: reqwest::Response) -> Result<Vec<u8>, CrawlError> {
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_PAGE_BYTES as u64)
+    {
+        return Err(CrawlError::TooLarge);
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(CrawlError::Http)? {
+        if bytes.len() + chunk.len() > MAX_PAGE_BYTES {
+            return Err(CrawlError::TooLarge);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 /// The same boundary is used for fixtures and network responses.
