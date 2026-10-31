@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -42,17 +42,16 @@ function nameInput() {
   return document.querySelector<HTMLInputElement>("#profile-name");
 }
 
-function edit(value: string) {
-  return act(async () => {
-    const input = nameInput();
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
-    input?.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+function research() {
+  return document.querySelector<HTMLTextAreaElement>("#profile-research")?.value;
 }
 
-function Fields() {
-  const { data } = useQuery<Profile>({ queryKey: ["getProfile"], staleTime: Infinity });
-  return data && <ProfileFields profile={data} />;
+function edit(value: string, field = "#profile-name") {
+  return act(async () => {
+    const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(field);
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set?.call(input, value);
+    input?.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 it("keeps the last edit across navigation and uses the saved profile after queued saves", async () => {
@@ -60,7 +59,7 @@ it("keeps the last edit across navigation and uses the saved profile after queue
   const first = deferredProfile();
   const second = deferredProfile();
   remote.save.mockReset().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-  const client = new QueryClient();
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
   client.setQueryData(["getProfile"], initial);
   const oldQuery = deferredProfile();
   void client.fetchQuery({ queryKey: ["getProfile"], queryFn: () => oldQuery.promise });
@@ -68,7 +67,9 @@ it("keeps the last edit across navigation and uses the saved profile after queue
   document.body.append(container);
   const root = createRoot(container);
   const render = (visible: boolean) =>
-    act(async () => root.render(<QueryClientProvider client={client}>{visible && <Fields />}</QueryClientProvider>));
+    act(async () =>
+      root.render(<QueryClientProvider client={client}>{visible && <ProfileFields />}</QueryClientProvider>),
+    );
   try {
     await render(true);
     await edit("第一次");
@@ -142,14 +143,15 @@ it("finishes onboarding after an in-flight profile save and keeps the completed 
   }
 });
 
-it("saves only the fields typed in and shows what an Agent saved in the others", async () => {
-  const initial: Profile = { name: "林晓", researchInterests: "视觉", rewritePreference: null, onboarded: false };
+it("saves only what is typed and not saved yet, and shows what an Agent saved", async () => {
+  const initial: Profile = { name: "林晓", researchInterests: null, rewritePreference: null, onboarded: false };
   remote.profile = initial;
+  // Keeps the text trimmed, as the core does.
   remote.save.mockReset().mockImplementation(async (form) => {
-    remote.profile = { ...remote.profile, ...form };
+    remote.profile = { ...remote.profile, ...Object.fromEntries(Object.entries(form).map(([k, v]) => [k, v.trim()])) };
     return remote.profile;
   });
-  const client = new QueryClient();
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
   client.setQueryData(["getProfile"], initial);
   const container = document.createElement("div");
   document.body.append(container);
@@ -158,16 +160,22 @@ it("saves only the fields typed in and shows what an Agent saved in the others",
     await act(async () =>
       root.render(
         <QueryClientProvider client={client}>
-          <Fields />
+          <ProfileFields />
         </QueryClientProvider>,
       ),
     );
+    await edit("视觉\n", "#profile-research");
+    await vi.waitFor(() => expect(client.getQueryData<Profile>(["getProfile"])?.researchInterests).toBe("视觉"));
+    // Still as typed, so the next line starts where the user left off.
+    expect(research()).toBe("视觉\n");
     // An Agent saves while the page is open.
-    remote.profile = { ...initial, researchInterests: "多模态学习" };
+    remote.profile = { ...remote.profile, researchInterests: "多模态学习" };
     await act(async () => client.setQueryData(["getProfile"], remote.profile));
+    await vi.waitFor(() => expect(research()).toBe("多模态学习"));
     await edit("林晓晓");
-    await vi.waitFor(() => expect(remote.save).toHaveBeenCalledWith({ name: "林晓晓" }));
-    expect(document.querySelector<HTMLTextAreaElement>("#profile-research")?.value).toBe("多模态学习");
+    await vi.waitFor(() => expect(remote.profile.name).toBe("林晓晓"));
+    expect(remote.save).toHaveBeenLastCalledWith({ name: "林晓晓" });
+    expect(research()).toBe("多模态学习");
   } finally {
     await act(async () => root.unmount());
     client.clear();

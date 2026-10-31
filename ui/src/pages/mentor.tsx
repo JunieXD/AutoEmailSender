@@ -231,11 +231,13 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
           action="保存"
           initial={formOf(editing)}
           save={(form) =>
-            call("updateMentor", { id: editing.id, before: fieldsOf(editing), ...form }).catch((error: unknown) => {
-              // Opening again starts from what the mentor has now.
-              void queryClient.invalidateQueries({ queryKey: ["getMentor", editing.id] });
-              throw error;
-            })
+            call("updateMentor", { id: editing.id, before: fieldsOf(editing), ...form }).catch(
+              async (error: unknown) => {
+                // Opening again starts from what the mentor has now, so the error waits for it.
+                await queryClient.invalidateQueries({ queryKey: ["getMentor", editing.id] });
+                throw error;
+              },
+            )
           }
           onSaved={async (saved) => {
             // A load still under way may have read the mentor before this save.

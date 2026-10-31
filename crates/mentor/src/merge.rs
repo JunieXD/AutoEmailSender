@@ -58,7 +58,7 @@ pub async fn conflicting_drafts(
              AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.state = 'review'
                AND k.task_id IS NULL AND (k.kind = email.kind
                  OR k.kind IN ('first', 'follow_up') AND email.kind IN ('first', 'follow_up')))
-           ORDER BY id"#,
+           ORDER BY kind"#,
         keep,
         other,
     )

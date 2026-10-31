@@ -974,16 +974,12 @@ pub async fn edit(
     after: &MentorFields,
     now: i64,
 ) -> Result<Edited, SaveError> {
-    let mut tx = db.begin().await?;
-    // Writing first holds the write lock from the comparison through the save.
-    let touched = sqlx::query!("UPDATE mentor SET updated_at = ? WHERE id = ?", now, id)
-        .execute(&mut *tx)
-        .await?;
-    if touched.rows_affected() == 0 {
-        return Ok(Edited::Gone);
-    }
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let current = export::profiles(&mut tx, &[id]).await?;
-    if current.get(&id).map(|p| &p.fields) != Some(before) {
+    let Some(current) = current.get(&id) else {
+        return Ok(Edited::Gone);
+    };
+    if current.fields != *before {
         return Ok(Edited::Changed);
     }
     update(&mut *tx, id, after, now).await?;

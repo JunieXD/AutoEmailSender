@@ -25,8 +25,8 @@ export function MergeDialog({ ids, onClose }: { ids: [number, number]; onClose: 
   });
   const merge = useMutation({
     mutationFn: (pair: { keep: number; other: number; discardedDrafts: DraftKind[] }) => call("mergeMentors", pair),
-    // Drafts changed since the preview: show the new one before merging.
-    onError: () => void queryClient.invalidateQueries({ queryKey: ["previewMerge"] }),
+    // Drafts changed since the preview: the new one shows before merging can be tried again.
+    onError: () => queryClient.invalidateQueries({ queryKey: ["previewMerge"] }),
     onSuccess: async (_, pair) => {
       queryClient.removeQueries({ queryKey: ["getMentor", pair.other] });
       dropDrafts(queryClient, [pair.keep, pair.other]);

@@ -2117,3 +2117,42 @@ async fn confirmation_detects_recipient_changes_after_the_first_forty_characters
 async fn confirmation_detects_a_change_to_only_the_sixth_mentor(db: SqlitePool) {
     refuses_changed_candidate_recipient(db, 6, "shown@a.edu", "unshown@b.edu").await;
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_merge_is_confirmed_only_with_the_drafts_it_discards(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
+    let mut ids = Vec::new();
+    for name in ["王伟", "王伟伟"] {
+        let id = mentor::create(
+            &ctx.db,
+            &mentor::MentorFields {
+                name: name.into(),
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        email::save_first_draft(&ctx.db, id, "申请", "草稿", &[], 0)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    // A preview from before the other mentor's draft: the user would agree to discarding none.
+    let error = call_agent(
+        &ctx,
+        "mergeMentors",
+        json!({"keep":ids[0], "other":ids[1], "discardedDrafts":[]}),
+        |_| panic!("a merge whose preview is out of date was put to the user"),
+        pending(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::Invalid));
+    refused(
+        &ctx,
+        "mergeMentors",
+        json!({"keep":ids[0], "other":ids[1], "discardedDrafts":["first"]}),
+    )
+    .await;
+}
