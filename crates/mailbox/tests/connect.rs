@@ -114,3 +114,18 @@ async fn the_test_email_goes_to_the_mailbox_itself() {
         "{headers}"
     );
 }
+
+#[tokio::test]
+async fn a_throttled_login_says_to_wait_not_to_change_the_code() {
+    let pki = fakemail::pki();
+    let net = Net::new(vec![pki.root.clone()]).unwrap();
+    let (me, _) = mailbox(&pki, Security::Tls, "throttled").await;
+    let message = mailbox::check_sending(&net, &me)
+        .await
+        .unwrap_err()
+        .message();
+    assert!(
+        message.starts_with("服务商限制了登录或发信的频率"),
+        "{message}"
+    );
+}

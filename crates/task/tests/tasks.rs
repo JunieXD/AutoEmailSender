@@ -1338,6 +1338,7 @@ async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqliteP
     let (port, inbox) = fakemail::smtp_with_hooks(
         &pki,
         false,
+        || std::future::ready(()),
         move || {
             let signal = signal.clone();
             let proceed = proceed.clone();

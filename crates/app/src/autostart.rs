@@ -23,7 +23,16 @@ pub async fn set_autostart(app: AppHandle, enabled: bool) -> std::result::Result
         check_location(&executable)?;
         enable(&app, &executable).map_err(setting_error)
     } else {
-        app.autolaunch().disable().map_err(setting_error)
+        app.autolaunch().disable().map_err(setting_error)?;
+        // On Windows, an app run as administrator turns it on for every user of the computer,
+        // which only an administrator can turn off again.
+        if app.autolaunch().is_enabled().map_err(setting_error)? {
+            return Err(
+                "开机自启是以管理员身份开启的。右键 Auto Email Sender 选“以管理员身份运行”，再关掉它。"
+                    .into(),
+            );
+        }
+        Ok(())
     }
 }
 

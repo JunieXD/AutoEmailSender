@@ -495,6 +495,10 @@ async fn mark_sending(
         .execute(&mut conn)
         .await?;
     let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
+    // Edited since the login, the mailbox is logged in to again as it is now, next step.
+    if mailbox::account(&mut *tx, mailbox_id).await?.as_ref() != Some(account) {
+        return Ok(None);
+    }
     let at = now();
     let Some(before) = sqlx::query_as!(
         BeforeHandover,

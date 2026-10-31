@@ -129,20 +129,23 @@ pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
         || std::future::ready(()),
         || std::future::ready(()),
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await
 }
 
-/// Hooks pause recipient responses, body results, and rejection replies before they reach
+/// Hooks pause login, recipient responses, body results, and rejection replies before they reach
 /// the client.
-pub async fn smtp_with_hooks<R, B, E>(
+pub async fn smtp_with_hooks<A, R, B, E>(
     pki: &Pki,
     starttls: bool,
+    on_auth: impl Fn() -> A + Send + Sync + 'static,
     on_rcpt: impl Fn() -> R + Send + Sync + 'static,
     on_body: impl Fn() -> B + Send + Sync + 'static,
     on_reject: impl Fn() -> E + Send + Sync + 'static,
 ) -> (u16, Inbox)
 where
+    A: Future<Output = ()> + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
     B: Future<Output = ()> + Send + 'static,
     E: Future<Output = ()> + Send + 'static,
@@ -151,6 +154,7 @@ where
     let inbox = Inbox::default();
     let received = inbox.clone();
     let acceptor = tls.clone();
+    let on_auth = Arc::new(on_auth);
     let on_rcpt = Arc::new(on_rcpt);
     let on_body = Arc::new(on_body);
     let on_reject = Arc::new(on_reject);
@@ -159,6 +163,7 @@ where
             io,
             acceptor.clone(),
             received.clone(),
+            on_auth.clone(),
             on_rcpt.clone(),
             on_body.clone(),
             on_reject.clone(),
@@ -168,15 +173,17 @@ where
     (port, inbox)
 }
 
-async fn smtp_session<R, B, E>(
+async fn smtp_session<A, R, B, E>(
     mut io: BufReader<Box<dyn Stream>>,
     tls: TlsAcceptor,
     inbox: Inbox,
+    on_auth: Arc<impl Fn() -> A + Send + Sync>,
     on_rcpt: Arc<impl Fn() -> R + Send + Sync>,
     on_body: Arc<impl Fn() -> B + Send + Sync>,
     on_reject: Arc<impl Fn() -> E + Send + Sync>,
 ) -> std::io::Result<()>
 where
+    A: Future<Output = ()> + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
     B: Future<Output = ()> + Send + 'static,
     E: Future<Output = ()> + Send + 'static,
@@ -198,11 +205,10 @@ where
             return Ok(());
         }
         let words: Vec<&str> = line.split_whitespace().collect();
-        if words
-            .first()
-            .is_some_and(|word| word.eq_ignore_ascii_case("RCPT"))
-        {
-            on_rcpt().await;
+        match words.first().map(|w| w.to_ascii_uppercase()).as_deref() {
+            Some("AUTH") => on_auth().await,
+            Some("RCPT") => on_rcpt().await,
+            _ => {}
         }
         let reply = match words.first().map(|w| w.to_ascii_uppercase()).as_deref() {
             Some("EHLO") if encrypted => "250-fake\r\n250 AUTH PLAIN LOGIN\r\n",
