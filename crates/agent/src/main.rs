@@ -1,6 +1,7 @@
 mod client;
 mod mcp;
 
+use std::io::Read;
 use std::process::ExitCode;
 
 use serde_json::{Value, json};
@@ -11,6 +12,7 @@ const USAGE: &str = "Auto Email Sender：联系导师的本机 Agent 接口
   autoemail list                       按组列出操作及确认方式
   autoemail help <操作名>              查看操作说明及输入输出类型
   autoemail call <操作名> [JSON 输入]  调用操作，省略输入时为 {}
+  autoemail call <操作名> -            从标准输入读 JSON 输入（材料这类大输入用这个）
   autoemail mcp                        启动标准输入输出 MCP 服务器
   autoemail --help                     显示帮助
   autoemail --version                  显示命令行版本
@@ -46,11 +48,20 @@ async fn run() -> Result<bool, String> {
         ["--version"] => println!("autoemail {}", env!("CARGO_PKG_VERSION")),
         ["mcp"] => mcp::run().await?,
         ["call", op, rest @ ..] if rest.len() <= 1 => {
+            // Command lines are too short for Base64 materials: about 1 MB on macOS, 32K on Windows.
             let input = match rest.first() {
-                Some(input) => serde_json::from_str::<Value>(input)
-                    .map_err(|error| format!("JSON 输入不正确：{error}"))?,
-                None => json!({}),
+                Some(&"-") => {
+                    let mut input = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut input)
+                        .map_err(|error| format!("读不了标准输入：{error}"))?;
+                    input
+                }
+                Some(input) => (*input).to_owned(),
+                None => "{}".into(),
             };
+            let input = serde_json::from_str::<Value>(&input)
+                .map_err(|error| format!("JSON 输入不正确：{error}"))?;
             let result = call(op, input).await?;
             println!("{result}");
             return Ok(result.get("error").is_none());

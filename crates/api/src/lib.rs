@@ -383,8 +383,8 @@ operations! {
         "loginAccount" [none] => login_account(AccountCredentials) -> account::State;
         /// 向已注册的邮箱发送重置密码验证码。
         "sendPasswordResetCode" [none] => send_password_reset_code(AccountEmail) -> ();
-        /// 用验证码重置密码，所有设备的旧会话失效。
-        "resetAccountPassword" [none] => reset_account_password(AccountVerification) -> ();
+        /// 用验证码重置密码，所有设备的旧会话失效，旧的云端备份用新密码解不开。
+        "resetAccountPassword" [confirm] => reset_account_password(AccountVerification) -> ();
         /// 撤销当前设备的会话并退出登录。
         "logoutAccount" [none] => logout_account(Nothing) -> ();
         /// 输入邮箱和密码注销账号，删除服务器上的全部账号数据，本机数据保留。
@@ -521,7 +521,7 @@ operations! {
         "previewTaskSchedule" [none] => preview_task_schedule(task::ApprovalPreview)
             -> task::SchedulePreview;
         /// 更改指定任务的发送时间安排。
-        "changeTaskSchedule" [confirm] => change_task_schedule(task::ScheduleEdit) -> u64;
+        "changeTaskSchedule" [confirm_if "任务里有已批准的邮件时"] => change_task_schedule(task::ScheduleEdit) -> u64;
         /// 更改指定邮件的发送时间，plannedAt 为 UTC 毫秒时间戳。
         "rescheduleEmail" [confirm] => reschedule_email(RescheduleEmail) -> ();
         /// 立即发送指定 id 的已批准邮件。
@@ -564,7 +564,7 @@ operations! {
         /// 暂停指定任务：不再生成草稿，已批准的邮件也先不发，仍可以审核和批准。
         "pauseTask" [none] => pause_task(TaskId) -> ();
         /// 恢复指定任务：接着生成排队的草稿（会调用模型、产生用量），并发出已批准的邮件。
-        "resumeTask" [confirm] => resume_task(TaskId) -> ();
+        "resumeTask" [confirm_if "恢复后会发出已批准的邮件时"] => resume_task(TaskId) -> ();
         /// 停止指定任务：没发出的邮件全部取消（记录保留），任务不能再继续。
         "stopTask" [none] => stop_task(TaskId) -> ();
         /// 永久删除指定任务和其中没发出的邮件（包括已批准的），发出过的留在导师的往来里。
@@ -694,10 +694,10 @@ operations! {
         /// 添加发信和收信邮箱，返回新邮箱的 id。
         "addMailbox" [none] => add_mailbox(NewMailbox) -> MailboxId;
         /// 修改指定邮箱设置，可填写新的授权码。
-        "updateMailbox" [confirm_if "修改未到期暂停中的邮箱设置会恢复发信，或更改邮箱地址会影响已批准邮件时"] =>
+        "updateMailbox" [confirm_if "修改未到期暂停中的邮箱设置会恢复发出已批准的邮件，或更改邮箱地址会影响已批准邮件时"] =>
             update_mailbox(MailboxEdit) -> ();
         /// 立即恢复指定邮箱的发信。
-        "resumeMailbox" [confirm] => resume_mailbox(MailboxId) -> ();
+        "resumeMailbox" [confirm_if "恢复后会发出已批准的邮件时"] => resume_mailbox(MailboxId) -> ();
         /// 永久删除指定邮箱。
         "deleteMailbox" [confirm] => delete_mailbox(MailboxId) -> ();
         /// 测试给定邮箱配置能否连接发信服务器。

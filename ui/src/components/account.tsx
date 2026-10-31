@@ -153,7 +153,9 @@ export function AccountDialog({
                 </p>
               )}
               {mode === "reset" && (
-                <p className="text-sm text-muted-foreground">重置后，所有电脑上的应用都要重新登录。</p>
+                <p className="text-sm text-muted-foreground">
+                  重置后，所有电脑上的应用都要重新登录，旧的云端备份也解不开了。
+                </p>
               )}
               <p className="flex gap-4 text-sm">
                 {mode === "login" ? (
