@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { defaultScheduler, notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -177,6 +177,43 @@ it("saves only what is typed and not saved yet, and shows what an Agent saved", 
     expect(remote.save).toHaveBeenLastCalledWith({ name: "林晓晓" });
     expect(research()).toBe("多模态学习");
   } finally {
+    await act(async () => root.unmount());
+    client.clear();
+    container.remove();
+  }
+});
+
+it("does not send a field again whose save finished before the page heard of it", async () => {
+  const initial: Profile = { name: "林晓", researchInterests: null, rewritePreference: null, onboarded: false };
+  remote.profile = initial;
+  remote.save.mockReset().mockImplementation(async (form) => {
+    remote.profile = { ...remote.profile, ...form };
+    return remote.profile;
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+  client.setQueryData(["getProfile"], initial);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const held: (() => void)[] = [];
+  try {
+    await act(async () =>
+      root.render(
+        <QueryClientProvider client={client}>
+          <ProfileFields />
+        </QueryClientProvider>,
+      ),
+    );
+    // The page renders again only when told, as when the next key comes before that.
+    notifyManager.setScheduler((notify) => held.push(notify));
+    await edit("视觉", "#profile-research");
+    await vi.waitFor(() => expect(client.getMutationCache().getAll().at(-1)?.state.status).toBe("success"));
+    remote.profile = { ...remote.profile, researchInterests: "多模态学习" };
+    await edit("林晓晓");
+    expect(remote.save).toHaveBeenLastCalledWith({ name: "林晓晓" });
+  } finally {
+    notifyManager.setScheduler(defaultScheduler);
+    for (const notify of held) notify();
     await act(async () => root.unmount());
     client.clear();
     container.remove();

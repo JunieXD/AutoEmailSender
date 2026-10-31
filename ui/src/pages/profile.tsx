@@ -53,7 +53,9 @@ export function ProfileFields({ basic = false }: { basic?: boolean }) {
   if (!profile) return null;
   function edit(change: ProfileForm) {
     setTyped({ ...typed, ...change });
-    save.mutate({ ...unsaved, ...change });
+    // The last save may have finished since this render.
+    const done = queryClient.getMutationCache().findAll({ mutationKey }).at(-1)?.state.status === "success";
+    save.mutate({ ...(done ? {} : unsaved), ...change });
   }
   const shown = (key: keyof ProfileForm) => {
     const saved = profile[key] ?? "";
