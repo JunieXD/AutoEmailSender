@@ -17,9 +17,9 @@ const T: i64 = 1_800_000_000_000;
 /// returns the mentor and the material for writing.
 async fn setup(db: &SqlitePool) -> (i64, i64) {
     let me = profile::ProfileForm {
-        name: "林晓".into(),
-        research_interests: "多模态学习".into(),
-        rewrite_preference: "语气再正式一些".into(),
+        name: Some("林晓".into()),
+        research_interests: Some("多模态学习".into()),
+        rewrite_preference: Some("语气再正式一些".into()),
     };
     profile::update(db, &me, T).await.unwrap();
     let material = async |name: &str, for_writing: bool, text: &str| {

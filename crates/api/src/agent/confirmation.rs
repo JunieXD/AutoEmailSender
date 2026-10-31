@@ -671,8 +671,15 @@ async fn describe(
             )
         }
         "mergeMentors" => {
-            let input: crate::MentorMerge = parse(input)?;
+            let crate::PreviewedMerge {
+                pair: input,
+                discarded_drafts,
+            } = parse(input)?;
             let drafts = mentor::merge::conflicting_drafts(conn, input.keep, input.other).await?;
+            // What the user agrees to must be what the merge then checks it discards.
+            if drafts != discarded_drafts {
+                return Err(mentor::merge::MergeError::Changed.into());
+            }
             let canceled = sqlx::query_scalar!(
                 r#"SELECT count(*) AS "count!: i64" FROM email
                 WHERE mentor_id IN (?1, ?2) AND task_id IS NOT NULL

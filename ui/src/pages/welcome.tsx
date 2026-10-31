@@ -78,7 +78,7 @@ export function WelcomePage() {
       done: profile.data.name !== null,
       result: profile.data.name,
       intro: "AI 写信时用你的姓名落款，分析匹配度时参考你的意向研究方向。",
-      body: <ProfileFields profile={profile.data} basic />,
+      body: <ProfileFields basic />,
     },
     {
       title: "发信邮箱",

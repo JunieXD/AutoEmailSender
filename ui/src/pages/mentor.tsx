@@ -6,7 +6,7 @@ import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
 import { Confirm } from "@/components/batch-bar";
 import { Correspondence } from "@/components/correspondence";
-import { formOf, MentorDialog } from "@/components/mentor-dialog";
+import { fieldsOf, formOf, MentorDialog } from "@/components/mentor-dialog";
 import {
   Avatar,
   ContactLabel,
@@ -211,13 +211,14 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
 
 function Profile({ mentor: m }: { mentor: MentorDetail }) {
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
+  // The mentor as the edit began; the core refuses the edit if it has changed since.
+  const [editing, setEditing] = useState<MentorDetail | null>(null);
   const edit = (
     <Button
       variant="quiet"
       size="sm"
       className="text-muted-foreground hover:text-foreground"
-      onClick={() => setEditing(true)}
+      onClick={() => setEditing(m)}
     >
       编辑
     </Button>
@@ -228,8 +229,16 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
         <MentorDialog
           title="编辑资料"
           action="保存"
-          initial={formOf(m)}
-          save={(form) => call("updateMentor", { id: m.id, ...form })}
+          initial={formOf(editing)}
+          save={(form) =>
+            call("updateMentor", { id: editing.id, before: fieldsOf(editing), ...form }).catch(
+              async (error: unknown) => {
+                // Opening again starts from what the mentor has now, so the error waits for it.
+                await queryClient.invalidateQueries({ queryKey: ["getMentor", editing.id] });
+                throw error;
+              },
+            )
+          }
           onSaved={async (saved) => {
             // A load still under way may have read the mentor before this save.
             await queryClient.cancelQueries({ queryKey: ["getMentor", m.id] });
@@ -237,9 +246,9 @@ function Profile({ mentor: m }: { mentor: MentorDetail }) {
             // An edited profile may now agree with a library update, which then no longer waits.
             for (const queryKey of [["listMentors"], ["listLibraryUpdates"], ["libraryUpdateCount"]])
               void queryClient.invalidateQueries({ queryKey });
-            setEditing(false);
+            setEditing(null);
           }}
-          onClose={() => setEditing(false)}
+          onClose={() => setEditing(null)}
         />
       )}
       <dl className="grid grid-cols-[52px_minmax(0,1fr)] gap-x-3 gap-y-2 [&_dd]:wrap-anywhere [&_dt]:text-muted-foreground">

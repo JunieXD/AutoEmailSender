@@ -643,7 +643,8 @@ operations! {
         "setMentorNote" [none] => set_mentor_note(MentorNote) -> ();
         /// 添加一位导师，返回新导师的 id。
         "addMentor" [none] => add_mentor(mentor::MentorForm) -> MentorId;
-        /// 更新指定导师的资料。
+        /// 更新指定导师的资料。before 是编辑前 getMentor 读到的 name、aliases、emails、
+        /// affiliations、homepages、research；这之后资料有了变化就不保存，重新读取后再改。
         "updateMentor" [confirm_if "更改已批准邮件的收件地址时"] =>
             update_mentor(MentorEdit) -> mentor::MentorDetail;
         /// 设置联系导师使用的邮箱，mailboxId 为 null 时取消指定。
@@ -654,8 +655,9 @@ operations! {
             add_mentor_email(MentorAddress) -> mentor::MentorDetail;
         /// 预览把 other 导师并入 keep 导师的结果。
         "previewMerge" [none] => preview_merge(MentorMerge) -> mentor::merge::Preview;
-        /// 把 other 导师合并到 keep 导师。
-        "mergeMentors" [confirm] => merge_mentors(MentorMerge) -> ();
+        /// 把 other 导师合并到 keep 导师。discardedDrafts 是 previewMerge 给出的；这之后要删的草稿
+        /// 有了变化就不合并，重新预览后再合并。
+        "mergeMentors" [confirm] => merge_mentors(PreviewedMerge) -> ();
         /// 按筛选和分页条件读取回收站导师。
         "listTrash" [none] => list_trash(mentor::trash::TrashQuery) -> mentor::MentorPage;
         /// 将指定 id 列表中的导师移入回收站。
@@ -710,7 +712,7 @@ operations! {
     "个人资料" {
         /// 读取学生个人资料。
         "getProfile" [none] => get_profile(Nothing) -> profile::Profile;
-        /// 保存学生个人资料。
+        /// 保存学生个人资料，只改传了的字段，空字符串清空。
         "updateProfile" [none] => update_profile(profile::ProfileForm) -> profile::Profile;
         /// 标记首次使用引导已完成。
         "finishOnboarding" [none] => finish_onboarding(Nothing) -> ();
@@ -978,6 +980,8 @@ pub struct MentorIds {
 #[derive(Debug, Deserialize, TS)]
 pub struct MentorEdit {
     pub id: i64,
+    /// The fields as they were when editing began.
+    pub before: mentor::MentorFields,
     #[serde(flatten)]
     pub form: mentor::MentorForm,
 }
@@ -1000,6 +1004,15 @@ pub struct MentorMailbox {
 pub struct MentorMerge {
     pub keep: i64,
     pub other: i64,
+}
+
+/// A merge as its preview showed it.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewedMerge {
+    #[serde(flatten)]
+    pub pair: MentorMerge,
+    pub discarded_drafts: Vec<email::DraftKind>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -1076,8 +1089,17 @@ async fn update_mentor(
     input: MentorEdit,
 ) -> Result<mentor::MentorDetail, CallError> {
     let fields = input.form.check().map_err(CallError::invalid)?;
-    let applied = mentor::update(&ctx.db, input.id, &fields, now()).await?;
-    require_applied(applied, NO_MENTOR)?;
+    match mentor::edit(&ctx.db, input.id, &input.before, &fields, now()).await? {
+        mentor::Edited::Saved => {}
+        mentor::Edited::Changed => {
+            return Err(CallError::invalid(
+                "打开编辑之后，这位导师的资料在别处有了变化（比如合并、导入或导师库更新）。\
+                关掉后重新打开，再改一次。"
+                    .into(),
+            ));
+        }
+        mentor::Edited::Gone => return Err(CallError::not_found(NO_MENTOR)),
+    }
     look_up(ctx, input.id).await?;
     get_mentor(ctx, MentorId { id: input.id }).await
 }
@@ -1123,8 +1145,9 @@ async fn preview_merge(
     Ok(mentor::merge::preview(&ctx.db, input.keep, input.other).await?)
 }
 
-async fn merge_mentors(ctx: &Context, input: MentorMerge) -> Result<(), CallError> {
-    mentor::merge::merge(&ctx.db, input.keep, input.other, now()).await?;
+async fn merge_mentors(ctx: &Context, input: PreviewedMerge) -> Result<(), CallError> {
+    let MentorMerge { keep, other } = input.pair;
+    mentor::merge::merge(&ctx.db, keep, other, &input.discarded_drafts, now()).await?;
     ctx.reply_processor.wake();
     ctx.todo_reminders.wake();
     Ok(())
@@ -1278,6 +1301,9 @@ impl From<mentor::merge::MergeError> for CallError {
                 "{name}老师还有 {count} 封邮件会发出（待发送、发送中或发送失败）。等它们发出，\
                 或改回草稿后再合并。"
             )),
+            mentor::merge::MergeError::Changed => {
+                CallError::invalid("预览之后两位导师的草稿有了变化，请看过新的预览再合并。".into())
+            }
             mentor::merge::MergeError::Db(e) => e.into(),
         }
     }

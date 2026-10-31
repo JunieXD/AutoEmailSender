@@ -14,6 +14,8 @@ pub enum MergeError {
         name: String,
         count: i64,
     },
+    /// The drafts the merge would discard are no longer those its preview showed.
+    Changed,
     Db(sqlx::Error),
 }
 
@@ -28,6 +30,7 @@ impl std::fmt::Display for MergeError {
         match self {
             MergeError::Gone => write!(f, "mentor gone"),
             MergeError::Busy { .. } => write!(f, "mentor has emails still to go out"),
+            MergeError::Changed => write!(f, "drafts changed since the preview"),
             MergeError::Db(e) => write!(f, "{e}"),
         }
     }
@@ -55,7 +58,7 @@ pub async fn conflicting_drafts(
              AND EXISTS (SELECT 1 FROM email k WHERE k.mentor_id = ?1 AND k.state = 'review'
                AND k.task_id IS NULL AND (k.kind = email.kind
                  OR k.kind IN ('first', 'follow_up') AND email.kind IN ('first', 'follow_up')))
-           ORDER BY id"#,
+           ORDER BY kind"#,
         keep,
         other,
     )
@@ -81,9 +84,15 @@ pub async fn preview(db: &SqlitePool, keep: i64, other: i64) -> Result<Preview, 
     })
 }
 
-/// Merges `other` into `keep`, which takes its profile, mail and the rest, and deletes it. `now` is
-/// UTC milliseconds.
-pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(), MergeError> {
+/// Merges `other` into `keep`, which takes its profile, mail and the rest, and deletes it.
+/// `discarded` is what the preview said goes of the drafts. `now` is UTC milliseconds.
+pub async fn merge(
+    db: &SqlitePool,
+    keep: i64,
+    other: i64,
+    discarded: &[email::DraftKind],
+    now: i64,
+) -> Result<(), MergeError> {
     let mut tx = db.begin().await?;
     let both = sqlx::query!(
         "UPDATE mentor SET updated_at = ? WHERE id IN (?, ?) AND trashed_at IS NULL",
@@ -116,6 +125,11 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
             name: b.name,
             count: b.count,
         });
+    }
+    // A draft each can have only one: the kept mentor's stays.
+    let drafts = conflicting_drafts(&mut tx, keep, other).await?;
+    if drafts != discarded {
+        return Err(MergeError::Changed);
     }
     let (Some(a), Some(b)) = (detail(&mut tx, keep).await?, detail(&mut tx, other).await?) else {
         return Err(MergeError::Gone);
@@ -203,8 +217,7 @@ pub async fn merge(db: &SqlitePool, keep: i64, other: i64, now: i64) -> Result<(
         .await?;
     }
 
-    // A draft each can have only one: the kept mentor's stays.
-    for kind in conflicting_drafts(&mut tx, keep, other).await? {
+    for kind in drafts {
         sqlx::query!(
             r#"DELETE
             FROM email

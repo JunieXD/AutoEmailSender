@@ -3358,7 +3358,7 @@ async fn merging_preserves_canceled_mail_for_late_bounces(db: SqlitePool) {
             .unwrap();
             empty.push(id);
         }
-        mentor::merge::merge(&db, keep, other, at + DAY)
+        mentor::merge::merge(&db, keep, other, &[], at + DAY)
             .await
             .unwrap();
         assert!(

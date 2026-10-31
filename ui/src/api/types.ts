@@ -441,7 +441,11 @@ affiliations: Array<Affiliation>, homepages: Array<string>,
  */
 sourceUrl: string | null, research: string | null, papers: Array<string>, note: string | null, analysis: MatchAnalysis, contact: Contact, tags: Array<Tag>, trashed: boolean, library: Array<MentorLibraryRecord>, };
 
-export type MentorEdit = { id: number, name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
+export type MentorEdit = { id: number,
+/**
+ * The fields as they were when editing began.
+ */
+before: MentorFields, name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string, };
 
 export type MentorFields = { name: string, aliases: Array<string>, emails: Array<string>, affiliations: Array<Affiliation>, homepages: Array<string>, research: string | null, };
 
@@ -663,6 +667,8 @@ export type Preview = { sheets: Array<string>, sheet: number, columns: Array<Col
 
 export type PreviewImport = { decisions?: Decisions, fileName: string, data: string, setup: ImportSetup, };
 
+export type PreviewedMerge = { discardedDrafts: Array<DraftKind>, keep: number, other: number, };
+
 export type PreviousLetter = { subject: string | null, sentAt: number, };
 
 export type PreviousPreview = { subject: string | null, sentAt: number, attribution: string, bodyText: string | null, };
@@ -671,7 +677,7 @@ export type Problem = { "kind": "placeholder", name: string, } | { "kind": "no_s
 
 export type Profile = { name: string | null, researchInterests: string | null, rewritePreference: string | null, onboarded: boolean, };
 
-export type ProfileForm = { name: string, researchInterests: string, rewritePreference: string, };
+export type ProfileForm = { name?: string, researchInterests?: string, rewritePreference?: string, };
 
 export type Progress = { generating: number, review: number, generationFailed: number, approved: number, sent: number, failed: number, canceled: number, };
 
@@ -1044,7 +1050,7 @@ export interface Operations {
   setMentorMailbox: { input: MentorMailbox; output: MentorDetail };
   addMentorEmail: { input: MentorAddress; output: MentorDetail };
   previewMerge: { input: MentorMerge; output: MergePreview };
-  mergeMentors: { input: MentorMerge; output: null };
+  mergeMentors: { input: PreviewedMerge; output: null };
   listTrash: { input: TrashQuery; output: MentorPage };
   trashMentors: { input: MentorIds; output: null };
   restoreMentors: { input: MentorIds; output: null };

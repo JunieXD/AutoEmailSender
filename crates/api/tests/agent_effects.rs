@@ -632,6 +632,16 @@ async fn empty_save_does_not_delete_a_draft_whose_attachment_was_swapped(db: Sql
 }
 
 /// A paused task holding one approved first email to the mentor.
+/// The profile dialog's save of the mentor with only its emails changed.
+async fn emails_edit(ctx: &Context, id: i64, emails: &[&str]) -> Value {
+    let m = mentor::get(&ctx.db, id).await.unwrap().unwrap();
+    let before = json!({"name":m.name, "aliases":m.aliases, "emails":m.emails,
+        "affiliations":m.affiliations, "homepages":m.homepages, "research":m.research});
+    json!({"id":id, "before":before, "name":m.name, "aliases":m.aliases, "emails":emails,
+        "affiliations":m.affiliations, "homepages":m.homepages,
+        "research":m.research.unwrap_or_default()})
+}
+
 async fn paused_task(ctx: &Context, mentor: i64) -> (i64, i64) {
     let task = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO task (name, kind, writer, schedule, state, created_at)
@@ -672,8 +682,7 @@ async fn resume_task_rechecks_the_pending_recipient_address(db: SqlitePool) {
         call(
             &ctx,
             "updateMentor",
-            json!({"id":mentor, "name":"王伟", "emails":["new@example.invalid"],
-                "aliases":[], "affiliations":[], "homepages":[], "research":""}),
+            emails_edit(&ctx, mentor, &["new@example.invalid"]).await,
         )
         .await
         .unwrap();
@@ -975,8 +984,7 @@ async fn recipient_edits_recheck_schedules_including_unassigned_task_mail(db: Sq
             .await
             .unwrap();
         let input = if op == "updateMentor" {
-            json!({"id":mentor, "name":name, "emails":[after], "aliases":[],
-                "affiliations":[], "homepages":[], "research":""})
+            emails_edit(&ctx, mentor, &[&after]).await
         } else {
             let candidate = sqlx::query_scalar::<_, i64>(
                 r#"INSERT INTO candidate (name, emails, review, enrich)
@@ -1653,8 +1661,7 @@ async fn resume_mailbox_rechecks_recipients_and_deleting_a_task_rechecks_its_ema
         call(
             &ctx,
             "updateMentor",
-            json!({"id":mentor, "name":"王伟", "emails":["after@example.invalid"],
-            "aliases":[], "affiliations":[], "homepages":[], "research":""}),
+            emails_edit(&ctx, mentor, &["after@example.invalid"]).await,
         )
         .await
         .unwrap();
@@ -1839,10 +1846,7 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             .unwrap();
         let decisions = json!({"take":[], "matches":[], "restore":[]});
         let input = match op {
-            "updateMentor" => json!({
-                "id":mentor, "name":name, "emails":[after], "aliases":[],
-                "affiliations":[], "homepages":[], "research":""
-            }),
+            "updateMentor" => emails_edit(&ctx, mentor, &[&after]).await,
             "addMentorEmail" => json!({"id":mentor, "address":after}),
             "importMentors" => json!({
                 "fileName":"mentors.csv",
@@ -1901,6 +1905,12 @@ async fn recipient_edits_require_confirmation_only_for_approved_mail(db: SqliteP
             .execute(&ctx.db)
             .await
             .unwrap();
+        // The safe edit changed the emails the first one began from.
+        let input = if op == "updateMentor" {
+            emails_edit(&ctx, mentor, &[&after]).await
+        } else {
+            input
+        };
         call_agent(&ctx, op, input, |_| {}, pending())
             .await
             .unwrap();
@@ -2106,4 +2116,43 @@ async fn confirmation_detects_recipient_changes_after_the_first_forty_characters
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn confirmation_detects_a_change_to_only_the_sixth_mentor(db: SqlitePool) {
     refuses_changed_candidate_recipient(db, 6, "shown@a.edu", "unshown@b.edu").await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_merge_is_confirmed_only_with_the_drafts_it_discards(db: SqlitePool) {
+    let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
+    let mut ids = Vec::new();
+    for name in ["王伟", "王伟伟"] {
+        let id = mentor::create(
+            &ctx.db,
+            &mentor::MentorFields {
+                name: name.into(),
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        email::save_first_draft(&ctx.db, id, "申请", "草稿", &[], 0)
+            .await
+            .unwrap();
+        ids.push(id);
+    }
+    // A preview from before the other mentor's draft: the user would agree to discarding none.
+    let error = call_agent(
+        &ctx,
+        "mergeMentors",
+        json!({"keep":ids[0], "other":ids[1], "discardedDrafts":[]}),
+        |_| panic!("a merge whose preview is out of date was put to the user"),
+        pending(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error.code, ErrorCode::Invalid));
+    refused(
+        &ctx,
+        "mergeMentors",
+        json!({"keep":ids[0], "other":ids[1], "discardedDrafts":["first"]}),
+    )
+    .await;
 }

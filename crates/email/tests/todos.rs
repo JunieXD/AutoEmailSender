@@ -76,7 +76,7 @@ async fn manual_edits_completion_merge_and_permanent_deletion(db: SqlitePool) {
     todos::update(&db, id, &form("填报名表", None, None).check().unwrap(), 4)
         .await
         .unwrap();
-    mentor::merge::merge(&db, keep, m, 5).await.unwrap();
+    mentor::merge::merge(&db, keep, m, &[], 5).await.unwrap();
     assert!(todos::for_mentor(&db, m).await.unwrap().is_empty());
     let saved = todos::for_mentor(&db, keep).await.unwrap().remove(0);
     assert_eq!(saved.id, id);

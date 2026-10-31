@@ -525,7 +525,9 @@ async fn merged_mentors_keep_library_records_and_pending_choices(db: SqlitePool)
     let other = mentor_id(&db, "mentor_second").await;
     second.preview.units[0].title = Some("教授".into());
     change(&db, second, 2).await;
-    mentor::merge::merge(&db, keep, other, 300).await.unwrap();
+    mentor::merge::merge(&db, keep, other, &[], 300)
+        .await
+        .unwrap();
     assert_eq!(mentor_id(&db, "mentor_second").await, keep);
     let groups = updates::list(&db).await.unwrap();
     assert_eq!(groups[0].differences[0].id, keep);

@@ -2049,7 +2049,9 @@ async fn merging_first_and_follow_up_drafts_keeps_only_the_retained_mentors(db: 
                     [email::DraftKind::FollowUp]
                 ) && !keep_follow_up
         );
-        mentor::merge::merge(&db, keep, other, T + 1).await.unwrap();
+        mentor::merge::merge(&db, keep, other, &preview.discarded_drafts, T + 1)
+            .await
+            .unwrap();
         let pending: Vec<(i64, String)> = sqlx::query_as(
             r#"SELECT id, kind
             FROM email
@@ -2104,7 +2106,9 @@ async fn merging_two_follow_up_drafts_keeps_only_the_retained_mentors(db: Sqlite
         preview.discarded_drafts.as_slice(),
         [email::DraftKind::FollowUp]
     ));
-    mentor::merge::merge(&db, keep, other, T + 1).await.unwrap();
+    mentor::merge::merge(&db, keep, other, &preview.discarded_drafts, T + 1)
+        .await
+        .unwrap();
     let drafts: Vec<i64> = sqlx::query_scalar(
         r#"SELECT id
         FROM email
@@ -2140,7 +2144,9 @@ async fn merging_replied_mentors_cancels_follow_up_in_either_direction(db: Sqlit
             "From: m{replied}@example.com\nMessage-ID: <merge-reply-{n}@example.com>\nSubject: 回复\n\n欢迎交流。"
         ));
         receive::round(&db, &net, T + 2).await.unwrap();
-        mentor::merge::merge(&db, keep, other, T + 3).await.unwrap();
+        mentor::merge::merge(&db, keep, other, &[], T + 3)
+            .await
+            .unwrap();
         assert!(email::follow_up::draft(&db, keep).await.unwrap().is_none());
         let canceled = email::list(&db, keep)
             .await

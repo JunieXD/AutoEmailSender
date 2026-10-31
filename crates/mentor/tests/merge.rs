@@ -95,7 +95,9 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
 
     let preview = merge::preview(&db, li, ming).await.unwrap();
     assert_eq!((preview.emails, preview.affiliations), (2, 1));
-    merge::merge(&db, li, ming, 10).await.unwrap();
+    merge::merge(&db, li, ming, &preview.discarded_drafts, 10)
+        .await
+        .unwrap();
     let merged = mentor::get(&db, li).await.unwrap().unwrap();
     assert!(mentor::get(&db, ming).await.unwrap().is_none());
     assert_eq!(merged.aliases, ["Ming Li"]);
@@ -141,12 +143,37 @@ async fn a_mentor_listed_twice_becomes_one(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_draft_written_after_the_preview_is_not_discarded(db: SqlitePool) {
+    let li = mentor(&db, "李明", &["liming@gmail.com"], "北京大学").await;
+    let ming = mentor(&db, "Ming Li", &["ming@pku.edu.cn"], "北京大学").await;
+    first_email(&db, li, "review", 0).await.unwrap();
+    let preview = merge::preview(&db, li, ming).await.unwrap();
+    assert!(preview.discarded_drafts.is_empty());
+    // Written in another window while the merge dialog was open.
+    let draft = first_email(&db, ming, "review", 0).await.unwrap();
+    assert!(matches!(
+        merge::merge(&db, li, ming, &preview.discarded_drafts, 10).await,
+        Err(MergeError::Changed)
+    ));
+    let state: String = sqlx::query_scalar("SELECT state FROM email WHERE id = ?")
+        .bind(draft)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(state, "review");
+    let preview = merge::preview(&db, li, ming).await.unwrap();
+    merge::merge(&db, li, ming, &preview.discarded_drafts, 10)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn mentors_with_mail_to_go_or_in_the_trash_are_not_merged(db: SqlitePool) {
     let li = mentor(&db, "李明", &[], "北京大学").await;
     let ming = mentor(&db, "李明", &[], "北京大学").await;
     let approved = first_email(&db, ming, "approved", 0).await.unwrap();
     assert!(matches!(
-        merge::merge(&db, li, ming, 10).await,
+        merge::merge(&db, li, ming, &[], 10).await,
         Err(MergeError::Busy { count: 1, .. })
     ));
     exec(
@@ -157,11 +184,11 @@ async fn mentors_with_mail_to_go_or_in_the_trash_are_not_merged(db: SqlitePool) 
     .await;
     exec(&db, "UPDATE mentor SET trashed_at = 1 WHERE id = ?", ming).await;
     assert!(matches!(
-        merge::merge(&db, li, ming, 10).await,
+        merge::merge(&db, li, ming, &[], 10).await,
         Err(MergeError::Gone)
     ));
     assert!(matches!(
-        merge::merge(&db, li, li, 10).await,
+        merge::merge(&db, li, li, &[], 10).await,
         Err(MergeError::Gone)
     ));
     assert!(mentor::get(&db, ming).await.unwrap().is_some());
@@ -186,7 +213,7 @@ async fn compatible_affiliations_fill_blanks_and_keep_local_title(db: SqlitePool
     let preview = merge::preview(&db, a, b).await.unwrap();
     assert_eq!((preview.emails, preview.affiliations), (0, 1));
     assert!(mentor::get(&db, b).await.unwrap().is_some());
-    merge::merge(&db, a, b, 1).await.unwrap();
+    merge::merge(&db, a, b, &[], 1).await.unwrap();
     let m = mentor::get(&db, a).await.unwrap().unwrap();
     assert_eq!(
         m.affiliations,
@@ -245,7 +272,9 @@ async fn task_pair(db: &SqlitePool, states: [&str; 2]) -> (i64, [i64; 2], [i64; 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn merging_two_canceled_task_members_keeps_only_the_retained_mentors_email(db: SqlitePool) {
     let (task, mentors, emails) = task_pair(&db, ["canceled", "canceled"]).await;
-    merge::merge(&db, mentors[0], mentors[1], 10).await.unwrap();
+    merge::merge(&db, mentors[0], mentors[1], &[], 10)
+        .await
+        .unwrap();
     let rows: Vec<(i64, i64, Option<i64>)> =
         sqlx::query_as("SELECT id,mentor_id,task_id FROM email ORDER BY id")
             .fetch_all(&db)
@@ -266,7 +295,9 @@ async fn merging_sent_and_canceled_task_members_keeps_the_sent_email_in_either_d
         } else {
             emails[1]
         };
-        merge::merge(&db, mentors[0], mentors[1], 10).await.unwrap();
+        merge::merge(&db, mentors[0], mentors[1], &[], 10)
+            .await
+            .unwrap();
         let rows: Vec<(i64, i64, String)> =
             sqlx::query_as("SELECT id,mentor_id,state FROM email WHERE task_id=?")
                 .bind(task)
@@ -295,7 +326,9 @@ async fn merging_two_sent_task_members_preserves_both_letters_and_only_one_membe
             .fetch_all(&db)
             .await
             .unwrap();
-    merge::merge(&db, mentors[0], mentors[1], 10).await.unwrap();
+    merge::merge(&db, mentors[0], mentors[1], &[], 10)
+        .await
+        .unwrap();
     let after: Vec<(i64, String, String, i64)> =
         sqlx::query_as("SELECT id,message_id,body_md,sent_at FROM email ORDER BY id")
             .fetch_all(&db)
