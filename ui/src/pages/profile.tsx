@@ -53,7 +53,8 @@ export function ProfileFields({ basic = false }: { basic?: boolean }) {
   if (!profile) return null;
   function edit(change: ProfileForm) {
     setTyped({ ...typed, ...change });
-    // The last save may have finished since this render.
+    // The last save may have finished since this render. It is still the one this render saw: the
+    // settings page and the first-run guide never show the form together, so only this `edit` saves.
     const done = queryClient.getMutationCache().findAll({ mutationKey }).at(-1)?.state.status === "success";
     save.mutate({ ...(done ? {} : unsaved), ...change });
   }
