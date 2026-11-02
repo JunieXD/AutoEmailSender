@@ -1044,7 +1044,7 @@ export interface Operations {
   listMentors: { input: MentorQuery; output: MentorPage };
   mentorFilterOptions: { input: Nothing; output: MentorFilterOptions };
   getMentor: { input: MentorId; output: MentorDetail };
-  setMentorNote: { input: MentorNote; output: null };
+  setMentorNote: { input: MentorNote; output: string | null };
   addMentor: { input: MentorForm; output: MentorId };
   updateMentor: { input: MentorEdit; output: MentorDetail };
   setMentorMailbox: { input: MentorMailbox; output: MentorDetail };

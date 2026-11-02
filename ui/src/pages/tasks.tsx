@@ -8,9 +8,9 @@ import type { DraftFilter, DraftState, PlanColumn, Progress, TaskSummary, NewTas
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
 import { CreateTaskDialog } from "@/components/create-task";
-import { TaskLetter, type TaskComposerHandle } from "@/components/task-letter";
+import { TaskLetter } from "@/components/task-letter";
 import { dropFactChecks } from "@/components/ai-writing";
-import { waitForSaves } from "@/components/letter-composer";
+import { type ComposerHandle, waitForSaves } from "@/components/letter-composer";
 import { Avatar } from "@/components/mentor";
 import { Pager, pageParam } from "@/components/mentor-table";
 import { Notice } from "@/components/notice";
@@ -203,7 +203,7 @@ export function TaskReviewPage() {
   const search = useSearch({ from: "/tasks/$id" });
   const navigate = useNavigate({ from: "/tasks/$id" });
   const client = useQueryClient();
-  const composer = useRef<TaskComposerHandle>(null);
+  const composer = useRef<ComposerHandle>(null);
   const [error, setError] = useState<string | null>(null);
   const [bulk, setBulk] = useState(false);
   const [changingSchedule, setChangingSchedule] = useState(false);
@@ -527,7 +527,7 @@ function DraftDetail({
 }: {
   id: number;
   task: TaskSummary;
-  composer: RefObject<TaskComposerHandle | null>;
+  composer: RefObject<ComposerHandle | null>;
   mobileOpen: boolean;
   onBack: () => void;
   onApproved: () => void;
@@ -551,8 +551,7 @@ function DraftDetail({
     mutationFn: async (
       op: "removeTaskEmail" | "regenerateTaskEmail" | "reapplyTaskTemplate" | "withdrawEmail" | "retryTaskGeneration",
     ) => {
-      const editor = composer.current;
-      await editor?.flush();
+      await composer.current?.flush();
       if (op === "withdrawEmail") await call(op, { id });
       else if (op === "retryTaskGeneration") await call(op, key);
       else await call(op, key);
@@ -560,8 +559,8 @@ function DraftDetail({
       if (op === "reapplyTaskTemplate") {
         const stored = await call("getTaskDraft", key);
         await client.cancelQueries({ queryKey: ["getTaskDraft", id] });
+        // The composer shows it in place of the letter, all of whose saves are done.
         client.setQueryData(["getTaskDraft", id], stored);
-        editor?.replace(stored);
       }
     },
     onSuccess: () => refreshTasks(client),

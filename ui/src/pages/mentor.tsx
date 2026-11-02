@@ -1,9 +1,10 @@
-import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type MutationState, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { ChevronLeft, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { MentorDetail } from "@/api/types";
+import { useChangedElsewhere } from "@/changed-elsewhere";
 import { Confirm } from "@/components/batch-bar";
 import { Correspondence } from "@/components/correspondence";
 import { fieldsOf, formOf, MentorDialog } from "@/components/mentor-dialog";
@@ -127,7 +128,7 @@ export function MentorPage() {
           </Section>
         )}
         <Section title="备注">
-          <Note key={m.id} id={m.id} note={m.note} />
+          <Note key={m.id} id={m.id} />
         </Section>
       </aside>
     </div>
@@ -428,8 +429,13 @@ function Points({ title, items, marker = "" }: { title: string; items: string[];
  * Saves as the user types. One mentor's saves run one at a time and outlive this page, so the last
  * text wins even after leaving and coming back quickly, and an unsaved note is shown again on return.
  */
-function Note({ id, note }: { id: number; note: string | null }) {
+function Note({ id }: { id: number }) {
   const queryClient = useQueryClient();
+  const note = useQuery({
+    queryKey: ["getMentor", id],
+    queryFn: () => call("getMentor", { id }),
+    select: (m) => m.note,
+  }).data;
   const mutationKey = ["setMentorNote", id];
   const save = useMutation({
     mutationKey,
@@ -437,13 +443,19 @@ function Note({ id, note }: { id: number; note: string | null }) {
     mutationFn: (text: string) => call("setMentorNote", { id, note: text }),
     // The page may be opened again from the cache before it reloads. A load still under way may
     // have read the note before this save, so it must not land afterwards.
-    onSuccess: async (_, text) => {
+    onSuccess: async (stored) => {
       await queryClient.cancelQueries({ queryKey: ["getMentor", id] });
-      queryClient.setQueryData<MentorDetail>(["getMentor", id], (m) => m && { ...m, note: text.trim() ? text : null });
+      queryClient.setQueryData<MentorDetail>(["getMentor", id], (m) => m && { ...m, note: stored });
     },
   });
-  const last = useMutationState({ filters: { mutationKey }, select: (m) => m.state }).at(-1);
-  const [text, setText] = useState(() => (last && last.status !== "success" ? String(last.variables) : (note ?? "")));
+  const last = useMutationState<MutationState<string | null, Error, string>>({
+    filters: { mutationKey },
+    select: (m) => m.state,
+  }).at(-1);
+  const [text, setText] = useState(() => (last && last.status !== "success" ? (last.variables ?? "") : (note ?? "")));
+  // Written elsewhere, such as by an Agent or an import: shown as it is now.
+  const changed = useChangedElsewhere(note, last, (a, b) => a === b);
+  if (changed !== undefined) setText(changed ?? "");
   return (
     <>
       <Textarea

@@ -5,6 +5,7 @@ import { type ReactNode, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Mailbox, Material, TestLetter } from "@/api/types";
 import { Attachments } from "@/components/attachments";
+import { openLinks } from "@/components/correspondence";
 import { ImportDialog } from "@/components/import-dialog";
 import { MailboxDialog, useProviders } from "@/components/mailbox-dialog";
 import { EMPTY_FORM, MentorDialog } from "@/components/mentor-dialog";
@@ -376,7 +377,7 @@ function TestLetterPreview({ mailbox, materials }: { mailbox: Mailbox; materials
       {/* On white whatever the app's theme, as mail apps show letters. */}
       <article className="rounded-lg border border-border bg-white px-6 py-5 text-black">
         <h3 className="mb-3 font-semibold break-words">{l.subject || "（无主题）"}</h3>
-        <div dangerouslySetInnerHTML={{ __html: letterHtml(l.bodyMd, style.data) }} />
+        <div onClick={openLinks} dangerouslySetInnerHTML={{ __html: letterHtml(l.bodyMd, style.data) }} />
       </article>
       <Attachments files={materials.filter((m) => l.attachments.includes(m.id))} />
       <p className="text-sm text-muted-foreground">

@@ -62,6 +62,21 @@ export function waitForSaves(client: QueryClient, mutationKey: readonly unknown[
 
 export type ComposerHandle = { flush: () => Promise<void>; approve: () => void };
 
+type SavedLetter = { subject: string | null; bodyMd: string | null; attachments: number[] };
+
+const NO_LETTER: SavedLetter = { subject: null, bodyMd: null, attachments: [] };
+
+/** Whether two drafts as stored hold the same letter, none being an empty one. */
+export function sameLetter(a: SavedLetter | null, b: SavedLetter | null) {
+  const [x, y] = [a ?? NO_LETTER, b ?? NO_LETTER];
+  return (
+    (x.subject ?? "") === (y.subject ?? "") &&
+    (x.bodyMd ?? "") === (y.bodyMd ?? "") &&
+    x.attachments.length === y.attachments.length &&
+    x.attachments.every((id, i) => id === y.attachments[i])
+  );
+}
+
 /** Uploads belong to the mentor, so a remounted editor stays locked until attachment is saved. */
 export function useUploading(mentorId: number) {
   return (

@@ -10,6 +10,7 @@ import { Calendar } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { composing } from "@/composing";
 
 type Due = Pick<Todo, "dueDate" | "dueTime">;
 
@@ -172,7 +173,9 @@ export function TodoEditor({
         maxLength={100}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === "Escape" && onCancel()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && !composing(e)) onCancel();
+        }}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Popover open={picking} onOpenChange={setPicking}>

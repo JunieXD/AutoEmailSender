@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 import { TAG_COLORS } from "@/api/types";
+import { composing } from "@/composing";
 
 /** The colour for the next new tag: the presets in turn. */
 function nextColor(count: number): string {
@@ -370,6 +371,7 @@ function TagRow({
         onChange={(e) => onName(e.target.value)}
         onBlur={onRename}
         onKeyDown={(e) => {
+          if (composing(e)) return;
           if (e.key === "Enter") onRename();
           // Esc first gives up the edit; the dialog stays open until it is pressed again.
           if (e.key === "Escape") onRevert();

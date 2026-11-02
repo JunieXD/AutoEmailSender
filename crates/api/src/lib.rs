@@ -639,8 +639,8 @@ operations! {
             -> mentor::filters::MentorFilterOptions;
         /// 读取指定 id 的导师完整资料。
         "getMentor" [none] => get_mentor(MentorId) -> mentor::MentorDetail;
-        /// 保存指定导师的备注。
-        "setMentorNote" [none] => set_mentor_note(MentorNote) -> ();
+        /// 保存指定导师的备注，返回存下的备注；只有空白时清空备注，返回 null。
+        "setMentorNote" [none] => set_mentor_note(MentorNote) -> Option<String>;
         /// 添加一位导师，返回新导师的 id。
         "addMentor" [none] => add_mentor(mentor::MentorForm) -> MentorId;
         /// 更新指定导师的资料。before 是编辑前 getMentor 读到的 name、aliases、emails、
@@ -1043,9 +1043,13 @@ async fn get_mentor(ctx: &Context, input: MentorId) -> Result<mentor::MentorDeta
         .ok_or_else(|| CallError::not_found(NO_MENTOR))
 }
 
-async fn set_mentor_note(ctx: &Context, input: MentorNote) -> Result<(), CallError> {
-    let note = Some(input.note.as_str()).filter(|n| !n.trim().is_empty());
-    require_applied(mentor::set_note(&ctx.db, input.id, note).await?, NO_MENTOR)
+async fn set_mentor_note(ctx: &Context, input: MentorNote) -> Result<Option<String>, CallError> {
+    let note = Some(input.note).filter(|n| !n.trim().is_empty());
+    require_applied(
+        mentor::set_note(&ctx.db, input.id, note.as_deref()).await?,
+        NO_MENTOR,
+    )?;
+    Ok(note)
 }
 
 /// Adds the declarations of `T` and every named type it refers to, keyed by name.

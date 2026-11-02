@@ -32,6 +32,7 @@ import {
 } from "@/components/letter-composer";
 import { LazyLetterEditor } from "@/components/lazy-letter-editor";
 import { usePlaceholders } from "@/components/template-dialog";
+import { composing } from "@/composing";
 import { day, time } from "@/format";
 import { letterHtml, letterText } from "@/letter";
 
@@ -298,7 +299,7 @@ function Composer({
         if (
           e.key === "Enter" &&
           (e.metaKey || e.ctrlKey) &&
-          !e.nativeEvent.isComposing &&
+          !composing(e) &&
           e.target instanceof HTMLElement &&
           e.currentTarget.contains(e.target)
         ) {

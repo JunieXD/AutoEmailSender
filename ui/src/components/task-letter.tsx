@@ -10,6 +10,7 @@ import { Link } from "@tanstack/react-router";
 import { useImperativeHandle, useRef, useState, type Ref, type ReactNode } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { DraftEdit, Material, MentorDetail, TaskDraft, TaskSummary } from "@/api/types";
+import { useChangedElsewhere } from "@/changed-elsewhere";
 import { AiButton, FactCheckStatus, Rewrite, useFactCheck, useWriting } from "@/components/ai-writing";
 import { Attachments } from "@/components/attachments";
 import { LetterBody } from "@/components/correspondence";
@@ -18,6 +19,7 @@ import {
   LetterProblems,
   LetterSend,
   quotes,
+  sameLetter,
   useDraftSave,
   useUploading,
   waitForSaves,
@@ -28,8 +30,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { day, time } from "@/format";
 import { letterHtml, letterText } from "@/letter";
-
-export type TaskComposerHandle = ComposerHandle & { replace: (draft: TaskDraft) => void };
 
 /** Task-specific state uses the same saving, picker, rules and approval controls as first letters and replies. */
 export function TaskLetter({
@@ -51,7 +51,7 @@ export function TaskLetter({
   actions?: ReactNode;
   onApproved: () => void;
   replacing: boolean;
-  ref?: Ref<TaskComposerHandle>;
+  ref?: Ref<ComposerHandle>;
 }) {
   const client = useQueryClient();
   const { save, last, scope, flush } = useDraftSave<DraftEdit, TaskDraft>(
@@ -77,6 +77,15 @@ export function TaskLetter({
       },
   );
   const [body, setBody] = useState({ version: 0, markdown: letter.bodyMd });
+  const stored = useQuery({
+    queryKey: ["getTaskDraft", draft.id],
+    queryFn: () => call("getTaskDraft", { taskId: task.id, id: draft.id }),
+  }).data;
+  const changed = useChangedElsewhere(stored, last, sameLetter);
+  if (changed) {
+    setLetter({ ...letter, subject: changed.subject, bodyMd: changed.bodyMd, attachments: changed.attachments });
+    if (changed.bodyMd !== body.markdown) setBody({ version: body.version + 1, markdown: changed.bodyMd });
+  }
   const attached = materials.filter((m) => letter.attachments.includes(m.id));
   const writing = useWriting(mentor.id, { taskId: task.id, id: draft.id });
   const busy = writing.latest?.status === "pending";
@@ -131,15 +140,9 @@ export function TaskLetter({
   });
   const locked = readOnly || busy || uploading || approving || approve.isSuccess || review !== undefined || replacing;
   const sendButton = useRef<HTMLButtonElement>(null);
-  function replaceLetter(next: DraftEdit) {
-    setLetter(next);
-    setBody((previous) => ({ version: previous.version + 1, markdown: next.bodyMd }));
-  }
   useImperativeHandle(ref, () => ({
     flush: saved,
     approve: () => sendButton.current?.click(),
-    replace: (stored) =>
-      replaceLetter({ ...letter, subject: stored.subject, bodyMd: stored.bodyMd, attachments: stored.attachments }),
   }));
   function edit(next: DraftEdit) {
     setLetter(next);
@@ -147,7 +150,8 @@ export function TaskLetter({
   }
   function rewrite(next: DraftEdit) {
     save.mutate(next);
-    replaceLetter(next);
+    setLetter(next);
+    setBody({ version: body.version + 1, markdown: next.bodyMd });
   }
   const blocker = !address ? (
     "导师尚未填写邮箱，可在资料里填写。"

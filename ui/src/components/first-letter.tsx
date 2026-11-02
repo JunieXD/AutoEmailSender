@@ -20,12 +20,14 @@ import type {
   MentorDetail,
   TemplateSummary,
 } from "@/api/types";
+import { useChangedElsewhere } from "@/changed-elsewhere";
 import { AiButton, FactCheckStatus, Rewrite, useFactCheck, useWriting } from "@/components/ai-writing";
 import {
   AttachMenu,
   LetterProblems,
   LetterSend,
   quotes,
+  sameLetter,
   useDraftSave,
   useUploading,
 } from "@/components/letter-composer";
@@ -63,6 +65,15 @@ export function FirstLetter({ mentor }: { mentor: MentorDetail }) {
       />
     )
   );
+}
+
+function edited(mentorId: number, draft: FirstDraft | null): FirstDraftEdit {
+  return {
+    mentorId,
+    subject: draft?.subject ?? "",
+    bodyMd: draft?.bodyMd ?? "",
+    attachments: draft?.attachments ?? [],
+  };
 }
 
 function LoadFailed({ error }: { error: Error }) {
@@ -109,7 +120,7 @@ function Composer({
     () =>
       restored ??
       (draft
-        ? { mentorId, subject: draft.subject ?? "", bodyMd: draft.bodyMd ?? "", attachments: draft.attachments }
+        ? edited(mentorId, draft)
         : { mentorId, subject: "", bodyMd: "", attachments: attachedByDefault(materials) }),
   );
   // The editor reads its text when mounted, so a template applied or a fix mounts a new one.
@@ -119,6 +130,17 @@ function Composer({
     setShown(prefill.data);
     setLetter({ ...letterState, subject: prefill.data?.subject ?? "", bodyMd: prefill.data?.bodyMd ?? "" });
     setBody({ version: body.version + 1, markdown: prefill.data?.bodyMd ?? "" });
+  }
+  const stored = useQuery({
+    queryKey: ["getFirstDraft", mentorId],
+    queryFn: () => call("getFirstDraft", { id: mentorId }),
+  }).data;
+  const changed = useChangedElsewhere(stored, last, sameLetter);
+  if (changed !== undefined) {
+    const next = edited(mentorId, changed);
+    setTouched(true);
+    setLetter(next);
+    if (next.bodyMd !== body.markdown) setBody({ version: body.version + 1, markdown: next.bodyMd });
   }
   // A material deleted since the draft was read is attached no more.
   const attached = materials.filter((m) => letterState.attachments.includes(m.id));
