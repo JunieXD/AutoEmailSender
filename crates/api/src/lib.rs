@@ -25,11 +25,13 @@ mod statistics;
 mod tasks;
 mod todos;
 pub mod updater;
+mod writing_turns;
 use crawling::*;
 use statistics::*;
 use std::collections::BTreeMap;
 use tasks::*;
 use todos::*;
+use writing_turns::{Writing, WritingRequest, cancel_writing};
 
 use base64::prelude::{BASE64_STANDARD, Engine};
 use serde::{Deserialize, Serialize};
@@ -52,6 +54,7 @@ pub struct Context {
     pub crawler: crawl::runner::Crawler,
     pub generator: task::generation::Generator,
     pub model_limit: model::background::Limit,
+    pub writings: writing_turns::Writings,
     pub mail_domains: MailDomains,
     pub cloud_backup: backup::cloud::CloudBackup,
     /// Where material files are kept.
@@ -80,6 +83,7 @@ impl Context {
             todo_reminders: Default::default(),
             generator: Default::default(),
             model_limit: Default::default(),
+            writings: Default::default(),
             mail_domains: Default::default(),
         }
     }
@@ -556,7 +560,7 @@ operations! {
         /// 检查给定任务草稿，返回需要处理的问题。
         "checkTaskDraft" [none] => check_task_draft(task::DraftEdit) -> Vec<check::Problem>;
         /// 根据给定任务草稿使用模型生成邮件。
-        "writeTaskDraft" [none] => write_task_draft(task::DraftEdit) -> writing::Letter;
+        "writeTaskDraft" [none] => write_task_draft(Writing<task::DraftEdit>) -> writing::Letter;
         /// 检查并列出任务中可批准的草稿。
         /// 会在后台查询收件地址的 DNS 记录，以检查是否有邮件服务器。
         "prepareTaskApproval" [none] => prepare_task_approval(TaskId)
@@ -779,7 +783,7 @@ operations! {
         /// 批准指定导师的追问草稿并安排发送。
         "approveFollowUp" [confirm] => approve_follow_up(ReplyEmail) -> ();
         /// 根据给定草稿使用模型撰写追问邮件。
-        "writeFollowUp" [none] => write_follow_up(FirstDraftEdit) -> writing::Letter;
+        "writeFollowUp" [none] => write_follow_up(Writing<FirstDraftEdit>) -> writing::Letter;
         /// 检查给定追问草稿，返回需要处理的问题。
         "checkFollowUpDraft" [none] => check_follow_up_draft(ReplyDraftEdit) -> Vec<check::Problem>;
     }
@@ -796,7 +800,7 @@ operations! {
         /// 批准指定导师的回复草稿并安排发送。
         "approveReply" [confirm] => approve_reply(ReplyEmail) -> ();
         /// 根据给定草稿使用模型撰写回复邮件。
-        "writeReply" [none] => write_reply(ReplyDraftEdit) -> writing::Letter;
+        "writeReply" [none] => write_reply(Writing<ReplyDraftEdit>) -> writing::Letter;
         /// 向指定导师的邮件草稿添加材料。
         "attachDraftMaterial" [none] => attach_draft_material(DraftMaterial) -> bool;
     }
@@ -809,7 +813,9 @@ operations! {
         /// 检查给定首封草稿，返回需要处理的问题。
         "checkFirstDraft" [none] => check_first_draft(FirstDraftEdit) -> Vec<check::Problem>;
         /// 根据给定草稿使用模型撰写首封邮件。
-        "writeLetter" [none] => write_letter(FirstDraftEdit) -> writing::Letter;
+        "writeLetter" [none] => write_letter(Writing<FirstDraftEdit>) -> writing::Letter;
+        /// 撤回还在排队等模型的 AI 写信请求；已经发给模型的照常完成。
+        "cancelWriting" [none] => cancel_writing(WritingRequest) -> ();
         /// 查询邮箱域名的 DNS 记录，检查是否有邮件服务器，返回需要处理的问题。
         "checkMailDomain" [none] => check_mail_domain(MailAddress) -> Option<check::Problem>;
         /// 批准指定导师的首封草稿并安排发送。
@@ -1066,7 +1072,8 @@ fn collect<T: TS + 'static + ?Sized>(cfg: &Config, decls: &mut BTreeMap<String, 
             if T::output_path().is_none() {
                 return;
             }
-            let (name, decl) = (T::name(self.cfg), T::decl(self.cfg));
+            // A generic type has one declaration for all its uses.
+            let (name, decl) = (T::ident(self.cfg), T::decl(self.cfg));
             match self.decls.get(&name) {
                 Some(seen) => assert_eq!(seen, &decl, "two types are named {name}"),
                 None => {
@@ -1074,6 +1081,7 @@ fn collect<T: TS + 'static + ?Sized>(cfg: &Config, decls: &mut BTreeMap<String, 
                     T::visit_dependencies(self);
                 }
             }
+            T::visit_generics(self);
         }
     }
     let mut visitor = Visitor { cfg, decls };
@@ -2070,8 +2078,14 @@ async fn check_first_draft(
 }
 
 /// Drafts the letter when it is blank and rewrites it otherwise.
-async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::Letter, CallError> {
-    let _permit = ctx.model_limit.acquire().await;
+async fn write_letter(
+    ctx: &Context,
+    Writing {
+        request,
+        edit: input,
+    }: Writing<FirstDraftEdit>,
+) -> Result<writing::Letter, CallError> {
+    let turn = ctx.writing_turn(request).await?;
     let current = writing::Letter {
         subject: input.subject,
         body_md: input.body_md,
@@ -2095,6 +2109,7 @@ async fn write_letter(ctx: &Context, input: FirstDraftEdit) -> Result<writing::L
     let email_id = email::first_draft(&ctx.db, input.mentor_id)
         .await?
         .map(|draft| draft.id);
+    turn.send()?;
     Ok(
         writing::write(&ctx.net, &prepared, &current, |purpose, usage| {
             model::usage::record_for_email(
@@ -2469,9 +2484,12 @@ async fn approve_follow_up(ctx: &Context, input: ReplyEmail) -> Result<(), CallE
 }
 async fn write_follow_up(
     ctx: &Context,
-    input: FirstDraftEdit,
+    Writing {
+        request,
+        edit: input,
+    }: Writing<FirstDraftEdit>,
 ) -> Result<writing::Letter, CallError> {
-    let _permit = ctx.model_limit.acquire().await;
+    let turn = ctx.writing_turn(request).await?;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
@@ -2492,6 +2510,7 @@ async fn write_follow_up(
         .await?
         .map(|draft| draft.id);
     let at = now();
+    turn.send()?;
     Ok(writing::write(
         &ctx.net,
         &prepared,
@@ -2526,8 +2545,14 @@ impl From<writing::reply::Error> for CallError {
     }
 }
 
-async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Letter, CallError> {
-    let _permit = ctx.model_limit.acquire().await;
+async fn write_reply(
+    ctx: &Context,
+    Writing {
+        request,
+        edit: input,
+    }: Writing<ReplyDraftEdit>,
+) -> Result<writing::Letter, CallError> {
+    let turn = ctx.writing_turn(request).await?;
     let chosen = model::chosen(&ctx.db)
         .await?
         .ok_or(writing::Error::NoModel)?;
@@ -2549,6 +2574,7 @@ async fn write_reply(ctx: &Context, input: ReplyDraftEdit) -> Result<writing::Le
         .filter(|draft| draft.reply_to == input.reply_to)
         .map(|draft| draft.id);
     let at = now();
+    turn.send()?;
     Ok(writing::write(
         &ctx.net,
         &prepared,
@@ -2987,9 +3013,120 @@ mod writing_tests {
     use super::*;
     use std::{
         future::{Future, poll_fn},
+        pin::Pin,
         sync::Arc,
         task::Poll,
     };
+
+    #[sqlx::test(migrator = "db::MIGRATOR")]
+    async fn a_letter_canceled_before_it_goes_out_never_reaches_the_model(db: SqlitePool) {
+        let mentor = mentor::create(
+            &db,
+            &mentor::MentorFields {
+                name: "王伟".into(),
+                ..Default::default()
+            },
+            0,
+        )
+        .await
+        .unwrap();
+        let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
+        let (address, received) =
+            provider::scripted(vec![("<subject>申请</subject><body>信</body>", "stop")])
+                .await
+                .unwrap();
+        let fields = model::ModelForm {
+            name: String::new(),
+            provider: model::providers::CUSTOM.into(),
+            base_url: address.clone(),
+            model: "m".into(),
+            input_price: None,
+            output_price: None,
+        }
+        .check()
+        .unwrap();
+        let id = model::create(&ctx.db, &fields, "", 0).await.unwrap();
+        assert!(
+            model::agree(&ctx.db, id, "custom", Some(&address))
+                .await
+                .unwrap()
+        );
+        let mut permits = Vec::new();
+        for _ in 0..model::background::CONCURRENCY {
+            permits.push(ctx.model_limit.acquire().await);
+        }
+        let write = |request: &str| {
+            call(
+                &ctx,
+                "writeLetter",
+                serde_json::json!({
+                    "mentorId": mentor, "subject": "", "bodyMd": "", "attachments": [],
+                    "request": request
+                }),
+            )
+        };
+        let cancel = |request: &str| {
+            call(
+                &ctx,
+                "cancelWriting",
+                serde_json::json!({ "request": request }),
+            )
+        };
+        async fn waiting(writing: Pin<&mut impl Future>) {
+            let mut writing = writing;
+            poll_fn(|cx| {
+                assert!(writing.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            })
+            .await;
+        }
+
+        // Canceled while it waits for a turn, it keeps its request until it ends.
+        let mut first = std::pin::pin!(write("r1"));
+        waiting(first.as_mut()).await;
+        cancel("r1").await.unwrap();
+        let mut taken = std::pin::pin!(write("r1"));
+        poll_fn(|cx| {
+            let Poll::Ready(Err(e)) = taken.as_mut().poll(cx) else {
+                panic!("a request still taken was accepted again");
+            };
+            assert!(matches!(e.code, ErrorCode::BadInput));
+            Poll::Ready(())
+        })
+        .await;
+        assert!(first.await.is_err());
+
+        // Dropped while it waits, it leaves nothing behind.
+        let mut dropped = Box::pin(write("r2"));
+        waiting(dropped.as_mut()).await;
+        drop(dropped);
+        let mut again = std::pin::pin!(write("r2"));
+        waiting(again.as_mut()).await;
+        cancel("r2").await.unwrap();
+        assert!(again.await.is_err());
+
+        // Canceled after its turn came up, while the letter is still being put together.
+        let mut held = Vec::new();
+        for _ in 0..ctx.db.options().get_max_connections() {
+            held.push(ctx.db.acquire().await.unwrap());
+        }
+        drop(permits);
+        let mut last = std::pin::pin!(write("r3"));
+        waiting(last.as_mut()).await;
+        cancel("r3").await.unwrap();
+        drop(held);
+        assert!(last.await.is_err());
+
+        assert!(received.lock().unwrap().is_empty());
+        assert_eq!(
+            ctx.model_limit
+                .acquire()
+                .await
+                .semaphore()
+                .available_permits(),
+            model::background::CONCURRENCY - 1
+        );
+    }
 
     #[sqlx::test(migrator = "db::MIGRATOR")]
     async fn queued_letter_uses_the_model_address_saved_before_its_turn(db: SqlitePool) {

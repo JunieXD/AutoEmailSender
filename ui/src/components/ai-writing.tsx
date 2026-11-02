@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode } from "react";
 import {
   type MutationState,
   type QueryClient,
+  type QueryKey,
   useMutation,
   useMutationState,
   useQuery,
@@ -22,7 +23,7 @@ import { letterText } from "@/letter";
 
 // AI writing in a composer (docs/ui.md#交互).
 
-type WritingEdit = FirstDraftEdit & { replyTarget?: Omit<ReplyTarget, "id"> | null };
+type WritingEdit = FirstDraftEdit & { replyTarget?: Omit<ReplyTarget, "id"> | null; request?: string };
 
 /** An empty reply has no saved draft yet; its AI request keeps the selected target on return. */
 export function useReplyWritingTarget(mentorId: number) {
@@ -57,11 +58,15 @@ export function useWriting(
       if (task) return call("writeTaskDraft", { ...letter, ...task });
       if (replyTo !== undefined) {
         await waitForSaves(queryClient, ["saveReplyDraft", mentorId]);
+        // Canceled while the draft was saving, so that the core had nothing to withdraw yet.
+        const current = queryClient.getMutationCache().find<Letter, Error, WritingEdit>({ mutationKey });
+        if (current?.state.variables?.request !== letter.request) throw new Error("这个请求已经取消");
         return call("writeReply", {
           mentorId,
           replyTo,
           bodyMd: letter.bodyMd,
           attachments: letter.attachments,
+          request: letter.request,
         });
       }
       return call(followUpId !== undefined ? "writeFollowUp" : "writeLetter", letter);
@@ -73,16 +78,32 @@ export function useWriting(
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  /** Drops the request and its answer; one still to come is not shown. */
   function forget() {
-    const cache = queryClient.getMutationCache();
-    for (const m of cache.findAll({ mutationKey })) cache.remove(m);
+    forgetWriting(queryClient, mutationKey);
   }
   function start(letter: WritingEdit) {
     forget();
-    write.mutate(letter);
+    write.mutate({ ...letter, request: crypto.randomUUID() });
   }
   return { latest, start, forget };
+}
+
+/**
+ * Drops a composer's AI writing: an answer still to come is not shown, and a request still waiting
+ * behind other model work is not sent at all.
+ */
+export function forgetWriting(queryClient: QueryClient, mutationKey: QueryKey) {
+  const cache = queryClient.getMutationCache();
+  // A key like ["writeReply", mentorId] takes in every reply's, each with its own request.
+  for (;;) {
+    const m = cache.find<Letter, Error, WritingEdit>({ mutationKey, exact: false });
+    if (!m) return;
+    const request = m.state.status === "pending" ? m.state.variables?.request : undefined;
+    // The core only marks the request withdrawn, which cannot fail by itself; one it misses goes
+    // out like one canceled too late.
+    if (request) void call("cancelWriting", { request });
+    cache.remove(m);
+  }
 }
 
 /**

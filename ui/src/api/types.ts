@@ -924,6 +924,15 @@ export type WordFile = { name: string, html: string, };
 
 export type Writer = "ai" | "template";
 
+export type Writing<T> = {
+/**
+ * Chosen by the app's UI, so that `cancelWriting` can withdraw the call before it reaches the
+ * model; agents leave it out.
+ */
+request?: string, } & T;
+
+export type WritingRequest = { request: string, };
+
 export const TAG_COLORS = ["#991b1b", "#c2410c", "#985a0c", "#2c7a4f", "#0e7490", "#3f6aa8", "#7e22ce", "#6f6762"] as const;
 
 export interface Operations {
@@ -1011,7 +1020,7 @@ export interface Operations {
   attachTaskMaterial: { input: TaskMaterial; output: boolean };
   saveTaskDraft: { input: DraftEdit; output: null };
   checkTaskDraft: { input: DraftEdit; output: Array<Problem> };
-  writeTaskDraft: { input: DraftEdit; output: Letter };
+  writeTaskDraft: { input: Writing<DraftEdit>; output: Letter };
   prepareTaskApproval: { input: TaskId; output: Array<ApprovalCandidate> };
   approveTaskEmails: { input: TaskApprovals; output: number };
   pauseTask: { input: TaskId; output: null };
@@ -1104,19 +1113,20 @@ export interface Operations {
   saveFollowUpDraft: { input: FollowUpEdit; output: FollowUpDraft | null };
   discardFollowUpDraft: { input: EmailId; output: null };
   approveFollowUp: { input: ReplyEmail; output: null };
-  writeFollowUp: { input: FirstDraftEdit; output: Letter };
+  writeFollowUp: { input: Writing<FirstDraftEdit>; output: Letter };
   checkFollowUpDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   getReplyDraft: { input: MentorId; output: ReplyDraft | null };
   getReplyTarget: { input: ReplyTargetQuery; output: ReplyTarget | null };
   saveReplyDraft: { input: ReplyDraftEdit; output: ReplyDraft | null };
   checkReplyDraft: { input: ReplyDraftEdit; output: Array<Problem> };
   approveReply: { input: ReplyEmail; output: null };
-  writeReply: { input: ReplyDraftEdit; output: Letter };
+  writeReply: { input: Writing<ReplyDraftEdit>; output: Letter };
   attachDraftMaterial: { input: DraftMaterial; output: boolean };
   getFirstDraft: { input: MentorId; output: FirstDraft | null };
   saveFirstDraft: { input: FirstDraftEdit; output: FirstDraft | null };
   checkFirstDraft: { input: FirstDraftEdit; output: Array<Problem> };
-  writeLetter: { input: FirstDraftEdit; output: Letter };
+  writeLetter: { input: Writing<FirstDraftEdit>; output: Letter };
+  cancelWriting: { input: WritingRequest; output: null };
   checkMailDomain: { input: MailAddress; output: Problem | null };
   approveFirstEmail: { input: FirstEmail; output: null };
   getAiReplyTodos: { input: Nothing; output: boolean };

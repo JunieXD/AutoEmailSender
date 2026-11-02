@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { QueryClient } from "@tanstack/react-query";
 import type { Affiliation, Contact, ContactStatus, DraftKind, ReplyOutcome } from "@/api/types";
+import { forgetWriting } from "@/components/ai-writing";
 import { refreshTasks } from "@/components/task-cache";
 import { day } from "@/format";
 
@@ -139,15 +140,15 @@ export function dropDrafts(queryClient: QueryClient, ids: number[], kind: DraftK
   for (const id of ids) {
     if (kind === "all" || kind === "reply") {
       queryClient.removeQueries({ queryKey: ["getReplyDraft", id] });
-      for (const m of mutations.findAll({ mutationKey: ["writeReply", id] })) mutations.remove(m);
+      forgetWriting(queryClient, ["writeReply", id]);
       for (const m of mutations.findAll({ mutationKey: ["factCheckEmail", "getReplyDraft", id] })) mutations.remove(m);
       for (const m of mutations.findAll({ mutationKey: ["saveReplyDraft", id], status: "error" })) mutations.remove(m);
     }
     if (kind === "all" || kind === "follow_up") {
       queryClient.removeQueries({ queryKey: ["getFollowUpDraft", id] });
+      forgetWriting(queryClient, ["writeFollowUp", id]);
       for (const key of [
         ["saveFollowUpDraft", id],
-        ["writeFollowUp", id],
         ["factCheckEmail", "getFollowUpDraft", id],
       ]) {
         for (const m of mutations.findAll({ mutationKey: key })) mutations.remove(m);
@@ -156,7 +157,7 @@ export function dropDrafts(queryClient: QueryClient, ids: number[], kind: DraftK
     if (kind === "all" || kind === "first") {
       queryClient.removeQueries({ queryKey: ["getFirstDraft", id] });
       for (const m of mutations.findAll({ mutationKey: ["saveFirstDraft", id], status: "error" })) mutations.remove(m);
-      for (const m of mutations.findAll({ mutationKey: ["writeLetter", id] })) mutations.remove(m);
+      forgetWriting(queryClient, ["writeLetter", id]);
       for (const m of mutations.findAll({ mutationKey: ["factCheckEmail", "getFirstDraft", id] })) mutations.remove(m);
     }
   }

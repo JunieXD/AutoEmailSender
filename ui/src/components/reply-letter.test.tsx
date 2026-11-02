@@ -99,6 +99,8 @@ vi.mock("@/api/call", () => ({
       return null;
     }
     if (op === "getFirstDraft" || op === "getFollowUpDraft" || op === "getFollowUpEntry") return null;
+    // Dropping a reply's hidden AI withdraws it too.
+    if (op === "cancelWriting") return null;
     if (op === "sendingPlan") {
       const emails = input.column === "pending" && remote.plan && !remote.withdrawn ? [remote.plan] : [];
       return { emails, total: emails.length };

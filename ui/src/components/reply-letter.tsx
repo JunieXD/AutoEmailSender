@@ -13,6 +13,7 @@ import type { Material, MentorDetail, ReplyDraft, ReplyDraftEdit, ReplyTarget, F
 import {
   AiButton,
   FactCheckStatus,
+  forgetWriting,
   Rewrite,
   useFactCheck,
   useReplyWritingTarget,
@@ -219,11 +220,8 @@ function Composer({
   }
   const persistTarget = useEffectEvent(() => {
     if (!editing?.target?.messageId) return;
-    if (selection.previousReplyTo !== editing.letter.replyTo) {
-      const cache = queryClient.getMutationCache();
-      for (const m of cache.findAll({ mutationKey: ["writeReply", mentorId, selection.previousReplyTo] }))
-        cache.remove(m);
-    }
+    if (selection.previousReplyTo !== editing.letter.replyTo)
+      forgetWriting(queryClient, ["writeReply", mentorId, selection.previousReplyTo]);
     save.mutate(editing);
   });
   useEffect(() => {

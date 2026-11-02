@@ -37,6 +37,7 @@ pub(crate) fn visible(op: &str) -> bool {
             | "previewMcpConfig"
             | "writeMcpConfig"
             | "mcpConfigText"
+            | "cancelWriting"
     )
 }
 

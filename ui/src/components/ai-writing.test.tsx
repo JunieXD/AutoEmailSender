@@ -4,19 +4,22 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import type { Letter, ModelConfig, ReplyTarget } from "@/api/types";
+import { dropDrafts } from "./mentor";
 import { ModelAction, useReplyWritingTarget, useWriting } from "./ai-writing";
 
 const remote = vi.hoisted(
   (): {
     models: ModelConfig[];
     write?: (input: Record<string, unknown>) => Promise<Letter>;
-  } => ({ models: [] }),
+    canceled: unknown[];
+  } => ({ models: [], canceled: [] }),
 );
 vi.mock("@tanstack/react-router", () => ({ Link: ({ children }: { children: ReactNode }) => <span>{children}</span> }));
 vi.mock("@/api/call", () => ({
   errorMessage: (error: Error) => error.message,
   call: async (op: string, input: Record<string, unknown>) => {
     if (op === "writeReply" && remote.write) return remote.write(input);
+    if (op === "cancelWriting") return void remote.canceled.push(input.request);
     if (op === "listModelConfigs") return structuredClone(remote.models);
     if (op === "listModelProviders") return [];
     if (op === "agreeModel") {
@@ -161,4 +164,20 @@ it("keeps an empty reply's AI target and result on return, and discards canceled
     container.remove();
     remote.write = undefined;
   }
+});
+
+it("withdraws every AI request still waiting for the mentors whose drafts are dropped", async () => {
+  remote.canceled = [];
+  const client = new QueryClient();
+  const cache = client.getMutationCache();
+  const waiting = (mutationKey: unknown[], request: string) =>
+    void cache.build(client, { mutationKey, mutationFn: () => new Promise(() => {}) }).execute({ request });
+  waiting(["writeReply", 7, "<a@example.edu.cn>"], "a");
+  waiting(["writeReply", 7, "<b@example.edu.cn>"], "b");
+  waiting(["writeFollowUp", 7, 3], "c");
+  waiting(["writeReply", 8, "<c@example.edu.cn>"], "d");
+  await vi.waitFor(() => expect(cache.findAll({ status: "pending" })).toHaveLength(4));
+  dropDrafts(client, [7]);
+  expect(remote.canceled).toEqual(["a", "b", "c"]);
+  expect(cache.findAll()).toHaveLength(1);
 });

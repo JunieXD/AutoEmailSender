@@ -74,9 +74,9 @@ pub async fn check_task_draft(
 }
 pub async fn write_task_draft(
     ctx: &Context,
-    edit: task::DraftEdit,
+    Writing { request, edit }: Writing<task::DraftEdit>,
 ) -> Result<writing::Letter, CallError> {
-    let _permit = ctx.model_limit.acquire().await;
+    let turn = ctx.writing_turn(request).await?;
     let t = sqlx::query!(
         "SELECT kind,model_config_id FROM task WHERE id = ?",
         edit.task_id
@@ -120,6 +120,7 @@ pub async fn write_task_draft(
     )
     .await?;
     let at = now();
+    turn.send()?;
     let mut letter = writing::write(
         &ctx.net,
         &prepared,
