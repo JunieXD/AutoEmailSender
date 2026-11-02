@@ -484,6 +484,19 @@ async fn wire_errors_become_actionable_messages() {
     ));
 }
 
+#[test]
+fn a_busy_server_is_waited_for_in_seconds() {
+    let wait = |seconds| {
+        Error::Server(ApiError {
+            code: ErrorCode::RateLimited,
+            retry_after_seconds: Some(seconds),
+        })
+        .message()
+    };
+    assert!(wait(5).contains("5 秒"), "{}", wait(5));
+    assert!(wait(60).contains("1 分钟"), "{}", wait(60));
+}
+
 #[tokio::test]
 async fn redirects_cannot_forward_account_credentials() {
     let mut origin = Provider::start().await.unwrap();

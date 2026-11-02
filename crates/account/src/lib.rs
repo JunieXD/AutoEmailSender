@@ -478,6 +478,8 @@ impl Error {
                 ErrorCode::InvalidCode => "验证码不对或已过期，请重新获取验证码。".into(),
                 ErrorCode::InvalidCredentials => "邮箱或密码不对，请检查后重试。".into(),
                 ErrorCode::RateLimited => match error.retry_after_seconds {
+                    // A busy server asks for a few seconds; the limits per hour, for minutes.
+                    Some(seconds @ ..60) => format!("请求太频繁，请 {seconds} 秒后再试。"),
                     Some(seconds) => {
                         format!("请求太频繁，请 {} 分钟后再试。", seconds.div_ceil(60))
                     }
