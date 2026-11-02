@@ -46,6 +46,11 @@ async fn an_address_is_added_once_in_any_letter_case(db: SqlitePool) {
     let again = form("me@QQ.com").check().unwrap();
     let result = mailbox::create(&db, &again, "s", 0).await;
     assert!(matches!(result, Err(SaveError::AddressTaken)), "{result:?}");
+    // As Chinese input methods type it.
+    let full_width = form("Ｍｅ＠ｑｑ．ｃｏｍ").check().unwrap();
+    assert_eq!(full_width.address.to_string(), "Me@qq.com");
+    let result = mailbox::create(&db, &full_width, "s", 0).await;
+    assert!(matches!(result, Err(SaveError::AddressTaken)), "{result:?}");
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

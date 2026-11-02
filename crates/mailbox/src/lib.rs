@@ -41,7 +41,7 @@ pub struct Mailbox {
     pub needs_secret: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Server {
     #[ts(type = "string")]
     pub host: Cow<'static, str>,
@@ -86,11 +86,10 @@ pub struct MailboxFields {
 }
 
 impl MailboxForm {
-    /// Trims the text and checks every field; the error says what to fix.
+    /// Trims the text, folds a full-width address and checks every field; the error says what
+    /// to fix.
     pub fn check(self) -> Result<MailboxFields, String> {
-        let address = self
-            .address
-            .trim()
+        let address = cloud_api::tidy_email(self.address.trim())
             .parse()
             .map_err(|_| "邮箱地址格式不正确")?;
         let sender_name = self.sender_name.trim();
@@ -141,7 +140,7 @@ pub fn checked_secret(secret: &str) -> Option<String> {
 }
 
 /// What logging in to a mailbox takes.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Account {
     pub address: lettre::Address,
     pub sender_name: String,
@@ -320,7 +319,10 @@ pub async fn secret(
 }
 
 /// What logging in to a saved mailbox takes.
-pub async fn account(db: &SqlitePool, id: i64) -> Result<Option<Account>, sqlx::Error> {
+pub async fn account(
+    db: impl sqlx::SqliteExecutor<'_>,
+    id: i64,
+) -> Result<Option<Account>, sqlx::Error> {
     let Some(r) = sqlx::query!(
         r#"SELECT address, sender_name, secret AS "secret!",
              smtp_host, smtp_port AS "smtp_port: u16", smtp_security AS "smtp_security: Security",

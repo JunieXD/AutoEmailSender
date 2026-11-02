@@ -1,5 +1,7 @@
 use std::io;
 
+use crate::pause::{Failure, PauseKind, classify};
+
 /// Why talking to a mail server failed. Displays in English for the log; `message` is for the user.
 #[derive(Debug)]
 pub enum MailError {
@@ -112,6 +114,15 @@ impl MailError {
                 "和 {host} 建立加密连接失败（{source}）。检查加密方式和端口是否对应：SSL/TLS \
                 一般用 465、993 端口，STARTTLS 一般用 587、143 端口。"
             ),
+            // Checking the code or trying again at once would only keep the limit on.
+            MailError::Login { reply, .. } | MailError::Refused { reply, .. }
+                if matches!(classify(self), Failure::Pause(PauseKind::Throttled(_))) =>
+            {
+                format!(
+                    "服务商限制了登录或发信的频率（服务器回复：{reply}）。过一段时间再试，\
+                    授权码不用改；短时间里反复尝试会让限制更久。"
+                )
+            }
             MailError::Login { reply, .. } => format!(
                 "登录被拒绝（服务器回复：{reply}）。检查授权码或密码有没有填错，\
                 邮箱设置里有没有开启 IMAP/SMTP 服务；\

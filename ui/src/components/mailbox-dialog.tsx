@@ -59,8 +59,9 @@ function formOf(m: Mailbox): NewMailbox {
   };
 }
 
-/** The provider that serves the address's domain. */
-function byDomain(providers: Provider[], address: string): Provider | undefined {
+/** The provider that serves the address's domain, full-width as Chinese input methods type it or not. */
+function byDomain(providers: Provider[], typed: string): Provider | undefined {
+  const address = typed.normalize("NFKC");
   const domain = address
     .slice(address.lastIndexOf("@") + 1)
     .trim()
@@ -172,7 +173,8 @@ export function MailboxDialog({
                 <Input
                   ref={addressRef}
                   id="mailbox-address"
-                  type="email"
+                  // Not type="email": the browser would reject full-width input the core normalizes.
+                  inputMode="email"
                   autoComplete="off"
                   spellCheck={false}
                   value={form.address}
@@ -321,7 +323,7 @@ function ProviderField({
       </Field>
     );
   }
-  if (!form.address.includes("@")) return null;
+  if (!form.address.normalize("NFKC").includes("@")) return null;
   const hosted = providers.filter((p) => p.domains.length === 0);
   return (
     <Field label="服务商" id="mailbox-provider">

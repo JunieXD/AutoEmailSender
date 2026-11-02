@@ -48,7 +48,7 @@ export function LetterStyleSection() {
     <Section title="信件样式">
       <p className="text-sm text-muted-foreground">每封信都用这套样式，改了马上保存；已经批准的信不受影响。</p>
       {style.error && <p className="text-sm text-destructive">信件样式没能加载：{errorMessage(style.error)}</p>}
-      {style.data && <LetterStyleFields saved={style.data} />}
+      {style.data && <LetterStyleFields />}
     </Section>
   );
 }
@@ -57,10 +57,13 @@ const mutationKey = ["updateLetterStyle"];
 
 /**
  * Saves each choice. Saves run one at a time and outlive this page, so the last choice wins even
- * after leaving and coming back quickly, and one not yet saved is shown again on return.
+ * after leaving and coming back quickly, and one not yet saved is shown again on return. Once
+ * saved, the style shows as the core has it, so that a change an Agent made since is not saved back.
  */
-function LetterStyleFields({ saved }: { saved: LetterStyle }) {
+function LetterStyleFields() {
   const queryClient = useQueryClient();
+  // Read here, not passed in, so that a render sees the style and the saves at the same moment.
+  const saved = useQuery({ queryKey: ["getLetterStyle"], queryFn: () => call("getLetterStyle", {}) }).data;
   const save = useMutation({
     mutationKey,
     scope: { id: "updateLetterStyle" },
@@ -75,9 +78,11 @@ function LetterStyleFields({ saved }: { saved: LetterStyle }) {
     filters: { mutationKey },
     select: (m) => m.state,
   }).at(-1);
-  const [style, setStyle] = useState(last?.status === "success" ? saved : (last?.variables ?? saved));
+  const [chosen, setChosen] = useState(last?.variables);
+  if (!saved) return null;
+  const style = last?.status === "success" ? saved : (chosen ?? saved);
   function edit(next: LetterStyle) {
-    setStyle(next);
+    setChosen(next);
     save.mutate(next);
   }
   return (

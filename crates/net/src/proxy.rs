@@ -13,13 +13,18 @@ pub enum Proxy {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
+    /// An IPv6 address without its brackets, as name lookups take it.
     pub host: String,
     pub port: u16,
 }
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.host, self.port)
+        if self.host.contains(':') {
+            write!(f, "[{}]:{}", self.host, self.port)
+        } else {
+            write!(f, "{}:{}", self.host, self.port)
+        }
     }
 }
 
@@ -102,6 +107,10 @@ fn system() -> Option<Proxy> {
 fn windows_proxy(server: &str) -> Option<Proxy> {
     let endpoint = |s: &str| {
         let (host, port) = s.trim().rsplit_once(':')?;
+        let host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
         Some(Endpoint {
             host: host.to_owned(),
             port: port.parse().ok()?,
@@ -147,5 +156,9 @@ mod tests {
         );
         assert_eq!(windows_proxy("ftp=127.0.0.1:1"), None);
         assert_eq!(windows_proxy("127.0.0.1"), None);
+        // Looked up without the brackets, written with them.
+        let ipv6 = windows_proxy("http=[::1]:7890;https=[::1]:7890").unwrap();
+        assert_eq!(ipv6.endpoint().host, "::1");
+        assert_eq!(ipv6.url(), "http://[::1]:7890");
     }
 }

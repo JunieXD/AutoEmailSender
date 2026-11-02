@@ -33,24 +33,28 @@ async fn mailbox(db: &SqlitePool, secret: &str) -> (Net, Inbox) {
         || std::future::ready(()),
         || std::future::ready(()),
         || std::future::ready(()),
+        || std::future::ready(()),
     )
     .await
 }
 
-async fn mailbox_with_hooks<R, B, E>(
+async fn mailbox_with_hooks<A, R, B, E>(
     db: &SqlitePool,
     secret: &str,
+    on_auth: impl Fn() -> A + Send + Sync + 'static,
     on_rcpt: impl Fn() -> R + Send + Sync + 'static,
     on_body: impl Fn() -> B + Send + Sync + 'static,
     on_reject: impl Fn() -> E + Send + Sync + 'static,
 ) -> (Net, Inbox)
 where
+    A: Future<Output = ()> + Send + 'static,
     R: Future<Output = ()> + Send + 'static,
     B: Future<Output = ()> + Send + 'static,
     E: Future<Output = ()> + Send + 'static,
 {
     let pki = fakemail::pki();
-    let (port, inbox) = fakemail::smtp_with_hooks(&pki, false, on_rcpt, on_body, on_reject).await;
+    let (port, inbox) =
+        fakemail::smtp_with_hooks(&pki, false, on_auth, on_rcpt, on_body, on_reject).await;
     let server = |port| Server {
         host: Cow::Borrowed("localhost"),
         port,
@@ -421,6 +425,7 @@ async fn an_old_failure_does_not_pause_saved_mailbox_settings(db: SqlitePool) {
             secret,
             || std::future::ready(()),
             || std::future::ready(()),
+            || std::future::ready(()),
             move || {
                 let (entered, proceed) = (entered.clone(), proceed.clone());
                 let first = first_failure.swap(false, Ordering::SeqCst);
@@ -475,6 +480,72 @@ async fn an_old_failure_does_not_pause_saved_mailbox_settings(db: SqlitePool) {
         assert_eq!(inbox.lock().unwrap().len(), 1);
         mailbox::delete(&db, primary.id).await.unwrap();
     }
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_mailbox_edited_during_the_login_sends_as_edited(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let logging_in = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let first_login = AtomicBool::new(true);
+    let (entered, proceed) = (logging_in.clone(), release.clone());
+    let (net, inbox) = mailbox_with_hooks(
+        &db,
+        SECRET,
+        move || {
+            let (entered, proceed) = (entered.clone(), proceed.clone());
+            let first = first_login.swap(false, Ordering::SeqCst);
+            async move {
+                if first {
+                    entered.notify_one();
+                    proceed.notified().await;
+                }
+            }
+        },
+        || std::future::ready(()),
+        || std::future::ready(()),
+        || std::future::ready(()),
+    )
+    .await;
+    let owner = approve(&db, "wang@example.edu.cn", &[], T).await;
+    let primary = mailbox::list(&db, T).await.unwrap().remove(0);
+    let fields = MailboxForm {
+        address: fakemail::BACKUP_ADDRESS.into(),
+        sender_name: primary.sender_name,
+        provider: primary.provider,
+        smtp: primary.smtp,
+        imap: primary.imap,
+        daily_limit: primary.daily_limit,
+        min_interval_s: primary.min_interval_s,
+    }
+    .check()
+    .unwrap();
+    let changing = async {
+        logging_in.notified().await;
+        assert!(
+            mailbox::update(&db, primary.id, &fields, SECRET)
+                .await
+                .unwrap()
+        );
+        release.notify_one();
+    };
+    // Only catches a hang; no timeout arranges the business ordering.
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        tokio::join!(send::step(&db, &writes, &net, nowhere(), || T), changing)
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(first_email(&db, owner).await.delivery, Delivery::Approved);
+    assert!(inbox.lock().unwrap().is_empty());
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    let sent = inbox.lock().unwrap().remove(0);
+    assert!(
+        sent.contains(&format!("<{}>", fakemail::BACKUP_ADDRESS)),
+        "{sent}"
+    );
 }
 
 async fn backup_mailbox(db: &SqlitePool) -> i64 {
@@ -1973,6 +2044,7 @@ async fn expiry_after_durable_claim_restores_the_previous_attempt(db: SqlitePool
     let (net, inbox) = mailbox_with_hooks(
         &db,
         SECRET,
+        || std::future::ready(()),
         move || {
             if enabled.load(Ordering::SeqCst) {
                 advancing.store(T + MINUTE + 3_600_000, Ordering::SeqCst);
@@ -2046,6 +2118,7 @@ async fn review_deadline_crossed_during_envelope_must_not_upload(db: SqlitePool)
     let (net, inbox) = mailbox_with_hooks(
         &db,
         SECRET,
+        || std::future::ready(()),
         move || {
             advancing.store(T + 3_600_000, Ordering::SeqCst);
             std::future::ready(())
@@ -2098,6 +2171,7 @@ async fn deadline_crossed_after_body_upload_keeps_the_uncertain_attempt(db: Sqli
         &db,
         SECRET,
         || std::future::ready(()),
+        || std::future::ready(()),
         move || {
             advancing.store(T + 3_600_000, Ordering::SeqCst);
             std::future::ready(())
@@ -2140,6 +2214,7 @@ async fn controlled_mailbox(db: &SqlitePool) -> (Net, Inbox, Arc<Envelope>) {
     let (net, inbox) = mailbox_with_hooks(
         db,
         SECRET,
+        || std::future::ready(()),
         move || {
             let gate = gate.clone();
             async move {
@@ -3047,6 +3122,7 @@ async fn an_expired_claim_is_restored_once_storage_works_again(db: SqlitePool) {
     let (net, inbox) = mailbox_with_hooks(
         &db,
         SECRET,
+        || std::future::ready(()),
         move || {
             advancing.store(T + 3_600_000, Ordering::SeqCst);
             std::future::ready(())
