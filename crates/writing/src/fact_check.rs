@@ -106,13 +106,13 @@ where
             email_id,
             model = chosen.model,
             usage = ?answer.usage,
-            finish_reason = answer.finish_reason,
+            finish_reason = ?answer.finish_reason,
             "the model checked the letter"
         );
         if let Some(usage) = answer.usage {
             record_usage(usage).await?;
         }
-        if answer.finish_reason.as_deref() == Some("length") {
+        if answer.finish_reason == Some(model::Finish::Length) {
             return Err(Error::InvalidAnswer);
         }
         match parse(&answer.text, letter) {

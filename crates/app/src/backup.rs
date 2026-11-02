@@ -61,6 +61,7 @@ pub async fn export_backup(
             .map_err(|e| format!("无法保存到这个位置：{e}，请选择其他位置。"))?;
         tauri::async_runtime::block_on(api::backup::export(&db, &dir, &target, now))
             .map_err(failure)?;
+        tracing::info!("exported a backup");
         Ok(true)
     })
     .await
@@ -83,9 +84,13 @@ pub async fn prepare_restore(app: AppHandle) -> Result<Option<api::backup::Resto
         let source = source
             .into_path()
             .map_err(|e| format!("无法读取这个文件：{e}，请选择本地备份文件。"))?;
-        tauri::async_runtime::block_on(api::backup::prepare(&dir, &source))
-            .map(Some)
-            .map_err(failure)
+        let info =
+            tauri::async_runtime::block_on(api::backup::prepare(&dir, &source)).map_err(failure)?;
+        tracing::info!(
+            exported_at = info.exported_at,
+            "prepared a restore from a file"
+        );
+        Ok(Some(info))
     })
     .await
 }
@@ -99,12 +104,16 @@ pub async fn prepare_cloud_restore(
     let ctx = ctx.inner().clone();
     blocking(app, move |app| {
         let dir = crate::data_dir(app).map_err(|e| format!("数据目录无法使用：{e}"))?;
-        tauri::async_runtime::block_on(api::backup::cloud::prepare_restore(&ctx, &dir)).map_err(
-            |e| {
+        let info = tauri::async_runtime::block_on(api::backup::cloud::prepare_restore(&ctx, &dir))
+            .map_err(|e| {
                 tracing::error!(error = %e, "cloud restore failed");
                 e.message()
-            },
-        )
+            })?;
+        tracing::info!(
+            exported_at = info.exported_at,
+            "prepared a restore from the cloud"
+        );
+        Ok(info)
     })
     .await
 }
@@ -131,6 +140,7 @@ pub async fn restore_backup(
             .map_err(failure)
     })
     .await?;
+    tracing::info!(exported_at, "restore confirmed; restarting to install it");
     app.restart();
 }
 

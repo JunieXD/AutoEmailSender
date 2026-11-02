@@ -12,7 +12,7 @@ pub mod output;
 pub mod providers;
 pub mod usage;
 
-pub use client::{Access, Answer, ask, list_models, test};
+pub use client::{Access, Answer, Finish, ask, list_models, test};
 pub use error::ModelError;
 
 /// A model configuration as the settings show it. Its API key never leaves the core.
@@ -80,10 +80,22 @@ impl Source {
         }
         // Calls append `/chat/completions` and `/models`.
         let base_url = base_url.trim().trim_end_matches('/');
-        let web = url::Url::parse(base_url)
-            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some());
-        if !web {
+        let Some(url) = url::Url::parse(base_url)
+            .ok()
+            .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+        else {
             return Err("接口地址不正确，需以 http:// 或 https:// 开头".into());
+        };
+        // The address is no secret: it is listed, logged and backed up. A key goes in its own field.
+        if !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(
+                "接口地址只填到路径，不带用户名、密码和 ? 后面的参数；API Key 填在 API Key 一栏"
+                    .into(),
+            );
         }
         Ok(Source::Custom(base_url.to_owned()))
     }

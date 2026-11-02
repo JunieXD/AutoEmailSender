@@ -404,10 +404,11 @@ pub async fn set_purpose(
     Ok(exists)
 }
 
-/// Deletes the material, then its file in `dir`; false when there is no such material. Drafts
-/// lose it as an attachment; emails that went out keep its name. Stopped or failing in between,
-/// the file is left behind, which only takes up space: a material without its file would fail the
-/// emails it is attached to.
+/// Deletes the material and its file in `dir`; false when there is no such material. Drafts lose
+/// it as an attachment; emails that went out keep its name. The file goes just before the deletion
+/// is committed: one that cannot be removed leaves the material as it was, to be deleted again,
+/// rather than the user's file behind a material shown as deleted. Stopped in between, the
+/// material is left without its file, and deleting it again finishes.
 pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bool, Error> {
     let mut tx = db.begin().await?;
     // Lock before checking references so generation cannot be queued between the check and
@@ -460,9 +461,9 @@ pub async fn delete(db: &SqlitePool, dir: &Path, id: i64, now: i64) -> Result<bo
         .execute(&mut *tx)
         .await?;
     }
-    tx.commit().await?;
-    if let Err(e) = tokio::fs::remove_file(file(dir, id)).await {
-        tracing::warn!("removing the file of deleted material {id}: {e}");
+    match tokio::fs::remove_file(file(dir, id)).await {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(Error::File(e)),
+        _ => tx.commit().await?,
     }
     Ok(true)
 }

@@ -64,6 +64,28 @@ async fn a_material_keeps_its_file_and_text_until_deleted(db: SqlitePool) {
     assert!(!material::delete(&db, dir.path(), id, 2).await.unwrap());
 }
 
+#[cfg(unix)]
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_file_that_cannot_be_removed_keeps_its_material(db: SqlitePool) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let id = add(&db, dir.path(), "简历.pdf", fixture("resume.pdf"), 1)
+        .await
+        .unwrap();
+    let mode =
+        |m| std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(m)).unwrap();
+    mode(0o500);
+    let refused = material::delete(&db, dir.path(), id, 2).await;
+    mode(0o700);
+    assert!(
+        matches!(refused, Err(material::Error::File(_))),
+        "{refused:?}"
+    );
+    assert_eq!(material::list(&db).await.unwrap().len(), 1);
+    assert!(material::delete(&db, dir.path(), id, 2).await.unwrap());
+    assert!(files(dir.path()).is_empty());
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn word_files_are_read_by_what_they_are(db: SqlitePool) {
     let dir = tempfile::tempdir().unwrap();

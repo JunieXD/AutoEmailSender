@@ -120,8 +120,8 @@ where
 pub type Inbox = Arc<Mutex<Vec<String>>>;
 
 /// An SMTP server that takes mail for anyone, except that it refuses recipients named `unknown`,
-/// and
-/// hangs up without answering once it has the mail for one named `hangup`.
+/// answers one named `garbled` with a line that is not SMTP, and hangs up without answering once
+/// it has the mail for one named `hangup`.
 pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
     smtp_with_hooks(
         pki,
@@ -230,6 +230,7 @@ where
             }
             Some("AUTH") => "535 5.7.8 authentication failed\r\n",
             Some("RCPT") if line.contains("<unknown@") => "550 5.1.1 user unknown\r\n",
+            Some("RCPT") if line.contains("<garbled@") => "garbled@example.edu.cn is wrong\r\n",
             Some("RCPT") if line.contains("<421@") => {
                 "550 5.1.1 <421@example.edu.cn>: Recipient address rejected: User unknown\r\n"
             }

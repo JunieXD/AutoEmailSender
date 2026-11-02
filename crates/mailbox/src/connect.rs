@@ -1,7 +1,6 @@
 //! Connections to mail servers: plain TCP through the system proxy, which lettre and async-imap
 //! cannot open themselves, then TLS with the app's shared settings.
 
-use std::fmt::Display;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
@@ -103,11 +102,10 @@ async fn limit<T>(
 }
 
 /// Says goodbye to a server in the background once its work is done. Its answer changes nothing,
-/// and
-/// some servers, such as Gmail through a proxy, drop the connection or never answer.
-pub(crate) fn farewell<E: Display>(
+/// and some servers, such as Gmail through a proxy, drop the connection or never answer.
+pub(crate) fn farewell(
     server: &str,
-    goodbye: impl Future<Output = Result<(), E>> + Send + 'static,
+    goodbye: impl Future<Output = Result<(), MailError>> + Send + 'static,
 ) {
     let server = server.to_owned();
     tokio::spawn(async move {
@@ -198,7 +196,8 @@ async fn first_to_answer(addrs: &[SocketAddr]) -> io::Result<TcpStream> {
     }
 }
 
-/// Asks an HTTP proxy, already connected, to open a tunnel; the error is the proxy's reason.
+/// Asks an HTTP proxy, already connected, to open a tunnel; the error says why, with the proxy's
+/// status code but not the words after it, which could be anything.
 async fn http_connect(mut stream: TcpStream, host: &str, port: u16) -> Result<TcpStream, String> {
     stream
         .write_all(
@@ -216,10 +215,13 @@ async fn http_connect(mut stream: TcpStream, host: &str, port: u16) -> Result<Tc
     }
     let head = String::from_utf8_lossy(&head);
     let status = head.lines().next().unwrap_or_default();
-    if status.split(' ').nth(1) != Some("200") {
-        return Err(status.to_owned());
+    match status.split(' ').nth(1) {
+        Some("200") => Ok(stream),
+        Some(code) if code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()) => {
+            Err(format!("HTTP {code}"))
+        }
+        _ => Err("not an HTTP reply".into()),
     }
-    Ok(stream)
 }
 
 #[cfg(test)]
@@ -288,7 +290,9 @@ mod tests {
             }
             let target = request.split(' ').nth(1).unwrap().to_owned();
             if target.ends_with(":25") {
-                return client.write_all(b"HTTP/1.1 403 Forbidden\r\n\r\n").await;
+                return client
+                    .write_all(b"HTTP/1.1 403 proxy-user@example.com may not\r\n\r\n")
+                    .await;
             }
             let mut server = TcpStream::connect(target).await?;
             client
@@ -337,7 +341,7 @@ mod tests {
         assert!(
             matches!(
                 refused,
-                Err(MailError::ProxyFailed { ref reason, .. }) if reason.contains("403")
+                Err(MailError::ProxyFailed { ref reason, .. }) if reason == "HTTP 403"
             ),
             "{refused:?}"
         );

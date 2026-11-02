@@ -34,6 +34,9 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
         .await
         .map_err(|e| Error::Restore(crate::backup::Error::Worker(e)))?
         .map_err(Error::Restore)?;
+    if restored {
+        tracing::info!("installed the confirmed restore");
+    }
     let db = db::open(&dir.join("app.db"))
         .await
         .map_err(Error::Database)?;

@@ -56,7 +56,8 @@ pub fn classify(error: &MailError) -> Failure {
         | MailError::ProxyFailed { .. }
         | MailError::TimedOut { .. }
         | MailError::Tls { .. }
-        | MailError::Broken(_) => Failure::Pause(PauseKind::Connection),
+        | MailError::Broken(_)
+        | MailError::Unreadable => Failure::Pause(PauseKind::Connection),
     }
 }
 

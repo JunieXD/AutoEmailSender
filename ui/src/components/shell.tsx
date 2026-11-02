@@ -272,7 +272,12 @@ function useBackground() {
     // Backups run at most hourly; the backup page refreshes it after its own.
     refetchInterval: 60_000,
   });
-  const cloudFailure = cloud.data?.enabled ? cloud.data.failure : null;
+  const libraryFailure = useQuery({
+    queryKey: ["libraryFailure"],
+    queryFn: () => call("libraryFailure", {}),
+    // Synchronization runs at most hourly.
+    refetchInterval: 60_000,
+  });
   const storage = useQuery({
     queryKey: ["storageFailure"],
     queryFn: () => call("storageFailure", {}),
@@ -298,11 +303,8 @@ function useBackground() {
     receiving: (mailboxes.data?.length ?? 0) > 0,
     repliesPaused: replies.data?.pause ?? null,
     libraryUpdates: library.data ?? 0,
-    // A day's missed backup is retried hourly; only a lasting failure needs the user.
-    cloudFailure:
-      cloudFailure && cloud.dataUpdatedAt - cloudFailure.since >= 3 * 86_400_000
-        ? { days: Math.floor((cloud.dataUpdatedAt - cloudFailure.since) / 86_400_000), message: cloudFailure.message }
-        : null,
+    cloudFailure: lasting(cloud.data?.enabled ? cloud.data.failure : null, cloud.dataUpdatedAt),
+    libraryFailure: lasting(libraryFailure.data, libraryFailure.dataUpdatedAt),
     marking: replies.data?.pause ? 0 : (replies.data?.remaining ?? 0),
     crawled:
       crawls.data?.filter((c) => c.state === "done" && new Date(c.finishedAt ?? 0).toDateString() === today) ?? [],
@@ -320,6 +322,7 @@ function useBackground() {
       mailboxes.error ??
       replies.error ??
       library.error ??
+      libraryFailure.error ??
       cloud.error ??
       done.error,
   };
@@ -341,8 +344,15 @@ function useBackground() {
       (work.matching > 0 && work.matchingPause ? 1 : 0) +
       (work.repliesPaused ? 1 : 0) +
       (work.libraryUpdates > 0 ? 1 : 0) +
-      (work.cloudFailure ? 1 : 0),
+      (work.cloudFailure ? 1 : 0) +
+      (work.libraryFailure ? 1 : 0),
   };
+}
+
+/** Work retried hourly in the background; only a failure lasting days needs the user. */
+function lasting(failure: { since: number; message: string } | null | undefined, now: number) {
+  const days = failure ? Math.floor((now - failure.since) / 86_400_000) : 0;
+  return failure && days >= 3 ? { days, message: failure.message } : null;
 }
 
 /** On a phone the background panel is under "更多", and the tab lights up when something waits. */
@@ -495,6 +505,11 @@ function Background({ className }: { className?: string }) {
             {work.cloudFailure && (
               <Link to="/settings/backup" className={ITEM}>
                 <Entry title={`云端备份 ${work.cloudFailure.days} 天没成功`} detail={work.cloudFailure.message} />
+              </Link>
+            )}
+            {work.libraryFailure && (
+              <Link to="/find" search={findSearch({ tab: "library" })} className={ITEM}>
+                <Entry title={`导师库 ${work.libraryFailure.days} 天没同步上`} detail={work.libraryFailure.message} />
               </Link>
             )}
           </Group>

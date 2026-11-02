@@ -277,13 +277,23 @@ async fn a_written_letter_is_rewritten_and_must_come_back_as_one(db: SqlitePool)
     for _ in 0..2 {
         let result = write().await;
         assert!(
-            matches!(result, Err(Error::NotALetter { finish_reason: Some(ref r) }) if r == "stop"),
+            matches!(
+                result,
+                Err(Error::NotALetter {
+                    finish_reason: Some(model::Finish::Stop)
+                })
+            ),
             "{result:?}"
         );
     }
     let result = write().await;
     assert!(
-        matches!(result, Err(Error::NotALetter { finish_reason: Some(ref r) }) if r == "length"),
+        matches!(
+            result,
+            Err(Error::NotALetter {
+                finish_reason: Some(model::Finish::Length)
+            })
+        ),
         "{result:?}"
     );
     let result = write().await;

@@ -231,6 +231,11 @@ async fn generate(
             }
         }
         Err(writing::Error::Model(error)) => {
+            tracing::warn!(
+                email_id = claim.id,
+                model = chosen.model,
+                "draft model failed: {error}"
+            );
             match model::background::classify(error, &chosen.access) {
                 Failure::Pause(reason) => Outcome::Pause(reason, Some(chosen)),
                 Failure::RateLimit(wait) => Outcome::RateLimit(wait),

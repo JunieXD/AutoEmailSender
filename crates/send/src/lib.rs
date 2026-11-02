@@ -86,7 +86,14 @@ pub async fn run(
 /// mentors are contacted from those mailboxes from now on. `run` does this first.
 pub async fn recover(db: &SqlitePool, now: i64) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
-    for e in email::interrupted(&mut tx, now).await? {
+    let interrupted = email::interrupted(&mut tx, now).await?;
+    if !interrupted.is_empty() {
+        tracing::warn!(
+            count = interrupted.len(),
+            "emails the last run left being sent are marked maybe sent"
+        );
+    }
+    for e in interrupted {
         if let Some(mailbox_id) = e.mailbox_id {
             mentor::assign_mailbox(&mut tx, e.mentor_id, mailbox_id).await?;
         }
@@ -316,8 +323,13 @@ async fn send<T: chrono::TimeZone>(
     let smtp = match mailbox::login(net, &account).await {
         Ok(smtp) => smtp,
         Err(err) => {
-            tracing::warn!("email {id} not sent from mailbox {mailbox_id}: {err}");
-            return match pause::classify(&err) {
+            // What the reply was taken as: its codes alone may not tell.
+            let failure = pause::classify(&err);
+            tracing::warn!(
+                ?failure,
+                "email {id} not sent from mailbox {mailbox_id}: {err}"
+            );
+            return match failure {
                 Failure::Pause(kind) => {
                     let pause = kind.in_zone(now(), zone);
                     pause::apply_for_account(
@@ -340,6 +352,9 @@ async fn send<T: chrono::TimeZone>(
         smtp.quit();
         return Ok(());
     };
+    // Should the app stop during the handover, this is the log's last word on the email, which the
+    // next start takes as maybe sent.
+    tracing::info!("email {id} handing over to mailbox {mailbox_id}");
     let outcome = match smtp
         .send(&m.outgoing, || {
             m.before.latest_at.is_some_and(|latest| now() >= latest)
@@ -347,6 +362,7 @@ async fn send<T: chrono::TimeZone>(
         .await
     {
         Ok(SendStatus::Expired) => {
+            tracing::info!("email {id} past its latest time before the server took it; put back");
             // Left sending, the email would wait for a restart to be taken as maybe sent.
             writes
                 .retry("restore expired email", || async {
@@ -359,16 +375,20 @@ async fn send<T: chrono::TimeZone>(
             tracing::info!("email {id} sent from mailbox {mailbox_id}");
             Outcome::Sent
         }
-        Err(err) => {
-            tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
-            match err {
-                SendError::NotSent(ref error) => match pause::classify(error) {
+        Err(err) => match err {
+            SendError::NotSent(ref error) => {
+                let failure = pause::classify(error);
+                tracing::warn!(?failure, "email {id} from mailbox {mailbox_id}: {err}");
+                match failure {
                     Failure::Pause(kind) => Outcome::Paused(kind.in_zone(now(), zone)),
                     Failure::Email => Outcome::Failed(err.message()),
-                },
-                SendError::Unknown(_) => Outcome::MaybeSent(err.message()),
+                }
             }
-        }
+            SendError::Unknown(_) => {
+                tracing::warn!("email {id} from mailbox {mailbox_id}: {err}");
+                Outcome::MaybeSent(err.message())
+            }
+        },
     };
     // Only this run knows how SMTP answered, so it keeps trying until that is written.
     let answered = now();
@@ -388,7 +408,8 @@ pub async fn files(
     let mut files = Vec::with_capacity(attachments.len());
     for a in attachments {
         let data = tokio::fs::read(material::file(dir, a.material_id)).await.map_err(|e| {
-            tracing::warn!("reading attachment {}: {e}", a.file_name);
+            // A file's name may be the student's, as in 林晓-简历.pdf.
+            tracing::warn!("reading the attachment of material {}: {e}", a.material_id);
             format!(
                 "附件“{}”的文件读不到了。在“设置 › 个人 › 材料”里重新添加它，换上新的附件后再发送。",
                 a.file_name

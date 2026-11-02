@@ -426,6 +426,8 @@ operations! {
             library_apply(library::updates::Choices) -> u32;
         /// 查询有待处理资料更新的导师数，不含回收站。
         "libraryUpdateCount" [none] => library_update_count(Nothing) -> i64;
+        /// 导师库同步从什么时候起一直失败，以及最近一次的原因；没有失败时为 null。
+        "libraryFailure" [none] => library_failure(Nothing) -> Option<libraries::LibraryFailure>;
         /// 立即从同步进度检查导师库更新，返回处理的变化数。
         "syncLibrary" [none] => library_sync(Nothing) -> u32;
     }
@@ -2123,8 +2125,10 @@ impl From<writing::Error> for CallError {
             writing::Error::Model(e) => e.into(),
             writing::Error::NotALetter { finish_reason } => {
                 tracing::warn!(?finish_reason, "the model's answer is not a letter");
-                let message = match finish_reason.as_deref() {
-                    Some("length") => "模型的回答太长，被截断了。再试一次，或者换个模型。",
+                let message = match finish_reason {
+                    Some(model::Finish::Length) => {
+                        "模型的回答太长，被截断了。再试一次，或者换个模型。"
+                    }
                     _ => "模型没有按要求的格式回答。再试一次，或者换个模型。",
                 };
                 CallError {

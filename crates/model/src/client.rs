@@ -38,8 +38,15 @@ pub async fn list_models(net: &Net, access: &Access) -> Result<Vec<String>, Mode
         .bearer_auth(access.api_key.as_deref().ok_or(ModelError::MissingKey)?)
         .timeout(Duration::from_secs(20));
     let body = read(send(request, access).await?, access).await?;
-    let models: Models =
-        serde_json::from_str(&body).map_err(|e| ModelError::Broken(format!("model list: {e}")))?;
+    let models: Models = serde_json::from_str(&body).map_err(|e| {
+        // Not serde's own words, which quote the value it could not take.
+        ModelError::Broken(format!(
+            "model list: {:?} error at line {} column {}",
+            e.classify(),
+            e.line(),
+            e.column()
+        ))
+    })?;
     let mut names: Vec<String> = models.data.into_iter().map(|m| m.id).collect();
     names.sort();
     Ok(names)
@@ -54,10 +61,23 @@ const IDLE: Duration = Duration::from_secs(60);
 pub struct Answer {
     /// May be empty, such as when the model spent all it may write on thinking.
     pub text: String,
-    /// Why it stopped, such as "length" when it ran out of room.
-    pub finish_reason: Option<String>,
+    pub finish_reason: Option<Finish>,
     /// None when the provider did not say.
     pub usage: Option<Usage>,
+}
+
+/// Why a model stopped, as OpenAI-compatible APIs say. A reason of a provider's own is `Other`: its
+/// words could be anything, even what was sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Finish {
+    Stop,
+    /// Out of room for the answer.
+    Length,
+    ContentFilter,
+    ToolCalls,
+    #[serde(other)]
+    Other,
 }
 
 /// Asks the model for a one-word answer, which proves the address, the key and the model name.
@@ -123,7 +143,7 @@ async fn chat(
     struct Choice {
         #[serde(default)]
         delta: Delta,
-        finish_reason: Option<String>,
+        finish_reason: Option<Finish>,
         /// Where Kimi reports the tokens.
         usage: Option<Tokens>,
     }

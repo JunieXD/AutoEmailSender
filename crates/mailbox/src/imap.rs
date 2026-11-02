@@ -2,9 +2,10 @@
 //! proxy. Only standard commands, folders opened read-only and messages read with `BODY.PEEK`, so
 //! that nothing changes in the user's mailbox (docs/design.md#桌面端).
 
+use std::io;
 use std::time::Duration;
 
-use async_imap::imap_proto::{AttributeValue, MailboxDatum, Response, Status};
+use async_imap::imap_proto::{AttributeValue, MailboxDatum, Response, ResponseCode, Status};
 use async_imap::types::NameAttribute;
 use async_imap::{Client, Session};
 use tokio::net::TcpStream;
@@ -44,6 +45,8 @@ const SENT_NAMES: [&str; 7] = [
 pub struct Imap {
     session: Session<TlsStream<TcpStream>>,
     server: Server,
+    /// To hide from what the server says.
+    secret: String,
 }
 
 /// A folder opened for reading.
@@ -64,15 +67,18 @@ pub struct Head {
 
 impl Imap {
     pub async fn open(net: &Net, account: &Account) -> Result<Imap, MailError> {
-        let session = connect::within(&account.imap, login(net, account)).await?;
+        let session = connect::within(&account.imap, login(net, account))
+            .await
+            .map_err(|e| e.without(&account.secret))?;
         Ok(Imap {
             session,
             server: account.imap.clone(),
+            secret: account.secret.clone(),
         })
     }
 
     /// The folder sent mail is kept in: the one the server marks `\Sent`, or else the first with a
-    /// usual name.
+    /// usual name. A name with a line break is left out: `quoted` cannot send it.
     pub async fn sent_folder(&mut self) -> Result<Option<String>, MailError> {
         let mut folders: Vec<(String, bool)> = Vec::new();
         self.command("LIST \"\" *", |response| {
@@ -81,6 +87,7 @@ impl Imap {
                 name,
                 ..
             }) = response
+                && !name.contains(['\r', '\n'])
             {
                 let sent = name_attributes.contains(&NameAttribute::Sent);
                 folders.push((name.to_string(), sent));
@@ -98,13 +105,25 @@ impl Imap {
 
     /// Opens a folder read-only.
     pub async fn examine(&mut self, folder: &str) -> Result<Opened, MailError> {
-        let server = self.server.clone();
-        let mailbox = patient(&server, self.session.examine(folder)).await?;
-        let uidvalidity = mailbox
-            .uid_validity
-            .ok_or_else(|| MailError::Broken(format!("{folder} has no UIDVALIDITY")))?;
+        let mut uidvalidity = None;
+        let mut exists = 0;
+        self.command(
+            &format!("EXAMINE {}", quoted(folder)),
+            |response| match response {
+                Response::Data {
+                    status: Status::Ok,
+                    code: Some(ResponseCode::UidValidity(v)),
+                    ..
+                } => uidvalidity = Some(*v),
+                Response::MailboxData(MailboxDatum::Exists(n)) => exists = *n,
+                _ => {}
+            },
+        )
+        .await?;
+        let uidvalidity =
+            uidvalidity.ok_or_else(|| MailError::Broken("a folder without UIDVALIDITY".into()))?;
         let mut last_uid = 0;
-        if mailbox.exists > 0 {
+        if exists > 0 {
             self.command("FETCH * UID", |response| {
                 // Changed flags of other messages may come too, with their UIDs.
                 if let Response::Fetch(_, attributes) = response {
@@ -113,9 +132,9 @@ impl Imap {
             })
             .await?;
             if last_uid == 0 {
-                return Err(MailError::Broken(format!(
-                    "{folder}: no UID for the last message"
-                )));
+                return Err(MailError::Broken(
+                    "no UID for a folder's last message".into(),
+                ));
             }
         }
         Ok(Opened {
@@ -260,46 +279,49 @@ impl Imap {
     }
 
     /// Runs a command, handing the server's untagged responses to `each`. async-imap's own commands
-    /// for these, unlike EXAMINE, take the server refusing for an empty answer.
+    /// take some refusals for an empty answer, and word a BYE as an error quoting it.
     async fn command(
         &mut self,
         command: &str,
         mut each: impl FnMut(&Response<'_>),
     ) -> Result<(), MailError> {
-        let server = self.server.clone();
-        let tag = patient(&server, self.session.run_command(command)).await?;
-        loop {
-            let response = tokio::time::timeout(PATIENCE, self.session.read_response())
-                .await
-                .map_err(|_| timed_out(&server))?
-                .map_err(|e| MailError::Broken(e.to_string()))?
-                .ok_or_else(|| MailError::Broken("the server closed the connection".into()))?;
-            match response.parsed() {
-                Response::Done {
-                    tag: done,
-                    status,
-                    information,
-                    ..
-                } if *done == tag => {
-                    return match status {
-                        Status::Ok => Ok(()),
-                        _ => Err(MailError::Refused {
-                            reply: information.as_deref().unwrap_or_default().to_owned(),
-                            smtp_code: None,
-                        }),
-                    };
+        let answered = async {
+            let server = self.server.clone();
+            let tag = patient(&server, self.session.run_command(command)).await?;
+            loop {
+                let response = tokio::time::timeout(PATIENCE, self.session.read_response())
+                    .await
+                    .map_err(|_| timed_out(&server))?
+                    .map_err(broken)?
+                    .ok_or_else(|| MailError::Broken("the server closed the connection".into()))?;
+                match response.parsed() {
+                    Response::Done {
+                        tag: done,
+                        status,
+                        information,
+                        ..
+                    } if *done == tag => {
+                        return match status {
+                            Status::Ok => Ok(()),
+                            _ => Err(MailError::Refused {
+                                reply: information.as_deref().unwrap_or_default().to_owned(),
+                                smtp_code: None,
+                            }),
+                        };
+                    }
+                    response => each(response),
                 }
-                response => each(response),
             }
         }
+        .await;
+        answered.map_err(|e| e.without(&self.secret))
     }
 
     /// Logs out in the background.
     pub fn close(mut self) {
-        connect::farewell(
-            &self.server.host,
-            async move { self.session.logout().await },
-        );
+        connect::farewell(&self.server.host, async move {
+            self.session.logout().await.map_err(refused)
+        });
     }
 }
 
@@ -325,10 +347,7 @@ async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStre
     let mut session = client
         .login(account.address.to_string(), &account.secret)
         .await
-        .map_err(|(e, _)| match refused(e) {
-            MailError::Refused { reply, smtp_code } => MailError::Login { reply, smtp_code },
-            e => e,
-        })?;
+        .map_err(|(e, _)| refused(e).login())?;
     // Some servers, such as 163's, refuse to open folders for clients that do not say who they are.
     if session.capabilities().await.map_err(refused)?.has_str("ID") {
         session
@@ -351,7 +370,7 @@ where
         Ok(None) => Err(MailError::Broken(
             "connection closed before the greeting".into(),
         )),
-        Err(e) => Err(MailError::Broken(e.to_string())),
+        Err(e) => Err(broken(e)),
     }
 }
 
@@ -404,21 +423,32 @@ fn day(ms: i64) -> String {
         .to_string()
 }
 
-/// A string for a search command.
+/// A string for a command. It must not have a line break, which would end the command.
 fn quoted(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// A NO or BAD from the server is a refusal; anything else means the connection broke.
+/// A NO or BAD from the server is a refusal; anything else means the connection broke, or the
+/// reply could not be read.
 fn refused(e: async_imap::error::Error) -> MailError {
+    use async_imap::error::Error;
     match e {
-        async_imap::error::Error::No(reply) | async_imap::error::Error::Bad(reply) => {
-            MailError::Refused {
-                reply: server_words(reply),
-                smtp_code: None,
-            }
-        }
-        e => MailError::Broken(e.to_string()),
+        Error::No(reply) | Error::Bad(reply) => MailError::Refused {
+            reply: server_words(reply),
+            smtp_code: None,
+        },
+        Error::Io(e) => broken(e),
+        e @ (Error::ConnectionLost | Error::Validate(_)) => MailError::Broken(e.to_string()),
+        _ => MailError::Unreadable,
+    }
+}
+
+/// async-imap's own errors, of kind `Other`, are of replies it cannot read, and quote them.
+fn broken(e: io::Error) -> MailError {
+    if e.kind() == io::ErrorKind::Other {
+        MailError::Unreadable
+    } else {
+        MailError::Broken(e.to_string())
     }
 }
 

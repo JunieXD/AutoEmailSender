@@ -29,7 +29,7 @@ pub enum Error {
     Model(ModelError),
     /// The model answered with something other than a letter.
     NotALetter {
-        finish_reason: Option<String>,
+        finish_reason: Option<model::Finish>,
     },
     Db(sqlx::Error),
 }
@@ -139,7 +139,7 @@ pub async fn write<F: Future<Output = Result<(), sqlx::Error>>>(
         mentor_id = mentor.id,
         model = chosen.model,
         usage = ?answer.usage,
-        finish_reason = answer.finish_reason,
+        finish_reason = ?answer.finish_reason,
         "the model answered"
     );
     if let Some(usage) = answer.usage {
@@ -155,14 +155,12 @@ pub async fn write<F: Future<Output = Result<(), sqlx::Error>>>(
         return Err(Error::Model(ModelError::NoAnswer { finish_reason }));
     }
     // What a model cut short may hold no more than its thinking.
-    if finish_reason.as_deref() == Some("length") {
+    if finish_reason == Some(model::Finish::Length) {
         return Err(Error::NotALetter { finish_reason });
     }
     if kind.body_only() {
-        let answer =
-            model::output::thinking_block(answer.text.trim()).map_err(|_| Error::NotALetter {
-                finish_reason: finish_reason.clone(),
-            })?;
+        let answer = model::output::thinking_block(answer.text.trim())
+            .map_err(|_| Error::NotALetter { finish_reason })?;
         let body = answer
             .trim()
             .strip_prefix("<body>")

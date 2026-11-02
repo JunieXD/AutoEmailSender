@@ -429,7 +429,7 @@ impl Reader<'_> {
                     })
                     .await;
             }
-            if answer.finish_reason.as_deref() == Some("length") {
+            if answer.finish_reason == Some(model::Finish::Length) {
                 tracing::info!(step, reason = "output_truncated", "model output rejected");
                 return Err(ReadError::Failed(
                     "模型的回答被截断，请换用支持更长输出的模型后重试。".into(),

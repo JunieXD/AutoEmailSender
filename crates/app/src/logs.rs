@@ -96,12 +96,19 @@ fn crawl_lines(dir: &Path, id: i64, created_at: DateTime<Utc>) -> std::io::Resul
     let marker = format!("crawl{{id={id}}}:");
     for name in files(dir)? {
         let content = std::fs::read_to_string(dir.join(name))?;
+        let mut kept = false;
         for line in content.lines() {
             let mut fields = line.split_whitespace();
-            // Fixed-width UTC RFC 3339 timestamps sort chronologically as strings.
-            if fields.next().is_some_and(|time| time >= start.as_str())
-                && fields.nth(1).is_some_and(|span| span.starts_with(&marker))
+            // An event's later lines, such as a panic's message, have no time of their own.
+            if let Some(time) = fields
+                .next()
+                .filter(|f| DateTime::parse_from_rfc3339(f).is_ok())
             {
+                // Fixed-width UTC RFC 3339 timestamps sort chronologically as strings.
+                kept = time >= start.as_str()
+                    && fields.nth(1).is_some_and(|span| span.starts_with(&marker));
+            }
+            if kept {
                 out.push_str(line);
                 out.push('\n');
             }
@@ -227,8 +234,10 @@ mod tests {
                 "2026-10-26T12:00:00.000000Z  INFO crawl{id=50}: crawl::runner: other crawl\n",
                 "2026-10-26T12:01:00.000000Z  INFO crawl{id=5}: crawl::runner: resumed\n",
                 "2026-10-26T12:02:00.000000Z  WARN crawl{id=5}: crawl: failed\n",
-                "2026-10-26T12:03:00.000000Z ERROR crawl{id=5}: crawl: error\n",
+                "2026-10-26T12:03:00.000000Z ERROR crawl{id=5}: crawl: panicked at src/x.rs:1:1:\n",
+                "the reason\n",
                 "2026-10-26T12:04:00.000000Z  INFO crawl{id=15}: crawl: wrong id\n",
+                "its own reason\n",
                 "2026-10-26T12:05:00.000000Z  INFO app: text crawl{id=5}\n",
                 "2026-10-26T12:06:00.000000Z  INFO othercrawl{id=5}: app: wrong span\n",
             ),
@@ -246,11 +255,11 @@ mod tests {
         let created_at = DateTime::from_timestamp_millis(1_792_929_600_000).unwrap();
         let lines = crawl_lines(dir.path(), 5, created_at).unwrap();
         assert!(!lines.contains("previous crawl"));
-        assert_eq!(lines.lines().count(), 4);
+        assert_eq!(lines.lines().count(), 5);
         assert!(lines.starts_with("2026-10-25"));
         assert!(lines.contains("resumed"));
         assert!(lines.contains("failed"));
-        assert!(lines.ends_with("error\n"));
+        assert!(lines.ends_with("panicked at src/x.rs:1:1:\nthe reason\n"));
         assert!(!lines.contains("other crawl"));
     }
 

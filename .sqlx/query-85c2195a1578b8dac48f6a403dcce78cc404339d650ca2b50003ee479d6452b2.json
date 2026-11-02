@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET library_checked_at = ?, library_failed_at = NULL, library_error = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "85c2195a1578b8dac48f6a403dcce78cc404339d650ca2b50003ee479d6452b2"
+}

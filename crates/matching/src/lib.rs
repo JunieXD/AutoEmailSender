@@ -230,13 +230,20 @@ async fn analyze(
         let answer =
             match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
                 Ok(a) => a,
-                Err(e) => return Ok(classify(e, chosen)),
+                Err(e) => {
+                    tracing::warn!(
+                        mentor_id = id,
+                        model = chosen.model,
+                        "match model failed: {e}"
+                    );
+                    return Ok(classify(e, chosen));
+                }
             };
         tracing::info!(
             mentor_id = id,
             model = chosen.model,
             usage = ?answer.usage,
-            finish_reason = answer.finish_reason,
+            finish_reason = ?answer.finish_reason,
             "match model answered"
         );
         if let Some(usage) = answer.usage {
@@ -255,7 +262,7 @@ async fn analyze(
                 chosen,
             ));
         }
-        if answer.finish_reason.as_deref() == Some("length") {
+        if answer.finish_reason == Some(model::Finish::Length) {
             return Ok(Outcome::Failed(
                 "模型的回答太长，被截断了。再试一次，或者换个模型。".into(),
             ));

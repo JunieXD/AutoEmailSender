@@ -94,6 +94,14 @@ fn a_custom_address_must_be_a_web_address() {
         "https://api.example.com/v1"
     );
     assert!(Source::check("custom", "api.example.com/v1").is_err());
+    for secret in [
+        "https://user:pass@api.example.com/v1",
+        "https://user@api.example.com/v1",
+        "https://api.example.com/v1?api_key=k",
+        "https://api.example.com/v1#k",
+    ] {
+        assert!(Source::check("custom", secret).is_err(), "{secret}");
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

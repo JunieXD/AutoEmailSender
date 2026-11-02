@@ -17,10 +17,20 @@ struct State {
     folders: Vec<Folder>,
     /// Every command received, without its tag.
     commands: Vec<String>,
-    /// The start of the next command to refuse, as a server limiting how much is asked of it.
-    refuse: Option<String>,
+    /// The start of the next command to answer otherwise, and how.
+    odd: Option<(String, Odd)>,
     /// A message left out of the answers to fetches of several, as some servers do.
     left_out: Option<u32>,
+}
+
+enum Odd {
+    /// As a server limiting how much is asked of it.
+    Refuse,
+    /// With a line that is not IMAP and quotes the secret, as a broken server echoing the login
+    /// might.
+    Garble,
+    /// With a BYE, closing the connection, as a server shutting down.
+    Bye,
 }
 
 struct Folder {
@@ -80,7 +90,17 @@ impl Store {
 
     /// Refuses the next command that starts with these words.
     pub fn refuse(&self, command: &str) {
-        self.0.lock().unwrap().refuse = Some(command.into());
+        self.0.lock().unwrap().odd = Some((command.into(), Odd::Refuse));
+    }
+
+    /// Answers the next command that starts with these words with a line that is not IMAP.
+    pub fn garble(&self, command: &str) {
+        self.0.lock().unwrap().odd = Some((command.into(), Odd::Garble));
+    }
+
+    /// Ends the session at the next command that starts with these words.
+    pub fn bye(&self, command: &str) {
+        self.0.lock().unwrap().odd = Some((command.into(), Odd::Bye));
     }
 
     /// Leaves the message with this UID out of the answers to fetches of several.
@@ -99,7 +119,7 @@ pub async fn imap(pki: &Pki, starttls: bool) -> (u16, Store) {
     let store = Store(Arc::new(Mutex::new(State {
         folders: Vec::new(),
         commands: Vec::new(),
-        refuse: None,
+        odd: None,
         left_out: None,
     })));
     store.create("INBOX", false);
@@ -129,22 +149,24 @@ async fn session(
         }
         let line = line.trim_end();
         let (tag, command) = line.split_once(' ').unwrap_or((line, ""));
-        let refused = {
+        let odd = {
             let mut state = store.0.lock().unwrap();
             state.commands.push(command.into());
-            let refused = state
-                .refuse
-                .as_ref()
-                .is_some_and(|r| command.starts_with(r.as_str()));
-            if refused {
-                state.refuse = None;
-            }
-            refused
+            state
+                .odd
+                .take_if(|(start, _)| command.starts_with(start.as_str()))
+                .map(|(_, odd)| odd)
         };
         let (verb, rest) = command.split_once(' ').unwrap_or((command, ""));
         let reply: Vec<u8> = match verb.to_ascii_uppercase().as_str() {
-            _ if refused => {
+            _ if matches!(odd, Some(Odd::Refuse)) => {
                 format!("{tag} NO [LIMIT] too many commands, try again later\r\n").into()
+            }
+            _ if matches!(odd, Some(Odd::Garble)) => format!("{SECRET} is wrong\r\n").into(),
+            _ if matches!(odd, Some(Odd::Bye)) => {
+                io.write_all(format!("* BYE {SECRET} going down\r\n").as_bytes())
+                    .await?;
+                return io.shutdown().await;
             }
             "CAPABILITY" => {
                 format!("* CAPABILITY IMAP4rev1 ID STARTTLS\r\n{tag} OK done\r\n").into()
@@ -189,7 +211,12 @@ async fn session(
                     } else {
                         "\\HasNoChildren"
                     };
-                    reply += &format!("* LIST ({flags}) \"/\" \"{}\"\r\n", f.name);
+                    let name = if f.name.contains(['\r', '\n']) {
+                        format!("{{{}}}\r\n{}", f.name.len(), f.name)
+                    } else {
+                        format!("\"{}\"", f.name)
+                    };
+                    reply += &format!("* LIST ({flags}) \"/\" {name}\r\n");
                 }
                 format!("{reply}{tag} OK done\r\n").into()
             }

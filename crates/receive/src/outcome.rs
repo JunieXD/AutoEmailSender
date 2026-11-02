@@ -106,14 +106,21 @@ async fn analyze(
         let answer =
             match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
                 Ok(answer) => answer,
-                Err(error) => return Ok(classify(error, chosen)),
+                Err(error) => {
+                    tracing::warn!(
+                        message_id = claim.id,
+                        model = chosen.model,
+                        "reply processing model failed: {error}"
+                    );
+                    return Ok(classify(error, chosen));
+                }
             };
         tracing::info!(
             message_id = claim.id,
             action = ?claim.action,
             model = chosen.model,
             usage = ?answer.usage,
-            finish_reason = answer.finish_reason,
+            finish_reason = ?answer.finish_reason,
             "reply processing model answered"
         );
         if let Some(usage) = answer.usage {

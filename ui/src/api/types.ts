@@ -308,6 +308,8 @@ export type LibraryAddPreview = { missing: number, created: number, supplemented
 
 export type LibraryAdded = { created: number, supplemented: number, missing: number, };
 
+export type LibraryFailure = { since: number, message: string, };
+
 export type LibraryId = { id: string, };
 
 export type LibraryListRequest = { org?: string, q?: string, page: number, };
@@ -954,6 +956,7 @@ export interface Operations {
   listLibraryUpdates: { input: Nothing; output: Array<LibraryUpdateGroup> };
   applyLibraryUpdates: { input: LibraryUpdateChoices; output: number };
   libraryUpdateCount: { input: Nothing; output: number };
+  libraryFailure: { input: Nothing; output: LibraryFailure | null };
   syncLibrary: { input: Nothing; output: number };
   getAgentCli: { input: Nothing; output: AgentCli };
   installAgentCli: { input: Nothing; output: AgentCli };

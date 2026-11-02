@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET library_failed_at = coalesce(library_failed_at, ?),\n                    library_error = ?\n                WHERE email = ? AND token = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "51865f608cf05378840498eb9d13dab17af8f9ce6ed7b7bc13120f453ba8e41a"
+}

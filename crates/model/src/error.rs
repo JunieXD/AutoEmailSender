@@ -1,6 +1,7 @@
 use std::error::Error;
 
-/// Why calling a model provider failed. Displays in English for the log; `message` is for the user.
+/// Why calling a model provider failed. Displays in English for the log, without the provider's
+/// words, which may quote what was sent; `message` is for the user.
 #[derive(Debug)]
 pub enum ModelError {
     MissingKey,
@@ -23,7 +24,7 @@ pub enum ModelError {
     Failed(String),
     /// The model replied without an answer, such as when it spent everything on thinking.
     NoAnswer {
-        finish_reason: Option<String>,
+        finish_reason: Option<crate::Finish>,
     },
     /// The provider answered in a way that makes no sense.
     Broken(String),
@@ -44,10 +45,9 @@ impl std::fmt::Display for ModelError {
                 Ok(())
             }
             ModelError::TimedOut { address } => write!(f, "{address} timed out"),
-            ModelError::Refused { status, reply, .. } => {
-                write!(f, "refused with {status}: {reply}")
-            }
-            ModelError::Failed(reply) => write!(f, "failed partway: {reply}"),
+            // Its error code too is the provider's words, which may quote the key.
+            ModelError::Refused { status, .. } => write!(f, "refused with {status}"),
+            ModelError::Failed(_) => write!(f, "failed partway"),
             ModelError::NoAnswer { finish_reason } => {
                 write!(f, "no answer, finish reason {finish_reason:?}")
             }
@@ -97,7 +97,14 @@ impl ModelError {
             }
             ModelError::NoAnswer { finish_reason } => format!(
                 "模型没有给出回答（结束原因：{}）。换个模型再试。",
-                finish_reason.as_deref().unwrap_or("未说明")
+                match finish_reason {
+                    None => "未说明",
+                    Some(crate::Finish::Stop) => "正常结束",
+                    Some(crate::Finish::Length) => "达到长度上限",
+                    Some(crate::Finish::ContentFilter) => "被服务商的内容审核拦下",
+                    Some(crate::Finish::ToolCalls) => "要调用工具",
+                    Some(crate::Finish::Other) => "服务商自己的原因",
+                }
             ),
             ModelError::Broken(e) => format!(
                 "服务商的回复看不懂（{e}）。检查接口地址是不是 OpenAI 兼容接口；一直出错时，\

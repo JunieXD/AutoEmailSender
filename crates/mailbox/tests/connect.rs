@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 
 use fakemail::{ADDRESS, Inbox, Pki, SECRET};
-use mailbox::{Account, MailError, Security, Server};
+use mailbox::{Account, MailError, Security, SendError, Server};
 use net::Net;
 
 /// A mailbox on fake servers of its own.
@@ -56,6 +56,11 @@ async fn a_wrong_secret_is_a_refused_login() {
         ),
         "{sending:?}"
     );
+    // The log has the codes, not the server's words.
+    assert_eq!(
+        sending.unwrap_err().to_string(),
+        "login refused (535 5.7.8)"
+    );
     let receiving = mailbox::check_receiving(&net, &me).await;
     assert!(
         matches!(
@@ -66,6 +71,72 @@ async fn a_wrong_secret_is_a_refused_login() {
             }) if reply == "[AUTHENTICATIONFAILED] invalid credentials"
         ),
         "{receiving:?}"
+    );
+}
+
+#[tokio::test]
+async fn replies_that_cannot_be_read_are_not_quoted() {
+    let pki = fakemail::pki();
+    let net = Net::new(vec![pki.root.clone()]).unwrap();
+    let (mut me, _) = mailbox(&pki, Security::Tls, SECRET).await;
+    // The fake's reply quotes the recipient; the mail libraries' wording of it, the reply.
+    let message = lettre::Message::builder()
+        .from(ADDRESS.parse().unwrap())
+        .to("garbled@example.edu.cn".parse().unwrap())
+        .subject("申请硕士")
+        .body(String::from("王老师：您好！"))
+        .unwrap();
+    let sending = mailbox::login(&net, &me)
+        .await
+        .unwrap()
+        .send(&message.into(), || false)
+        .await;
+    assert!(
+        matches!(sending, Err(SendError::NotSent(MailError::Unreadable))),
+        "{:?}",
+        sending.err()
+    );
+    // This one quotes the secret.
+    let (imap, store) = fakemail::imap(&pki, false).await;
+    me.imap.port = imap;
+    store.garble("EXAMINE");
+    let receiving = mailbox::check_receiving(&net, &me).await;
+    assert!(
+        matches!(receiving, Err(MailError::Unreadable)),
+        "{receiving:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_server_ending_the_session_closed_the_connection() {
+    let pki = fakemail::pki();
+    let net = Net::new(vec![pki.root.clone()]).unwrap();
+    let (mut me, _) = mailbox(&pki, Security::Tls, SECRET).await;
+    let (imap, store) = fakemail::imap(&pki, false).await;
+    me.imap.port = imap;
+    store.bye("EXAMINE");
+    let receiving = mailbox::check_receiving(&net, &me).await;
+    // Not taken for a reply that cannot be read, nor quoting the BYE.
+    assert!(
+        matches!(receiving, Err(MailError::Broken(ref e)) if !e.contains(SECRET)),
+        "{receiving:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_sent_folder_named_with_a_line_break_is_left_alone() {
+    let pki = fakemail::pki();
+    let net = Net::new(vec![pki.root.clone()]).unwrap();
+    let (mut me, _) = mailbox(&pki, Security::Tls, SECRET).await;
+    let (imap, store) = fakemail::imap(&pki, false).await;
+    me.imap.port = imap;
+    // Opening it would send the rest of its name as another command.
+    store.create("Sent\r\nA1 NOOP", true);
+    store.create("Sent Messages", false);
+    let mut session = mailbox::Imap::open(&net, &me).await.unwrap();
+    assert_eq!(
+        session.sent_folder().await.unwrap().as_deref(),
+        Some("Sent Messages")
     );
 }
 

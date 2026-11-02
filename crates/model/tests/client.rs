@@ -190,6 +190,26 @@ async fn a_key_quoted_back_is_not_shown() {
 }
 
 #[tokio::test]
+async fn a_refusal_quoting_the_request_keeps_it_out_of_the_log() {
+    let (address, _) = provider(
+        400,
+        r#"{"error":{"message":"Invalid content: 王老师，我的绩点是 3.8","code":"sk-test"}}"#,
+    )
+    .await;
+    let net = Net::new(Vec::new()).unwrap();
+    let error = model::ask(&net, &access(address, None), "m", "规则", "资料", false)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "refused with 400");
+    // The user still reads what the provider said.
+    assert!(
+        error.message().contains("绩点是 3.8"),
+        "{}",
+        error.message()
+    );
+}
+
+#[tokio::test]
 async fn a_reply_without_a_whole_answer_is_not_a_pass() {
     let net = Net::new(Vec::new()).unwrap();
     // As when a custom address is a website rather than its API.
@@ -211,8 +231,9 @@ async fn a_reply_without_a_whole_answer_is_not_a_pass() {
     assert!(
         matches!(
             result,
-            Err(ModelError::NoAnswer { ref finish_reason })
-                if finish_reason.as_deref() == Some("length")
+            Err(ModelError::NoAnswer {
+                finish_reason: Some(model::Finish::Length)
+            })
         ),
         "{result:?}"
     );
@@ -355,4 +376,39 @@ async fn models_are_listed_by_name() {
         received.lock().unwrap()[0].line,
         "GET /v1/models HTTP/1.1\r\n"
     );
+}
+
+#[tokio::test]
+async fn a_model_list_it_cannot_read_is_not_quoted() {
+    let (address, _) = provider(200, r#"{"data":"sk-test"}"#).await;
+    let net = Net::new(Vec::new()).unwrap();
+    let error = model::list_models(&net, &access(address, None))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ModelError::Broken(_)), "{error:?}");
+    assert!(!error.to_string().contains("sk-test"), "{error}");
+    assert!(!error.message().contains("sk-test"), "{error}");
+}
+
+#[tokio::test]
+async fn a_finish_reason_of_the_providers_own_is_not_quoted() {
+    let (address, _) = provider(
+        200,
+        r#"data: {"choices":[{"delta":{},"finish_reason":"sk-test 王老师"}]}"#,
+    )
+    .await;
+    let net = Net::new(Vec::new()).unwrap();
+    let error = model::test(&net, &access(address, None), "m")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            ModelError::NoAnswer {
+                finish_reason: Some(model::Finish::Other)
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(!error.message().contains("sk-test"), "{}", error.message());
 }

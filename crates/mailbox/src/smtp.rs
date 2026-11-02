@@ -193,14 +193,19 @@ impl SendError {
 pub struct Smtp {
     server: Server,
     conn: AsyncSmtpConnection,
+    /// To hide from what the server says.
+    secret: String,
 }
 
 /// Connects to the mailbox's SMTP server and logs in; nothing is sent yet.
 pub async fn login(net: &Net, account: &Account) -> Result<Smtp, MailError> {
-    let conn = connect::within(&account.smtp, open(net, account)).await?;
+    let conn = connect::within(&account.smtp, open(net, account))
+        .await
+        .map_err(|e| e.without(&account.secret))?;
     Ok(Smtp {
         server: account.smtp.clone(),
         conn,
+        secret: account.secret.clone(),
     })
 }
 
@@ -213,7 +218,11 @@ impl Smtp {
         email: &Outgoing,
         expired: impl Fn() -> bool,
     ) -> Result<SendStatus, SendError> {
-        let Smtp { server, mut conn } = self;
+        let Smtp {
+            server,
+            mut conn,
+            secret,
+        } = self;
         let envelope = &email.envelope;
         let ready = connect::within(&server, async {
             // A server without SMTPUTF8 turns down addresses that are not ASCII.
@@ -240,7 +249,7 @@ impl Smtp {
         .await;
         if let Err(e) = ready {
             quit(&server.host, conn);
-            return Err(SendError::NotSent(e));
+            return Err(SendError::NotSent(e.without(&secret)));
         }
         if expired() {
             // DATA has started: QUIT would be read as body text, so close the connection instead.
@@ -251,7 +260,8 @@ impl Smtp {
         let sent = connect::uploading(&server, message.len(), async {
             conn.message(message).await.map_err(refused)
         })
-        .await;
+        .await
+        .map_err(|e| e.without(&secret));
         match sent {
             Ok(_) => {
                 quit(&server.host, conn);
@@ -287,10 +297,10 @@ async fn open(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailE
             conn.starttls(connect::lettre_tls(net, &server.host)?, &HELLO)
                 .await
                 .map_err(|e| {
-                    if e.status().is_some() {
+                    if e.status().is_some() || e.is_response() {
                         refused(e)
                     } else {
-                        // Without a reply to refuse with, what failed is the handshake.
+                        // The upgrade's own, such as a server without STARTTLS.
                         MailError::Tls {
                             host: server.host.to_string(),
                             source: io::Error::other(e),
@@ -303,25 +313,28 @@ async fn open(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailE
     let credentials = Credentials::new(account.address.to_string(), account.secret.clone());
     conn.auth(&[Mechanism::Plain, Mechanism::Login], &credentials)
         .await
-        .map_err(|e| match refused(e) {
-            MailError::Refused { reply, smtp_code } => MailError::Login { reply, smtp_code },
-            e => e,
-        })?;
+        .map_err(|e| refused(e).login())?;
     Ok(conn)
 }
 
 fn quit(host: &str, mut conn: AsyncSmtpConnection) {
-    connect::farewell(host, async move { conn.quit().await.map(drop) });
+    connect::farewell(
+        host,
+        async move { conn.quit().await.map(drop).map_err(refused) },
+    );
 }
 
-/// A reply from the server, worded by lettre like "permanent error (535): ...", is a refusal;
-/// anything else means the connection broke.
+/// A reply from the server, worded by lettre like "permanent error (535): ...", is a refusal; one
+/// lettre cannot read, which it words by quoting, is unreadable; anything else means the
+/// connection broke.
 fn refused(e: lettre::transport::smtp::Error) -> MailError {
     if let Some(code) = e.status() {
         MailError::Refused {
             reply: e.to_string(),
             smtp_code: Some(code.into()),
         }
+    } else if e.is_response() {
+        MailError::Unreadable
     } else {
         MailError::Broken(e.to_string())
     }

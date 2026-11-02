@@ -43,7 +43,7 @@ impl Synchronizer {
     ) -> Result<u32, Error> {
         let _guard = self.acquire().await;
         let Some(account) = sqlx::query!(
-            r#"SELECT email, library_revision, library_checked_at
+            r#"SELECT email, token AS "token!", library_revision, library_checked_at
             FROM account WHERE token IS NOT NULL"#
         )
         .fetch_optional(db)
@@ -58,52 +58,82 @@ impl Synchronizer {
         if !force && account.library_checked_at.is_some_and(|at| now - at < DAY) {
             return Ok(0);
         }
-        let mut after = account.library_revision;
-        let mut count = 0;
-        loop {
-            let path = format!("{}?after={after}", path::LIBRARY_CHANGES);
-            let page: wire::Changes = client
-                .authenticated(db, Method::GET, &path, None::<&Empty>)
-                .await?;
-            // A malformed page must not advance the cursor or keep the process looping forever.
-            if page.revision < after
-                || page.more && page.revision == after
-                || page
-                    .changes
-                    .iter()
-                    .any(|c| c.revision <= after || c.revision > page.revision)
-            {
-                return Err(Error::Invalid(
-                    "服务器返回的更新进度不正确，请稍后重试或升级应用。".into(),
-                ));
-            }
-            for change in &page.changes {
-                let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-                check_account(&mut tx, &account.email).await?;
-                process(&mut tx, change, now).await?;
-                tx.commit().await?;
-                count += 1;
-            }
+        let result = changes(client, db, &account.email, account.library_revision, now).await;
+        if let Err(error @ (Error::Account(_) | Error::Invalid(_))) = &result {
+            // Kept for the session that failed, not one that replaced it or ended meanwhile, and
+            // under the lock, so that a later success clears it.
+            let message = error.message();
+            sqlx::query!(
+                r#"UPDATE account SET library_failed_at = coalesce(library_failed_at, ?),
+                    library_error = ?
+                WHERE email = ? AND token = ?"#,
+                now,
+                message,
+                account.email,
+                account.token
+            )
+            .execute(db)
+            .await?;
+        }
+        result
+    }
+}
+
+/// Takes the changes since `after`, and on reaching the end clears any failure.
+async fn changes(
+    client: &account::Client,
+    db: &SqlitePool,
+    email: &str,
+    mut after: i64,
+    now: i64,
+) -> Result<u32, Error> {
+    let mut count = 0;
+    loop {
+        let path = format!("{}?after={after}", path::LIBRARY_CHANGES);
+        let page: wire::Changes = client
+            .authenticated(db, Method::GET, &path, None::<&Empty>)
+            .await?;
+        // A malformed page must not advance the cursor or keep the process looping forever.
+        if page.revision < after
+            || page.more && page.revision == after
+            || page
+                .changes
+                .iter()
+                .any(|c| c.revision <= after || c.revision > page.revision)
+        {
+            return Err(Error::Invalid(
+                "服务器返回的更新进度不正确，请稍后重试或升级应用。".into(),
+            ));
+        }
+        for change in &page.changes {
             let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-            check_account(&mut tx, &account.email).await?;
-            sqlx::query!("UPDATE account SET library_revision = ?", page.revision)
-                .execute(&mut *tx)
-                .await?;
+            check_account(&mut tx, email).await?;
+            process(&mut tx, change, now).await?;
             tx.commit().await?;
-            after = page.revision;
-            if !page.more {
-                break;
-            }
+            count += 1;
         }
         let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-        check_account(&mut tx, &account.email).await?;
-        sqlx::query!("UPDATE account SET library_checked_at = ?", now)
+        check_account(&mut tx, email).await?;
+        sqlx::query!("UPDATE account SET library_revision = ?", page.revision)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        tracing::info!(count, "synchronized mentor library");
-        Ok(count)
+        after = page.revision;
+        if !page.more {
+            break;
+        }
     }
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    check_account(&mut tx, email).await?;
+    sqlx::query!(
+        "UPDATE account SET library_checked_at = ?, library_failed_at = NULL, library_error = NULL",
+        now
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    tracing::info!(count, "synchronized mentor library");
+    Ok(count)
 }
 
 async fn check_account(conn: &mut SqliteConnection, email: &str) -> Result<(), Error> {

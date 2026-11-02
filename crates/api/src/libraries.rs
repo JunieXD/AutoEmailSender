@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{CallError, Context, ErrorCode, Nothing};
@@ -141,6 +141,27 @@ pub async fn run(ctx: std::sync::Arc<Context>) {
             );
         }
     }
+}
+
+/// Synchronization failing since then.
+#[derive(Debug, Serialize, TS)]
+pub struct LibraryFailure {
+    pub since: i64,
+    pub message: String,
+}
+
+pub async fn library_failure(
+    ctx: &Context,
+    _: Nothing,
+) -> Result<Option<LibraryFailure>, CallError> {
+    let failure = sqlx::query!(
+        "SELECT library_failed_at, library_error FROM account WHERE token IS NOT NULL"
+    )
+    .fetch_optional(&ctx.db)
+    .await?
+    .and_then(|a| a.library_failed_at.zip(a.library_error))
+    .map(|(since, message)| LibraryFailure { since, message });
+    Ok(failure)
 }
 
 impl From<library::Error> for CallError {

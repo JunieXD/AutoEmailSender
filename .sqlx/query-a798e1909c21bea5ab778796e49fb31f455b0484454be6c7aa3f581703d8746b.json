@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT library_failed_at, library_error FROM account WHERE token IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "library_failed_at",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "library_failed_at"
+          }
+        }
+      },
+      {
+        "name": "library_error",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "library_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "a798e1909c21bea5ab778796e49fb31f455b0484454be6c7aa3f581703d8746b"
+}

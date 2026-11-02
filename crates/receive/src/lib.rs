@@ -171,8 +171,16 @@ async fn receive_all(
     round: &mut Round,
 ) -> Result<(), sqlx::Error> {
     for id in mailbox::receivable(db, now).await? {
+        let replies = round.replies.len();
         match receive(db, net, id, now, round).await {
-            Ok(()) => round.changed |= mailbox::received(db, id).await?,
+            Ok(()) => {
+                tracing::info!(
+                    mailbox = id,
+                    replies = round.replies.len() - replies,
+                    "received"
+                );
+                round.changed |= mailbox::received(db, id).await?;
+            }
             Err(Error::Mail(e)) => {
                 tracing::warn!(mailbox = id, "receive: {e}");
                 let refused = matches!(e, MailError::Login { .. } | MailError::Refused { .. });

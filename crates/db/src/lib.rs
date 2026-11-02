@@ -120,12 +120,13 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         .connect_with(options)
         .await
         .map_err(OpenError::Open)?;
-    let backup = if upgrading(&pool).await.map_err(OpenError::Open)? {
-        Some(
-            back_up(&pool, &path.with_file_name("backups"))
-                .await
-                .map_err(OpenError::Backup)?,
-        )
+    let upgrading = upgrading(&pool).await.map_err(OpenError::Open)?;
+    let backup = if upgrading {
+        let backup = back_up(&pool, &path.with_file_name("backups"))
+            .await
+            .map_err(OpenError::Backup)?;
+        tracing::info!("upgrading the database, backed up first");
+        Some(backup)
     } else {
         None
     };
@@ -133,6 +134,10 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         .run(&pool)
         .await
         .map_err(|error| OpenError::Upgrade { error, backup })?;
+    if upgrading {
+        let version = MIGRATOR.iter().map(|m| m.version).max();
+        tracing::info!(version, "upgraded the database");
+    }
     Ok(pool)
 }
 
