@@ -433,7 +433,7 @@ async fn account_errors_pause_only_the_task_and_old_configuration_errors_do_not(
     assert_eq!(t.progress.generation_failed, 0);
     assert_eq!(t.progress.generating, 1);
     task::resume(&db, id).await.unwrap();
-    run.handle.wake();
+    run.handle.restart(id);
     request(&mut p)
         .await
         .respond
@@ -643,7 +643,7 @@ async fn pause_keeps_completed_drafts_and_stop_discards_in_flight_results(db: Sq
     );
     assert!(p.requests.try_recv().is_err());
     task::resume(&db, id).await.unwrap();
-    run.handle.wake();
+    run.handle.restart(id);
     let a = request(&mut p).await;
     let b = request(&mut p).await;
     task::stop(&db, id, 3).await.unwrap();
@@ -1001,7 +1001,7 @@ async fn stopped_or_paused_tasks_skip_checks_after_writing(db: SqlitePool) {
         if !stop {
             assert!(row.2.is_some());
             task::resume(&db, id).await.unwrap();
-            run.handle.wake();
+            run.handle.restart(id);
             request(&mut p)
                 .await
                 .respond
@@ -1212,6 +1212,59 @@ async fn fact_check_account_errors_pause_remaining_work_and_keep_the_draft(db: S
     assert!(matches!(&drafts[0].draft.fact_check,
         Some(email::fact_check::FactCheck::Failed { reason }) if !reason.is_empty()));
     assert!(p.requests.try_recv().is_err());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_fact_check_asked_to_wait_past_ten_minutes_pauses_and_keeps_the_draft(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    let (id, _) = setup(&db, &p.address, 4).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let first = request(&mut p).await;
+    let _second = request(&mut p).await;
+    let _third = request(&mut p).await;
+    first.respond.send(Response::answer(LETTER)).ok().unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "coding plan expired".into(),
+            retry_after: Some(601),
+        })
+        .ok()
+        .unwrap();
+    run.until(&db, id, |t| t.progress.review == 1).await;
+    let t = task::get(&db, id).await.unwrap().unwrap();
+    assert_eq!(t.state, task::TaskState::Paused);
+    assert!(t.pause_reason.unwrap().contains("coding plan expired"));
+    let drafts = task::pending(&db, id, 1, |_| None).await.unwrap();
+    assert_eq!(drafts[0].draft.body_md, "王老师：您好，我希望申请读研。");
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_fact_check_asked_for_after_going_on_counts_in_the_new_round(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    let (id, _) = setup(&db, &p.address, 1).await;
+    profile::set_ai_fact_check(&db, true).await.unwrap();
+    let mut run = Runner::start(&db, Default::default());
+    let writing = request(&mut p).await;
+    task::pause(&db, id, 2).await.unwrap();
+    task::resume(&db, id).await.unwrap();
+    run.handle.restart(id);
+    writing.respond.send(Response::answer(LETTER)).ok().unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "coding plan expired".into(),
+            retry_after: Some(601),
+        })
+        .ok()
+        .unwrap();
+    run.until(&db, id, |t| t.state == task::TaskState::Paused)
+        .await;
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

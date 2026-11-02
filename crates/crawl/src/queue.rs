@@ -255,6 +255,12 @@ pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
     tx.commit().await?;
     Ok(result)
 }
+pub(crate) async fn running(db: &SqlitePool) -> Result<Vec<i64>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT id FROM crawl WHERE state = 'running'")
+        .fetch_all(db)
+        .await
+}
+
 pub async fn valid(conn: &mut SqliteConnection, c: &Claim) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT EXISTS (

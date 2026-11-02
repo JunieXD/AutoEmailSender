@@ -12,7 +12,7 @@ use crate::providers::NoThinking;
 use crate::usage::Usage;
 
 /// Where and how to call a provider.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Access {
     /// Without a trailing slash.
     pub base_url: String,

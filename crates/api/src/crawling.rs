@@ -144,7 +144,7 @@ pub(super) async fn resume_crawl(ctx: &Context, input: CrawlId) -> Result<(), Ca
         crawl_ready(ctx, None).await?;
     }
     queue::control(&ctx.db, input.id, "resume", now()).await?;
-    ctx.crawler.wake();
+    ctx.crawler.restart(input.id);
     Ok(())
 }
 pub(super) async fn cancel_crawl(ctx: &Context, input: CrawlId) -> Result<(), CallError> {
@@ -189,7 +189,7 @@ pub(super) async fn retry_crawl(ctx: &Context, input: CrawlRetry) -> Result<u64,
         crawl_ready(ctx, None).await?;
     }
     let n = queue::retry(&ctx.db, input.id, input.page, now()).await?;
-    ctx.crawler.wake();
+    ctx.crawler.restart(input.id);
     Ok(n)
 }
 pub(super) async fn delete_crawl(ctx: &Context, input: CrawlId) -> Result<(), CallError> {
@@ -208,9 +208,12 @@ pub(super) async fn enrich_candidates(
     input: CandidateIds,
 ) -> Result<crawl::enrich::EnrichPlan, CallError> {
     crawl_ready(ctx, None).await?;
-    let result = crawl::enrich::start(&ctx.db, &input.ids, now()).await?;
+    let (plan, reopened) = crawl::enrich::start(&ctx.db, &input.ids, now()).await?;
+    for crawl in reopened {
+        ctx.crawler.restart(crawl);
+    }
     ctx.crawler.wake();
-    Ok(result)
+    Ok(plan)
 }
 pub(super) async fn list_candidates(
     ctx: &Context,

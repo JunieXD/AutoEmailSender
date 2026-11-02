@@ -137,18 +137,20 @@ impl rustls::client::danger::ServerCertVerifier for PageCertificate {
     }
 }
 
-/// How long a refusing server asked to be left alone, in seconds or until a date.
+/// How long a refusing server asked to be left alone, in seconds or until a date. At most a day,
+/// which no caller waits out anyway, so that deadlines computed from it stay representable.
 pub fn retry_after(response: &reqwest::Response) -> Option<Duration> {
     let value = response
         .headers()
         .get(reqwest::header::RETRY_AFTER)?
         .to_str()
         .ok()?;
-    value.parse().ok().map(Duration::from_secs).or_else(|| {
+    let wait = value.parse().ok().map(Duration::from_secs).or_else(|| {
         httpdate::parse_http_date(value)
             .ok()
             .map(|at| at.duration_since(SystemTime::now()).unwrap_or_default())
-    })
+    })?;
+    Some(wait.min(Duration::from_secs(24 * 60 * 60)))
 }
 
 /// Whether the server's certificate was the problem rather than the handshake, however deep the

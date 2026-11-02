@@ -1,15 +1,14 @@
 //! Automatic reply classification, with no mentor or student profile sent to the model.
 
 use email::outcome::{self as queue, ReplyOutcome};
-use model::{Chosen, ModelError};
+use model::{
+    Chosen, ModelError,
+    background::{Cooldown, Limited, RateLimit, Rounds},
+};
 use serde::Deserialize;
 use sqlx::SqlitePool;
-use std::{sync::Arc, time::Duration};
-use tokio::{
-    sync::{Mutex, Notify},
-    task::JoinSet,
-    time::Instant,
-};
+use std::sync::Arc;
+use tokio::{sync::Notify, task::JoinSet, time::Instant};
 
 const CONCURRENCY: usize = model::background::CONCURRENCY;
 const NO_MODEL: &str = "尚未添加模型。在“设置 › AI › 模型”里添加后继续回信处理。";
@@ -26,10 +25,21 @@ const SYSTEM: &str = "你帮助学生标出导师回信的结果。用户消息�
     值必须是以上四个英文值之一。";
 
 #[derive(Clone, Default)]
-pub struct Processor(Arc<Notify>);
+pub struct Processor {
+    wake: Arc<Notify>,
+    rounds: Arc<Rounds<()>>,
+}
 impl Processor {
     pub fn wake(&self) {
-        self.0.notify_one();
+        self.wake.notify_one();
+    }
+    /// The user resumed processing, or turned some of it on or off.
+    pub fn restart(&self) {
+        self.rounds.next(());
+        self.wake();
+    }
+    fn round(&self) -> u64 {
+        self.rounds.current(&())
     }
 }
 
@@ -44,7 +54,10 @@ enum Outcome {
     Todos(Vec<email::todos::Fields>),
     Failed(String),
     Pause(String, Guard),
-    RateLimit(Duration),
+    /// With the round the limited request went out in.
+    RateLimit(RateLimit, Chosen, u64),
+    /// A rate limit began while this waited for a turn at the model.
+    Wait,
     Gone,
 }
 
@@ -78,8 +91,9 @@ async fn analyze(
     db: &SqlitePool,
     net: &net::Net,
     writes: &db::Writes,
+    processor: &Processor,
     claim: queue::Claim,
-    cooldown: &Mutex<Option<Instant>>,
+    cooldown: &Cooldown<()>,
 ) -> Result<Outcome, sqlx::Error> {
     let todos = claim.action == queue::Action::Todos;
     let Some((message, email_id, reply_date)) =
@@ -90,12 +104,8 @@ async fn analyze(
     let prompt = if todos { super::todos::SYSTEM } else { SYSTEM };
     let mut system = prompt.to_owned();
     for attempt in 0..2 {
-        if let Some(at) = *cooldown.lock().await
-            && at > Instant::now()
-        {
-            return Ok(Outcome::RateLimit(
-                at.saturating_duration_since(Instant::now()),
-            ));
+        if cooldown.until().is_some() {
+            return Ok(Outcome::Wait);
         }
         let Some(chosen) = model::chosen(db).await? else {
             return Ok(Outcome::Pause(NO_MODEL.into(), Guard::Missing));
@@ -103,6 +113,7 @@ async fn analyze(
         if !chosen.agreed {
             return Ok(Outcome::Pause(NOT_AGREED.into(), Guard::Model(chosen)));
         }
+        let round = processor.round();
         let answer =
             match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
                 Ok(answer) => answer,
@@ -112,7 +123,7 @@ async fn analyze(
                         model = chosen.model,
                         "reply processing model failed: {error}"
                     );
-                    return Ok(classify(error, chosen));
+                    return Ok(classify(error, chosen, round));
                 }
             };
         tracing::info!(
@@ -173,10 +184,10 @@ async fn analyze(
     unreachable!("both attempts return")
 }
 
-fn classify(error: ModelError, chosen: Chosen) -> Outcome {
+fn classify(error: ModelError, chosen: Chosen, round: u64) -> Outcome {
     match model::background::classify(error, &chosen.access) {
         model::background::Failure::Pause(reason) => Outcome::Pause(reason, Guard::Model(chosen)),
-        model::background::Failure::RateLimit(wait) => Outcome::RateLimit(wait),
+        model::background::Failure::RateLimit(limit) => Outcome::RateLimit(limit, chosen, round),
         model::background::Failure::Failed(reason) => Outcome::Failed(reason),
     }
 }
@@ -230,15 +241,20 @@ pub async fn run(
     writes
         .retry("recover reply processing queue", || queue::recover(&db))
         .await;
-    let cooldown = Arc::new(Mutex::new(None));
+    let cooldown = Cooldown::new(processor.rounds.clone());
     let mut workers = JoinSet::new();
     let mut claims = std::collections::HashMap::new();
-    let mut retry_at: Option<Instant> = None;
+    let mut limited = Limited::default();
     loop {
         let progress = writes
             .retry("reply processing progress", || queue::progress(&db))
             .await;
-        let cooling = retry_at.is_some_and(|at| at > Instant::now());
+        // New mail brings work back without the user starting a new round.
+        if progress.remaining == 0 && workers.is_empty() {
+            limited = Limited::default();
+        }
+        let retry_at = cooldown.until();
+        let cooling = retry_at.is_some();
         if progress.pause.is_none()
             && !cooling
             && workers.len() < CONCURRENCY
@@ -248,11 +264,11 @@ pub async fn run(
         {
             let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
             let cooldown = cooldown.clone();
-            let writes = writes.clone();
+            let (writes, processor) = (writes.clone(), processor.clone());
             let task = workers.spawn(async move {
                 let _permit = limit.acquire().await;
                 let result = match queue::running(&db, claim).await {
-                    Ok(true) => analyze(&db, &net, &writes, claim, &cooldown).await,
+                    Ok(true) => analyze(&db, &net, &writes, &processor, claim, &cooldown).await,
                     Ok(false) => Ok(Outcome::Gone),
                     Err(e) => Err(e),
                 };
@@ -269,6 +285,12 @@ pub async fn run(
                         claims.remove(&task_id);
                         let id = claim.id;
                         let outcome = match result {
+                            Ok(Outcome::RateLimit(limit, chosen, round))
+                                if round == processor.round()
+                                    && limited.lasting(round, Instant::now(), limit.wait, &chosen) =>
+                            {
+                                Outcome::Pause(limit.lasting, Guard::Model(chosen))
+                            }
                             Ok(o) => o,
                             Err(e) => {
                                 tracing::error!(message_id = id, "reply processing database: {e}");
@@ -303,15 +325,27 @@ pub async fn run(
                                         )
                                         .await
                                     }
-                                    Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
-                                    Outcome::Gone => requeue(&db, claim, None, None).await,
+                                    Outcome::RateLimit(..) | Outcome::Wait | Outcome::Gone => {
+                                        requeue(&db, claim, None, None).await
+                                    }
                                 }
                             })
                             .await;
-                        if applied && let Outcome::RateLimit(wait) = outcome {
-                            let at = Instant::now() + wait;
-                            retry_at = Some(retry_at.map_or(at, |old| old.max(at)));
-                            *cooldown.lock().await = retry_at;
+                        if applied
+                            && matches!(
+                                outcome,
+                                Outcome::Done(_) | Outcome::Todos(_) | Outcome::Failed(_)
+                            )
+                        {
+                            limited = Limited::default();
+                        }
+                        // A limit from before the user went on does not hold the new round back
+                        // either: its own requests find out whether it still holds.
+                        if applied
+                            && let Outcome::RateLimit(limit, _, round) = outcome
+                            && round == processor.round()
+                        {
+                            cooldown.defer((), round, limit.wait);
                         }
                         changed();
                     }
@@ -337,7 +371,7 @@ pub async fn run(
                     }
                 }
             },
-            () = processor.0.notified() => {},
+            () = processor.wake.notified() => {},
             () = async {
                 if let Some(at) = retry_at {
                     tokio::time::sleep_until(at).await;

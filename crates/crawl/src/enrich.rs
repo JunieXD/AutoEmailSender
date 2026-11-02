@@ -113,10 +113,16 @@ async fn plan(conn: &mut SqliteConnection, ids: &[i64]) -> Result<EnrichPlan, sq
 pub async fn preview(db: &SqlitePool, ids: &[i64]) -> Result<EnrichPlan, sqlx::Error> {
     plan(&mut *db.acquire().await?, ids).await
 }
-pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, sqlx::Error> {
+/// Queues the candidates' enrichment, also saying which ended crawls it started again.
+pub async fn start(
+    db: &SqlitePool,
+    ids: &[i64],
+    at: i64,
+) -> Result<(EnrichPlan, Vec<i64>), sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let result = plan(&mut tx, ids).await?;
     let mut crawls = std::collections::BTreeMap::<i64, usize>::new();
+    let mut reopened = Vec::new();
     for id in &result.ids {
         let r = sqlx::query!(
             r#"SELECT crawl_id AS "crawl!: i64", profile_url AS "url!: PageUrl"
@@ -156,13 +162,14 @@ pub async fn start(db: &SqlitePool, ids: &[i64], at: i64) -> Result<EnrichPlan, 
         .rows_affected();
         if resumed > 0 {
             queue::open_run(&mut tx, r.crawl, at).await?;
+            reopened.push(r.crawl);
         }
     }
     tx.commit().await?;
     for (id, candidates) in crawls {
         crate::span(id).in_scope(|| tracing::info!(candidates, "enrichment queued"));
     }
-    Ok(result)
+    Ok((result, reopened))
 }
 pub(crate) async fn enqueue(
     conn: &mut SqliteConnection,

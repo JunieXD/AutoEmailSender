@@ -12,18 +12,16 @@ use crate::{
 };
 use model::{
     Chosen,
-    background::{CONCURRENCY, Failure, Limit},
+    background::{CONCURRENCY, Failure, LASTING, Limit, Limited, RateLimit, Rounds},
 };
 use serde::Serialize;
 use sqlx::{SqlitePool, types::Json};
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use tracing::Instrument;
 use ts_rs::TS;
+/// Crawls share it: they can use the same model and websites.
+type Cooldown = model::background::Cooldown<i64>;
 const READ_FAILED: &str = "抓取数据暂时无法读取，请继续或重启应用。";
 const SAVE_FAILED: &str = "网页资料暂时无法保存，请继续或重启应用。";
 const MODEL_READ_FAILED: &str = "模型配置暂时无法读取，请重试。";
@@ -31,17 +29,24 @@ const CANDIDATE_READ_FAILED: &str = "候选资料暂时无法读取，请继续�
 #[derive(Clone, Default)]
 pub struct Crawler {
     wake: Arc<Notify>,
+    rounds: Arc<Rounds<i64>>,
     writes: db::Writes,
 }
 impl Crawler {
     pub fn new(writes: db::Writes) -> Self {
         Self {
             wake: Arc::default(),
+            rounds: Arc::default(),
             writes,
         }
     }
     pub fn wake(&self) {
         self.wake.notify_one();
+    }
+    /// The user resumed or retried `crawl`.
+    pub fn restart(&self, crawl: i64) {
+        self.rounds.next(crawl);
+        self.wake();
     }
 }
 #[derive(Debug, Clone, Serialize, TS)]
@@ -105,14 +110,24 @@ impl Pages {
     ) -> Result<Material, ReadError> {
         // A limit can begin while this page is being claimed; it then waits its turn again.
         if cooldown.until().is_some() {
-            return Err(ReadError::RateLimit);
+            return Err(ReadError::Wait);
         }
+        let round = cooldown.round(&c.crawl);
         let fetched = self.http.fetch(target).await.map_err(|e| match e {
             // Like a model's rate limit: no new pages start until then, and this one goes again.
             crate::CrawlError::SlowDown(wait) => {
                 tracing::info!(wait_ms = wait.as_millis(), "website rate limited");
-                cooldown.defer(wait);
-                ReadError::RateLimit
+                ReadError::RateLimit(
+                    RateLimit {
+                        wait,
+                        lasting: format!(
+                            "网站要求放慢访问已超过 {} 分钟，页面一直没能打开。\
+                            可能是网站限制了你的网络，过一阵再继续，或换个网络后继续。",
+                            LASTING.as_secs() / 60
+                        ),
+                    },
+                    round,
+                )
             }
             e => ReadError::Failed(e.message()),
         })?;
@@ -250,7 +265,10 @@ enum Outcome {
     Done(Page),
     Failed(String),
     Pause(String, Option<Chosen>),
-    RateLimit,
+    /// With the round of the limited request.
+    RateLimit(RateLimit, Chosen, u64),
+    /// A rate limit began while the page was being claimed.
+    Wait,
     Gone,
 }
 
@@ -263,7 +281,8 @@ enum ReadError {
         operation: &'static str,
         reason: &'static str,
     },
-    RateLimit,
+    RateLimit(RateLimit, u64),
+    Wait,
     Gone,
 }
 
@@ -275,37 +294,6 @@ fn database(
         source,
         operation,
         reason,
-    }
-}
-
-#[derive(Clone, Default)]
-struct Cooldown(Arc<Mutex<Option<Instant>>>);
-impl Cooldown {
-    fn until(&self) -> Option<Instant> {
-        self.0
-            .lock()
-            .unwrap_or_else(|_| {
-                unreachable!("cooldown updates cannot panic while holding the lock")
-            })
-            .filter(|at| *at > Instant::now())
-    }
-    fn defer(&self, wait: Duration) {
-        let at = Instant::now() + wait;
-        let mut current = self.0.lock().unwrap_or_else(|_| {
-            unreachable!("cooldown updates cannot panic while holding the lock")
-        });
-        *current = Some(current.map_or(at, |old| old.max(at)));
-    }
-    async fn acquire(&self, limit: &Limit) -> tokio::sync::OwnedSemaphorePermit {
-        loop {
-            if let Some(at) = self.until() {
-                tokio::time::sleep_until(at).await;
-            }
-            let permit = limit.acquire().await;
-            if self.until().is_none() {
-                return permit;
-            }
-        }
     }
 }
 
@@ -354,6 +342,7 @@ impl Reader<'_> {
                     break permit;
                 }
             };
+            let round = self.cooldown.round(&self.claim.crawl);
             let started = Instant::now();
             let answer = model::ask(
                 self.net,
@@ -396,10 +385,9 @@ impl Reader<'_> {
                 );
                 match failure {
                     Failure::Pause(r) => ReadError::Pause(r),
-                    Failure::RateLimit(w) => {
-                        tracing::info!(wait_ms = w.as_millis(), "model rate limited");
-                        self.cooldown.defer(w);
-                        ReadError::RateLimit
+                    Failure::RateLimit(limit) => {
+                        tracing::info!(wait_ms = limit.wait.as_millis(), "model rate limited");
+                        ReadError::RateLimit(limit, round)
                     }
                     Failure::Failed(r) => ReadError::Failed(r),
                 }
@@ -498,7 +486,8 @@ async fn process(
                 Outcome::Pause(reason.into(), Some(chosen))
             }
             Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
-            Err(ReadError::RateLimit) => Outcome::RateLimit,
+            Err(ReadError::RateLimit(limit, round)) => Outcome::RateLimit(limit, chosen, round),
+            Err(ReadError::Wait) => Outcome::Wait,
             Err(ReadError::Gone) => Outcome::Gone,
         },
     )
@@ -975,7 +964,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                 .await?;
             }
         }
-        Outcome::RateLimit | Outcome::Gone => {
+        Outcome::RateLimit(..) | Outcome::Wait | Outcome::Gone => {
             sqlx::query!(
                 "UPDATE crawl_page SET work_state = 'queued',claim = claim + 1 WHERE id = ?",
                 c.id
@@ -1003,7 +992,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             "page failed"
         ),
         Outcome::Pause(_, _) => tracing::info!("crawl paused"),
-        Outcome::RateLimit => {}
+        Outcome::RateLimit(..) | Outcome::Wait => {}
         Outcome::Gone => tracing::info!(url = c.url.as_str(), "page claim invalidated"),
     }
     Ok(true)
@@ -1152,11 +1141,18 @@ async fn run_with_pages(
     writes.retry("recover crawl", || queue::recover(&db)).await;
     let mut workers = JoinSet::new();
     let mut claims = HashMap::new();
-    let cooldown = Cooldown::default();
+    let cooldown = Cooldown::new(crawler.rounds.clone());
+    // By crawl: each has its own websites and model.
+    let mut limited: HashMap<i64, Limited> = HashMap::new();
     loop {
         for result in writes.retry("finish crawl", || finish(&db, now())).await {
             changed();
             finished(result);
+        }
+        // Crawls that stopped running count afresh when they go on, so drop them.
+        if !limited.is_empty() {
+            let running = writes.retry("running crawls", || queue::running(&db)).await;
+            limited.retain(|id, _| running.contains(id));
         }
         let retry_at = cooldown.until();
         let cooling = retry_at.is_some();
@@ -1181,7 +1177,19 @@ async fn run_with_pages(
                 let (c, outcome) = match joined {
                     Ok((id, (c, result))) => {
                         claims.remove(&id);
+                        let current = |round| round == crawler.rounds.current(&c.crawl);
                         let outcome = match result {
+                            Ok(Outcome::RateLimit(limit, chosen, round))
+                                if current(round)
+                                    && limited.entry(c.crawl).or_default().lasting(
+                                        round,
+                                        Instant::now(),
+                                        limit.wait,
+                                        &chosen,
+                                    ) =>
+                            {
+                                Outcome::Pause(limit.lasting, Some(chosen))
+                            }
                             Ok(o) => o,
                             Err(e) => {
                                 crate::span(c.crawl).in_scope(|| tracing::error!("crawl database: {e}"));
@@ -1191,6 +1199,14 @@ async fn run_with_pages(
                                 )
                             }
                         };
+                        // A limit from before the user went on with the crawl does not hold
+                        // crawls back: its own requests find out whether it still holds. Nor does
+                        // one that paused the crawl, so that going on sends at once.
+                        if let Outcome::RateLimit(limit, _, round) = &outcome
+                            && current(*round)
+                        {
+                            cooldown.defer(c.crawl, *round, limit.wait);
+                        }
                         (c, outcome)
                     }
                     Err(e) => {
@@ -1204,10 +1220,13 @@ async fn run_with_pages(
                         )
                     }
                 };
-                writes
+                let applied = writes
                     .retry("save crawl", || save(&db, &c, &outcome))
                     .instrument(crate::span(c.crawl))
                     .await;
+                if applied && matches!(outcome, Outcome::Done(_) | Outcome::Failed(_)) {
+                    limited.remove(&c.crawl);
+                }
                 changed();
             },
             () = crawler.wake.notified() => {},

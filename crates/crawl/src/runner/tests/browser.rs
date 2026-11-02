@@ -116,9 +116,16 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
     let limit = Limit::default();
     for _ in 0..3 {
         let claim = queue::next(&db).await.unwrap().unwrap();
-        let outcome = process(&db, &net, &pages, &limit, &claim, &Cooldown::default())
-            .await
-            .unwrap();
+        let outcome = process(
+            &db,
+            &net,
+            &pages,
+            &limit,
+            &claim,
+            &Cooldown::new(Arc::default()),
+        )
+        .await
+        .unwrap();
         assert!(matches!(outcome, Outcome::Done(_)));
         assert!(save(&db, &claim, &outcome).await.unwrap());
     }
@@ -229,7 +236,7 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
     ] {
         browser.results.lock().unwrap().push_back(result);
         let Err(ReadError::Failed(error)) = pages
-            .fetch(&db, &claim, &target, &Cooldown::default())
+            .fetch(&db, &claim, &target, &Cooldown::new(Arc::default()))
             .await
         else {
             panic!("browser should fail");
@@ -250,7 +257,7 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
         claim = queue::next(&db).await.unwrap().unwrap();
     }
     let m = Pages::local(site.port)
-        .fetch(&db, &claim, &target, &Cooldown::default())
+        .fetch(&db, &claim, &target, &Cooldown::new(Arc::default()))
         .await
         .unwrap_or_else(|_| panic!("preview HTTP material"));
     assert_eq!(m.needs_browser, Some(crate::BrowserReason::Challenge));
@@ -273,7 +280,7 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
             browser: Some(browser.clone()),
         };
         let target = Scope::new(&claim.scope).page(claim.url.clone()).unwrap();
-        let cooldown = Cooldown::default();
+        let cooldown = Cooldown::new(Arc::default());
         let read = pages.fetch(&db, &claim, &target, &cooldown);
         tokio::pin!(read);
         tokio::select! {
@@ -358,9 +365,16 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
             queue::retry(&db, id, None, 2).await.unwrap();
         }
         let claim = queue::next(&db).await.unwrap().unwrap();
-        let outcome = process(&db, &net, &pages, &limit, &claim, &Cooldown::default())
-            .await
-            .unwrap();
+        let outcome = process(
+            &db,
+            &net,
+            &pages,
+            &limit,
+            &claim,
+            &Cooldown::new(Arc::default()),
+        )
+        .await
+        .unwrap();
         assert!(matches!(outcome, Outcome::Failed(_)));
         save(&db, &claim, &outcome).await.unwrap();
     }

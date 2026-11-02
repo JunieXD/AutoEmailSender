@@ -2,19 +2,32 @@
 use super::*;
 use model::{
     Chosen,
-    background::{CONCURRENCY, Failure, Limit},
+    background::{CONCURRENCY, Cooldown, Failure, LASTING, Limit, Limited, RateLimit, Rounds},
 };
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 #[derive(Clone, Default)]
-pub struct Generator(Arc<Notify>);
+pub struct Generator {
+    wake: Arc<Notify>,
+    rounds: Arc<Rounds<i64>>,
+}
 impl Generator {
     pub fn wake(&self) {
-        self.0.notify_one();
+        self.wake.notify_one();
+    }
+    /// The user resumed `task`.
+    pub fn restart(&self, task: i64) {
+        self.rounds.next(task);
+        self.wake();
+    }
+    fn round(&self, task: i64) -> u64 {
+        self.rounds.current(&task)
     }
 }
 #[derive(Debug, Clone, Serialize, TS)]
@@ -30,11 +43,13 @@ enum Outcome {
         letter: writing::Letter,
         model: String,
         fact_check: Option<email::fact_check::FactCheck>,
-        failure: Option<(Failure, Chosen)>,
+        /// With the round the check's last request went out in.
+        failure: Option<(Failure, Chosen, u64)>,
     },
     Failed(String),
     Pause(String, Option<Chosen>),
-    RateLimit(Duration),
+    /// With the round the limited request went out in.
+    RateLimit(RateLimit, Chosen, u64),
     Requeue,
 }
 
@@ -42,6 +57,7 @@ async fn generate(
     db: &SqlitePool,
     net: &net::Net,
     writes: &db::Writes,
+    generator: &Generator,
     claim: emails::Claim,
 ) -> std::result::Result<Outcome, sqlx::Error> {
     if !emails::valid(db, claim).await? {
@@ -97,6 +113,9 @@ async fn generate(
         None
     };
     tx.commit().await?;
+    // The round the latest request went out in; the check asks again from inside.
+    let sent = AtomicU64::new(0);
+    let note_sent = || sent.store(generator.round(claim.task), Ordering::Relaxed);
     let answer = async {
         let input = writing::prepare(
             db,
@@ -121,6 +140,7 @@ async fn generate(
             },
         };
         let at = now();
+        note_sent();
         writing::write(net, &input, &current, |purpose, usage| {
             let chosen = &chosen;
             async move {
@@ -157,6 +177,7 @@ async fn generate(
                 match model::selected(db, t.model_config_id).await? {
                     Some(check_config) => {
                         let at = now();
+                        note_sent();
                         let result = writing::fact_check::check(
                             db,
                             net,
@@ -165,8 +186,10 @@ async fn generate(
                             &check_config,
                             &refs,
                             || async move {
-                                Ok(profile::ai_fact_check(db).await?
-                                    && emails::valid(db, claim).await?)
+                                let go_on = profile::ai_fact_check(db).await?
+                                    && emails::valid(db, claim).await?;
+                                note_sent();
+                                Ok(go_on)
                             },
                             |usage| {
                                 let chosen = &check_config;
@@ -208,7 +231,8 @@ async fn generate(
                                     }
                                     Failure::RateLimit(_) => message,
                                 };
-                                failure = Some((classified, check_config));
+                                failure =
+                                    Some((classified, check_config, sent.load(Ordering::Relaxed)));
                                 Some(email::fact_check::FactCheck::Failed { reason })
                             }
                             Err(error) => Some(email::fact_check::FactCheck::Failed {
@@ -238,7 +262,9 @@ async fn generate(
             );
             match model::background::classify(error, &chosen.access) {
                 Failure::Pause(reason) => Outcome::Pause(reason, Some(chosen)),
-                Failure::RateLimit(wait) => Outcome::RateLimit(wait),
+                Failure::RateLimit(limit) => {
+                    Outcome::RateLimit(limit, chosen, sent.load(Ordering::Relaxed))
+                }
                 Failure::Failed(reason) => Outcome::Failed(reason),
             }
         }
@@ -326,7 +352,7 @@ async fn apply(
                 at,
             )
             .await?;
-            if applied && let Some((Failure::Pause(reason), config)) = failure {
+            if applied && let Some((Failure::Pause(reason), config, _)) = failure {
                 pause_task(&mut tx, claim.task, reason, Some(config), at).await?;
             }
             tx.commit().await?;
@@ -336,7 +362,7 @@ async fn apply(
         Outcome::Pause(reason, config) => {
             requeue(db, claim, Some((reason, config.as_ref())), at).await
         }
-        Outcome::RateLimit(_) | Outcome::Requeue => requeue(db, claim, None, at).await,
+        Outcome::RateLimit(..) | Outcome::Requeue => requeue(db, claim, None, at).await,
     }
 }
 
@@ -355,7 +381,10 @@ pub async fn run(
     let mut workers = JoinSet::new();
     let mut claims = HashMap::new();
     let mut active = HashSet::new();
-    let mut retry_at: Option<Instant> = None;
+    // Tasks share it: they can use the same model.
+    let cooldown = Cooldown::new(generator.rounds.clone());
+    // By task: tasks can use different models.
+    let mut limited: HashMap<i64, Limited> = HashMap::new();
     loop {
         let tasks = writes
             .retry("draft progress", || {
@@ -401,6 +430,7 @@ pub async fn run(
                         && !claims.values().any(|c: &emails::Claim| c.task == id) =>
                 {
                     active.remove(&id);
+                    limited.remove(&id);
                     if t.state != "stopped" && t.generated + t.failed > 0 {
                         finished(DraftsFinished {
                             task_id: t.id,
@@ -412,21 +442,24 @@ pub async fn run(
                 }
                 Ok(None) => {
                     active.remove(&id);
+                    limited.remove(&id);
                 }
                 Err(e) => tracing::error!("draft completion: {e}"),
                 _ => {}
             }
         }
-        let cooling = retry_at.is_some_and(|at| at > Instant::now());
+        let retry_at = cooldown.until();
+        let cooling = retry_at.is_some();
         if !cooling
             && workers.len() < CONCURRENCY
             && let Some(claim) = writes.retry("claim draft", || emails::next(&db)).await
         {
             active.insert(claim.task);
             let (db, net, writes, limit) = (db.clone(), net.clone(), writes.clone(), limit.clone());
+            let generator = generator.clone();
             let task = workers.spawn(async move {
                 let _permit = limit.acquire().await;
-                (claim, generate(&db, &net, &writes, claim).await)
+                (claim, generate(&db, &net, &writes, &generator, claim).await)
             });
             claims.insert(task.id(), claim);
             changed();
@@ -437,7 +470,35 @@ pub async fn run(
                 match joined {
                     Ok((worker, (claim, result))) => {
                         claims.remove(&worker);
+                        let current = |round| round == generator.round(claim.task);
                         let outcome = match result {
+                            Ok(Outcome::RateLimit(limit, chosen, round))
+                                if current(round)
+                                    && limited.entry(claim.task).or_default().lasting(
+                                        round,
+                                        Instant::now(),
+                                        limit.wait,
+                                        &chosen,
+                                    ) =>
+                            {
+                                Outcome::Pause(limit.lasting, Some(chosen))
+                            }
+                            // The draft got through, which starts the limits afresh; the check
+                            // after it was limited.
+                            Ok(Outcome::Done {
+                                letter,
+                                model,
+                                fact_check,
+                                failure: Some((Failure::RateLimit(limit), config, round)),
+                            }) if current(round) && limit.wait > LASTING =>
+                            {
+                                Outcome::Done {
+                                    letter,
+                                    model,
+                                    fact_check,
+                                    failure: Some((Failure::Pause(limit.lasting), config, round)),
+                                }
+                            }
                             Ok(o) => o,
                             Err(e) => {
                                 tracing::error!("draft database: {e}");
@@ -453,18 +514,23 @@ pub async fn run(
                         let applied = writes
                             .retry("save draft", || apply(&db, claim, &outcome, at))
                             .await;
+                        if applied && matches!(outcome, Outcome::Done { .. } | Outcome::Failed(_)) {
+                            limited.remove(&claim.task);
+                        }
+                        // A limit from before the user went on does not hold the new round back
+                        // either: its own requests find out whether it still holds.
                         if applied
-                            && let Some(wait) = match outcome {
-                                Outcome::RateLimit(wait)
+                            && let Some((wait, round)) = match outcome {
+                                Outcome::RateLimit(RateLimit { wait, .. }, _, round)
                                 | Outcome::Done {
-                                    failure: Some((Failure::RateLimit(wait), _)),
+                                    failure:
+                                        Some((Failure::RateLimit(RateLimit { wait, .. }), _, round)),
                                     ..
-                                } => Some(wait),
+                                } if current(round) => Some((wait, round)),
                                 _ => None,
                             }
                         {
-                            let at = Instant::now() + wait;
-                            retry_at = Some(retry_at.map_or(at, |old| old.max(at)));
+                            cooldown.defer(claim.task, round, wait);
                         }
                         changed();
                     }
@@ -486,7 +552,7 @@ pub async fn run(
                     }
                 }
             },
-            () = generator.0.notified() => {},
+            () = generator.wake.notified() => {},
             () = async {
                 if let Some(at) = retry_at {
                     tokio::time::sleep_until(at).await;

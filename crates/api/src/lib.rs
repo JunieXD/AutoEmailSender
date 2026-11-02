@@ -902,7 +902,7 @@ async fn plan_matching(
 async fn start_matching(ctx: &Context, input: MatchBatch) -> Result<u64, CallError> {
     matching::ready(&ctx.db).await?;
     let count = mentor::matching::enqueue(&ctx.db, &input.ids, false, input.redo, now()).await?;
-    ctx.matcher.wake();
+    ctx.matcher.restart();
     Ok(count)
 }
 async fn match_mentor(ctx: &Context, input: MentorId) -> Result<u64, CallError> {
@@ -917,7 +917,7 @@ async fn match_mentor(ctx: &Context, input: MentorId) -> Result<u64, CallError> 
         ));
     }
     let count = mentor::matching::enqueue(&ctx.db, &[input.id], true, true, now()).await?;
-    ctx.matcher.wake();
+    ctx.matcher.restart();
     Ok(count)
 }
 async fn storage_failure(ctx: &Context, _: Nothing) -> Result<Option<String>, CallError> {
@@ -935,7 +935,7 @@ async fn pause_matching(ctx: &Context, _: Nothing) -> Result<(), CallError> {
 async fn resume_matching(ctx: &Context, _: Nothing) -> Result<(), CallError> {
     matching::ready(&ctx.db).await?;
     mentor::matching::resume(&ctx.db).await?;
-    ctx.matcher.wake();
+    ctx.matcher.restart();
     Ok(())
 }
 async fn cancel_matching(ctx: &Context, _: Nothing) -> Result<(), CallError> {
@@ -946,7 +946,7 @@ async fn cancel_matching(ctx: &Context, _: Nothing) -> Result<(), CallError> {
 async fn retry_matching(ctx: &Context, _: Nothing) -> Result<u64, CallError> {
     matching::ready(&ctx.db).await?;
     let count = mentor::matching::retry(&ctx.db, now()).await?;
-    ctx.matcher.wake();
+    ctx.matcher.restart();
     Ok(count)
 }
 impl From<matching::Error> for CallError {
@@ -2601,7 +2601,7 @@ async fn get_ai_reply_outcome(ctx: &Context, _: Nothing) -> Result<bool, CallErr
 }
 async fn set_ai_reply_outcome(ctx: &Context, input: AiReplyOutcome) -> Result<(), CallError> {
     email::outcome::set_enabled(&ctx.db, input.enabled).await?;
-    ctx.reply_processor.wake();
+    ctx.reply_processor.restart();
     Ok(())
 }
 async fn set_reply_outcome(ctx: &Context, input: ReplyOutcomeEdit) -> Result<(), CallError> {
@@ -2629,7 +2629,7 @@ async fn reply_processing(
 }
 async fn resume_reply_processing(ctx: &Context, _: Nothing) -> Result<(), CallError> {
     email::outcome::resume(&ctx.db).await?;
-    ctx.reply_processor.wake();
+    ctx.reply_processor.restart();
     Ok(())
 }
 

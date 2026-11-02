@@ -46,7 +46,7 @@ async fn process_answer(
     let net = net::Net::new(vec![]).unwrap();
     let fetcher = Pages::local(site.port);
     let limit = Limit::default();
-    let cooldown = Cooldown::default();
+    let cooldown = Cooldown::new(Arc::default());
     let read = process(db, &net, &fetcher, &limit, claim, &cooldown);
     let respond = async {
         provider
@@ -317,7 +317,7 @@ async fn enrichment_skip_groups_are_rechecked_when_starting(db: SqlitePool) {
         );
     }
     review::reject(&db, &[ready]).await.unwrap();
-    let p = enrich::start(&db, &[ready], 3).await.unwrap();
+    let (p, _) = enrich::start(&db, &[ready], 3).await.unwrap();
     assert!(p.ids.is_empty());
     assert_eq!(p.skipped[0].reason, EnrichSkipReason::Reviewed);
 }
@@ -402,7 +402,7 @@ async fn enrichment_failure_reasons_and_single_page_retry(db: SqlitePool) {
         &Pages::local(site.port),
         &Limit::default(),
         &c,
-        &Cooldown::default(),
+        &Cooldown::new(Arc::default()),
     )
     .await
     .unwrap();
@@ -457,7 +457,7 @@ async fn enrichment_failure_reasons_and_single_page_retry(db: SqlitePool) {
                 &Pages::local(site.port),
                 &Limit::default(),
                 &c,
-                &Cooldown::default(),
+                &Cooldown::new(Arc::default()),
             )
             .await
             .unwrap()
@@ -500,7 +500,7 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
             limit.acquire().await,
         ];
         let net = net::Net::new(vec![]).unwrap();
-        let cooldown = Cooldown::default();
+        let cooldown = Cooldown::new(Arc::default());
         let writes = db::Writes::default();
         let reader = Reader {
             writes: &writes,
@@ -614,7 +614,7 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
         let (_, id) = candidate(&db, &site, path).await;
         enrich::start(&db, &[id], 1).await.unwrap();
     }
-    let cooldown = Cooldown::default();
+    let cooldown = Cooldown::new(Arc::default());
     let limit = Limit::default();
     let start = |claim: Claim| {
         let (db, cd, limit, port) = (db.clone(), cooldown.clone(), limit.clone(), site.port);
@@ -655,7 +655,11 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
         r = &mut a => (true, r.unwrap()),
         r = &mut b => (false, r.unwrap())
     };
-    assert!(matches!(result, Outcome::RateLimit));
+    let Outcome::RateLimit(limit, _, round) = &result else {
+        panic!("the first page was limited");
+    };
+    // As the run loop does with a limit that does not pause the crawl.
+    cooldown.defer(claim.crawl, *round, limit.wait);
     save(&db, &claim, &result).await.unwrap();
     second.respond.send(Response::answer("invalid JSON")).ok();
     loop {
@@ -1259,7 +1263,7 @@ async fn enrichment_deleting_crawl_clears_queued_and_running_candidates(db: Sqli
                     .unwrap()
             );
         }
-        let plan = enrich::start(&db, &[id], 3).await.unwrap();
+        let (plan, _) = enrich::start(&db, &[id], 3).await.unwrap();
         assert!(plan.ids.is_empty());
         assert_eq!(
             serde_json::to_value(&plan.skipped[0].reason).unwrap(),
@@ -1696,7 +1700,7 @@ async fn enrichment_model_receives_existing_affiliations(db: SqlitePool) {
     let net = net::Net::new(vec![]).unwrap();
     let fetcher = Pages::local(site.port);
     let limit = Limit::default();
-    let cooldown = Cooldown::default();
+    let cooldown = Cooldown::new(Arc::default());
     let read = process(&db, &net, &fetcher, &limit, &c, &cooldown);
     let respond = async {
         let request = provider.requests.recv().await.unwrap();

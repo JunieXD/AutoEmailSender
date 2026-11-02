@@ -26,6 +26,10 @@ impl Drop for Runner {
 }
 impl Runner {
     fn start(db: &SqlitePool) -> Self {
+        Self::sharing(db, model::background::Limit::default())
+    }
+    /// A runner taking turns at calling the model with whoever else holds `limit`.
+    fn sharing(db: &SqlitePool, limit: model::background::Limit) -> Self {
         let matcher = Matcher::default();
         let (change_tx, changes) = mpsc::unbounded_channel();
         let (done_tx, done) = mpsc::unbounded_channel();
@@ -34,7 +38,7 @@ impl Runner {
             db::Writes::default(),
             Net::new(Vec::new()).unwrap(),
             matcher.clone(),
-            model::background::Limit::default(),
+            limit,
             move || {
                 let _ = change_tx.send(());
             },
@@ -217,7 +221,7 @@ async fn invalid_output_retries_once_then_succeeds_or_fails(db: SqlitePool) {
     retry.respond.send(Response::answer(VALID)).ok().unwrap();
     assert_eq!(runner.finished().await.failed, 0);
     queue::enqueue(&db, &ids, true, true, 5).await.unwrap();
-    runner.matcher.wake();
+    runner.matcher.restart();
     for _ in 0..2 {
         request(&mut p)
             .await
@@ -282,7 +286,7 @@ async fn unauthorized_still_pauses_after_name_and_price_edits_then_resumes(db: S
     ));
     assert!(p.requests.try_recv().is_err());
     queue::resume(&db).await.unwrap();
-    runner.matcher.wake();
+    runner.matcher.restart();
     request(&mut p)
         .await
         .respond
@@ -335,6 +339,206 @@ async fn rate_limit_waits_for_retry_after_on_controlled_time(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_rate_limit_lasting_past_ten_minutes_pauses_with_the_providers_words(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "coding plan expired".into(),
+            // However long: working out when to retry must not overflow.
+            retry_after: Some(u64::MAX),
+        })
+        .ok()
+        .unwrap();
+    runner.progress(&db, |p| p.pause.is_some()).await;
+    let progress = queue::progress(&db).await.unwrap();
+    assert_eq!((progress.remaining, progress.failed), (1, 0));
+    assert!(
+        progress
+            .pause
+            .unwrap()
+            .reason
+            .unwrap()
+            .contains("coding plan expired")
+    );
+    // Going on starts afresh: an ordinary limit right after waits instead of pausing again.
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    let req = request(&mut p).await;
+    while runner.changes.try_recv().is_ok() {}
+    req.respond
+        .send(Response::Refused {
+            status: 429,
+            message: "slow down".into(),
+            retry_after: Some(1),
+        })
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn going_on_after_a_pause_counts_limits_afresh_despite_an_old_call(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    setup(&db, &p.address, 2).await;
+    let mut runner = Runner::start(&db);
+    let (limited, old) = (request(&mut p).await, request(&mut p).await);
+    let clock_guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    let refuse = |req: provider::Request, wait| {
+        req.respond
+            .send(Response::Refused {
+                status: 429,
+                message: "slow down".into(),
+                retry_after: Some(wait),
+            })
+            .ok()
+            .unwrap();
+    };
+    while runner.changes.try_recv().is_ok() {}
+    refuse(limited, 590);
+    runner.changes.recv().await.unwrap();
+    queue::pause(&db, 10, None).await.unwrap();
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    refuse(old, 1);
+    runner.changes.recv().await.unwrap();
+    tokio::time::advance(Duration::from_secs(591)).await;
+    tokio::time::resume();
+    clock_guard.abort();
+    let (again, _other) = (request(&mut p).await, request(&mut p).await);
+    while runner.changes.try_recv().is_ok() {}
+    refuse(again, 20);
+    runner.changes.recv().await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn going_on_after_limits_met_together_paused_asks_again_at_once(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    setup(&db, &p.address, 2).await;
+    let mut runner = Runner::start(&db);
+    let (first, second) = (request(&mut p).await, request(&mut p).await);
+    let clock_guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    let refuse = |req: provider::Request, wait| {
+        req.respond
+            .send(Response::Refused {
+                status: 429,
+                message: "coding plan expired".into(),
+                retry_after: Some(wait),
+            })
+            .ok()
+            .unwrap();
+    };
+    while runner.changes.try_recv().is_ok() {}
+    // Short of pausing, it holds the next calls back for 590 seconds.
+    refuse(first, 590);
+    runner.changes.recv().await.unwrap();
+    tokio::time::advance(Duration::from_secs(1)).await;
+    refuse(second, 600);
+    runner.progress(&db, |p| p.pause.is_some()).await;
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    tokio::time::resume();
+    clock_guard.abort();
+    request(&mut p).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_limit_from_before_going_on_neither_pauses_nor_holds_the_new_round_back(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    let old = request(&mut p).await;
+    queue::pause(&db, 10, None).await.unwrap();
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    old.respond
+        .send(Response::Refused {
+            status: 429,
+            message: "slow down".into(),
+            retry_after: Some(u64::MAX),
+        })
+        .ok()
+        .unwrap();
+    // The new round asks again right away rather than waiting out the old answer's day.
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::answer(VALID))
+        .ok()
+        .unwrap();
+    assert_eq!(runner.finished().await.analyzed, 1);
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_call_that_waited_for_its_turn_past_going_on_counts_in_the_new_round(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    let limit = model::background::Limit::default();
+    let mut turns = Vec::new();
+    for _ in 0..model::background::CONCURRENCY {
+        turns.push(limit.acquire().await);
+    }
+    setup(&db, &p.address, 1).await;
+    let mut runner = Runner::sharing(&db, limit);
+    // Claimed, and waiting for a turn.
+    runner.changes.recv().await.unwrap();
+    queue::pause(&db, 10, None).await.unwrap();
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    drop(turns);
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "coding plan expired".into(),
+            retry_after: Some(601),
+        })
+        .ok()
+        .unwrap();
+    runner.progress(&db, |p| p.pause.is_some()).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn asking_again_after_going_on_counts_in_the_new_round(db: SqlitePool) {
+    let mut p = Provider::start().await.unwrap();
+    setup(&db, &p.address, 1).await;
+    let mut runner = Runner::start(&db);
+    let old = request(&mut p).await;
+    queue::pause(&db, 10, None).await.unwrap();
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    old.respond.send(Response::answer("not json")).ok().unwrap();
+    request(&mut p)
+        .await
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "coding plan expired".into(),
+            retry_after: Some(601),
+        })
+        .ok()
+        .unwrap();
+    runner.progress(&db, |p| p.pause.is_some()).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn startup_recovers_running_concurrency_is_three_and_pause_stops_claiming(db: SqlitePool) {
     let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 5).await;
@@ -375,7 +579,7 @@ async fn startup_recovers_running_concurrency_is_three_and_pause_stops_claiming(
         .unwrap();
     profile::set_default_model(&db, config).await.unwrap();
     queue::resume(&db).await.unwrap();
-    runner.matcher.wake();
+    runner.matcher.restart();
     for _ in 0..2 {
         let req = request(&mut p).await;
         assert_eq!(req.body["model"], "new-default");
@@ -459,7 +663,7 @@ async fn restored_mentor_discards_the_old_request_after_a_new_claim(db: SqlitePo
     mentor::trash::trash(&db, &ids, 3).await.unwrap();
     mentor::trash::restore(&db, &ids, 4).await.unwrap();
     queue::enqueue(&db, &ids, true, true, 5).await.unwrap();
-    runner.matcher.wake();
+    runner.matcher.restart();
     let new = request(&mut p).await;
     while runner.changes.try_recv().is_ok() {}
     old.respond
@@ -698,7 +902,7 @@ async fn cancelled_inflight_errors_do_not_retry_or_fail(db: SqlitePool) {
     let mut runner = Runner::start(&db);
     for status in [429, 401, 500] {
         queue::enqueue(&db, &ids, true, true, 3).await.unwrap();
-        runner.matcher.wake();
+        runner.matcher.restart();
         let req = request(&mut p).await;
         queue::cancel(&db).await.unwrap();
         while runner.changes.try_recv().is_ok() {}
@@ -730,7 +934,7 @@ async fn cancelled_inflight_errors_do_not_retry_or_fail(db: SqlitePool) {
         assert!(p.requests.try_recv().is_err());
     }
     queue::enqueue(&db, &ids, true, true, 4).await.unwrap();
-    runner.matcher.wake();
+    runner.matcher.restart();
     let req = request(&mut p).await;
     queue::cancel(&db).await.unwrap();
     req.respond.send(Response::answer(VALID)).ok().unwrap();

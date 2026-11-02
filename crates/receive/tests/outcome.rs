@@ -492,7 +492,7 @@ async fn missing_model_and_consent_pause_and_resume_without_losing_the_queue(db:
         .await
         .unwrap();
     queue::resume(&db).await.unwrap();
-    runner.processor.wake();
+    runner.processor.restart();
     runner
         .until(&db, |p| {
             p.pause.as_ref().is_some_and(|p| p.reason.contains("确认"))
@@ -505,7 +505,7 @@ async fn missing_model_and_consent_pause_and_resume_without_losing_the_queue(db:
         .await
         .unwrap();
     queue::resume(&db).await.unwrap();
-    runner.processor.wake();
+    runner.processor.restart();
     request(&mut p)
         .await
         .respond
@@ -550,7 +550,7 @@ async fn late_model_results_and_errors_cannot_override_manual_changes_or_new_wor
     let old = request(&mut p).await;
     queue::set_enabled(&db, false).await.unwrap();
     queue::set_enabled(&db, true).await.unwrap();
-    runner.processor.wake();
+    runner.processor.restart();
     let new = request(&mut p).await;
     old.respond
         .send(Response::Refused {
@@ -599,7 +599,7 @@ async fn current_config_errors_pause_old_config_errors_only_requeue(db: SqlitePo
     let progress = queue::progress(&db).await.unwrap();
     assert_eq!((progress.remaining, progress.failed), (1, 0));
     queue::resume(&db).await.unwrap();
-    runner.processor.wake();
+    runner.processor.restart();
     request(&mut new_provider)
         .await
         .respond
@@ -641,7 +641,7 @@ async fn waiting_for_shared_capacity_reads_latest_model_and_consent(db: SqlitePo
         .await
         .unwrap();
     queue::resume(&db).await.unwrap();
-    runner.processor.wake();
+    runner.processor.restart();
     request(&mut new)
         .await
         .respond
@@ -692,6 +692,55 @@ async fn rate_limit_uses_retry_after_without_polling_on_controlled_time(db: Sqli
         .ok()
         .unwrap();
     runner.until(&db, |p| p.remaining == 0).await;
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn turning_processing_off_and_on_counts_limits_afresh_despite_an_old_call(db: SqlitePool) {
+    let m = setup(&db).await;
+    for at in 1..=2 {
+        message(&db, m, "reply", at, "答复").await;
+    }
+    let mut p = Provider::start().await.unwrap();
+    config(&db, &p.address).await;
+    queue::set_enabled(&db, true).await.unwrap();
+    let mut runner = Runner::start(&db, Default::default());
+    let (limited, _old) = (request(&mut p).await, request(&mut p).await);
+    let clock_guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    tokio::time::pause();
+    while runner.changes.try_recv().is_ok() {}
+    limited
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "slow down".into(),
+            retry_after: Some(590),
+        })
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    queue::set_enabled(&db, false).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
+    runner.processor.restart();
+    tokio::time::advance(Duration::from_secs(591)).await;
+    tokio::time::resume();
+    clock_guard.abort();
+    let (again, _other) = (request(&mut p).await, request(&mut p).await);
+    while runner.changes.try_recv().is_ok() {}
+    again
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "slow down".into(),
+            retry_after: Some(20),
+        })
+        .ok()
+        .unwrap();
+    runner.changes.recv().await.unwrap();
+    assert!(queue::progress(&db).await.unwrap().pause.is_none());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

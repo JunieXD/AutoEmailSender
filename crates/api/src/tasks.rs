@@ -174,7 +174,7 @@ pub async fn pause_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
 }
 pub async fn resume_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
     task::resume(&ctx.db, key.id).await?;
-    ctx.generator.wake();
+    ctx.generator.restart(key.id);
     ctx.sender.wake();
     Ok(())
 }

@@ -178,7 +178,7 @@ async fn extraction_requests_a_json_object(db: SqlitePool) {
         limit: &Limit::default(),
         claim: &claim,
         chosen: &chosen,
-        cooldown: &Cooldown::default(),
+        cooldown: &Cooldown::new(Arc::default()),
     };
     let ask = reader.ask::<extract::Route>("route", extract::ROUTE, json!({}));
     let respond = async {
@@ -481,7 +481,7 @@ async fn claims_pause_resume_cancel_restart_and_limits(db: SqlitePool) {
                 &Pages::local(port),
                 &Limit::default(),
                 &c,
-                &Cooldown::default(),
+                &Cooldown::new(Arc::default()),
             )
             .await
             .unwrap()
@@ -905,6 +905,49 @@ async fn crawling_matching_and_drafting_share_three_actual_calls() {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn going_on_after_a_lasting_limit_paused_the_crawl_asks_again_at_once(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/", include_str!("../../tests/pages/toronto.html"));
+    let mut p = Provider::start().await.unwrap();
+    let config = config(&db, &p.address).await;
+    let id = queue::start(&db, &[site.url("/")], config, 1)
+        .await
+        .unwrap();
+    let handle = Crawler::default();
+    let (tx, mut events) = mpsc::unbounded_channel();
+    let task = tokio::spawn(run_with_pages(
+        db.clone(),
+        net::Net::new(vec![]).unwrap(),
+        Arc::new(Pages::local(site.port)),
+        handle.clone(),
+        Limit::default(),
+        move || {
+            tx.send(()).ok();
+        },
+        |_| {},
+    ));
+    p.requests
+        .recv()
+        .await
+        .unwrap()
+        .respond
+        .send(Response::Refused {
+            status: 429,
+            message: "coding plan expired".into(),
+            retry_after: Some(601),
+        })
+        .ok();
+    changed_until(&db, id, &mut events, "paused").await;
+    queue::control(&db, id, "resume", 3).await.unwrap();
+    handle.restart(id);
+    tokio::time::timeout(GUARD_TIMEOUT, p.requests.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    task.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/", include_str!("../../tests/pages/toronto.html"));
@@ -936,7 +979,7 @@ async fn late_results_restart_and_retry_after_preserve_work(db: SqlitePool) {
         .send(Response::answer(r#"{"kind":"profile","next":[]}"#))
         .ok();
     queue::control(&db, id, "resume", 3).await.unwrap();
-    handle.wake();
+    handle.restart(id);
     let interrupted = p.requests.recv().await.unwrap();
     task.abort();
     let task = start(tx);
@@ -1523,7 +1566,7 @@ async fn process_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
         &Pages::local(site.port),
         &Limit::default(),
         claim,
-        &Cooldown::default(),
+        &Cooldown::new(Arc::default()),
     )
     .await
     .unwrap();
@@ -2272,7 +2315,7 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
             &Pages::local(site.port),
             &Limit::default(),
             &c,
-            &Cooldown::default(),
+            &Cooldown::new(Arc::default()),
         )
         .await
         .unwrap();
@@ -2682,7 +2725,7 @@ async fn regression_invalid_name_is_corrected_or_fails_with_page_reason(db: Sqli
                     &Pages::local(port),
                     &Limit::default(),
                     &c,
-                    &Cooldown::default(),
+                    &Cooldown::new(Arc::default()),
                 )
                 .await
                 .unwrap()
@@ -2778,7 +2821,7 @@ async fn regression_deleted_or_changed_config_requeues_and_requires_current_cons
             limit.acquire().await,
         ];
         let net = net::Net::new(vec![]).unwrap();
-        let cooldown = Cooldown::default();
+        let cooldown = Cooldown::new(Arc::default());
         let reader = Reader {
             writes: &fetcher.writes,
             db: &db,
@@ -2935,8 +2978,9 @@ async fn a_website_asking_to_slow_down_holds_new_pages_and_keeps_the_page(db: Sq
     queue::start(&db, &[site.url("/list"), site.url("/other")], config, 1)
         .await
         .unwrap();
-    let cooldown = Cooldown::default();
+    let cooldown = Cooldown::new(Arc::default());
     // The second is claimed as if the runner had looked before the first was limited.
+    let mut outcomes = Vec::new();
     for _ in 0..2 {
         let claim = queue::next(&db).await.unwrap().unwrap();
         let outcome = process(
@@ -2949,9 +2993,16 @@ async fn a_website_asking_to_slow_down_holds_new_pages_and_keeps_the_page(db: Sq
         )
         .await
         .unwrap();
-        assert!(matches!(outcome, Outcome::RateLimit));
-        assert!(cooldown.until().is_some());
+        // As the run loop does with a limit that does not pause the crawl.
+        if let Outcome::RateLimit(limit, _, round) = &outcome {
+            cooldown.defer(claim.crawl, *round, limit.wait);
+        }
+        outcomes.push(outcome);
     }
+    assert!(matches!(
+        outcomes[..],
+        [Outcome::RateLimit(..), Outcome::Wait]
+    ));
     assert_eq!(*site.visits.lock().unwrap(), ["/list"]);
 }
 
@@ -2966,7 +3017,7 @@ async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePoo
     queue::start(&db, &[site.url("/a"), site.url("/b")], config, 1)
         .await
         .unwrap();
-    let cooldown = Cooldown::default();
+    let cooldown = Cooldown::new(Arc::default());
     let limit = Limit::default();
     let start = |claim: Claim| {
         let (db, cooldown, limit, port) = (db.clone(), cooldown.clone(), limit.clone(), site.port);
@@ -3003,13 +3054,15 @@ async fn regression_retry_after_blocks_inflight_pages_next_request(db: SqlitePoo
         .ok();
     // Whichever page received 429 finishes first. The other page remains in flight.
     tokio::pin!(a, b);
-    let a_limited = tokio::select! { result = &mut a => {
-        assert!(matches!(result.unwrap(), Outcome::RateLimit));
-        true
-    }, result = &mut b => {
-        assert!(matches!(result.unwrap(), Outcome::RateLimit));
-        false
-    } };
+    let (a_limited, result) = tokio::select! {
+        result = &mut a => (true, result.unwrap()),
+        result = &mut b => (false, result.unwrap()),
+    };
+    let Outcome::RateLimit(limited, _, round) = result else {
+        panic!("the first page was limited");
+    };
+    // As the run loop does with a limit that does not pause the crawl.
+    cooldown.defer(1, round, limited.wait);
     second
         .respond
         .send(Response::answer(r#"{"kind":"list","next":[]}"#))
@@ -3225,7 +3278,7 @@ async fn restored_key_pauses_crawl_instead_of_failing_pages(db: SqlitePool) {
         &Pages::local(site.port),
         &Limit::default(),
         &claim,
-        &Cooldown::default(),
+        &Cooldown::new(Arc::default()),
     )
     .await
     .unwrap();

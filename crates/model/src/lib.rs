@@ -259,7 +259,7 @@ pub async fn agree(
 }
 
 /// The configuration AI features call, with its API key.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Chosen {
     pub id: i64,
     pub provider: String,

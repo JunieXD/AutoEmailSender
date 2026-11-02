@@ -1,10 +1,22 @@
 //! Shared model capacity and failure policy for persisted background queues.
 
 use crate::{Access, Chosen, ModelError};
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    sync::{Arc, Mutex, MutexGuard},
+    time::Duration,
+};
+use tokio::{
+    sync::{Notify, OwnedSemaphorePermit, Semaphore},
+    time::Instant,
+};
 
 pub const CONCURRENCY: usize = 3;
+
+/// Rate limits lasting longer than this with nothing getting through are taken as limits that
+/// will not lift by themselves, such as a used-up plan, and pause the work.
+pub const LASTING: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone)]
 pub struct Limit(Arc<Semaphore>);
@@ -34,14 +46,162 @@ pub fn same_config(current: &Chosen, expected: &Chosen) -> bool {
 
 pub enum Failure {
     Pause(String),
-    RateLimit(Duration),
+    RateLimit(RateLimit),
     Failed(String),
+}
+
+#[derive(Debug)]
+pub struct RateLimit {
+    pub wait: Duration,
+    /// The reason to pause with when the limits last.
+    pub lasting: String,
+}
+
+/// How many times the user has started or resumed each piece of background work (`K`): rate
+/// limits met in an earlier round, even by calls still running when it ended, do not count toward
+/// pausing it.
+#[derive(Default)]
+pub struct Rounds<K> {
+    rounds: Mutex<HashMap<K, u64>>,
+    /// A round began, which may lift a cooldown being waited out.
+    began: Notify,
+}
+impl<K: Eq + Hash> Rounds<K> {
+    pub fn next(&self, key: K) {
+        *self.rounds().entry(key).or_default() += 1;
+        self.began.notify_waiters();
+    }
+    pub fn current(&self, key: &K) -> u64 {
+        self.rounds().get(key).copied().unwrap_or_default()
+    }
+    fn rounds(&self) -> MutexGuard<'_, HashMap<K, u64>> {
+        self.rounds
+            .lock()
+            .unwrap_or_else(|_| unreachable!("nothing panics while holding the lock"))
+    }
+}
+
+/// Until when rate limits hold background work back. Each limit belongs to the piece of work
+/// (`K`) and round whose call met it: once the user goes on with a piece, what it met before no
+/// longer holds it back, while what other pieces met still does.
+pub struct Cooldown<K> {
+    rounds: Arc<Rounds<K>>,
+    until: Arc<Mutex<HashMap<K, (u64, Instant)>>>,
+}
+impl<K> Clone for Cooldown<K> {
+    fn clone(&self) -> Self {
+        Self {
+            rounds: self.rounds.clone(),
+            until: self.until.clone(),
+        }
+    }
+}
+impl<K: Eq + Hash> Cooldown<K> {
+    pub fn new(rounds: Arc<Rounds<K>>) -> Self {
+        Self {
+            rounds,
+            until: Arc::default(),
+        }
+    }
+    /// The round of `key` a call going out now belongs to.
+    pub fn round(&self, key: &K) -> u64 {
+        self.rounds.current(key)
+    }
+    /// When the last limit still holding back ends.
+    pub fn until(&self) -> Option<Instant> {
+        let now = Instant::now();
+        let mut until = self.lock();
+        until.retain(|key, &mut (round, at)| round == self.rounds.current(key) && at > now);
+        until.values().map(|&(_, at)| at).max()
+    }
+    /// Holds back for `wait` from now, for a limit a call of `key` made in `round` met.
+    pub fn defer(&self, key: K, round: u64, wait: Duration) {
+        let at = Instant::now() + wait;
+        let mut until = self.lock();
+        let held = until.entry(key).or_insert((round, at));
+        *held = if held.0 == round {
+            (round, held.1.max(at))
+        } else {
+            (round, at)
+        };
+    }
+    /// A turn among the calls running at once, once no limit holds back.
+    pub async fn acquire(&self, limit: &Limit) -> OwnedSemaphorePermit {
+        loop {
+            // Made before looking, so that it hears a round that begins in between.
+            let began = self.rounds.began.notified();
+            if let Some(at) = self.until() {
+                tokio::select! {
+                    () = tokio::time::sleep_until(at) => {}
+                    () = began => {}
+                }
+                continue;
+            }
+            let permit = limit.acquire().await;
+            if self.until().is_none() {
+                return permit;
+            }
+        }
+    }
+    fn lock(&self) -> MutexGuard<'_, HashMap<K, (u64, Instant)>> {
+        self.until
+            .lock()
+            .unwrap_or_else(|_| unreachable!("nothing panics while holding the lock"))
+    }
+}
+
+/// Rate limits one piece of background work has met in a round, with nothing getting through in
+/// between. Whoever keeps it starts it afresh once something gets through, so that only time spent
+/// waiting out limits counts.
+#[derive(Default)]
+pub struct Limited {
+    round: u64,
+    /// By configuration: work can run on two at once, and late answers can come through one the
+    /// user has replaced since.
+    waits: Vec<Waits>,
+}
+struct Waits {
+    config: Chosen,
+    /// Each stretch of time counted once however many limits asked for it.
+    blocked: Duration,
+    until: Instant,
+}
+impl Limited {
+    /// Notes a limit met `now` through `config` that asks to wait `wait`, by a call made in the
+    /// current `round`; true once the waiting through `config` is longer than `LASTING`.
+    pub fn lasting(&mut self, round: u64, now: Instant, wait: Duration, config: &Chosen) -> bool {
+        if self.round != round {
+            *self = Limited {
+                round,
+                waits: Vec::new(),
+            };
+        }
+        let i = self
+            .waits
+            .iter()
+            .position(|w| same_config(&w.config, config))
+            .unwrap_or_else(|| {
+                self.waits.push(Waits {
+                    config: config.clone(),
+                    blocked: Duration::ZERO,
+                    until: now,
+                });
+                self.waits.len() - 1
+            });
+        let w = &mut self.waits[i];
+        let end = now + wait;
+        if end > w.until {
+            w.blocked += end - w.until.max(now);
+            w.until = end;
+        }
+        w.blocked > LASTING
+    }
 }
 
 /// How background work goes on after `error` from calling through `access`.
 pub fn classify(error: ModelError, access: &Access) -> Failure {
     let message = error.message();
-    let (status, reply, retry_after) = match error {
+    let (status, words, code, retry_after) = match error {
         ModelError::MissingKey | ModelError::Unreachable { .. } | ModelError::TimedOut { .. } => {
             return Failure::Pause(message);
         }
@@ -50,15 +210,11 @@ pub fn classify(error: ModelError, access: &Access) -> Failure {
             reply,
             retry_after,
             code,
-        } => (
-            Some(status),
-            format!("{} {reply}", code.unwrap_or_default()),
-            retry_after,
-        ),
-        ModelError::Failed(reply) => (None, reply, None),
+        } => (Some(status), reply, code, retry_after),
+        ModelError::Failed(reply) => (None, reply, None, None),
         _ => return Failure::Failed(message),
     };
-    let reply = reply.to_lowercase();
+    let reply = format!("{} {words}", code.unwrap_or_default()).to_lowercase();
     if [
         "context_length",
         "context length",
@@ -121,7 +277,18 @@ pub fn classify(error: ModelError, access: &Access) -> Failure {
     {
         Failure::Pause(message)
     } else if status == Some(429) {
-        Failure::RateLimit(retry_after.unwrap_or(Duration::from_secs(30)))
+        Failure::RateLimit(RateLimit {
+            // A provider asking for no wait at all is still limiting; a second keeps retries from
+            // running back to back.
+            wait: retry_after
+                .unwrap_or(Duration::from_secs(30))
+                .max(Duration::from_secs(1)),
+            lasting: format!(
+                "模型服务商限流超过 {} 分钟（服务商回复：{words}）。可能是套餐到期或用量到了上限，\
+                到服务商网站查看，处理好后继续。",
+                LASTING.as_secs() / 60
+            ),
+        })
     } else {
         Failure::Failed(message)
     }
@@ -155,6 +322,93 @@ mod tests {
             retry_after: None,
             code: Some(code.into()),
         }
+    }
+
+    #[test]
+    fn rate_limits_pause_once_waiting_them_out_takes_over_ten_minutes() {
+        let config = |key: &str| Chosen {
+            id: 1,
+            provider: "custom".into(),
+            model: "m".into(),
+            agreed: true,
+            access: Source::check("custom", "https://relay.example.com/v1")
+                .unwrap()
+                .access(Some(key.into())),
+        };
+        let (a, b) = (config("k"), config("new key"));
+        let start = Instant::now();
+        let at = |secs| start + Duration::from_secs(secs);
+        let secs = Duration::from_secs;
+
+        // Retried as soon as each 30-second wait ends: the 21st limit passes ten minutes.
+        let mut limited = Limited::default();
+        let pauses: Vec<_> = (0..21)
+            .map(|n| limited.lasting(0, at(n * 31), secs(30), &a))
+            .collect();
+        assert_eq!(pauses.iter().position(|&p| p), Some(20));
+
+        assert!(!Limited::default().lasting(0, at(0), secs(600), &a));
+        assert!(Limited::default().lasting(0, at(0), secs(601), &a));
+
+        // Limits met together count their longest wait once.
+        let mut limited = Limited::default();
+        for wait in [590, 1, 0] {
+            assert!(!limited.lasting(0, at(0), secs(wait), &a));
+        }
+        assert!(limited.lasting(0, at(591), secs(590), &a));
+
+        // Waiting for a turn at the model between limits does not count.
+        let mut limited = Limited::default();
+        assert!(!limited.lasting(0, at(0), secs(300), &a));
+        assert!(!limited.lasting(0, at(3600), secs(300), &a));
+
+        // Each configuration counts its own waits, whichever answers last; a new round starts
+        // afresh.
+        let mut limited = Limited::default();
+        assert!(!limited.lasting(0, at(0), secs(590), &b));
+        assert!(!limited.lasting(0, at(1), secs(1), &a));
+        assert!(!limited.lasting(0, at(591), secs(590), &a));
+        assert!(limited.lasting(0, at(591), secs(30), &b));
+        assert!(!limited.lasting(1, at(1200), secs(590), &b));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn going_on_with_one_piece_of_work_drops_only_the_limits_it_met_before() {
+        let rounds = Arc::new(Rounds::default());
+        let cooldown = Cooldown::new(rounds.clone());
+        let secs = Duration::from_secs;
+        let at = |wait| Instant::now() + secs(wait);
+        cooldown.defer(1, 0, secs(590));
+        cooldown.defer(1, 0, secs(10));
+        cooldown.defer(2, 0, secs(60));
+        assert_eq!(cooldown.until(), Some(at(590)));
+        rounds.next(1);
+        assert_eq!(cooldown.until(), Some(at(60)));
+        cooldown.defer(1, 1, secs(90));
+        assert_eq!(cooldown.until(), Some(at(90)));
+        tokio::time::advance(secs(90)).await;
+        assert_eq!(cooldown.until(), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_waiting_out_a_limit_stops_waiting_once_going_on_drops_it() {
+        let rounds = Arc::new(Rounds::default());
+        let cooldown = Cooldown::new(rounds.clone());
+        cooldown.defer(1, 0, Duration::from_secs(590));
+        cooldown.defer(2, 0, Duration::from_secs(60));
+        let start = Instant::now();
+        let waiting = tokio::spawn({
+            let cooldown = cooldown.clone();
+            async move {
+                let _permit = cooldown.acquire(&Limit::default()).await;
+                Instant::now()
+            }
+        });
+        // Asleep until the 590 seconds are over.
+        tokio::task::yield_now().await;
+        rounds.next(1);
+        // Woken, it still waits out the limit the other piece met.
+        assert_eq!(waiting.await.unwrap(), start + Duration::from_secs(60));
     }
 
     #[test]

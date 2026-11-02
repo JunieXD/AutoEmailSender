@@ -1,11 +1,15 @@
 //! Matching a student's interests and experience to mentors, on a persisted queue.
 
 use mentor::{MentorDetail, matching as queue};
-use model::{Chosen, ModelError, usage::Purpose};
+use model::{
+    Chosen, ModelError,
+    background::{Cooldown, Limited, RateLimit, Rounds},
+    usage::Purpose,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::SqlitePool;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use ts_rs::TS;
 
@@ -173,10 +177,21 @@ fn parse(text: &str) -> Result<queue::MatchAnswer, String> {
 }
 
 #[derive(Clone, Default)]
-pub struct Matcher(Arc<Notify>);
+pub struct Matcher {
+    wake: Arc<Notify>,
+    rounds: Arc<Rounds<()>>,
+}
 impl Matcher {
     pub fn wake(&self) {
-        self.0.notify_one();
+        self.wake.notify_one();
+    }
+    /// The user started or resumed analysis.
+    pub fn restart(&self) {
+        self.rounds.next(());
+        self.wake();
+    }
+    fn round(&self) -> u64 {
+        self.rounds.current(&())
     }
 }
 
@@ -190,7 +205,8 @@ enum Outcome {
     Done(queue::MatchAnswer, String, i64),
     Failed(String),
     Pause(String, Option<Chosen>),
-    RateLimit(Duration),
+    /// With the round the limited request went out in.
+    RateLimit(RateLimit, Chosen, u64),
     Gone,
 }
 
@@ -198,6 +214,7 @@ async fn analyze(
     db: &SqlitePool,
     net: &net::Net,
     writes: &db::Writes,
+    matcher: &Matcher,
     claim: queue::Claim,
 ) -> Result<Outcome, sqlx::Error> {
     let id = claim.id;
@@ -227,6 +244,7 @@ async fn analyze(
     let message = message(&me, &references, &mentor);
     let mut system = SYSTEM.to_owned();
     for attempt in 0..2 {
+        let round = matcher.round();
         let answer =
             match model::ask(net, &chosen.access, &chosen.model, &system, &message, true).await {
                 Ok(a) => a,
@@ -236,7 +254,7 @@ async fn analyze(
                         model = chosen.model,
                         "match model failed: {e}"
                     );
-                    return Ok(classify(e, chosen));
+                    return Ok(classify(e, chosen, round));
                 }
             };
         tracing::info!(
@@ -260,6 +278,7 @@ async fn analyze(
                     finish_reason: answer.finish_reason,
                 },
                 chosen,
+                round,
             ));
         }
         if answer.finish_reason == Some(model::Finish::Length) {
@@ -283,10 +302,10 @@ async fn analyze(
     unreachable!("both attempts return")
 }
 
-fn classify(error: ModelError, chosen: Chosen) -> Outcome {
+fn classify(error: ModelError, chosen: Chosen, round: u64) -> Outcome {
     match model::background::classify(error, &chosen.access) {
         model::background::Failure::Pause(message) => Outcome::Pause(message, Some(chosen)),
-        model::background::Failure::RateLimit(wait) => Outcome::RateLimit(wait),
+        model::background::Failure::RateLimit(limit) => Outcome::RateLimit(limit, chosen, round),
         model::background::Failure::Failed(message) => Outcome::Failed(message),
     }
 }
@@ -335,7 +354,8 @@ pub async fn run(
     let mut claims = std::collections::HashMap::new();
     let mut total = MatchFinished::default();
     let mut active = false;
-    let mut retry_at: Option<Instant> = None;
+    let cooldown = Cooldown::new(matcher.rounds.clone());
+    let mut limited = Limited::default();
     loop {
         let progress = writes
             .retry("match progress", || queue::progress(&db))
@@ -350,18 +370,19 @@ pub async fn run(
             total = MatchFinished::default();
             active = false;
         }
-        let cooling = retry_at.is_some_and(|at| at > Instant::now());
+        let retry_at = cooldown.until();
+        let cooling = retry_at.is_some();
         if progress.pause.is_none()
             && !cooling
             && workers.len() < CONCURRENCY
             && let Some(claim) = writes.retry("claim match", || queue::next(&db)).await
         {
             let (db, net, limit) = (db.clone(), net.clone(), limit.clone());
-            let writes = writes.clone();
+            let (writes, matcher) = (writes.clone(), matcher.clone());
             let task = workers.spawn(async move {
                 let _permit = limit.acquire().await;
                 let result = match queue::running(&db, claim).await {
-                    Ok(true) => analyze(&db, &net, &writes, claim).await,
+                    Ok(true) => analyze(&db, &net, &writes, &matcher, claim).await,
                     Ok(false) => Ok(Outcome::Gone),
                     Err(e) => Err(e),
                 };
@@ -378,6 +399,12 @@ pub async fn run(
                         claims.remove(&task_id);
                         let id = claim.id;
                         let outcome = match result {
+                            Ok(Outcome::RateLimit(limit, chosen, round))
+                                if round == matcher.round()
+                                    && limited.lasting(round, Instant::now(), limit.wait, &chosen) =>
+                            {
+                                Outcome::Pause(limit.lasting, Some(chosen))
+                            }
                             Ok(o) => o,
                             Err(e) => {
                                 tracing::error!(mentor_id = id, "match database: {e}");
@@ -404,7 +431,7 @@ pub async fn run(
                                         )
                                         .await
                                     }
-                                    Outcome::RateLimit(_) => requeue(&db, claim, None, None).await,
+                                    Outcome::RateLimit(..) => requeue(&db, claim, None, None).await,
                                     Outcome::Gone => Ok(false),
                                 }
                             })
@@ -413,10 +440,14 @@ pub async fn run(
                             if matches!(outcome, Outcome::Done(..) | Outcome::Failed(_)) {
                                 total.analyzed += 1;
                                 total.failed += i64::from(matches!(outcome, Outcome::Failed(_)));
+                                limited = Limited::default();
                             }
-                            if let Outcome::RateLimit(wait) = outcome {
-                                let at = Instant::now() + wait;
-                                retry_at = Some(retry_at.map_or(at, |old| old.max(at)));
+                            // A limit from before the user went on does not hold the new round
+                            // back either: its own requests find out whether it still holds.
+                            if let Outcome::RateLimit(limit, _, round) = outcome
+                                && round == matcher.round()
+                            {
+                                cooldown.defer((), round, limit.wait);
                             }
                         }
                         changed();
@@ -443,7 +474,7 @@ pub async fn run(
                     }
                 }
             },
-            () = matcher.0.notified() => {},
+            () = matcher.wake.notified() => {},
             () = async {
                 if let Some(at) = retry_at {
                     tokio::time::sleep_until(at).await;

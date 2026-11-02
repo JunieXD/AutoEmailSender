@@ -14,7 +14,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json"] }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
-tokio = { workspace = true, features = ["sync", "time"] }
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
 tracing.workspace = true
 ts-rs.workspace = true
 url = "2.5.8"
@@ -23,4 +23,4 @@ url = "2.5.8"
 db = { workspace = true, features = ["testing"] }
 profile.workspace = true
 test-fixtures = { path = "../test-fixtures" }
-tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }
