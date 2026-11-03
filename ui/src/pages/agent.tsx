@@ -4,6 +4,7 @@ import { call, errorMessage } from "@/api/call";
 import type { AgentCli, McpClient } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { PhonesRow } from "./phones";
 import { Row, Section, SwitchButton } from "./settings";
 
 const MAC = navigator.userAgent.includes("Mac");
@@ -14,8 +15,17 @@ const CLIENTS: [McpClient, string, string][] = [
   ["cursor", "Cursor", "重新打开 Cursor 后生效。"],
 ];
 
-/** Settings › 应用 › Agent (docs/ui.md 设置 › 应用 › 手机和 Agent; the phone part comes later). */
-export function AgentSection() {
+/** Settings › 应用 › 手机和 Agent (docs/ui.md). */
+export function RemoteSection() {
+  return (
+    <Section title="手机和 Agent">
+      <PhonesRow />
+      <AgentRows />
+    </Section>
+  );
+}
+
+function AgentRows() {
   const queryClient = useQueryClient();
   const access = useQuery({ queryKey: ["getAgentAccess"], queryFn: () => call("getAgentAccess", {}) });
   const save = useMutation({
@@ -26,8 +36,8 @@ export function AgentSection() {
     },
   });
   return (
-    <Section title="Agent">
-      <div>
+    <>
+      <Row label="Agent">
         <label className="flex items-center justify-between gap-4">
           <span>允许 Agent 连接</span>
           <SwitchButton
@@ -47,14 +57,14 @@ export function AgentSection() {
         </div>
         {access.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(access.error)}</p>}
         {save.error && <p className="mt-2 text-sm text-destructive">设置未能保存：{errorMessage(save.error)}</p>}
-      </div>
+      </Row>
       {access.data && (
         <>
           <McpRow />
           <CliRow />
         </>
       )}
-    </Section>
+    </>
   );
 }
 

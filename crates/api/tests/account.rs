@@ -140,3 +140,26 @@ async fn a_library_failure_is_not_kept_for_a_session_that_came_after(db: SqliteP
         () = checking => {},
     }
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn logging_out_tells_account_subscribers(db: SqlitePool) {
+    let (mut server, ctx) = signed_in(db).await;
+    let changed = ctx.account.subscribe();
+    let answering = async {
+        let request = server.requests.recv().await.unwrap();
+        assert!(request.line.starts_with("POST /v1/account/logout "));
+        request
+            .respond
+            .send(Response::Raw {
+                status: 200,
+                content: "{}".into(),
+            })
+            .unwrap();
+    };
+    let (logged_out, ()) = tokio::join!(
+        api::call(&ctx, "logoutAccount", serde_json::json!({})),
+        answering
+    );
+    logged_out.unwrap();
+    assert!(changed.has_changed().unwrap());
+}

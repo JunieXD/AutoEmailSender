@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO phone (id, name, key, paired_at)\n        SELECT ?, ?, ?, ? FROM profile WHERE phone_room = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "123e9a0d4d0e15cfba0f1c7d78475d614bafd916760f49cf9d3bb1479ed6fb56"
+}

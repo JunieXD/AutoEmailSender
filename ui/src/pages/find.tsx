@@ -26,6 +26,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { NativeSelect } from "@/components/ui/native-select";
 import { day, time } from "@/format";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
+import { desktop } from "@/host";
 
 const FILTERS = {
   all: "全部",
@@ -397,9 +398,11 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
             </details>
           )}
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="quiet" disabled={exported.isPending} onClick={() => exported.mutate()}>
-              导出这次抓取的日志
-            </Button>
+            {desktop && (
+              <Button variant="quiet" disabled={exported.isPending} onClick={() => exported.mutate()}>
+                导出这次抓取的日志
+              </Button>
+            )}
             {exported.data && <span className="text-muted-foreground">已导出</span>}
             <Confirm
               trigger={

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET token = NULL WHERE email = ? AND token IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4aec3cd59ee40b1de8859f99dc830a27aabe64387fd4da02aa086a123f0e0488"
+}

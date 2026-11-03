@@ -3,11 +3,13 @@
 
 pub mod agent;
 pub mod agent_settings;
+pub mod phones;
 use agent::{
     answer_agent_request, describe_operation, get_agent_access, list_agent_requests,
     list_operations, set_agent_access,
 };
 use agent_settings::*;
+use phones::*;
 mod accounts;
 pub mod libraries;
 use libraries::*;
@@ -43,6 +45,7 @@ pub struct Context {
     pub library: library::sync::Synchronizer,
     pub agent_settings: agent_settings::Settings,
     pub agent_access: agent::Access,
+    pub phones: phones::Phones,
     pub writes: db::Writes,
     pub db: SqlitePool,
     pub net: net::Net,
@@ -70,6 +73,7 @@ impl Context {
             library: Default::default(),
             agent_settings: Default::default(),
             agent_access: Default::default(),
+            phones: Default::default(),
             crawler: crawl::runner::Crawler::new(writes.clone()),
             writes,
             db,
@@ -153,6 +157,37 @@ impl From<sqlx::Error> for CallError {
     }
 }
 
+/// Operations only the app's window may call: neither an Agent nor a phone decides who may connect
+/// or answers an Agent's request.
+pub(crate) fn window_only(op: &str) -> bool {
+    matches!(
+        op,
+        "getAgentAccess"
+            | "setAgentAccess"
+            | "listAgentRequests"
+            | "answerAgentRequest"
+            | "getAgentCli"
+            | "installAgentCli"
+            | "uninstallAgentCli"
+            | "previewMcpConfig"
+            | "writeMcpConfig"
+            | "mcpConfigText"
+            | "getPhoneAccess"
+            | "setPhoneAccess"
+            | "addPhone"
+            | "answerPhonePairing"
+            | "cancelPhonePairing"
+            | "listPhones"
+            | "revokePhone"
+    )
+}
+
+/// Operations only the app's UI calls, on the computer or a phone: an Agent leaves out the request
+/// that `cancelWriting` withdraws.
+fn ui_only(op: &str) -> bool {
+    window_only(op) || op == "cancelWriting"
+}
+
 /// A change that found nothing to change, as when the thing is gone, as an error saying so.
 fn require_applied(applied: bool, message: &str) -> Result<(), CallError> {
     if applied {
@@ -209,12 +244,12 @@ macro_rules! operations {
                 },
             )*)*]
                 .into_iter()
-                .filter(|op| agent::visible(&op.name))
+                .filter(|op| !ui_only(&op.name))
                 .collect()
         }
 
         fn operation_description(name: &str) -> Result<agent::OperationDescription, CallError> {
-            if !agent::visible(name) {
+            if ui_only(name) {
                 return Err(CallError::invalid("这个操作只供应用界面使用".into()));
             }
             match name {
@@ -299,7 +334,7 @@ pub async fn call_agent(
     let mut log = AgentCallLog { op, success: false };
     let result = match op {
         // An agent does not decide whether agents may connect.
-        op if !agent::visible(op) => Err(CallError::invalid("这个操作只供应用界面使用".into())),
+        op if ui_only(op) => Err(CallError::invalid("这个操作只供应用界面使用".into())),
         "addLibraryMentors" => libraries::library_add_agent(ctx, input, waiting, cancelled).await,
         _ => {
             tokio::pin!(cancelled);
@@ -347,6 +382,7 @@ pub async fn call_agent(
     log.success = result.is_ok();
     if log.success {
         ctx.agent_access.emit(agent::Event::Called);
+        ctx.phones.push("called-elsewhere", "null");
     }
     result
 }
@@ -461,6 +497,22 @@ operations! {
         /// 按 name 读取操作说明、确认方式及输入输出的 TypeScript 类型声明。
         "describeOperation" [none] => describe_operation(agent::OperationName)
             -> agent::OperationDescription;
+    }
+    "手机远程" {
+        /// 读取是否允许手机连接，以及和中继的连接状态。
+        "getPhoneAccess" [none] => get_phone_access(Nothing) -> PhoneAccess;
+        /// 设置是否允许手机连接，关掉时断开所有手机。
+        "setPhoneAccess" [none] => set_phone_access(PhoneAccessEdit) -> ();
+        /// 生成配对用的二维码，5 分钟内有效、只能用一次，替换之前的。
+        "addPhone" [none] => add_phone(Nothing) -> PhoneCode;
+        /// 回答扫码的手机能不能配对，allow 为是否允许。
+        "answerPhonePairing" [none] => answer_phone_pairing(PhonePairingAnswer) -> ();
+        /// 作废正在显示的二维码。
+        "cancelPhonePairing" [none] => cancel_phone_pairing(Nothing) -> ();
+        /// 列出已配对的手机和它们是否在线。
+        "listPhones" [none] => list_phones(Nothing) -> Vec<PairedPhone>;
+        /// 撤销一部手机的配对并断开它。
+        "revokePhone" [none] => revoke_phone(PhoneId) -> ();
     }
     "概览" {
         /// 读取后台保存失败的提示，没有失败时返回 null。

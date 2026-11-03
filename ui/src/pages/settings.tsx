@@ -10,6 +10,7 @@ import { refreshReplyOutcomes } from "@/components/mentor";
 import { UpdateDialog, useUpdate } from "@/components/update";
 import { Button } from "@/components/ui/button";
 import { Segments } from "@/components/ui/segments";
+import { desktop } from "@/host";
 import { savedTheme, setTheme } from "@/theme";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
@@ -37,9 +38,9 @@ const GROUPS = [
     sections: [
       { to: "/settings/appearance", label: "外观" },
       { to: "/settings/notifications", label: "通知" },
-      { to: "/settings/background", label: "后台运行" },
+      { to: "/settings/background", label: "后台运行", desktopOnly: true },
       { to: "/settings/backup", label: "备份" },
-      { to: "/settings/agent", label: "Agent" },
+      { to: "/settings/remote", label: "手机和 Agent", desktopOnly: true },
       { to: "/settings/account", label: "账号和赞助" },
       { to: "/settings/about", label: "关于和日志" },
     ],
@@ -71,18 +72,20 @@ export function SettingsPage() {
         {GROUPS.map((g) => (
           <div key={g.label} className="flex flex-col gap-0.5">
             <h2 className="px-3 pb-1 text-sm text-muted-foreground">{g.label}</h2>
-            {g.sections.map((s) => (
-              <Link
-                key={s.to}
-                to={s.to}
-                className="flex h-10 items-center justify-between rounded-md px-3"
-                activeProps={{ className: "bg-selected font-medium text-brand-text" }}
-                inactiveProps={{ className: "hover:bg-muted" }}
-              >
-                {s.label}
-                <ChevronRight className="hidden size-[18px] text-muted-foreground phone:block" strokeWidth={1.6} />
-              </Link>
-            ))}
+            {g.sections
+              .filter((s) => desktop || !("desktopOnly" in s))
+              .map((s) => (
+                <Link
+                  key={s.to}
+                  to={s.to}
+                  className="flex h-10 items-center justify-between rounded-md px-3"
+                  activeProps={{ className: "bg-selected font-medium text-brand-text" }}
+                  inactiveProps={{ className: "hover:bg-muted" }}
+                >
+                  {s.label}
+                  <ChevronRight className="hidden size-[18px] text-muted-foreground phone:block" strokeWidth={1.6} />
+                </Link>
+              ))}
           </div>
         ))}
       </nav>
@@ -147,15 +150,24 @@ export function AppearanceSection() {
 
 export function AboutSection() {
   const version = useQuery({ queryKey: ["appVersion"], queryFn: getVersion, staleTime: Infinity });
-  const location = useQuery({ queryKey: ["dataLocation"], queryFn: dataLocation, staleTime: Infinity });
-  const open = useMutation({ mutationFn: openDataLocation });
-  const exported = useMutation({ mutationFn: exportLogs });
   return (
     <Section title="关于和日志">
       <Row label="版本">
         <p className="text-sm text-muted-foreground">{version.data ?? " "}</p>
-        <CheckUpdate />
+        {desktop && <CheckUpdate />}
       </Row>
+      {desktop && <ComputerSide />}
+    </Section>
+  );
+}
+
+/** Where the data and logs are, which only the computer can open or save. */
+function ComputerSide() {
+  const location = useQuery({ queryKey: ["dataLocation"], queryFn: dataLocation, staleTime: Infinity });
+  const open = useMutation({ mutationFn: openDataLocation });
+  const exported = useMutation({ mutationFn: exportLogs });
+  return (
+    <>
       <Row label="数据位置">
         <p className="text-sm break-all text-muted-foreground">{location.data ?? " "}</p>
         <div className="flex items-center gap-3">
@@ -177,7 +189,7 @@ export function AboutSection() {
           {exported.isError && <span className="text-sm text-destructive">{errorMessage(exported.error)}</span>}
         </div>
       </Row>
-    </Section>
+    </>
   );
 }
 

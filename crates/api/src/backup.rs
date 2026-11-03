@@ -203,6 +203,8 @@ async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
           cloud_backup_commit = NULL, cloud_backup_replace = NULL, cloud_backup_failed_at = NULL,
           cloud_backup_error = NULL;
         DELETE FROM cloud_backup_material;
+        DELETE FROM phone;
+        UPDATE profile SET phone_access = 0, phone_room = NULL, phone_room_account = NULL;
         UPDATE crawl_page
         SET text = CASE WHEN status = 'success' THEN '' END;
         VACUUM;"#,

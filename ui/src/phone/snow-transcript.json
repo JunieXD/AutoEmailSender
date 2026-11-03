@@ -1,0 +1,32 @@
+{
+  "answer": "c25e8b84378b21071d603dfce3f947b162b6e715240344db0a18d99259a6de23cafe7f76b51e1ef342624b24504ca9f8",
+  "device": "fedcba9876543210fedcba9876543210",
+  "first": "6665646362613938373635343332313066656463626139383736353433323130c8feca81be196cdf2cadeabf13c4903d7632dce4955aa68b6e5d9adef54e261647dff036754d48f32e0ecc5145dc0cd2",
+  "fromComputer": [
+    {
+      "json": "{\"welcome\":{\"computer\":\"MacBook Pro\"}}",
+      "parts": [
+        "2b3e61f523d762e20d70ee5492be8d8aa77ef00e1035a667ad1272b48e15edc131e2c36376d92d81c820e6ea7f90da1d8cdbac267d31fc"
+      ]
+    },
+    {
+      "json": "{\"id\":1,\"output\":{\"name\":\"张三\"}}",
+      "parts": [
+        "c70e75a83320643f03805895b83d219f2d540165539284c3a38de63120bc1eadcc55ac88f59561f44ebb3ac0cbb9893b60524a61"
+      ]
+    }
+  ],
+  "fromPhone": [
+    {
+      "json": "{\"id\":1,\"op\":\"getProfile\",\"input\":{}}",
+      "parts": [
+        "2660b6cce22d79757adceb4179a34b1b15fa1d1094eeec2c93ca1fdfa329f642b25723d0a6e7e50737a79cf58bf21d7a2f85cd3806e7"
+      ]
+    }
+  ],
+  "handshakeHash": "ac4ec43af218d4949863d764c2995435253caee8ccd0a174d2e4b9896fd2bb58",
+  "initiatorEphemeral": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+  "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "room": "0123456789abcdef0123456789abcdef",
+  "source": "snow 0.10 with fixed ephemeral keys, the computer's library"
+}

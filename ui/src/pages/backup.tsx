@@ -12,13 +12,14 @@ import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHea
 import { Input } from "@/components/ui/input";
 import { day, fileSize } from "@/format";
 import { useNow } from "@/now";
+import { desktop } from "@/host";
 import { Row, Section, SwitchButton } from "./settings";
 
 /** Settings › 应用 › 备份 (docs/ui.md#交互). */
 export function BackupSection() {
   return (
     <Section title="备份">
-      <LocalBackup />
+      {desktop && <LocalBackup />}
       <CloudBackupRow />
     </Section>
   );
@@ -196,7 +197,7 @@ function CloudBackup({ email }: { email: string }) {
               {running ? "正在备份…" : "立即备份"}
             </Button>
           )}
-          {backup?.summary && (
+          {desktop && backup?.summary && (
             <Button variant="quiet" disabled={restore.isPending} onClick={() => restore.mutate()}>
               {restore.isPending ? "正在下载…" : "从云端恢复"}
             </Button>

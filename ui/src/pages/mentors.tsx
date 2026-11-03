@@ -25,6 +25,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { SearchBox } from "@/components/search-box";
 import { Segments } from "@/components/ui/segments";
 import { type FilterSearch, filterOf, filterSearch, filtered, MentorFilters } from "@/components/mentor-filters";
+import { desktop } from "@/host";
 
 const STATUSES: [ContactStatus | undefined, string][] = [
   [undefined, "全部"],
@@ -325,13 +326,15 @@ export function MentorsPage() {
             分析匹配度
           </Button>
           <AddTagButton mentorIds={[...selected]} add={addTag} />
-          <Button
-            variant="ghost"
-            onClick={() => setExporting({ scope: { kind: "ids", value: [...selected] }, count: selected.size })}
-          >
-            <Download strokeWidth={1.6} />
-            导出
-          </Button>
+          {desktop && (
+            <Button
+              variant="ghost"
+              onClick={() => setExporting({ scope: { kind: "ids", value: [...selected] }, count: selected.size })}
+            >
+              <Download strokeWidth={1.6} />
+              导出
+            </Button>
+          )}
           {selected.size === 2 && first !== undefined && second !== undefined && (
             <Button variant="ghost" onClick={() => setMerging([first, second])}>
               <Merge strokeWidth={1.6} />
@@ -361,20 +364,22 @@ export function MentorsPage() {
             <Trash2 strokeWidth={1.6} />
             回收站
           </Link>
-          <Button
-            variant="ghost"
-            className="px-2 phone:text-xs"
-            disabled={!query.data}
-            onClick={() =>
-              setExporting({
-                scope: { kind: "filter", value: listFilter(search) },
-                count: total,
-              })
-            }
-          >
-            <Download strokeWidth={1.6} />
-            导出表格
-          </Button>
+          {desktop && (
+            <Button
+              variant="ghost"
+              className="px-2 phone:text-xs"
+              disabled={!query.data}
+              onClick={() =>
+                setExporting({
+                  scope: { kind: "filter", value: listFilter(search) },
+                  count: total,
+                })
+              }
+            >
+              <Download strokeWidth={1.6} />
+              导出表格
+            </Button>
+          )}
         </div>
         <Pager
           page={page}

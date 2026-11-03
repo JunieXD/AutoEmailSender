@@ -15,6 +15,7 @@ cloud-api.workspace = true
 hkdf = "0.13"
 net.workspace = true
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest-websocket = "0.6.0"
 serde.workspace = true
 sha2 = "0.11"
 sqlx.workspace = true

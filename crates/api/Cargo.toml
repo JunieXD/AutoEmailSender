@@ -47,9 +47,12 @@ zstd = "0.14"
 getrandom = "0.4"
 reqwest = { version = "0.13", default-features = false }
 whoami = "2.1"
+remote.workspace = true
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
 db = { workspace = true, features = ["testing"] }
 fakemail.workspace = true
 office_oxide = "0.1"
 test-fixtures = { path = "../test-fixtures" }
+tokio = { workspace = true, features = ["test-util"] }

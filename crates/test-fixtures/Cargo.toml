@@ -9,7 +9,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+async-tungstenite = { version = "0.32", default-features = false, features = ["tokio-runtime"] }
+base64 = "0.22"
 cloud-api.workspace = true
+futures-util = { version = "0.3.31", default-features = false, features = ["sink"] }
+snow = { version = "0.10.0", default-features = false, features = ["default-resolver", "use-chacha20poly1305", "use-sha2", "use-curve25519", "use-getrandom", "std"] }
 db.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

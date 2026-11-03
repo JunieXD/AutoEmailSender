@@ -655,7 +655,19 @@ export type PageState = "queued" | "running" | "done";
 
 export type PageStatus = "success" | "failed" | "needs_browser";
 
+export type PairedPhone = { id: string, name: string, pairedAt: number, seenAt: number | null, online: boolean, };
+
 export type Pause = { until: number, reason: string, };
+
+export type PhoneAccess = { enabled: boolean, status: RelayStatus, };
+
+export type PhoneAccessEdit = { enabled: boolean, };
+
+export type PhoneCode = { url: string, svg: string, expiresAt: number, };
+
+export type PhoneId = { id: string, };
+
+export type PhonePairingAnswer = { allow: boolean, };
 
 export type PlanColumn = "pending" | "upcoming" | "history";
 
@@ -701,6 +713,8 @@ export type Range = "week" | "month" | "quarter" | "all";
 export type ReceiveStatus = { receivedAt: number | null, };
 
 export type Redeemed = { days: number, sponsorUntil: number, };
+
+export type RelayStatus = { "kind": "off" } | { "kind": "connecting" } | { "kind": "online" } | { "kind": "failed", reason: string, };
 
 export type RenderedApproval = { attachments: Array<number>, id: number,
 /**
@@ -979,6 +993,13 @@ export interface Operations {
   answerAgentRequest: { input: AgentAnswer; output: null };
   listOperations: { input: Nothing; output: Array<OperationSummary> };
   describeOperation: { input: OperationName; output: OperationDescription };
+  getPhoneAccess: { input: Nothing; output: PhoneAccess };
+  setPhoneAccess: { input: PhoneAccessEdit; output: null };
+  addPhone: { input: Nothing; output: PhoneCode };
+  answerPhonePairing: { input: PhonePairingAnswer; output: null };
+  cancelPhonePairing: { input: Nothing; output: null };
+  listPhones: { input: Nothing; output: Array<PairedPhone> };
+  revokePhone: { input: PhoneId; output: null };
   storageFailure: { input: Nothing; output: string | null };
   contactStats: { input: StatsQuery; output: ContactProgress };
   mentorStats: { input: Nothing; output: MentorOverview };

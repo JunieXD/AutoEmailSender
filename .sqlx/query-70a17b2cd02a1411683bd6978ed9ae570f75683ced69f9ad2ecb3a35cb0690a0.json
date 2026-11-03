@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE phone SET seen_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "70a17b2cd02a1411683bd6978ed9ae570f75683ced69f9ad2ecb3a35cb0690a0"
+}

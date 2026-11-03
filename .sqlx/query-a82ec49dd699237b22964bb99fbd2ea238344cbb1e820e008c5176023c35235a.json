@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET phone_room = ?, phone_room_account = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a82ec49dd699237b22964bb99fbd2ea238344cbb1e820e008c5176023c35235a"
+}

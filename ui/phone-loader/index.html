@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Auto Email Sender</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        min-height: 100dvh;
+        margin: 0;
+        padding: 24px;
+        box-sizing: border-box;
+        text-align: center;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        width: min(320px, 100%);
+      }
+      ul {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      li {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        min-height: 44px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 12px;
+        font: inherit;
+        background: color-mix(in srgb, currentColor 10%, transparent);
+        color: inherit;
+      }
+      li button:first-child {
+        flex: 1;
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <main></main>
+    <script type="module" src="./loader.ts"></script>
+  </body>
+</html>

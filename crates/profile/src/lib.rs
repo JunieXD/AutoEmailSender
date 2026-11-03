@@ -258,3 +258,16 @@ pub async fn set_agent_access(db: &SqlitePool, enabled: bool) -> Result<(), sqlx
         .await?;
     Ok(())
 }
+
+pub async fn phone_access(db: &SqlitePool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(r#"SELECT phone_access AS "enabled!: bool" FROM profile"#)
+        .fetch_one(db)
+        .await
+}
+
+pub async fn set_phone_access(db: &SqlitePool, enabled: bool) -> Result<(), sqlx::Error> {
+    sqlx::query!("UPDATE profile SET phone_access = ?", enabled)
+        .execute(db)
+        .await?;
+    Ok(())
+}

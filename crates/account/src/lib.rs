@@ -7,7 +7,9 @@ pub use key::{Keys, keys};
 use std::time::Duration;
 
 use cloud_api::{ApiError, Empty, ErrorCode, Session, path};
-use reqwest::{Method, RequestBuilder};
+use reqwest::{Method, RequestBuilder, StatusCode};
+use reqwest_websocket::Upgrade;
+pub use reqwest_websocket::WebSocket;
 use serde::{Serialize, de::DeserializeOwned};
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, watch};
@@ -81,9 +83,14 @@ impl Client {
     pub fn with_address(net: &net::Net, address: String) -> Self {
         // Net already built this TLS configuration; disabling redirects cannot invalidate it.
         // A redirect must never forward a login key or verification code to a different service.
-        let http = net.page_http_builder().build().unwrap_or_else(|_| {
-            unreachable!("validated network settings must build an account HTTP client")
-        });
+        // WebSockets upgrade only HTTP/1.1 connections.
+        let http = net
+            .page_http_builder()
+            .http1_only()
+            .build()
+            .unwrap_or_else(|_| {
+                unreachable!("validated network settings must build an account HTTP client")
+            });
         Self {
             address: address.trim_end_matches('/').into(),
             change: Mutex::new(()),
@@ -92,6 +99,13 @@ impl Client {
         }
     }
 
+    /// The official server, such as `https://api.auto-email-sender.cn`.
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Hears every change of who is logged in: logging in, out, a reset password or deleted
+    /// account, an expired session.
     pub fn subscribe(&self) -> watch::Receiver<()> {
         self.changed.subscribe()
     }
@@ -133,7 +147,9 @@ impl Client {
             },
         ))
         .await?;
-        save_session(db, session, &keys.backup).await
+        let state = save_session(db, session, &keys.backup).await?;
+        self.changed.send_replace(());
+        Ok(state)
     }
 
     pub async fn register(
@@ -147,7 +163,9 @@ impl Client {
         let (request, backup) = verified(email, code, password).await?;
         let session: Session =
             response(self.request(Method::POST, path::REGISTER).json(&request)).await?;
-        save_session(db, session, &backup).await
+        let state = save_session(db, session, &backup).await?;
+        self.changed.send_replace(());
+        Ok(state)
     }
 
     pub async fn reset_password(
@@ -164,12 +182,15 @@ impl Client {
                 .json(&request),
         )
         .await?;
-        sqlx::query!(
-            "UPDATE account SET token = NULL WHERE email = ?",
+        let signed_out = sqlx::query!(
+            "UPDATE account SET token = NULL WHERE email = ? AND token IS NOT NULL",
             request.email
         )
         .execute(db)
         .await?;
+        if signed_out.rows_affected() > 0 {
+            self.changed.send_replace(());
+        }
         Ok(())
     }
 
@@ -183,6 +204,7 @@ impl Client {
             Err(error) => return Err(error),
         }
         sqlx::query!("DELETE FROM account").execute(db).await?;
+        self.changed.send_replace(());
         Ok(())
     }
 
@@ -292,6 +314,7 @@ impl Client {
         )
         .await?;
         sqlx::query!("DELETE FROM account").execute(db).await?;
+        self.changed.send_replace(());
         Ok(())
     }
 
@@ -322,24 +345,56 @@ impl Client {
         login: &Login,
         request: RequestBuilder,
     ) -> Result<reqwest::Response, Error> {
-        match checked(request.bearer_auth(&login.token)).await {
-            Err(Error::Server(ApiError {
-                code: ErrorCode::SessionExpired,
-                ..
-            })) => {
-                let cleared = sqlx::query!(
-                    "UPDATE account SET token = NULL WHERE token = ?",
-                    login.token
-                )
-                .execute(db)
-                .await?;
-                if cleared.rows_affected() > 0 {
-                    self.changed.send_replace(());
-                }
-                Err(Error::SignedOut)
-            }
-            result => result,
+        self.signed_in(db, login, checked(request.bearer_auth(&login.token)).await)
+            .await
+    }
+
+    /// Opens a WebSocket to an official service, such as the relay, as `send` sends a request.
+    pub async fn websocket(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+        path: &str,
+    ) -> Result<WebSocket, Error> {
+        let response = self
+            .request(Method::GET, path)
+            .bearer_auth(&login.token)
+            .upgrade()
+            .send()
+            .await
+            .map_err(Error::WebSocket)?;
+        if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+            let refused = Err(Error::Server(
+                response.into_inner().json().await.map_err(Error::Network)?,
+            ));
+            return self.signed_in(db, login, refused).await;
         }
+        response.into_websocket().await.map_err(Error::WebSocket)
+    }
+
+    async fn signed_in<T>(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+        result: Result<T, Error>,
+    ) -> Result<T, Error> {
+        let Err(Error::Server(ApiError {
+            code: ErrorCode::SessionExpired,
+            ..
+        })) = result
+        else {
+            return result;
+        };
+        let cleared = sqlx::query!(
+            "UPDATE account SET token = NULL WHERE token = ?",
+            login.token
+        )
+        .execute(db)
+        .await?;
+        if cleared.rows_affected() > 0 {
+            self.changed.send_replace(());
+        }
+        Err(Error::SignedOut)
     }
 }
 
@@ -432,6 +487,7 @@ pub enum Error {
     Worker(tokio::task::JoinError),
     Database(sqlx::Error),
     Network(reqwest::Error),
+    WebSocket(reqwest_websocket::Error),
     Server(ApiError),
     SignedOut,
     AccountChanged,
@@ -449,6 +505,7 @@ impl std::fmt::Display for Error {
             Self::Database(error) => write!(f, "account database: {error}"),
             Self::Worker(error) => write!(f, "account derivation worker: {error}"),
             Self::Network(error) => write!(f, "account network: {error}"),
+            Self::WebSocket(error) => write!(f, "account websocket: {error}"),
             Self::Server(error) => write!(f, "account server: {:?}", error.code),
             Self::Invalid(_) => write!(f, "invalid account input"),
             Self::SignedOut => write!(f, "account session expired"),
@@ -468,7 +525,9 @@ impl Error {
             Self::Network(error) if error.is_decode() => {
                 "服务器返回的数据无法读取，请稍后重试或升级应用。".into()
             }
-            Self::Network(_) => "连不上服务器，请检查网络和代理设置后重试。".into(),
+            Self::Network(_) | Self::WebSocket(_) => {
+                "连不上服务器，请检查网络和代理设置后重试。".into()
+            }
             Self::SignedOut => "登录已失效，请重新登录。".into(),
             Self::AccountChanged => "要注销的账号已经不是当前登录的账号，请刷新后重试。".into(),
             Self::Server(error) => match error.code {
@@ -518,6 +577,11 @@ impl Error {
                 }
                 ErrorCode::BackupTooLarge => {
                     "云端备份的空间暂时满了：没传完的数据一天内会清掉，之后再试。".into()
+                }
+                // Logging in to another account gives the computer a new room, so this is not
+                // expected to happen.
+                ErrorCode::RoomTaken => {
+                    "手机远程的连接属于另一个账号，请导出日志发给开发者。".into()
                 }
                 ErrorCode::NotFound | ErrorCode::MethodNotAllowed => {
                     "服务器不支持这个操作，请升级应用后重试。".into()

@@ -22,6 +22,7 @@ import { LibraryUpdatesDialog } from "@/components/library";
 import { useAccount } from "@/components/account";
 import { UpdateEntry } from "@/components/update";
 import { useResume } from "@/pages/mailboxes";
+import { desktop } from "@/host";
 import { useReceive } from "@/pages/conversations";
 
 const NAV = [
@@ -115,11 +116,11 @@ export function Shell() {
     });
     return () => void stop.then((unlisten) => unlisten());
   }, [queryClient]);
-  // What an Agent did may touch anything on screen. It often calls many operations in a row, so
-  // refresh at most twice a second while it works.
+  // What an Agent or a phone did may touch anything on screen. An Agent often calls many
+  // operations in a row, so refresh at most twice a second while it works.
   useEffect(() => {
     let waiting = false;
-    const stop = listen("agent-called", () => {
+    const stop = listen("called-elsewhere", () => {
       if (waiting) return;
       waiting = true;
       setTimeout(() => {
@@ -144,13 +145,13 @@ export function Shell() {
           ))}
         </nav>
         <div className="grow" />
-        <UpdateEntry />
+        {desktop && <UpdateEntry />}
         <Background />
         <AccountRow />
       </aside>
       <main className="relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
         <Outlet />
-        <AgentRequests />
+        {desktop && <AgentRequests />}
         {completed && (
           <div
             role="status"

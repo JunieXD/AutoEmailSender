@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod backup;
 pub mod library;
+pub mod relay;
 
 pub mod path {
     pub const REGISTER_CODE: &str = "/v1/account/register-code";
@@ -172,6 +173,8 @@ pub enum ErrorCode {
     BackupIncomplete,
     BackupChanged,
     BackupTooLarge,
+    /// The relay's room belongs to another account.
+    RoomTaken,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

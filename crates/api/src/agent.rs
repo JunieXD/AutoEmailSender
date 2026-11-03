@@ -24,23 +24,6 @@ pub(crate) use confirmation::{confirmation, library_addition};
 
 const CONFIRM_FOR: Duration = Duration::from_secs(5 * 60);
 
-pub(crate) fn visible(op: &str) -> bool {
-    !matches!(
-        op,
-        "getAgentAccess"
-            | "setAgentAccess"
-            | "listAgentRequests"
-            | "answerAgentRequest"
-            | "getAgentCli"
-            | "installAgentCli"
-            | "uninstallAgentCli"
-            | "previewMcpConfig"
-            | "writeMcpConfig"
-            | "mcpConfigText"
-            | "cancelWriting"
-    )
-}
-
 #[derive(serde::Serialize, TS)]
 #[serde(tag = "kind", content = "condition", rename_all = "camelCase")]
 pub enum OperationConfirmation {

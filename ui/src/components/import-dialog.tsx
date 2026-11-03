@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { base64, MAX_UPLOAD } from "@/file";
 import { reconcileChoices, reconcileMatches } from "@/import-decisions";
+import { desktop } from "@/host";
 
 type ImportFile = Omit<PreviewImport, "decisions">;
 
@@ -150,20 +151,22 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
             <p className="min-w-0 flex-1 text-sm break-words text-muted-foreground phone:order-first phone:w-full phone:flex-none">
               {file?.fileName ?? "CSV、XLSX 或 XLS，不超过 20 MB；也可以拖到这里"}
             </p>
-            <div className="flex flex-wrap items-center gap-1 text-sm">
-              <span className="text-muted-foreground">下载模板</span>
-              {(["xlsx", "csv"] as const).map((format) => (
-                <Button
-                  key={format}
-                  variant="ghost"
-                  size="sm"
-                  disabled={template.isPending}
-                  onClick={() => template.mutate(format)}
-                >
-                  {format.toUpperCase()}
-                </Button>
-              ))}
-            </div>
+            {desktop && (
+              <div className="flex flex-wrap items-center gap-1 text-sm">
+                <span className="text-muted-foreground">下载模板</span>
+                {(["xlsx", "csv"] as const).map((format) => (
+                  <Button
+                    key={format}
+                    variant="ghost"
+                    size="sm"
+                    disabled={template.isPending}
+                    onClick={() => template.mutate(format)}
+                  >
+                    {format.toUpperCase()}
+                  </Button>
+                ))}
+              </div>
+            )}
           </div>
           {!preview && (
             <div className="space-y-1 text-sm text-muted-foreground">

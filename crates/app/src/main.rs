@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::DateTime;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Listener, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
@@ -255,7 +255,7 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
             }
         }
         api::agent::Event::Called => {
-            if let Err(e) = ui.emit("agent-called", ()) {
+            if let Err(e) = ui.emit("called-elsewhere", ()) {
                 tracing::warn!("refresh agent call: {e}");
             }
         }
@@ -263,6 +263,45 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
     .await
     .map_err(StartupError::Agent)?;
     app.manage(agent);
+    let ui = app.clone();
+    api::phones::start(ctx.clone(), move |event| match event {
+        api::phones::Event::Pairing(name) => {
+            if name.is_some() {
+                show(&ui);
+            }
+            if let Err(e) = ui.emit("phone-pairing", name) {
+                tracing::warn!("ask about a phone: {e}");
+            }
+        }
+        api::phones::Event::Changed => {
+            if let Err(e) = ui.emit("phones-changed", ()) {
+                tracing::warn!("refresh phones: {e}");
+            }
+        }
+        api::phones::Event::Called => {
+            if let Err(e) = ui.emit("called-elsewhere", ()) {
+                tracing::warn!("refresh phone call: {e}");
+            }
+        }
+    });
+    // Phones show what the window shows. Calls from elsewhere are passed on where they are made,
+    // so that a phone does not hear about its own.
+    for event in [
+        "account-changed",
+        "sending-changed",
+        "received",
+        "reply-processing-changed",
+        "todos-changed",
+        "matching-changed",
+        "tasks-changed",
+        "crawl-changed",
+        "crawl-finished",
+        "drafts-finished",
+        "matching-finished",
+    ] {
+        let ctx = ctx.clone();
+        app.listen_any(event, move |e| ctx.phones.push(event, e.payload()));
+    }
     tauri::async_runtime::spawn(api::libraries::run(ctx.clone()));
     tauri::async_runtime::spawn(api::backup::cloud::run(ctx.clone()));
     let api::Context {

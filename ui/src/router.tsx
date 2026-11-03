@@ -25,8 +25,9 @@ import {
 } from "./pages/settings";
 import { TrashPage, trashSearch } from "./pages/trash";
 import { AccountSection } from "./pages/account";
-import { AgentSection } from "./pages/agent";
+import { RemoteSection } from "./pages/agent";
 import { BackupSection } from "./pages/backup";
+import { desktop } from "./host";
 import { WelcomePage } from "./pages/welcome";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -193,10 +194,10 @@ const backupRoute = createRoute({
   component: BackupSection,
 });
 
-const agentRoute = createRoute({
+const remoteRoute = createRoute({
   getParentRoute: () => settingsRoute,
-  path: "agent",
-  component: AgentSection,
+  path: "remote",
+  component: RemoteSection,
 });
 
 const accountRoute = createRoute({
@@ -237,9 +238,9 @@ export const router = createRouter({
       repliesRoute,
       appearanceRoute,
       notificationsRoute,
-      backgroundRoute,
       backupRoute,
-      agentRoute,
+      // Settings of the computer, which a phone has no page for.
+      ...(desktop ? [backgroundRoute, remoteRoute] : []),
       accountRoute,
       aboutRoute,
     ]),
