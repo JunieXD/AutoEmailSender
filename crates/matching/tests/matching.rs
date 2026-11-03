@@ -387,7 +387,7 @@ async fn going_on_after_a_pause_counts_limits_afresh_despite_an_old_call(db: Sql
     let mut p = Provider::start().await.unwrap();
     setup(&db, &p.address, 2).await;
     let mut runner = Runner::start(&db);
-    let (limited, old) = (request(&mut p).await, request(&mut p).await);
+    let (first, second) = (request(&mut p).await, request(&mut p).await);
     let clock_guard = tokio::spawn(async {
         loop {
             tokio::task::yield_now().await;
@@ -405,17 +405,21 @@ async fn going_on_after_a_pause_counts_limits_afresh_despite_an_old_call(db: Sql
             .unwrap();
     };
     while runner.changes.try_recv().is_ok() {}
-    refuse(limited, 590);
+    // Held back for 590 seconds, short of pausing. The time passes with no call out, as no call
+    // waits that long.
+    refuse(first, 590);
+    refuse(second, 590);
     runner.changes.recv().await.unwrap();
-    queue::pause(&db, 10, None).await.unwrap();
-    queue::resume(&db).await.unwrap();
-    runner.matcher.restart();
-    refuse(old, 1);
     runner.changes.recv().await.unwrap();
     tokio::time::advance(Duration::from_secs(591)).await;
     tokio::time::resume();
     clock_guard.abort();
-    let (again, _other) = (request(&mut p).await, request(&mut p).await);
+    let (old, _other) = (request(&mut p).await, request(&mut p).await);
+    queue::pause(&db, 10, None).await.unwrap();
+    queue::resume(&db).await.unwrap();
+    runner.matcher.restart();
+    refuse(old, 1);
+    let again = request(&mut p).await;
     while runner.changes.try_recv().is_ok() {}
     refuse(again, 20);
     runner.changes.recv().await.unwrap();

@@ -704,41 +704,43 @@ async fn turning_processing_off_and_on_counts_limits_afresh_despite_an_old_call(
     config(&db, &p.address).await;
     queue::set_enabled(&db, true).await.unwrap();
     let mut runner = Runner::start(&db, Default::default());
-    let (limited, _old) = (request(&mut p).await, request(&mut p).await);
+    let (first, second) = (request(&mut p).await, request(&mut p).await);
     let clock_guard = tokio::spawn(async {
         loop {
             tokio::task::yield_now().await;
         }
     });
     tokio::time::pause();
+    let refuse = |req: provider::Request, wait| {
+        req.respond
+            .send(Response::Refused {
+                status: 429,
+                message: "slow down".into(),
+                retry_after: Some(wait),
+            })
+            .ok()
+            .unwrap();
+    };
     while runner.changes.try_recv().is_ok() {}
-    limited
-        .respond
-        .send(Response::Refused {
-            status: 429,
-            message: "slow down".into(),
-            retry_after: Some(590),
-        })
-        .ok()
-        .unwrap();
+    // Held back for 590 seconds, short of pausing. The time passes with no call out, as no call
+    // waits that long.
+    refuse(first, 590);
+    refuse(second, 590);
     runner.changes.recv().await.unwrap();
-    queue::set_enabled(&db, false).await.unwrap();
-    queue::set_enabled(&db, true).await.unwrap();
-    runner.processor.restart();
+    runner.changes.recv().await.unwrap();
     tokio::time::advance(Duration::from_secs(591)).await;
     tokio::time::resume();
     clock_guard.abort();
-    let (again, _other) = (request(&mut p).await, request(&mut p).await);
+    let (old, _other) = (request(&mut p).await, request(&mut p).await);
+    queue::set_enabled(&db, false).await.unwrap();
+    queue::set_enabled(&db, true).await.unwrap();
+    runner.processor.restart();
+    let again = request(&mut p).await;
+    // The old round's call, limited now, makes way for the new round's other one.
+    refuse(old, 1);
+    let _again_too = request(&mut p).await;
     while runner.changes.try_recv().is_ok() {}
-    again
-        .respond
-        .send(Response::Refused {
-            status: 429,
-            message: "slow down".into(),
-            retry_after: Some(20),
-        })
-        .ok()
-        .unwrap();
+    refuse(again, 20);
     runner.changes.recv().await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_none());
 }
