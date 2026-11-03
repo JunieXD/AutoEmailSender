@@ -26,6 +26,7 @@ pub mod startup;
 mod statistics;
 mod tasks;
 mod todos;
+pub mod tracking;
 pub mod updater;
 mod writing_turns;
 use crawling::*;
@@ -33,6 +34,7 @@ use statistics::*;
 use std::collections::BTreeMap;
 use tasks::*;
 use todos::*;
+use tracking::{get_tracking, set_tracking};
 use writing_turns::{Writing, WritingRequest, cancel_writing};
 
 use base64::prelude::{BASE64_STANDARD, Engine};
@@ -60,6 +62,7 @@ pub struct Context {
     pub writings: writing_turns::Writings,
     pub mail_domains: MailDomains,
     pub cloud_backup: backup::cloud::CloudBackup,
+    pub tracking: tracking::Tracker,
     /// Where material files are kept.
     pub materials: std::path::PathBuf,
 }
@@ -79,6 +82,7 @@ impl Context {
             db,
             net,
             cloud_backup: backup::cloud::CloudBackup::new(data),
+            tracking: Default::default(),
             materials: data.join("materials"),
             sender: Default::default(),
             receiver: Default::default(),
@@ -405,16 +409,16 @@ operations! {
         "getAccount" [none] => get_account(Nothing) -> account::State;
         /// 读取服务器上的赞助到期时间。
         "getSponsor" [none] => get_sponsor(Nothing) -> account::Sponsor;
-        /// 读取赞助时长、价格和带当前账号编号的爱发电链接。
-        "getSponsorTiers" [none] => get_sponsor_tiers(Nothing) -> Vec<cloud_api::SponsorTier>;
+        /// 读取赞助时长和邮件追踪额度包的价格，以及带当前账号编号的爱发电链接。
+        "getSponsorTiers" [none] => get_sponsor_tiers(Nothing) -> cloud_api::SponsorTiers;
         /// 读取邀请码、已邀请人数和填写期限。
         "getInvite" [none] => get_invite(Nothing) -> cloud_api::Invite;
         /// 填写同学的邀请码，双方各得 3 天赞助。
         "fillInvite" [none] => fill_invite(cloud_api::CodeRequest) -> account::Sponsor;
         /// 兑换赞助天数，返回天数和新的到期时间。
         "redeemCode" [none] => redeem_code(cloud_api::CodeRequest) -> cloud_api::Redeemed;
-        /// 用爱发电订单号开通赞助，返回新的到期时间。
-        "claimSponsorOrder" [none] => claim_sponsor_order(SponsorOrder) -> account::Sponsor;
+        /// 用爱发电订单号开通赞助或加邮件追踪额度，返回新的到期时间和剩余额度。
+        "claimSponsorOrder" [none] => claim_sponsor_order(SponsorOrder) -> cloud_api::Account;
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
         "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();
         /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。
@@ -444,6 +448,12 @@ operations! {
         "backUpToCloud" [none] => back_up_to_cloud(Nothing) -> ();
         /// 删除云端的备份并关闭自动备份，本机数据不动。
         "deleteCloudBackup" [confirm] => delete_cloud_backup(Nothing) -> ();
+    }
+    "邮件追踪" {
+        /// 读取开关、上次同步失败的原因和服务器上的赞助到期时间、剩余额度（读不到时带上原因）。
+        "getTracking" [none] => get_tracking(Nothing) -> tracking::Status;
+        /// 打开或关闭邮件追踪；打开要已登录、赞助有效。
+        "setTracking" [none] => set_tracking(tracking::TrackingSwitch) -> ();
     }
     "导师库" {
         /// 读取导师库的机构和人数。
@@ -2112,7 +2122,9 @@ async fn check_first_draft(
     );
     let (count, last) = match m.contact {
         mentor::Contact::None => (0, None),
-        mentor::Contact::Contacted { count, last_out_at }
+        mentor::Contact::Contacted {
+            count, last_out_at, ..
+        }
         | mentor::Contact::Bounced { count, last_out_at } => (count, Some(last_out_at)),
         mentor::Contact::Replied {
             count, last_out_at, ..

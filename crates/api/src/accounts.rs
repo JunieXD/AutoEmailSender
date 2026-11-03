@@ -34,7 +34,7 @@ pub async fn get_sponsor(ctx: &Context, _: Nothing) -> Result<account::Sponsor, 
 pub async fn get_sponsor_tiers(
     ctx: &Context,
     _: Nothing,
-) -> Result<Vec<cloud_api::SponsorTier>, CallError> {
+) -> Result<cloud_api::SponsorTiers, CallError> {
     Ok(ctx.account.sponsor_tiers(&ctx.db).await?)
 }
 
@@ -59,11 +59,14 @@ pub async fn redeem_code(
 pub async fn claim_sponsor_order(
     ctx: &Context,
     input: SponsorOrder,
-) -> Result<account::Sponsor, CallError> {
-    Ok(ctx
+) -> Result<cloud_api::Account, CallError> {
+    let login = account::saved_login(&ctx.db).await?;
+    let account = ctx
         .account
-        .claim_sponsor_order(&ctx.db, &input.order_number)
-        .await?)
+        .claim_sponsor_order(&ctx.db, &login, &input.order_number)
+        .await?;
+    crate::tracking::note(&ctx.db, &login, &account).await?;
+    Ok(account)
 }
 
 pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {

@@ -27,6 +27,9 @@ pub struct MentorFilter {
     pub keyword: Option<String>,
     #[ts(optional)]
     pub unanswered_days: Option<NonZeroU32>,
+    /// Applied only with status = contacted: whether the latest letter, tracked, was opened.
+    #[ts(optional)]
+    pub opened: Option<bool>,
     /// All scores when absent; an unfinished analysis can still have a previous result.
     #[ts(optional)]
     pub matching: Option<MatchFilter>,
@@ -109,6 +112,8 @@ pub struct MentorFilterOptions {
     pub titles: FilterValues,
     pub tags: Vec<FilterTag>,
     pub untagged: i64,
+    /// Whether a letter has gone out tracked, without which filtering by opens finds no one.
+    pub tracked: bool,
 }
 
 #[derive(Debug, sqlx::Type)]
@@ -211,6 +216,11 @@ pub async fn options(db: &SqlitePool) -> Result<MentorFilterOptions, sqlx::Error
         ORDER BY count(mt.mentor_id) DESC, t.name"#,
     )
     .fetch_all(&mut *tx)
+    .await?;
+    options.tracked = sqlx::query_scalar!(
+        r#"SELECT EXISTS (SELECT 1 FROM email WHERE tracking_state = 'tracked') AS "tracked!: bool""#
+    )
+    .fetch_one(&mut *tx)
     .await?;
     Ok(options)
 }

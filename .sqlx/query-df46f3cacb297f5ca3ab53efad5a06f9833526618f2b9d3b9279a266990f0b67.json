@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM email WHERE tracking_state = 'tracked') AS \"tracked!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "tracked!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "df46f3cacb297f5ca3ab53efad5a06f9833526618f2b9d3b9279a266990f0b67"
+}

@@ -41,6 +41,7 @@ export type MentorSearch = FilterSearch & {
   q?: string;
   page?: number;
   unansweredDays?: number;
+  opened?: boolean;
 };
 
 const OUTCOME_FILTERS: [ReplyOutcomeFilter, string][] = [
@@ -60,6 +61,7 @@ export function mentorSearch(search: Record<string, unknown>): MentorSearch {
     q,
     page: pageParam(search.page),
     unansweredDays: status === "contacted" && Number.isInteger(days) && days > 0 && days <= 36500 ? days : undefined,
+    opened: status === "contacted" && typeof search.opened === "boolean" ? search.opened : undefined,
   };
 }
 
@@ -70,6 +72,7 @@ function listFilter(s: MentorSearch): MentorFilter {
     replyOutcome: s.outcome,
     keyword: s.q,
     unansweredDays: s.unansweredDays,
+    opened: s.opened,
     ...filterOf(s),
   };
 }
@@ -110,6 +113,11 @@ export function MentorsPage() {
     navigate({ search: (s) => ({ ...s, page: n > 1 ? n : undefined }), replace: true }),
   );
   const addTag = useAddTag();
+  const tracked = useQuery({
+    queryKey: ["mentorFilterOptions"],
+    queryFn: () => call("mentorFilterOptions", {}),
+    select: (o) => o.tracked,
+  }).data;
   const trash = useMutation({
     mutationFn: (ids: number[]) => call("trashMentors", { ids }),
     // Only these: others may have been ticked while it ran.
@@ -207,7 +215,14 @@ export function MentorsPage() {
           options={STATUSES}
           onChange={(status) =>
             navigate({
-              search: (s) => ({ ...s, status, outcome: undefined, unansweredDays: undefined, page: undefined }),
+              search: (s) => ({
+                ...s,
+                status,
+                outcome: undefined,
+                unansweredDays: undefined,
+                opened: undefined,
+                page: undefined,
+              }),
             })
           }
         />
@@ -271,6 +286,26 @@ export function MentorsPage() {
             }}
           />
           天没回复
+          {tracked && (
+            <NativeSelect
+              aria-label="打开情况"
+              className="ml-4 w-32"
+              value={search.opened === undefined ? "" : String(search.opened)}
+              onChange={(e) =>
+                navigate({
+                  search: (s) => ({
+                    ...s,
+                    opened: e.target.value === "" ? undefined : e.target.value === "true",
+                    page: undefined,
+                  }),
+                })
+              }
+            >
+              <option value="">全部打开情况</option>
+              <option value="true">打开过</option>
+              <option value="false">没打开过</option>
+            </NativeSelect>
+          )}
         </div>
       )}
 

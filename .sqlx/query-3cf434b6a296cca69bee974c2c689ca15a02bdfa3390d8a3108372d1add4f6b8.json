@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tracking_revision FROM account",
+  "describe": {
+    "columns": [
+      {
+        "name": "tracking_revision",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "tracking_revision"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3cf434b6a296cca69bee974c2c689ca15a02bdfa3390d8a3108372d1add4f6b8"
+}

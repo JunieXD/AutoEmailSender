@@ -445,6 +445,7 @@ struct BeforeHandover {
 impl BeforeHandover {
     /// A known rejection proves nothing about this attempt; only the previous attempt may still
     /// have a late copy or bounce. Keep the Message-ID for duplicate suppression on another retry.
+    /// One write, so that the tracking trigger sees only the previous attempt's sent_at.
     async fn failed(
         &self,
         conn: &mut sqlx::SqliteConnection,
@@ -452,18 +453,23 @@ impl BeforeHandover {
         error: &str,
         now: i64,
     ) -> Result<(), sqlx::Error> {
-        email::failed(conn, id, error, now).await?;
         sqlx::query!(
-            r#"UPDATE email SET mailbox_id = (SELECT id FROM mailbox WHERE id = ?1),
-                 from_address = ?2, to_address = ?3, message_id = coalesce(?4, message_id),
-                 copy_message_id = ?5, sent_at = ?6
-               WHERE id = ?7 AND state IN ('failed', 'canceled')"#,
+            r#"UPDATE email SET
+                 state = CASE WHEN cancel_reason IS NULL THEN 'failed' ELSE 'canceled' END,
+                 planned_at = CASE WHEN cancel_reason IS NULL THEN planned_at END,
+                 latest_at = NULL, error = CASE WHEN cancel_reason IS NULL THEN ?1 END,
+                 mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
+                 from_address = ?3, to_address = ?4, message_id = coalesce(?5, message_id),
+                 copy_message_id = ?6, sent_at = ?7, updated_at = ?8
+               WHERE id = ?9 AND state = 'sending'"#,
+            error,
             self.mailbox_id,
             self.from_address,
             self.to_address,
             self.message_id,
             self.copy_message_id,
             self.sent_at,
+            now,
             id,
         )
         .execute(conn)
@@ -548,6 +554,17 @@ async fn mark_sending(
     let to_name = sqlx::query_scalar!("SELECT name FROM mentor WHERE id = ?", handover.mentor_id)
         .fetch_one(&mut *tx)
         .await?;
+    let fresh = uuid::Uuid::new_v4().simple().to_string();
+    // Only what goes out has the image: the app shows the letter without it, so that reading
+    // one's own letter there is no open.
+    let html = match email::tracking::assign(&mut tx, id, &fresh, at).await? {
+        Some(tracking) => format!(
+            r#"{}<img src="{}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">"#,
+            handover.html,
+            account::tracking_image(&tracking)
+        ),
+        None => handover.html,
+    };
     let outgoing = files.and_then(|files| {
         let to = handover.to_address.as_deref().ok_or(email::NO_ADDRESS)?;
         mailbox::compose(
@@ -559,7 +576,7 @@ async fn mark_sending(
                 to_name: &to_name,
                 to,
                 subject: &handover.subject,
-                html: &handover.html,
+                html: &html,
                 text: &handover.text,
                 attachments: &files,
             },

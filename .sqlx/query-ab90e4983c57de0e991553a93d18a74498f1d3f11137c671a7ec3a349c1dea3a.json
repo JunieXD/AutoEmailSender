@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET tracking_until = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "ab90e4983c57de0e991553a93d18a74498f1d3f11137c671a7ec3a349c1dea3a"
+}

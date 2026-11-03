@@ -298,12 +298,19 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
         "crawl-finished",
         "drafts-finished",
         "matching-finished",
+        "tracking-changed",
     ] {
         let ctx = ctx.clone();
         app.listen_any(event, move |e| ctx.phones.push(event, e.payload()));
     }
     tauri::async_runtime::spawn(api::libraries::run(ctx.clone()));
     tauri::async_runtime::spawn(api::backup::cloud::run(ctx.clone()));
+    let ui = app.clone();
+    tauri::async_runtime::spawn(api::tracking::run(ctx.clone(), move || {
+        if let Err(e) = ui.emit("tracking-changed", ()) {
+            tracing::warn!("refresh tracking: {e}");
+        }
+    }));
     let api::Context {
         writes,
         db,
@@ -320,6 +327,7 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
         ..
     } = &*ctx;
     let ui = app.clone();
+    let tracking = ctx.clone();
     tauri::async_runtime::spawn(send::run(
         db.clone(),
         writes.clone(),
@@ -327,6 +335,7 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
         materials.clone(),
         sender.clone(),
         move || {
+            tracking.tracking.sent();
             if let Err(e) = ui.emit("sending-changed", ()) {
                 tracing::warn!("refresh sending: {e}");
             }

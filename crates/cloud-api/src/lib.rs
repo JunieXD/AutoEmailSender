@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub mod backup;
 pub mod library;
 pub mod relay;
+pub mod tracking;
 
 pub mod path {
     pub const REGISTER_CODE: &str = "/v1/account/register-code";
@@ -79,9 +80,20 @@ pub struct SponsorTier {
     pub url: String,
 }
 
+/// Emails of tracking quota, bought apart from sponsorship.
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TrackingPack {
+    pub count: u32,
+    pub price: u32,
+    pub url: String,
+}
+
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SponsorTiers {
     pub tiers: Vec<SponsorTier>,
+    pub packs: Vec<TrackingPack>,
 }
 
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -122,11 +134,14 @@ pub struct Redeemed {
     pub sponsor_until: i64,
 }
 
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     pub email: String,
     pub sponsor_until: Option<i64>,
+    /// Emails of tracking quota; usable while the sponsorship lasts.
+    pub tracking_left: u32,
 }
 
 #[derive(Serialize, Deserialize)]

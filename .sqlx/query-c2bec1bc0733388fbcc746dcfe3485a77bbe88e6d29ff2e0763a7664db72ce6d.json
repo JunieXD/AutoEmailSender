@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.name, m.mailbox_id, m.source_url,\n            m.trashed_at IS NOT NULL AS \"trashed!: bool\",\n            m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n            m.match_model, m.match_error, coalesce(m.matched_at < (SELECT\n            match_basis_changed_at FROM profile), 0) AS \"basis_changed!: bool\",\n            d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note,\n            d.match_reason,\n            d.match_directions AS \"match_directions: Json<Vec<String>>\",\n            d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n            d.match_risks AS \"match_risks: Json<Vec<String>>\",\n            c.status AS \"status?: ContactStatus\",\n            c.contact_count AS \"contact_count?\", c.last_out_at, c.last_reply_at,\n            c.unread AS \"unread?: bool\"\n        FROM mentor m\n        JOIN mentor_detail d ON d.mentor_id = m.id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        WHERE m.id = ?",
+  "query": "SELECT m.id, m.name, m.mailbox_id, m.source_url,\n            m.trashed_at IS NOT NULL AS \"trashed!: bool\",\n            m.match_state AS \"match_state: MatchColumn\", m.match_score, m.matched_at,\n            m.match_model, m.match_error, coalesce(m.matched_at < (SELECT\n            match_basis_changed_at FROM profile), 0) AS \"basis_changed!: bool\",\n            d.research, d.papers AS \"papers: Json<Vec<String>>\", d.note,\n            d.match_reason,\n            d.match_directions AS \"match_directions: Json<Vec<String>>\",\n            d.match_highlights AS \"match_highlights: Json<Vec<String>>\",\n            d.match_risks AS \"match_risks: Json<Vec<String>>\",\n            c.status AS \"status?: ContactStatus\",\n            c.contact_count AS \"contact_count?\", c.last_out_at, c.last_reply_at,\n            c.unread AS \"unread?: bool\", c.opened AS \"opened?: bool\"\n        FROM mentor m\n        JOIN mentor_detail d ON d.mentor_id = m.id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        WHERE m.id = ?",
   "describe": {
     "columns": [
       {
@@ -245,6 +245,17 @@
             "name": "unread"
           }
         }
+      },
+      {
+        "name": "opened?: bool",
+        "ordinal": 23,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "opened"
+          }
+        }
       }
     ],
     "parameters": {
@@ -273,8 +284,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "ef875e23a9faf3bb408ef3e03944b0a32ae62c32c82020c6507113de7b65455b"
+  "hash": "c2bec1bc0733388fbcc746dcfe3485a77bbe88e6d29ff2e0763a7664db72ce6d"
 }

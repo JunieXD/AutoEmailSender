@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET tracking_left = ?1, tracking_until = ?2\n        WHERE tracking_left IS NOT ?1 OR tracking_until IS NOT ?2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "cece15ee662a3a9bb08ed2d585f29d46f9b8efb4c08979a02a7af10fa3c4a3c3"
+}

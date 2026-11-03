@@ -28,6 +28,7 @@ import { AccountSection } from "./pages/account";
 import { RemoteSection } from "./pages/agent";
 import { BackupSection } from "./pages/backup";
 import { desktop } from "./host";
+import { TrackingSection } from "./pages/tracking";
 import { WelcomePage } from "./pages/welcome";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -170,6 +171,12 @@ const repliesRoute = createRoute({
   component: ReplyProcessingSection,
 });
 
+const trackingRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: "tracking",
+  component: TrackingSection,
+});
+
 const appearanceRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: "appearance",
@@ -236,6 +243,7 @@ export const router = createRouter({
       checksRoute,
       modelsRoute,
       repliesRoute,
+      trackingRoute,
       appearanceRoute,
       notificationsRoute,
       backupRoute,

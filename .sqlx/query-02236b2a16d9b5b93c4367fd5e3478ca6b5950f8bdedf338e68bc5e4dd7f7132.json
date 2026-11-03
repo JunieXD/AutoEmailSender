@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT m.id, m.name, a.university, a.school, a.department, a.title, (\n            SELECT count(*)\n            FROM mentor_affiliation\n            WHERE mentor_id = m.id\n        ) AS \"affiliation_count!: i64\",\n            substr(d.research, 1, 120) AS \"research?: String\",\n            m.match_state AS \"match_state: MatchColumn\", m.match_score,\n            m.match_error, coalesce(m.matched_at < (SELECT match_basis_changed_at FROM\n            profile), 0) AS \"basis_changed!: bool\",\n            c.status AS \"status?: ContactStatus\",\n            c.contact_count AS \"contact_count?\", c.last_out_at, c.last_reply_at,\n            c.unread AS \"unread?: bool\", c.outcome AS \"outcome?: ReplyOutcome\"\n        FROM json_each(?) page\n        JOIN mentor m ON m.id = page.value\n        LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id\n        AND a.position = (\n            SELECT min(position)\n            FROM mentor_affiliation\n            WHERE mentor_id = m.id\n        )\n        LEFT JOIN mentor_detail d ON d.mentor_id = m.id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        ORDER BY page.key",
+  "query": "SELECT m.id, m.name, a.university, a.school, a.department, a.title, (\n            SELECT count(*)\n            FROM mentor_affiliation\n            WHERE mentor_id = m.id\n        ) AS \"affiliation_count!: i64\",\n            substr(d.research, 1, 120) AS \"research?: String\",\n            m.match_state AS \"match_state: MatchColumn\", m.match_score,\n            m.match_error, coalesce(m.matched_at < (SELECT match_basis_changed_at FROM\n            profile), 0) AS \"basis_changed!: bool\",\n            c.status AS \"status?: ContactStatus\",\n            c.contact_count AS \"contact_count?\", c.last_out_at, c.last_reply_at,\n            c.unread AS \"unread?: bool\", c.outcome AS \"outcome?: ReplyOutcome\",\n            c.opened AS \"opened?: bool\"\n        FROM json_each(?) page\n        JOIN mentor m ON m.id = page.value\n        LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id\n        AND a.position = (\n            SELECT min(position)\n            FROM mentor_affiliation\n            WHERE mentor_id = m.id\n        )\n        LEFT JOIN mentor_detail d ON d.mentor_id = m.id\n        LEFT JOIN mentor_contact c ON c.mentor_id = m.id\n        ORDER BY page.key",
   "describe": {
     "columns": [
       {
@@ -185,6 +185,17 @@
             "name": "outcome"
           }
         }
+      },
+      {
+        "name": "opened?: bool",
+        "ordinal": 18,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mentor_contact",
+            "name": "opened"
+          }
+        }
       }
     ],
     "parameters": {
@@ -208,8 +219,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "1ec585b27bae21f6d16d01bf3058554b71ba0f8e3bfff603b7b87d0a91319af0"
+  "hash": "02236b2a16d9b5b93c4367fd5e3478ca6b5950f8bdedf338e68bc5e4dd7f7132"
 }

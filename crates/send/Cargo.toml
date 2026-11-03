@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+account.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 db.workspace = true
 email.workspace = true
@@ -23,11 +24,14 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "macros", "sync", "time"] }
 tracing.workspace = true
 ts-rs.workspace = true
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+cloud-api.workspace = true
 db = { workspace = true, features = ["testing"] }
 base64 = "0.22"
 fakemail.workspace = true
+mail-parser = "1.0.0"
 receive.workspace = true
 task.workspace = true
 tempfile = "3"

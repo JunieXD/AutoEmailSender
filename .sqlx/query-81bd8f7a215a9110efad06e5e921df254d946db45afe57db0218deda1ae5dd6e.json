@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT p.email_tracking AS \"enabled: bool\", a.tracking_error\n        FROM profile p LEFT JOIN account a",
+  "describe": {
+    "columns": [
+      {
+        "name": "enabled: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "profile",
+            "name": "email_tracking"
+          }
+        }
+      },
+      {
+        "name": "tracking_error",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "tracking_error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "81bd8f7a215a9110efad06e5e921df254d946db45afe57db0218deda1ae5dd6e"
+}

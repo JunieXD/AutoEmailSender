@@ -5497,12 +5497,15 @@ dependencies = [
 name = "send"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "account",
  "base64 0.22.1",
  "chrono",
+ "cloud-api",
  "db",
  "email",
  "fakemail",
  "fastrand",
+ "mail-parser",
  "mailbox",
  "material",
  "mentor",
@@ -5517,6 +5520,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ts-rs",
+ "uuid",
 ]
 
 [[package]]

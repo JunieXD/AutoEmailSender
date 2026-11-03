@@ -14,7 +14,7 @@ vi.mock("@/api/call", () => ({
   call: async (op: string) => {
     if (op === "getAccount") return { kind: "loggedIn", email: "lisi@163.com" };
     if (op === "getSponsor") return remote.getSponsor();
-    if (op === "getSponsorTiers") return [];
+    if (op === "getSponsorTiers") return { tiers: [], packs: [] };
     if (op === "getInvite") return { status: "ineligible" };
     if (op === "redeemCode") {
       remote.redeem();

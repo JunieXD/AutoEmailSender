@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET tracking_failed_at = NULL, tracking_error = NULL\n                WHERE tracking_error IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "007f808f270cdcc4dc832236cc9c91c42ea7f9114d92a8181782347b6e1eacaf"
+}

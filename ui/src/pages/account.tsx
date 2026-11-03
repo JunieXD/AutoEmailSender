@@ -92,6 +92,7 @@ function SponsorRow({ email }: { email: string }) {
   const refreshSponsor = useRefreshSponsor(email);
   const [dialog, setDialog] = useState<"claim" | "redeem" | null>(null);
   const [redeemed, setRedeemed] = useState<number | null>(null);
+  const [claimed, setClaimed] = useState<number | null>(null);
   const open = useMutation({ mutationFn: (tier: SponsorTier) => openUrl(tier.url) });
   const { refetch } = sponsor;
   useEffect(() => {
@@ -102,8 +103,8 @@ function SponsorRow({ email }: { email: string }) {
   const until = sponsor.data?.sponsorUntil;
   const active = until != null && until > now;
   const cheapest =
-    tiers.data && tiers.data.length > 1
-      ? tiers.data.reduce((best, tier) => (perDay(tier) < perDay(best) ? tier : best))
+    tiers.data && tiers.data.tiers.length > 1
+      ? tiers.data.tiers.reduce((best, tier) => (perDay(tier) < perDay(best) ? tier : best))
       : undefined;
   return (
     <Row label="赞助">
@@ -117,8 +118,12 @@ function SponsorRow({ email }: { email: string }) {
         <p className="text-sm text-muted-foreground">正在读取…</p>
       )}
       {redeemed != null && <p className="text-sm text-success">兑换成功，加了 {redeemed} 天赞助。</p>}
+      {claimed != null && (
+        <p className="text-sm text-success">开通成功{claimed > 0 && `，邮件追踪剩余 ${claimed} 封`}。</p>
+      )}
       <p className="text-sm text-muted-foreground">
-        本机的功能一直免费。赞助用来支付服务器和导师库的整理，赞助期内导师库不限数量。
+        本机的功能一直免费。赞助用来支付服务器和导师库的整理，赞助期内导师库不限数量，还能用邮件追踪和云端备份。
+        {until == null && "第一次赞助还送邮件追踪的额度。"}
       </p>
       {tiers.error ? (
         <p className="text-sm text-destructive">{errorMessage(tiers.error)}</p>
@@ -127,7 +132,7 @@ function SponsorRow({ email }: { email: string }) {
           <>
             <p className="mt-1 text-sm font-medium">{active ? "续赞助" : "选一种时长"}</p>
             <div className="grid max-w-md grid-cols-3 gap-2">
-              {tiers.data.map((tier) => (
+              {tiers.data.tiers.map((tier) => (
                 <Button
                   key={tier.url}
                   variant="quiet"
@@ -170,8 +175,9 @@ function SponsorRow({ email }: { email: string }) {
           label="订单号"
           action="开通"
           submit={async (orderNumber) => {
-            await call("claimSponsorOrder", { orderNumber });
+            const account = await call("claimSponsorOrder", { orderNumber });
             await refreshSponsor();
+            setClaimed(account.trackingLeft);
           }}
           onClose={() => setDialog(null)}
         />
@@ -199,6 +205,7 @@ function useRefreshSponsor(email: string) {
   const queryClient = useQueryClient();
   return async () => {
     void queryClient.invalidateQueries({ queryKey: ["getLibraryQuota"] });
+    void queryClient.invalidateQueries({ queryKey: ["getTracking"] });
     // A read on its way started before the grant; invalidating alone would reuse it on the first load
     // or once the page is left, so drop it and read again now or when the page comes back.
     await queryClient.cancelQueries({ queryKey: ["getSponsor", email] });

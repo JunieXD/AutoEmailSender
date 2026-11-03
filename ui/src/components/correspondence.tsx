@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScheduleActions, refreshSchedule, scheduledAt } from "@/components/schedule";
 import { AddTodo, TodoItem } from "@/components/todos";
+import { TrackingNote } from "@/components/tracking";
 import { day, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
 import { toHtml } from "@/markdown";
@@ -308,6 +309,7 @@ function Sent({
         )}
       </div>
       <p className={`max-w-[min(42rem,88%)] text-right text-sm ${tone}`}>{text}</p>
+      {e.tracking && <TrackingNote tracking={e.tracking} />}
       {actions && (
         <div className="flex flex-wrap justify-end gap-1">
           {e.state === "approved" && <ScheduleActions id={e.id} initial={e.plannedAt ?? undefined} />}

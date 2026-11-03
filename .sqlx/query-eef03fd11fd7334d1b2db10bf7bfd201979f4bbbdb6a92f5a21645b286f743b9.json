@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT (SELECT email_tracking FROM profile) = 1\n            OR EXISTS (SELECT 1 FROM email WHERE tracking_account = ?1 AND tracked_at >= ?2)\n            OR EXISTS (SELECT 1 FROM email WHERE tracking_account = ?1\n                AND tracking_state = 'pending' AND state <> 'sending')\n            AS \"wanted!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "wanted!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "eef03fd11fd7334d1b2db10bf7bfd201979f4bbbdb6a92f5a21645b286f743b9"
+}

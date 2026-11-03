@@ -52,6 +52,7 @@ export function ContactLabel({
     <div className={`flex items-center gap-1.5 ${className}`}>
       <span className={`size-2 shrink-0 rounded-full ${dot}`} />
       {label}
+      {contact.status === "contacted" && contact.opened && <span className="text-muted-foreground">已打开</span>}
       {contact.status === "replied" && contact.unread && (
         <span className="size-2 shrink-0 rounded-full bg-unread" aria-label="有新回信" />
       )}

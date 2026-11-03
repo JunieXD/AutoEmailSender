@@ -203,6 +203,7 @@ function TaskSteps({
                         <p className="text-xs text-muted-foreground">
                           {m.previous.subject ?? "（无主题）"} · 发出{" "}
                           {Math.max(0, Math.floor((openedAt - m.previous.sentAt) / 86_400_000))} 天
+                          {m.previous.opened !== null && (m.previous.opened ? " · 已打开" : " · 没打开过")}
                         </p>
                       )}
                       {kind === "first" && (m.contactCount > 0 || m.lastContactAt !== null) && (

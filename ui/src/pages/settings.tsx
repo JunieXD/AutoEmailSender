@@ -30,6 +30,7 @@ const GROUPS = [
       { to: "/settings/mailboxes", label: "邮箱" },
       { to: "/settings/checks", label: "发送前检查" },
       { to: "/settings/replies", label: "回信处理" },
+      { to: "/settings/tracking", label: "邮件追踪" },
     ],
   },
   { label: "AI", sections: [{ to: "/settings/models", label: "模型" }] },

@@ -77,6 +77,11 @@ export function Shell() {
     });
     // A sent email changes its mentor's correspondence and contact status as well as its task.
     const sendingChanged = listen("sending-changed", () => refreshMentors(queryClient));
+    // Opens and registrations show on letters, in the contact column and in the filters.
+    const trackingChanged = listen("tracking-changed", () => {
+      refreshMentors(queryClient);
+      void queryClient.invalidateQueries({ queryKey: ["getTracking"] });
+    });
     const accountChanged = listen("account-changed", () => queryClient.invalidateQueries({ queryKey: ["getAccount"] }));
     const tasksChanged = listen("tasks-changed", () => refreshTasks(queryClient));
     const repliesChanged = listen("reply-processing-changed", () => refreshReplyOutcomes(queryClient));
@@ -90,6 +95,7 @@ export function Shell() {
       void crawlChanged.then((f) => f());
       void crawlFinished.then((f) => f());
       void sendingChanged.then((f) => f());
+      void trackingChanged.then((f) => f());
       void accountChanged.then((f) => f());
       void tasksChanged.then((f) => f());
       void repliesChanged.then((f) => f());

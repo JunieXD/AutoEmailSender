@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET tracking_failed_at = coalesce(tracking_failed_at, ?),\n                    tracking_error = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "a151d29fa20e98e44bbd256512035475a6eb7979419a63c835c1e670dfacf9fa"
+}

@@ -114,6 +114,8 @@ pub enum Contact {
     Contacted {
         count: i64,
         last_out_at: i64,
+        /// Whether the latest letter was opened, when it went with a tracking image.
+        opened: Option<bool>,
     },
     /// A mentor can write first, so there may be nothing sent yet.
     Replied {
@@ -323,6 +325,10 @@ macro_rules! filtered_query {
                 SELECT mentor_id FROM mentor_contact
                 WHERE status = 'replied' AND coalesce(outcome, 'unmarked') = ?4
             ))
+            AND (?1 IS NOT 'contacted' OR ?17 IS NULL OR m.id IN (
+                SELECT mentor_id FROM mentor_contact
+                WHERE status = 'contacted' AND opened = ?17
+            ))
             AND (?2 IS NULL OR m.id IN (
                 SELECT rowid FROM mentor_search WHERE mentor_search MATCH ?2
             ))
@@ -343,6 +349,7 @@ macro_rules! filtered_query {
             title_missing,
             tags,
             untagged,
+            filter.opened,
             $($page,)*
         )
         .$fetch($conn)
@@ -400,7 +407,7 @@ async fn filtered_ids(
         now,
         "SELECT m.id",
         r#"ORDER BY m.match_score DESC, m.id
-        LIMIT ?17 OFFSET ?18"#,
+        LIMIT ?18 OFFSET ?19"#,
         fetch_all,
         limit,
         skip,
@@ -434,7 +441,8 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
             profile), 0) AS "basis_changed!: bool",
             c.status AS "status?: ContactStatus",
             c.contact_count AS "contact_count?", c.last_out_at, c.last_reply_at,
-            c.unread AS "unread?: bool", c.outcome AS "outcome?: ReplyOutcome"
+            c.unread AS "unread?: bool", c.outcome AS "outcome?: ReplyOutcome",
+            c.opened AS "opened?: bool"
         FROM json_each(?) page
         JOIN mentor m ON m.id = page.value
         LEFT JOIN mentor_affiliation a ON a.mentor_id = m.id
@@ -480,6 +488,7 @@ async fn rows(conn: &mut SqliteConnection, ids: &[i64]) -> Result<Vec<MentorRow>
                     r.last_out_at,
                     r.last_reply_at,
                     r.unread,
+                    r.opened,
                 )?,
                 tags: tags.remove(&r.id).unwrap_or_default(),
             })
@@ -509,7 +518,7 @@ pub async fn detail(
             d.match_risks AS "match_risks: Json<Vec<String>>",
             c.status AS "status?: ContactStatus",
             c.contact_count AS "contact_count?", c.last_out_at, c.last_reply_at,
-            c.unread AS "unread?: bool"
+            c.unread AS "unread?: bool", c.opened AS "opened?: bool"
         FROM mentor m
         JOIN mentor_detail d ON d.mentor_id = m.id
         LEFT JOIN mentor_contact c ON c.mentor_id = m.id
@@ -616,6 +625,7 @@ pub async fn detail(
             r.last_out_at,
             r.last_reply_at,
             r.unread,
+            r.opened,
         )?,
         tags: tags_of(&mut *conn, &[id])
             .await?
@@ -671,11 +681,16 @@ fn contact(
     last_out_at: Option<i64>,
     last_reply_at: Option<i64>,
     unread: Option<bool>,
+    opened: Option<bool>,
 ) -> Result<Contact, sqlx::Error> {
     Ok(match (status, count, last_out_at, last_reply_at, unread) {
         (None, ..) => Contact::None,
         (Some(ContactStatus::Contacted), Some(count), Some(last_out_at), _, _) => {
-            Contact::Contacted { count, last_out_at }
+            Contact::Contacted {
+                count,
+                last_out_at,
+                opened,
+            }
         }
         (Some(ContactStatus::Bounced), Some(count), Some(last_out_at), _, _) => {
             Contact::Bounced { count, last_out_at }

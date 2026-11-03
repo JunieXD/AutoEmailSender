@@ -11,7 +11,7 @@ use reqwest::{Method, RequestBuilder, StatusCode};
 use reqwest_websocket::Upgrade;
 pub use reqwest_websocket::WebSocket;
 use serde::{Serialize, de::DeserializeOwned};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use tokio::sync::{Mutex, watch};
 use ts_rs::TS;
 
@@ -36,6 +36,24 @@ pub enum State {
     Expired { email: String },
 }
 
+/// The official service this run talks to, which `AUTOEMAIL_SERVER_URL` can point elsewhere.
+pub fn server_address() -> String {
+    std::env::var_os("AUTOEMAIL_SERVER_URL")
+        .map(|address| address.to_string_lossy().into_owned())
+        .unwrap_or_else(|| SERVER_URL.into())
+        .trim_end_matches('/')
+        .into()
+}
+
+/// The address of the tracking image of an email.
+pub fn tracking_image(id: &str) -> String {
+    format!(
+        "{}{}",
+        server_address(),
+        cloud_api::tracking::image_path(id)
+    )
+}
+
 pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
     let row = sqlx::query!(
         r#"SELECT email, token IS NOT NULL AS "logged_in!: bool"
@@ -53,12 +71,13 @@ pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
 /// Read once by operations that must keep using one account throughout.
 pub async fn saved_login(db: &SqlitePool) -> Result<Login, Error> {
     let row = sqlx::query!(
-        r#"SELECT token AS "token!", backup_key FROM account WHERE token IS NOT NULL"#
+        r#"SELECT email, token AS "token!", backup_key FROM account WHERE token IS NOT NULL"#
     )
     .fetch_optional(db)
     .await?
     .ok_or(Error::SignedOut)?;
     Ok(Login {
+        email: row.email,
         token: row.token,
         backup_key: row.backup_key.and_then(|key| key.try_into().ok()),
     })
@@ -74,10 +93,7 @@ pub struct Client {
 
 impl Client {
     pub fn new(net: &net::Net) -> Self {
-        let address = std::env::var_os("AUTOEMAIL_SERVER_URL")
-            .map(|address| address.to_string_lossy().into_owned())
-            .unwrap_or_else(|| SERVER_URL.into());
-        Self::with_address(net, address)
+        Self::with_address(net, server_address())
     }
 
     pub fn with_address(net: &net::Net, address: String) -> Self {
@@ -217,14 +233,9 @@ impl Client {
         })
     }
 
-    pub async fn sponsor_tiers(
-        &self,
-        db: &SqlitePool,
-    ) -> Result<Vec<cloud_api::SponsorTier>, Error> {
-        let tiers: cloud_api::SponsorTiers = self
-            .authenticated(db, Method::GET, path::SPONSOR_TIERS, None::<&Empty>)
-            .await?;
-        Ok(tiers.tiers)
+    pub async fn sponsor_tiers(&self, db: &SqlitePool) -> Result<cloud_api::SponsorTiers, Error> {
+        self.authenticated(db, Method::GET, path::SPONSOR_TIERS, None::<&Empty>)
+            .await
     }
 
     pub async fn invite(&self, db: &SqlitePool) -> Result<cloud_api::Invite, Error> {
@@ -260,11 +271,13 @@ impl Client {
         .await
     }
 
+    /// As `login`, so that the account answered is the one the caller notes it for.
     pub async fn claim_sponsor_order(
         &self,
         db: &SqlitePool,
+        login: &Login,
         order_number: &str,
-    ) -> Result<Sponsor, Error> {
+    ) -> Result<cloud_api::Account, Error> {
         let order_number = order_number.trim();
         if order_number.is_empty() {
             return Err(Error::Invalid("请填写爱发电的订单号。"));
@@ -274,19 +287,16 @@ impl Client {
                 "订单号只有字母和数字，请从爱发电的“我的订单”里复制。",
             ));
         }
-        let account: cloud_api::Account = self
-            .authenticated(
-                db,
-                Method::POST,
-                path::SPONSOR_CLAIM,
-                Some(&cloud_api::ClaimRequest {
-                    order_number: order_number.into(),
-                }),
-            )
-            .await?;
-        Ok(Sponsor {
-            sponsor_until: account.sponsor_until,
-        })
+        self.authenticated_as(
+            db,
+            login,
+            Method::POST,
+            path::SPONSOR_CLAIM,
+            Some(&cloud_api::ClaimRequest {
+                order_number: order_number.into(),
+            }),
+        )
+        .await
     }
 
     pub async fn delete(
@@ -325,12 +335,24 @@ impl Client {
         path: &str,
         body: Option<&impl Serialize>,
     ) -> Result<T, Error> {
-        let login = saved_login(db).await?;
+        self.authenticated_as(db, &saved_login(db).await?, method, path, body)
+            .await
+    }
+
+    /// As `authenticated`, for requests that must all go as one login.
+    pub async fn authenticated_as<T: DeserializeOwned>(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+        method: Method,
+        path: &str,
+        body: Option<&impl Serialize>,
+    ) -> Result<T, Error> {
         let mut request = self.request(method, path);
         if let Some(body) = body {
             request = request.json(body);
         }
-        self.send(db, &login, request)
+        self.send(db, login, request)
             .await?
             .json()
             .await
@@ -400,9 +422,23 @@ impl Client {
 
 /// A saved login. Without Debug, so that neither secret ends up in a log.
 pub struct Login {
+    pub email: String,
     token: String,
     /// Missing for logins from before cloud backup; logging in again derives it.
     pub backup_key: Option<[u8; 32]>,
+}
+
+impl Login {
+    /// Whether it is still the saved login: not logged out or replaced since, not even by
+    /// logging in again as the same account.
+    pub async fn is_saved(&self, conn: &mut SqliteConnection) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS (SELECT 1 FROM account WHERE token = ?) AS "saved!: bool""#,
+            self.token
+        )
+        .fetch_one(conn)
+        .await
+    }
 }
 
 async fn checked(request: RequestBuilder) -> Result<reqwest::Response, Error> {

@@ -22,15 +22,16 @@ async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePo
     .execute(&db)
     .await
     .unwrap();
+    let login = account::saved_login(&db).await.unwrap();
     let calls = async {
         assert_eq!(client.get_sponsor(&db).await.unwrap().sponsor_until, None);
         assert_eq!(
-            client.sponsor_tiers(&db).await.unwrap()[0].url,
+            client.sponsor_tiers(&db).await.unwrap().tiers[0].url,
             "https://afdian.com/order/create?custom_order_id=123"
         );
         assert_eq!(
             client
-                .claim_sponsor_order(&db, "  AbC123\n")
+                .claim_sponsor_order(&db, &login, "  AbC123\n")
                 .await
                 .unwrap()
                 .sponsor_until,
@@ -38,7 +39,7 @@ async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePo
         );
         for invalid in ["", "   ", "订单号", "abc-123", &"a".repeat(65)] {
             assert!(matches!(
-                client.claim_sponsor_order(&db, invalid).await,
+                client.claim_sponsor_order(&db, &login, invalid).await,
                 Err(Error::Invalid(_))
             ));
         }
@@ -48,17 +49,17 @@ async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePo
             (
                 "GET",
                 path::ACCOUNT,
-                json!({"email":"student@example.invalid", "sponsorUntil":null}),
+                json!({"email":"student@example.invalid", "sponsorUntil":null, "trackingLeft":0}),
             ),
             (
                 "GET",
                 path::SPONSOR_TIERS,
-                json!({"tiers":[{"duration":{"days":7},"price":660,"url":"https://afdian.com/order/create?custom_order_id=123"}]}),
+                json!({"tiers":[{"duration":{"days":7},"price":660,"url":"https://afdian.com/order/create?custom_order_id=123"}],"packs":[]}),
             ),
             (
                 "POST",
                 path::SPONSOR_CLAIM,
-                json!({"email":"student@example.invalid", "sponsorUntil":1_800_000_000_000_i64}),
+                json!({"email":"student@example.invalid", "sponsorUntil":1_800_000_000_000_i64, "trackingLeft":100}),
             ),
         ] {
             let request = server.requests.recv().await.unwrap();
@@ -100,9 +101,13 @@ async fn sponsorship_preserves_server_error_codes(db: SqlitePool) {
         ErrorCode::OrderNotSponsorship,
         ErrorCode::SponsorUnavailable,
     ];
+    let login = account::saved_login(&db).await.unwrap();
     let calls = async {
         for code in CODES {
-            let error = client.claim_sponsor_order(&db, "abc123").await.unwrap_err();
+            let error = client
+                .claim_sponsor_order(&db, &login, "abc123")
+                .await
+                .unwrap_err();
             assert!(matches!(error, Error::Server(ref error) if error.code == code));
         }
     };
@@ -324,6 +329,7 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
             account: Account {
                 email: input.email,
                 sponsor_until: Some(1234),
+                tracking_left: 0,
             },
         })
         .unwrap();
@@ -400,6 +406,7 @@ async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: Sqlite
                 account: Account {
                     email: "second@example.invalid".into(),
                     sponsor_until: None,
+                    tracking_left: 0,
                 },
             })
             .unwrap(),
@@ -556,6 +563,7 @@ async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
                         account: Account {
                             email: email.into(),
                             sponsor_until: None,
+                            tracking_left: 0,
                         },
                     })
                     .unwrap(),

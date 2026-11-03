@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET tracking_state = 'tracked', tracked_at = ?\n            WHERE tracking_id = ? AND tracking_state = 'pending'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "96263b765754734803c0013dcfa91f891c1fdb6ffd2aa55fd7cc141583cb7f75"
+}

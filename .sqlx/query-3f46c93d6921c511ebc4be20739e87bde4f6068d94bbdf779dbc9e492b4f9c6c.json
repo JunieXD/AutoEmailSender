@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: DraftKind\", state AS \"state: DeliveryColumn\",\n            coalesce(subject, '') AS \"subject!: String\",\n            coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1\n            FROM email r WHERE r.resend_of = email.id) AS \"resent!: bool\", planned_at,\n            latest_at, from_address, to_address, sent_at, error, cancel_reason\n        FROM email\n        WHERE mentor_id = ? AND (state IN ('approved', 'sending', 'maybe_sent', 'sent',\n            'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'\n        AND task_id IS NULL))\n        ORDER BY id",
+  "query": "SELECT id, kind AS \"kind: DraftKind\", state AS \"state: DeliveryColumn\",\n            coalesce(subject, '') AS \"subject!: String\",\n            coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1\n            FROM email r WHERE r.resend_of = email.id) AS \"resent!: bool\", planned_at,\n            latest_at, from_address, to_address, sent_at, error, cancel_reason,\n            tracking_state AS \"tracking_state: tracking::State\",\n            open_count AS \"open_count: u32\", first_opened_at, last_opened_at\n        FROM email\n        WHERE mentor_id = ? AND (state IN ('approved', 'sending', 'maybe_sent', 'sent',\n            'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'\n        AND task_id IS NULL))\n        ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -141,6 +141,50 @@
             "name": "cancel_reason"
           }
         }
+      },
+      {
+        "name": "tracking_state: tracking::State",
+        "ordinal": 14,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "tracking_state"
+          }
+        }
+      },
+      {
+        "name": "open_count: u32",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "open_count"
+          }
+        }
+      },
+      {
+        "name": "first_opened_at",
+        "ordinal": 16,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "first_opened_at"
+          }
+        }
+      },
+      {
+        "name": "last_opened_at",
+        "ordinal": 17,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "last_opened_at"
+          }
+        }
       }
     ],
     "parameters": {
@@ -160,8 +204,12 @@
       true,
       true,
       true,
+      true,
+      true,
+      true,
+      true,
       true
     ]
   },
-  "hash": "ab6cd1580c6b3ac9cdb1060592e9817c29c5b4ff2b31cf1434895b3a4fed49e7"
+  "hash": "3f46c93d6921c511ebc4be20739e87bde4f6068d94bbdf779dbc9e492b4f9c6c"
 }

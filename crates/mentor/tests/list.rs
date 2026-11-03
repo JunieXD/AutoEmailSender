@@ -197,6 +197,7 @@ async fn filters_sorts_and_pages(db: SqlitePool) {
     assert_eq!(
         row.contact,
         Contact::Contacted {
+            opened: None,
             count: 1,
             last_out_at: 5
         }

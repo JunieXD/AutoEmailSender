@@ -78,6 +78,8 @@ pub struct TaskPlan {
 pub struct PreviousLetter {
     pub subject: Option<String>,
     pub sent_at: i64,
+    /// Whether it was opened, when it went with a tracking image.
+    pub opened: Option<bool>,
 }
 
 async fn validate_source(conn: &mut SqliteConnection, form: &NewTask) -> Result<()> {
@@ -126,7 +128,7 @@ async fn candidates(
                  THEN '还有一封没发出的首封或追问'
                ELSE NULL END AS "reason: String",
              coalesce(c.contact_count, 0) AS "contact_count!: i64",
-             c.last_out_at AS last_contact_at,
+             c.last_out_at AS last_contact_at, c.opened AS "opened?: bool",
              (SELECT json_quote(status) FROM mentor_library WHERE mentor_id = m.id
                 AND status IN ('retired', 'departed', 'deceased')
                 ORDER BY CASE status WHEN 'deceased' THEN 0 WHEN 'departed' THEN 1 ELSE 2 END,
@@ -154,9 +156,12 @@ async fn candidates(
             contact_count: row.contact_count,
             last_contact_at: row.last_contact_at,
             library_status: row.library_status.map(|s| s.0),
+            // A mentor who can be followed up has not replied, so the latest letter out, which
+            // the contact summary describes, is the one followed up.
             previous: previous.map(|p| PreviousLetter {
                 subject: p.subject,
                 sent_at: p.sent_at,
+                opened: row.opened,
             }),
         });
     }

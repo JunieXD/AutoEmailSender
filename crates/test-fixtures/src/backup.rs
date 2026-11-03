@@ -1,18 +1,11 @@
 //! An in-memory cloud backup server following the official server's rules (the server
 //! repository's docs/backup.md), without accounts: every request acts for one account.
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io,
-    sync::{Arc, Mutex},
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use cloud_api::backup::{Commit, Committed, Current, Discard, LIMIT, OBJECTS, Status};
 use serde_json::json;
-use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
-    task::JoinHandle,
-};
+
+use crate::http::{Reply, error, ok};
 
 #[derive(Default)]
 pub struct State {
@@ -30,39 +23,11 @@ pub struct State {
 
 pub type Change = Box<dyn FnOnce(&mut State) + Send>;
 
-pub struct Server {
-    pub address: String,
-    pub state: Arc<Mutex<State>>,
-    task: JoinHandle<()>,
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
+pub type Server = crate::http::Server<State>;
 
 impl Server {
-    #[expect(
-        clippy::unwrap_used,
-        reason = "test fixture listener failures must panic at their source"
-    )]
-    pub async fn start(state: State) -> io::Result<Self> {
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let address = format!("http://127.0.0.1:{}", listener.local_addr()?.port());
-        let state = Arc::new(Mutex::new(state));
-        let shared = state.clone();
-        let task = tokio::spawn(async move {
-            loop {
-                let (stream, _) = listener.accept().await.unwrap();
-                tokio::spawn(serve(stream, shared.clone()));
-            }
-        });
-        Ok(Self {
-            address,
-            state,
-            task,
-        })
+    pub async fn start(state: State) -> std::io::Result<Self> {
+        crate::http::Server::serve(state, respond).await
     }
 }
 
@@ -70,61 +35,7 @@ impl Server {
     clippy::unwrap_used,
     reason = "test fixture request failures must panic at their source"
 )]
-async fn serve(stream: TcpStream, state: Arc<Mutex<State>>) {
-    let mut io = BufReader::new(stream);
-    loop {
-        let mut line = String::new();
-        if io.read_line(&mut line).await.unwrap() == 0 {
-            return;
-        }
-        let mut length = 0;
-        loop {
-            let mut header = String::new();
-            io.read_line(&mut header).await.unwrap();
-            if header == "\r\n" {
-                break;
-            }
-            if let Some((name, value)) = header.trim_end().split_once(": ")
-                && name.eq_ignore_ascii_case("content-length")
-            {
-                length = value.parse().unwrap();
-            }
-        }
-        let mut body = vec![0; length];
-        io.read_exact(&mut body).await.unwrap();
-        let mut words = line.split(' ');
-        let (method, path) = (words.next().unwrap(), words.next().unwrap());
-        let (status, content_type, content) =
-            respond(&mut state.lock().unwrap(), method, path, body);
-        let head = format!(
-            "HTTP/1.1 {status} Reply\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\n\r\n",
-            content.len()
-        );
-        io.write_all(&[head.as_bytes(), &content].concat())
-            .await
-            .unwrap();
-    }
-}
-
-fn error(status: u16, code: &str) -> (u16, &'static str, Vec<u8>) {
-    (
-        status,
-        "application/json",
-        json!({ "code": code }).to_string().into_bytes(),
-    )
-}
-
-#[expect(
-    clippy::unwrap_used,
-    reason = "test fixture request failures must panic at their source"
-)]
-fn respond(
-    state: &mut State,
-    method: &str,
-    path: &str,
-    body: Vec<u8>,
-) -> (u16, &'static str, Vec<u8>) {
-    let ok = |value: serde_json::Value| (200, "application/json", value.to_string().into_bytes());
+fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply {
     let sponsored = |state: &State| state.sponsor_until.is_some_and(|until| until > state.now);
     match (method, path.strip_prefix("/v1/backup")) {
         ("GET", Some("")) => ok(serde_json::to_value(Status {

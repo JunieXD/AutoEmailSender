@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tracking_id FROM email WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "tracking_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "tracking_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "5b2ed8f843d83f2199ca23613991a36d1c076280ca8e1f2d739148c62fed7f90"
+}

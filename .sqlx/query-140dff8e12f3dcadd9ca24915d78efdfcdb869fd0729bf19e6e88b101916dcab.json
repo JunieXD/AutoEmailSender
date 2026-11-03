@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS (SELECT 1 FROM account WHERE token = ?) AS \"saved!: bool\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "saved!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "140dff8e12f3dcadd9ca24915d78efdfcdb869fd0729bf19e6e88b101916dcab"
+}

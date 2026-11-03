@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 mod reply;
 pub mod thread;
+pub mod tracking;
 pub use reply::*;
 
 use serde::{Deserialize, Serialize};
@@ -373,6 +374,8 @@ pub struct Email {
     pub resent: bool,
     #[serde(flatten)]
     pub delivery: Delivery,
+    /// For one that went with a tracking image.
+    pub tracking: Option<tracking::Tracking>,
 }
 
 /// A file an email went out with, as it was named then.
@@ -459,7 +462,9 @@ pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Em
             coalesce(subject, '') AS "subject!: String",
             coalesce(body_md, '') AS "body_md!: String", resend_of, EXISTS (SELECT 1
             FROM email r WHERE r.resend_of = email.id) AS "resent!: bool", planned_at,
-            latest_at, from_address, to_address, sent_at, error, cancel_reason
+            latest_at, from_address, to_address, sent_at, error, cancel_reason,
+            tracking_state AS "tracking_state: tracking::State",
+            open_count AS "open_count: u32", first_opened_at, last_opened_at
         FROM email
         WHERE mentor_id = ? AND (state IN ('approved', 'sending', 'maybe_sent', 'sent',
             'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'
@@ -522,6 +527,12 @@ pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Em
             resend_of: r.resend_of,
             resent: r.resent,
             delivery,
+            tracking: r.tracking_state.map(|state| tracking::Tracking {
+                state,
+                opens: r.open_count.unwrap_or_default(),
+                first_open_at: r.first_opened_at,
+                last_open_at: r.last_opened_at,
+            }),
         })
     })
     .collect()

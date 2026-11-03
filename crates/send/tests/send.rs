@@ -3353,6 +3353,7 @@ async fn late_provider_copy_after_readding_same_mailbox(db: SqlitePool) {
                 mentor::Contact::Contacted {
                     count: 1,
                     last_out_at: at,
+                    opened: None,
                 }
             );
         }
@@ -3704,4 +3705,253 @@ async fn restored_mailbox_waits_without_sending_or_receiving_until_secret_is_fil
         first_email(&db, mentor).await.delivery,
         Delivery::Sent { .. }
     ));
+}
+
+/// The HTML part of a message as sent.
+fn html(mail: &str) -> String {
+    mail_parser::MessageParser::default()
+        .parse(mail)
+        .unwrap()
+        .body_html(0)
+        .unwrap()
+        .into_owned()
+}
+
+/// The tracking id in a message's image, if it has one.
+fn tracking_image(mail: &str) -> Option<String> {
+    let html = html(mail);
+    let (_, rest) = html.split_once("/t/")?;
+    Some(rest.split_once(".gif").unwrap().0.into())
+}
+
+/// A sponsored login with `left` emails of tracking quota.
+async fn track(db: &SqlitePool, on: bool, left: i64) {
+    sqlx::query(
+        "INSERT INTO account (id, email, token, tracking_left, tracking_until)
+         VALUES (1, 'student@example.invalid', 'token', ?, 4000000000000)
+         ON CONFLICT (id) DO UPDATE SET tracking_left = excluded.tracking_left",
+    )
+    .bind(left)
+    .execute(db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE profile SET email_tracking = ?")
+        .bind(on)
+        .execute(db)
+        .await
+        .unwrap();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn letters_carry_a_tracking_image_while_on_and_the_quota_covers_them(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    track(&db, false, 5).await;
+    approve(&db, "off@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+
+    // One email of quota: the second letter is beyond it until the first is registered.
+    track(&db, true, 1).await;
+    let tracked = approve(&db, "on@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T + MINUTE)
+        .await
+        .unwrap();
+    approve(&db, "over@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T + DAY)
+        .await
+        .unwrap();
+
+    let mail = inbox.lock().unwrap().clone();
+    assert_eq!(mail.len(), 3);
+    assert_eq!(tracking_image(&mail[0]), None);
+    let id = tracking_image(&mail[1]).unwrap();
+    assert!(cloud_api::tracking::valid_id(&id), "{id}");
+    assert!(html(&mail[1]).ends_with(&format!(
+        r#"<img src="{}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">"#,
+        account::tracking_image(&id)
+    )));
+    assert_eq!(tracking_image(&mail[2]), None);
+    // The app shows the letter without the image.
+    let email = first_email(&db, tracked).await;
+    let stored: String = sqlx::query_scalar("SELECT html FROM email WHERE id = ?")
+        .bind(email.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(stored, "<p>王老师：您好！</p>");
+    assert_eq!(
+        email.tracking.map(|t| t.state),
+        Some(email::tracking::State::Pending)
+    );
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn letters_go_without_a_tracking_image_once_the_sponsorship_ends(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    track(&db, true, 5).await;
+    sqlx::query("UPDATE account SET tracking_until = ?")
+        .bind(T + MINUTE)
+        .execute(&db)
+        .await
+        .unwrap();
+    approve(&db, "before@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    approve(&db, "after@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T + MINUTE)
+        .await
+        .unwrap();
+    let mail = inbox.lock().unwrap().clone();
+    assert!(tracking_image(&mail[0]).is_some());
+    assert_eq!(tracking_image(&mail[1]), None);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn letters_waiting_for_another_account_leave_this_ones_quota_alone(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    track(&db, true, 1).await;
+    approve(&db, "first@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    sqlx::raw_sql(
+        r#"DELETE FROM account;
+        INSERT INTO account (id, email, token, tracking_left, tracking_until)
+        VALUES (1, 'other@example.invalid', 'other', 1, 4000000000000);
+        UPDATE profile SET email_tracking = 1;"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    approve(&db, "second@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T + MINUTE)
+        .await
+        .unwrap();
+    let mail = inbox.lock().unwrap().clone();
+    assert!(tracking_image(&mail[0]).is_some());
+    assert!(tracking_image(&mail[1]).is_some());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_refused_letter_holds_no_tracking_quota_when_sent_again(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    track(&db, true, 1).await;
+    let unknown = approve(&db, "unknown@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    // The refused letter reached nobody, so this one takes the one email of quota.
+    approve(&db, "on@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T + MINUTE)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE mentor_email SET address = 'wang@example.edu.cn' WHERE mentor_id = ?")
+        .bind(unknown)
+        .execute(&db)
+        .await
+        .unwrap();
+    let refused = first_email(&db, unknown).await;
+    assert!(email::retry(&db, refused.id, T + DAY).await.unwrap());
+    send::step(&db, &writes, &net, nowhere(), || T + DAY)
+        .await
+        .unwrap();
+    let mail = inbox.lock().unwrap().clone();
+    assert_eq!(mail.len(), 2);
+    assert!(tracking_image(&mail[0]).is_some());
+    assert_eq!(tracking_image(&mail[1]), None);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_letter_sent_again_after_it_may_have_gone_keeps_its_tracking_image(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    track(&db, true, 5).await;
+    let hangup = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    let cut_off = first_email(&db, hangup).await;
+    assert!(matches!(cut_off.delivery, Delivery::MaybeSent { .. }));
+    // Turned off meanwhile, the copy sent again is still the same letter.
+    track(&db, false, 5).await;
+    assert!(email::retry(&db, cut_off.id, T + DAY).await.unwrap());
+    send::step(&db, &writes, &net, nowhere(), || T + DAY)
+        .await
+        .unwrap();
+    let mail = inbox.lock().unwrap().clone();
+    assert_eq!(mail.len(), 2);
+    assert!(tracking_image(&mail[0]).is_some());
+    assert_eq!(tracking_image(&mail[0]), tracking_image(&mail[1]));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_letter_retried_without_an_address_keeps_the_tracking_image_it_may_have_gone_with(
+    db: SqlitePool,
+) {
+    let writes = db::Writes::default();
+    let (net, inbox) = mailbox(&db, SECRET).await;
+    track(&db, true, 5).await;
+    let hangup = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    let cut_off = first_email(&db, hangup).await;
+    sqlx::query("DELETE FROM mentor_email WHERE mentor_id = ?")
+        .bind(hangup)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(email::retry(&db, cut_off.id, T + DAY).await.unwrap());
+    send::step(&db, &writes, &net, nowhere(), || T + DAY)
+        .await
+        .unwrap();
+    let failed = first_email(&db, hangup).await;
+    assert!(matches!(failed.delivery, Delivery::Failed { .. }));
+    sqlx::query("INSERT INTO mentor_email (address, mentor_id, position) VALUES (?, ?, 0)")
+        .bind("hangup@example.edu.cn")
+        .bind(hangup)
+        .execute(&db)
+        .await
+        .unwrap();
+    assert!(email::retry(&db, cut_off.id, T + 2 * DAY).await.unwrap());
+    send::step(&db, &writes, &net, nowhere(), || T + 2 * DAY)
+        .await
+        .unwrap();
+    let mail = inbox.lock().unwrap().clone();
+    assert_eq!(mail.len(), 2);
+    assert!(tracking_image(&mail[0]).is_some());
+    assert_eq!(tracking_image(&mail[0]), tracking_image(&mail[1]));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn sending_a_letter_again_leaves_the_time_its_tracking_image_has_to_be_registered(
+    db: SqlitePool,
+) {
+    let writes = db::Writes::default();
+    let (net, _) = mailbox(&db, SECRET).await;
+    track(&db, true, 5).await;
+    let hangup = approve(&db, "hangup@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T)
+        .await
+        .unwrap();
+    let within = cloud_api::tracking::REGISTER_WITHIN;
+    let cut_off = first_email(&db, hangup).await;
+    assert!(email::retry(&db, cut_off.id, T + within).await.unwrap());
+    send::step(&db, &writes, &net, nowhere(), || T + within)
+        .await
+        .unwrap();
+    // Synchronized a moment later than the deadline the first handover set.
+    let mut conn = db.acquire().await.unwrap();
+    assert!(email::tracking::expire(&mut conn, T + 1).await.unwrap());
+    drop(conn);
+    assert_eq!(
+        first_email(&db, hangup).await.tracking.map(|t| t.state),
+        Some(email::tracking::State::Expired)
+    );
 }

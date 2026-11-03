@@ -172,6 +172,7 @@ const firstEmail: Email = {
   latestAt: null,
   resendOf: null,
   resent: false,
+  tracking: null,
   error: "发送失败",
 };
 

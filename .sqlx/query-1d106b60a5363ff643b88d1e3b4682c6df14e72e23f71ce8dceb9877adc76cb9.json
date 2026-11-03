@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE profile SET email_tracking = 0",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "1d106b60a5363ff643b88d1e3b4682c6df14e72e23f71ce8dceb9877adc76cb9"
+}
