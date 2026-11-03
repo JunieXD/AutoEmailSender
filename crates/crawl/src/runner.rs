@@ -15,7 +15,7 @@ use model::{
     background::{CONCURRENCY, Failure, LASTING, Limit, Limited, RateLimit, Rounds},
 };
 use serde::Serialize;
-use sqlx::{SqlitePool, types::Json};
+use sqlx::SqlitePool;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use tracing::Instrument;
@@ -260,6 +260,8 @@ struct Page {
     kind: PageKind,
     people: Vec<Person>,
     next: Vec<PageUrl>,
+    /// The page proved to be its one person's own, so where it ended up identifies them.
+    own: bool,
 }
 enum Outcome {
     Done(Page),
@@ -521,6 +523,10 @@ async fn read(
         chosen,
         cooldown,
     };
+    let targeted = matches!(
+        c.kind,
+        PageKind::Profile | PageKind::EnrichProfile | PageKind::EnrichChild
+    );
     if m.units.is_empty()
         || matches!(
             m.needs_browser,
@@ -529,103 +535,18 @@ async fn read(
     {
         return Ok(Page {
             material: m,
-            kind: if c.candidate_id.is_some() {
-                c.kind
-            } else if c.kind == PageKind::Profile {
-                PageKind::Profile
-            } else {
-                PageKind::Entry
-            },
+            kind: if targeted { c.kind } else { PageKind::Entry },
             people: vec![],
             next: vec![],
+            own: false,
         });
     }
-    if let Some(id) = c.candidate_id {
-        let mut conn = db
-            .acquire()
-            .await
-            .map_err(database("read enrichment candidate", CANDIDATE_READ_FAILED))?;
-        let candidate = review::read(&mut conn, &[id])
-            .await
-            .map_err(database("read enrichment candidate", CANDIDATE_READ_FAILED))?
-            .pop()
-            .ok_or(ReadError::Gone)?;
-        if candidate.review != "pending" {
-            return Err(ReadError::Gone);
-        }
-        drop(conn);
-        let mut data = extract::data(&m, 0..m.units.len());
-        data["target"] = serde_json::json!({
-            "name": candidate.fields.name,
-            "aliases": candidate.fields.aliases,
-            "affiliations": candidate.fields.affiliations
-        });
-        data["child"] = serde_json::json!(c.kind == PageKind::EnrichChild);
-        let result = reader
-            .ask::<extract::Enriched>("enrich", extract::ENRICH, data)
-            .await?;
-        let mut next = Vec::new();
-        if c.kind == PageKind::EnrichProfile {
-            let links = extract::links(&m);
-            for id in result.next {
-                if let Some((_, url)) = id.checked_sub(1).and_then(|n| links.get(n))
-                    && scope.page((*url).clone()).is_ok()
-                    && !url.is_normalization_of(&c.url)
-                    && !url.is_normalization_of(&m.url)
-                    && !next.contains(*url)
-                {
-                    next.push((*url).clone());
-                    if next.len() == 3 {
-                        break;
-                    }
-                }
-            }
-        }
-        let mut person = extract::profile(&m, result.profile).map_err(|reason| {
-            tracing::info!(reason = "invalid_profile", "enrichment extraction failed");
-            ReadError::Failed(reason)
-        })?;
-        if c.kind == PageKind::EnrichChild {
-            let target_names: Vec<_> = std::iter::once(candidate.fields.name.as_str())
-                .chain(candidate.fields.aliases.iter().map(String::as_str))
-                .collect();
-            let names: Vec<_> = result
-                .names
-                .iter()
-                .map(String::as_str)
-                .chain(target_names.iter().copied())
-                .collect();
-            let mut owned = Vec::new();
-            for email in m.units.iter().flat_map(|unit| &unit.emails) {
-                if !owned.contains(&email.address)
-                    && crate::owns_email(&m, &names, &target_names, &email.address)
-                {
-                    owned.push(email.address.clone());
-                }
-            }
-            person
-                .fields
-                .emails
-                .retain(|email| owned.len() == 1 && owned.contains(email));
-            person.fields.homepages.retain(|url| url != m.url.as_str());
-        }
-        return Ok(Page {
-            material: m,
-            kind: c.kind,
-            people: vec![person],
-            next,
-        });
+    if targeted {
+        return read_for_candidate(&reader, &scope, m).await;
     }
-    let route = if c.kind == PageKind::Profile {
-        extract::Route {
-            kind: Kind::Profile,
-            next: vec![],
-        }
-    } else {
-        reader
-            .ask::<extract::Route>("route", extract::ROUTE, extract::routing(&m, &scope))
-            .await?
-    };
+    let route = reader
+        .ask::<extract::Route>("route", extract::ROUTE, extract::routing(&m, &scope))
+        .await?;
     let mut next: Vec<PageUrl> = Vec::new();
     let kind = match route.kind {
         Kind::Profile => PageKind::Profile,
@@ -668,7 +589,7 @@ async fn read(
                     extract::data(&m, 0..m.units.len()),
                 )
                 .await?;
-            let mut p = extract::profile(&m, p).map_err(|reason| {
+            let mut p = extract::profile(&m, p.name, p.details).map_err(|reason| {
                 tracing::info!(reason = "invalid_profile", "page extraction failed");
                 ReadError::Failed(reason)
             })?;
@@ -682,6 +603,135 @@ async fn read(
         kind,
         people,
         next,
+        own: kind == PageKind::Profile,
+    })
+}
+/// Reads a profile page or enrichment page for the one candidate it was queued for.
+async fn read_for_candidate(
+    reader: &Reader<'_>,
+    scope: &Scope,
+    m: Material,
+) -> Result<Page, ReadError> {
+    let c = reader.claim;
+    let mut conn = reader
+        .db
+        .acquire()
+        .await
+        .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?;
+    let id = match c.candidate_id {
+        Some(id) => id,
+        // The candidate the profile page is saved into, as review::save picks it.
+        None => sqlx::query_scalar!(
+            r#"SELECT candidate_id AS "candidate_id!: i64"
+            FROM candidate_profile
+            WHERE crawl_id = ? AND url = ?
+            ORDER BY candidate_id
+            LIMIT 1"#,
+            c.crawl,
+            c.url
+        )
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?
+        .ok_or(ReadError::Gone)?,
+    };
+    let candidate = review::read(&mut conn, &[id])
+        .await
+        .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?
+        .pop()
+        .ok_or(ReadError::Gone)?;
+    // Enrichment stops at review; a list's profile page still adds to a reviewed candidate, which
+    // awaits review again if it was taken in, and stays rejected if it was rejected.
+    if c.candidate_id.is_some() && candidate.review != "pending" {
+        return Err(ReadError::Gone);
+    }
+    drop(conn);
+    let target = candidate.fields;
+    let mut data = extract::data(&m, 0..m.units.len());
+    data["target"] = serde_json::json!({
+        "name": target.name,
+        "aliases": target.aliases,
+        "affiliations": target.affiliations
+    });
+    data["subpages"] = serde_json::json!(c.kind == PageKind::EnrichProfile);
+    let result = reader
+        .ask::<extract::Targeted>("profile", extract::TARGET, data)
+        .await?;
+    let names: Vec<_> = std::iter::once(target.name.as_str())
+        .chain(target.aliases.iter().map(String::as_str))
+        .collect();
+    if result.relation == extract::Relation::Mismatched && !extract::mentions(&m, &names) {
+        tracing::info!(
+            url = c.url.as_str(),
+            reason = "identity_mismatch",
+            "page rejected"
+        );
+        return Err(ReadError::Failed(format!(
+            "模型判断这页是别人的或多人的页面，页面上也没出现「{}」，没有补入",
+            target.name
+        )));
+    }
+    let mut next = Vec::new();
+    if c.kind == PageKind::EnrichProfile {
+        let links = extract::links(&m);
+        for id in result.next {
+            if let Some((_, url)) = id.checked_sub(1).and_then(|n| links.get(n))
+                && scope.page((*url).clone()).is_ok()
+                && !url.is_normalization_of(&c.url)
+                && !url.is_normalization_of(&m.url)
+                && !next.contains(*url)
+            {
+                next.push((*url).clone());
+                if next.len() == 3 {
+                    break;
+                }
+            }
+        }
+    }
+    let mut person =
+        extract::profile(&m, target.name.clone(), result.details).map_err(|reason| {
+            tracing::info!(reason = "invalid_profile", "page extraction failed");
+            ReadError::Failed(reason)
+        })?;
+    if c.kind == PageKind::Profile {
+        person.profile = Some(c.url.clone());
+    }
+    let own = result.relation == extract::Relation::Matched;
+    // Only one person's own page vouches for every address on it. Elsewhere an address must sit
+    // by their name, as on a list, and a subpage that gives more than one is not trusted for any.
+    if !own || c.kind == PageKind::EnrichChild {
+        let target_names: Vec<_> = names
+            .iter()
+            .copied()
+            .chain(person.fields.aliases.iter().map(String::as_str))
+            .collect();
+        let page_names: Vec<_> = result
+            .names
+            .iter()
+            .map(String::as_str)
+            .chain(target_names.iter().copied())
+            .collect();
+        let mut owned = Vec::new();
+        for email in m.units.iter().flat_map(|unit| &unit.emails) {
+            if !owned.contains(&email.address)
+                && crate::owns_email(&m, &page_names, &target_names, &email.address)
+            {
+                owned.push(email.address.clone());
+            }
+        }
+        let trusted = c.kind != PageKind::EnrichChild || owned.len() == 1;
+        person
+            .fields
+            .emails
+            .retain(|email| trusted && owned.contains(email));
+        person.fields.homepages.retain(|url| url != m.url.as_str());
+    }
+    Ok(Page {
+        material: m,
+        kind: c.kind,
+        people: vec![person],
+        next,
+        own,
     })
 }
 fn browser(reason: &crate::BrowserReason) -> &'static str {
@@ -699,87 +749,6 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
         tracing::info!(url = c.url.as_str(), "page claim invalidated");
         return Ok(false);
     }
-    let enrich_identity_failure;
-    let outcome = if let Some(id) = c.candidate_id
-        && let Outcome::Done(p) = outcome
-        && (c.kind == PageKind::EnrichChild || !p.material.url.is_normalization_of(&c.url))
-        && let Some(person) = p.people.first()
-    {
-        let candidate = review::read(&mut tx, &[id])
-            .await?
-            .pop()
-            .ok_or(sqlx::Error::RowNotFound)?;
-        if enrich::matches(&candidate.fields, &person.fields, &p.material) {
-            outcome
-        } else {
-            tracing::info!(
-                url = c.url.as_str(),
-                reason = "enrichment_identity_mismatch",
-                "page rejected"
-            );
-            let source = if c.kind == PageKind::EnrichChild {
-                "子页".to_owned()
-            } else {
-                format!("页面跳到了 {}，", p.material.url.as_str())
-            };
-            enrich_identity_failure = Outcome::Failed(format!(
-                "{source}读到的姓名是「{}」，和候选「{}」对不上，或页面未出现匹配姓名，没有补入",
-                person.fields.name, candidate.fields.name
-            ));
-            &enrich_identity_failure
-        }
-    } else {
-        outcome
-    };
-    let redirect_failure;
-    let outcome = if let Outcome::Done(p) = outcome
-        && c.kind == PageKind::Profile
-        && !p.material.url.is_normalization_of(&c.url)
-        && let Some(person) = p.people.first()
-    {
-        let names = Json(
-            std::iter::once(&person.fields.name)
-                .chain(&person.fields.aliases)
-                .map(|name| mentor::intake::comparable(name))
-                .collect::<Vec<_>>(),
-        );
-        let candidates = sqlx::query!(
-            r#"SELECT c.name, EXISTS (
-                 SELECT 1 FROM json_each(c.match_names) a JOIN json_each(?) b
-                 ON a.value = b.value
-               ) AS "matched!: bool"
-               FROM candidate_profile p JOIN candidate c ON c.id = p.candidate_id
-               WHERE p.crawl_id = ? AND p.url = ? ORDER BY c.id"#,
-            names,
-            c.crawl,
-            c.url,
-        )
-        .fetch_all(&mut *tx)
-        .await?;
-        if candidates.iter().any(|c| c.matched) {
-            outcome
-        } else {
-            tracing::info!(
-                url = c.url.as_str(),
-                reason = "profile_identity_mismatch",
-                "page rejected"
-            );
-            let original_names = candidates
-                .into_iter()
-                .map(|c| c.name)
-                .collect::<Vec<_>>()
-                .join("、");
-            redirect_failure = Outcome::Failed(format!(
-                "个人页跳到了 {}，读到的姓名是「{}」，和名单上的「{}」对不上，没有补入",
-                p.material.url.as_str(),
-                person.fields.name,
-                original_names,
-            ));
-            &redirect_failure
-        }
-    } else {
-        outcome
-    };
     match outcome {
         Outcome::Done(p) => {
             let text = p.material.text();
@@ -898,9 +867,13 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     review::save(
                         &mut tx,
                         c.crawl,
-                        review::Source::Page {
-                            id: c.id,
-                            kind: p.kind,
+                        if p.kind == PageKind::List {
+                            review::Source::List { id: c.id }
+                        } else {
+                            review::Source::Profile {
+                                id: c.id,
+                                own: p.own,
+                            }
                         },
                         p.material.url.as_str(),
                         Person {

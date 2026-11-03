@@ -232,6 +232,10 @@ fn prose_mentions_block_ownership_without_starting_it() {
         "<main><article><h2>Alice</h2><p>Collaborates with\nBob</p><p>Email: a@pku.edu.cn</p></article><article><h2>Bob</h2><p>Email: b@pku.edu.cn</p></article></main>",
         "<main><h2>Alice</h2><p>Collaborates with Bob</p><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
         "<p>Alice<br>Collaborates with Bob<br>Email: a@pku.edu.cn<br>Bob<br>Email: b@pku.edu.cn</p>",
+        "<main><h2>Alice</h2><p>Student: Bob</p><p>a@pku.edu.cn</p><h2>Bob</h2><p>b@pku.edu.cn</p></main>",
+        "<article><h2>Alice</h2><p>Supervisor: Bob<br>Email: a@pku.edu.cn</p></article><article><h2>Bob</h2><p>b@pku.edu.cn</p></article>",
+        "<article><h2>Alice</h2><div><p>Coauthor: Bob</p><p>a@pku.edu.cn</p></div></article><article><h2>Bob</h2><p>b@pku.edu.cn</p></article>",
+        "<p>Alice<br>Student: Bob<br>Email: a@pku.edu.cn<br>Bob<br>Email: b@pku.edu.cn</p>",
     ]
     .map(|html| {
         pairings(
@@ -240,7 +244,7 @@ fn prose_mentions_block_ownership_without_starting_it() {
             ["a@pku.edu.cn", "b@pku.edu.cn"],
         )
     });
-    assert_eq!(results, [[[false, false], [false, true]]; 4]);
+    assert_eq!(results, [[[false, false], [false, true]]; 8]);
     assert_eq!(
         pairings(
             "<main><article><h2>张三</h2><p>与李四共同指导研究生</p><p>邮箱：zs@pku.edu.cn</p></article><article><h2>李四</h2><p>ls@pku.edu.cn</p></article></main>",
@@ -543,5 +547,88 @@ fn real_profiles_require_both_the_name_and_an_evidenced_address() {
             &["Zhi-Hua Zhou"],
             "absent@nju.edu.cn"
         ));
+    }
+}
+
+#[test]
+fn a_name_after_a_field_label_or_title_still_heads_its_record() {
+    for (html, name) in [
+        ("<p>Name: Zhang San<br>Email: z@pku.edu.cn</p>", "Zhang San"),
+        ("<p>姓名：张三</p><p>电子邮箱：z@pku.edu.cn</p>", "张三"),
+        (
+            "<h1>Prof. Zhang San</h1><p>Email: z@pku.edu.cn</p>",
+            "Zhang San",
+        ),
+        ("<p>教师姓名：张三</p><p>邮箱：z@pku.edu.cn</p>", "张三"),
+        ("<p>Name：Zhang San<br>Email: z@pku.edu.cn</p>", "Zhang San"),
+    ] {
+        let page = parse(&url(), html);
+        assert!(
+            owns_email(&page, &[name], &[name], "z@pku.edu.cn"),
+            "{html}"
+        );
+    }
+}
+
+#[test]
+fn names_and_addresses_in_navigation_or_footers_stay_in_them() {
+    for (html, address) in [
+        (
+            "<main><h1>李四</h1><nav><a href='/zhang'>张三</a></nav><p>li@pku.edu.cn</p></main>",
+            "li@pku.edu.cn",
+        ),
+        (
+            "<article><h1>张三</h1><p>获奖新闻</p></article><footer>学院公共邮箱：office@pku.edu.cn</footer>",
+            "office@pku.edu.cn",
+        ),
+        (
+            "<article><h1>张三</h1><p>获奖新闻</p></article><nav>office@pku.edu.cn</nav>",
+            "office@pku.edu.cn",
+        ),
+        (
+            "<div class='page-footer-wrapper'><article><h1>张三</h1><p>获奖新闻</p></article>\
+            <footer>学院公共邮箱：office@pku.edu.cn</footer></div>",
+            "office@pku.edu.cn",
+        ),
+    ] {
+        let page = parse(&url(), html);
+        assert!(
+            !owns_email(&page, &["张三", "李四"], &["张三"], address),
+            "{html}"
+        );
+    }
+    let page = parse(
+        &url(),
+        "<main><h1>王五</h1></main><footer>张三 zs@pku.edu.cn</footer>",
+    );
+    assert!(owns_email(
+        &page,
+        &["张三", "王五"],
+        &["张三"],
+        "zs@pku.edu.cn"
+    ));
+    // One navigation's name does not go with another footer's address either.
+    let page = parse(
+        &url(),
+        "<nav><h2>张三</h2></nav><main><p>研究方向</p></main><footer><p>zs@pku.edu.cn</p></footer>",
+    );
+    assert!(!owns_email(&page, &["张三"], &["张三"], "zs@pku.edu.cn"));
+}
+
+#[test]
+fn a_list_inside_navigation_or_a_footer_keeps_its_own_records() {
+    for (region, end) in [
+        ("nav", "nav"),
+        ("div class=\"page footer\"", "div"),
+        ("div id=\"faculty-footer-container\"", "div"),
+        ("div role=\"navigation\"", "div"),
+    ] {
+        check(
+            &format!(
+                "<{region}><ul><li><h2>Alice</h2><p>a@pku.edu.cn</p></li>\
+                <li><h2>Bob</h2><p>b@pku.edu.cn</p></li></ul></{end}>"
+            ),
+            &[("Alice", &["a@pku.edu.cn"]), ("Bob", &["b@pku.edu.cn"])],
+        );
     }
 }

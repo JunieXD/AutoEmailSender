@@ -4,6 +4,17 @@ fn compact(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
+/// Whether a name after `before` on its line, whitespace removed, heads it as a person's record
+/// does: only a name label or a title may come first. Other labels, such as Student:, name
+/// someone in relation to the record's owner.
+fn heads(before: &str) -> bool {
+    let before = before.to_lowercase();
+    let label = before.strip_suffix([':', '：']);
+    before.is_empty()
+        || label.is_some_and(|label| ["姓名", "教师姓名", "name", "fullname"].contains(&label))
+        || ["prof.", "professor", "dr.", "dr"].contains(&before.as_str())
+}
+
 struct Occurrence<'a> {
     name: &'a str,
     unit: usize,
@@ -74,12 +85,13 @@ pub fn owns_email(
         for name in &names {
             for (start, matched) in text.match_indices(name.as_str()) {
                 let end = start + matched.len();
+                let line = line_starts.iter().copied().filter(|&s| s <= start).max();
                 matches.push(Occurrence {
                     name,
                     unit,
                     start,
                     end,
-                    leading: start == 0 || line_starts.contains(&start),
+                    leading: heads(&text[line.unwrap_or(0)..start]),
                 });
             }
         }
@@ -100,6 +112,11 @@ pub fn owns_email(
         .filter(|found| is_target(found.name) && found.leading)
         .any(|found| {
             evidence.iter().any(|&(unit, offset)| {
+                // Navigation and footers are the site's, on every page: a name or address there
+                // goes only with what is in the same one.
+                if material.units[found.unit].footer_or_nav != material.units[unit].footer_or_nav {
+                    return false;
+                }
                 let name_path = &material.units[found.unit].path;
                 let email_path = &material.units[unit].path;
                 let common = name_path
@@ -122,9 +139,6 @@ pub fn owns_email(
                                 && other.start >= found.start
                                 && other.start <= offset
                         });
-                }
-                if material.units[unit].in_footer_or_nav {
-                    return false;
                 }
                 let name_item = item_start(material, found.unit, common);
                 let email_item = item_start(material, unit, common);

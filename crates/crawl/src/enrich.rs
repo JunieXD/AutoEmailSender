@@ -1,6 +1,6 @@
 //! Candidate enrichment uses the crawl page queue without candidate identity merging.
 use crate::{PageUrl, extract::Person, queue, review, store::PageKind};
-use mentor::{Affiliation, MentorFields, intake::comparable};
+use mentor::{Affiliation, intake::comparable};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{SqliteConnection, SqlitePool, types::Json};
@@ -192,35 +192,6 @@ pub(crate) async fn enqueue(
     .execute(conn)
     .await?;
     Ok(())
-}
-pub(crate) fn matches(
-    fields: &MentorFields,
-    incoming: &MentorFields,
-    material: &crate::Material,
-) -> bool {
-    let text: String = comparable(&format!(
-        "{}\n{}",
-        material.title.as_deref().unwrap_or_default(),
-        material.text()
-    ))
-    .chars()
-    .filter(|c| !c.is_whitespace())
-    .collect();
-    std::iter::once(&fields.name)
-        .chain(&fields.aliases)
-        .any(|a| {
-            std::iter::once(&incoming.name)
-                .chain(&incoming.aliases)
-                .any(|b| {
-                    comparable(a) == comparable(b)
-                        && text.contains(
-                            &comparable(b)
-                                .chars()
-                                .filter(|c| !c.is_whitespace())
-                                .collect::<String>(),
-                        )
-                })
-        })
 }
 fn compatible(a: &Affiliation, b: &Affiliation, single: bool) -> bool {
     let pairs = [

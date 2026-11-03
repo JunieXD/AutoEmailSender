@@ -1,5 +1,6 @@
 use super::*;
 use crate::enrich::{self, EnrichField, EnrichSkipReason, EnrichState};
+use sqlx::types::Json;
 
 pub(super) async fn candidate(db: &SqlitePool, site: &Site, path: &str) -> (i64, i64) {
     let crawl = sqlx::query_scalar::<_, i64>(
@@ -31,7 +32,7 @@ pub(super) async fn candidate(db: &SqlitePool, site: &Site, path: &str) -> (i64,
     (crawl, id)
 }
 fn answer(email: &str, next: Value) -> Value {
-    let mut p = person("张三", email);
+    let mut p = targeted(email);
     p["names"] = json!(["张三", "李四"]);
     p["next"] = next;
     p
@@ -511,9 +512,9 @@ async fn enrichment_waiting_for_quota_rechecks_default_deletion_edits_and_consen
             chosen: &chosen,
             cooldown: &cooldown,
         };
-        let ask = reader.ask::<extract::Enriched>(
-            "enrich",
-            extract::ENRICH,
+        let ask = reader.ask::<extract::Targeted>(
+            "profile",
+            extract::TARGET,
             json!({"target":{"name":"张三"}}),
         );
         tokio::pin!(ask);
@@ -725,20 +726,29 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     let site = Site::new().await;
     let mut p = Provider::start().await.unwrap();
     config(&db, &p.address).await;
-    for (path, destination, name, aliases, success) in [
-        ("/slash", "/slash/", "Zhang San", json!([]), true),
-        ("/old", "/new", "Zhang San", json!(["张三"]), true),
-        ("/wrong", "/other", "李四", json!([]), false),
-        ("/directory", "/contacts", "张三", json!([]), false),
+    let both = "<p>张三 a@example.edu</p><p>李四 b@example.edu</p>";
+    // Only a page the model says is someone else's, without the name on it, fills nothing.
+    for (path, destination, html, relation, success) in [
+        ("/slash", "/slash/", both, "matched", true),
+        ("/old", "/new", both, "uncertain", true),
+        ("/shared", "/people", both, "mismatched", true),
+        (
+            "/wrong",
+            "/other",
+            "<p>李四 b@example.edu</p>",
+            "mismatched",
+            false,
+        ),
+        (
+            "/directory",
+            "/contacts",
+            "<p>学院办公室 b@example.edu</p>",
+            "mismatched",
+            false,
+        ),
     ] {
         site.redirect(path, destination);
-        site.page(
-            destination,
-            "<p>张三 a@example.edu</p><p>李四 b@example.edu</p>",
-        );
-        if path == "/directory" {
-            site.page(destination, "<p>学院办公室 b@example.edu</p>");
-        }
+        site.page(destination, html);
         let (_, id) = candidate(&db, &site, path).await;
         enrich::start(&db, &[id], 2).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
@@ -750,19 +760,18 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
             },
             json!([]),
         );
-        a["name"] = json!(name);
-        a["aliases"] = aliases;
+        a["relation"] = json!(relation);
         let result = process_answer(&db, &site, &mut p, &c, a).await;
         save(&db, &c, &result).await.unwrap();
         let d = detail(&db, id).await;
-        assert_eq!(!d.candidate.fields.emails.is_empty(), success);
+        assert_eq!(!d.candidate.fields.emails.is_empty(), success, "{path}");
         if !success {
             assert!(
                 d.candidate
                     .enrichment
                     .enrich_error
                     .unwrap()
-                    .contains("对不上")
+                    .contains("张三")
             );
         }
     }
@@ -818,9 +827,9 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     review::save(
         &mut tx,
         crawl,
-        review::Source::Page {
+        review::Source::Profile {
             id: page,
-            kind: PageKind::Profile,
+            own: true,
         },
         site.url("/merged").as_str(),
         extract::Person {
@@ -899,9 +908,9 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
     review::save(
         &mut tx,
         crawl,
-        review::Source::Page {
+        review::Source::Profile {
             id: page,
-            kind: PageKind::Profile,
+            own: true,
         },
         site.url("/active").as_str(),
         extract::Person {
@@ -940,18 +949,12 @@ async fn enrichment_child_checks_identity_before_filling_any_field(db: SqlitePoo
     site.page("/p", "<p>张三</p><a href='/child'>实验室成员</a>");
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
-    for (html, name, aliases, success) in [
-        (
-            "<p>李四 b@example.edu 肿瘤医学</p>",
-            "李四",
-            json!([]),
-            false,
-        ),
-        ("<p>学院办公室 b@example.edu</p>", "张三", json!([]), false),
+    for (html, relation, success) in [
+        ("<p>李四 b@example.edu 肿瘤医学</p>", "mismatched", false),
+        ("<p>学院办公室 b@example.edu</p>", "mismatched", false),
         (
             "<p>Zhang San a@example.edu 机器学习</p><p>张三</p>",
-            "Zhang San",
-            json!(["张三"]),
+            "matched",
             true,
         ),
     ] {
@@ -970,8 +973,7 @@ async fn enrichment_child_checks_identity_before_filling_any_field(db: SqlitePoo
             },
             json!([]),
         );
-        a["name"] = json!(name);
-        a["aliases"] = aliases;
+        a["relation"] = json!(relation);
         a["research"] = json!(if success {
             "机器学习"
         } else {
@@ -1018,7 +1020,9 @@ async fn enrichment_child_accepts_identity_in_page_title(db: SqlitePool) {
         let result = process_answer(&db, &site, &mut provider, &c, empty_answer(json!([1]))).await;
         save(&db, &c, &result).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
+        // Only the title can tell the model wrong.
         let mut a = empty_answer(json!([]));
+        a["relation"] = json!("mismatched");
         a["papers"] = json!(["Reliable Learning, 2025"]);
         a["emails"] = json!(["office@example.edu"]);
         let result = process_answer(&db, &site, &mut provider, &c, a).await;
@@ -1047,14 +1051,28 @@ async fn enrichment_child_accepts_identity_in_page_title(db: SqlitePool) {
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_child_treats_bilingual_names_as_one_person(db: SqlitePool) {
     let site = Site::new().await;
-    site.page("/p", "<p>张三（Zhang San）</p><a href='/contact'>联系</a>");
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
-    for html in [
-        "<h1>张三（Zhang San）</h1><p>电子邮箱：a@example.edu</p>",
-        "<h1>Zhang San（张三）</h1><p>电子邮箱：a@example.edu</p>",
-        "<div><h1>张三（Zhang San）</h1><p>a@example.edu</p></div><div><h1>李四</h1><p>b@example.edu</p></div>",
+    // The English name may first be given by the contact page itself.
+    for (profile, html) in [
+        (
+            "<p>张三（Zhang San）</p>",
+            "<h1>张三（Zhang San）</h1><p>电子邮箱：a@example.edu</p>",
+        ),
+        (
+            "<p>张三（Zhang San）</p>",
+            "<h1>Zhang San（张三）</h1><p>电子邮箱：a@example.edu</p>",
+        ),
+        (
+            "<p>张三（Zhang San）</p>",
+            "<div><h1>张三（Zhang San）</h1><p>a@example.edu</p></div><div><h1>李四</h1><p>b@example.edu</p></div>",
+        ),
+        (
+            "<p>张三</p>",
+            "<h1>Zhang San</h1><p>电子邮箱：a@example.edu</p>",
+        ),
     ] {
+        site.page("/p", &format!("{profile}<a href='/contact'>联系</a>"));
         site.page("/contact", html);
         let (_, id) = candidate(&db, &site, "/p").await;
         sqlx::query("UPDATE candidate SET aliases='[]' WHERE id=?")
@@ -1065,12 +1083,15 @@ async fn enrichment_child_treats_bilingual_names_as_one_person(db: SqlitePool) {
         enrich::start(&db, &[id], 2).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
         let mut a = empty_answer(json!([1]));
-        a["aliases"] = json!(["Zhang San"]);
+        let english = profile.contains("Zhang San");
+        if english {
+            a["aliases"] = json!(["Zhang San"]);
+        }
         let result = process_answer(&db, &site, &mut provider, &c, a).await;
         save(&db, &c, &result).await.unwrap();
         assert_eq!(
-            detail(&db, id).await.candidate.fields.aliases,
-            vec!["Zhang San"]
+            detail(&db, id).await.candidate.fields.aliases.is_empty(),
+            !english
         );
         let c = queue::next(&db).await.unwrap().unwrap();
         let mut a = empty_answer(json!([]));

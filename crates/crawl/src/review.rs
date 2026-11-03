@@ -386,8 +386,17 @@ pub async fn list(db: &SqlitePool, q: &CandidateQuery) -> Result<CandidatePage, 
 }
 
 pub(crate) enum Source {
-    Page { id: i64, kind: PageKind },
-    Agent { note: Option<String> },
+    List {
+        id: i64,
+    },
+    /// `own` says the page proved to be the person's own, so where it ended up identifies them.
+    Profile {
+        id: i64,
+        own: bool,
+    },
+    Agent {
+        note: Option<String>,
+    },
 }
 
 /// Returns whether this person added a candidate rather than merging into existing candidates.
@@ -400,20 +409,12 @@ pub(crate) async fn save(
 ) -> Result<bool, sqlx::Error> {
     let f = &person.fields;
     let profile = person.profile.as_ref().map(crate::PageUrl::as_str);
-    let (list_page, profile_page, is_profile, note) = match &source {
-        Source::Page { id, kind } => (
-            (*kind == PageKind::List).then_some(*id),
-            (*kind == PageKind::Profile).then_some(*id),
-            *kind == PageKind::Profile,
-            None,
-        ),
-        Source::Agent { note } => (None, None, profile == Some(url), note.as_deref()),
+    let (list_page, profile_page, is_profile, reached, note) = match &source {
+        Source::List { id } => (Some(*id), None, false, None, None),
+        Source::Profile { id, own } => (None, Some(*id), true, own.then_some(url), None),
+        Source::Agent { note } => (None, None, profile == Some(url), None, note.as_deref()),
     };
-    // The runner checks redirected names before allowing the destination as an identity.
-    let identities: Vec<_> = profile
-        .into_iter()
-        .chain(is_profile.then_some(url))
-        .collect();
+    let identities: Vec<_> = profile.into_iter().chain(reached).collect();
     let names: Vec<_> = std::iter::once(&f.name)
         .chain(&f.aliases)
         .map(|name| intake::comparable(name))
@@ -467,7 +468,7 @@ pub(crate) async fn save(
     }
     let added = old.is_empty();
     if added
-        && matches!(source, Source::Page { .. })
+        && !matches!(source, Source::Agent { .. })
         && sqlx::query_scalar!("SELECT count(*) FROM candidate WHERE crawl_id = ?", crawl)
             .fetch_one(&mut *conn)
             .await?

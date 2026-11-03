@@ -210,6 +210,20 @@ fn person(name: &str, email: &str) -> Value {
         "papers": ["论文一"]
     })
 }
+/// What the model says of a page read for a known person: it is theirs.
+fn targeted(email: &str) -> Value {
+    json!({
+        "relation": "matched",
+        "aliases": [],
+        "emails": [email, "invented@example.edu"],
+        "affiliations": [],
+        "homepages": [],
+        "research": "机器学习",
+        "papers": ["论文一"],
+        "names": [],
+        "next": []
+    })
+}
 async fn changed_until(
     db: &SqlitePool,
     id: i64,
@@ -319,14 +333,11 @@ async fn home_categories_pagination_profiles_evidence_and_retry_end_to_end() {
                     json!({"people":[listed("张三",Some(1),vec!["a@school.example.edu"])]})
                 }
             } else {
-                person(
-                    title,
-                    if title == "张三" {
-                        "a@school.example.edu"
-                    } else {
-                        "b@school.example.edu"
-                    },
-                )
+                targeted(if title == "张三" {
+                    "a@school.example.edu"
+                } else {
+                    "b@school.example.edu"
+                })
             };
             r.respond.send(Response::answer(&answer.to_string())).ok();
         }
@@ -599,9 +610,9 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
         review::save(
             &mut tx,
             crawl,
-            review::Source::Page {
+            review::Source::Profile {
                 id: claim.id,
-                kind: PageKind::Profile,
+                own: true,
             },
             url.as_str(),
             Person {
@@ -668,9 +679,9 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
         review::save(
             &mut tx,
             crawl,
-            review::Source::Page {
+            review::Source::Profile {
                 id: claim.id,
-                kind: PageKind::Profile,
+                own: true,
             },
             site.url(&format!("/limit/{n}")).as_str(),
             Person {
@@ -851,7 +862,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls() {
         let system = request.body["messages"][0]["content"].as_str().unwrap();
         if system.starts_with("你整理学院") {
             "crawl"
-        } else if system.starts_with("你补全指定") {
+        } else if system.starts_with("你整理 target") {
             "enrich"
         } else if system.contains("分数不是录取") {
             "matching"
@@ -875,10 +886,7 @@ async fn crawling_matching_and_drafting_share_three_actual_calls() {
     let answer = if purpose(&released) == "matching" {
         json!({"score":80,"reason":"方向相关","directions":[],"highlights":[],"risks":[]})
     } else {
-        let mut answer = person("张三", "a@school.example.edu");
-        answer["names"] = json!(["张三"]);
-        answer["next"] = json!([]);
-        answer
+        targeted("a@school.example.edu")
     };
     released
         .respond
@@ -1110,9 +1118,9 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
         review::save(
             &mut tx,
             crawl,
-            review::Source::Page {
+            review::Source::Profile {
                 id: page.id,
-                kind: PageKind::Profile,
+                own: true,
             },
             site.url(&format!("/people/{name}")).as_str(),
             Person {
@@ -1176,9 +1184,9 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
         review::save(
             &mut tx,
             crawl,
-            review::Source::Page {
+            review::Source::Profile {
                 id: page.id,
-                kind: PageKind::Profile,
+                own: true,
             },
             site.url(&format!("/same/{n}")).as_str(),
             Person {
@@ -1274,9 +1282,9 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
     review::save(
         &mut tx,
         crawl,
-        review::Source::Page {
+        review::Source::Profile {
             id: page.id,
-            kind: PageKind::Profile,
+            own: true,
         },
         url.as_str(),
         person(vec![]),
@@ -1315,9 +1323,9 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
     review::save(
         &mut tx,
         crawl,
-        review::Source::Page {
+        review::Source::Profile {
             id: page.id,
-            kind: PageKind::Profile,
+            own: true,
         },
         url.as_str(),
         person(vec!["新补到的论文".into()]),
@@ -1370,9 +1378,9 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
         review::save(
             &mut tx,
             crawl,
-            review::Source::Page {
+            review::Source::Profile {
                 id: page.id,
-                kind: PageKind::Profile,
+                own: true,
             },
             u.as_str(),
             person(u.clone(), vec![]),
@@ -1413,9 +1421,9 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
         review::save(
             &mut tx,
             crawl,
-            review::Source::Page {
+            review::Source::Profile {
                 id: page.id,
-                kind: PageKind::Profile,
+                own: true,
             },
             u.as_str(),
             person(u.clone(), vec!["zhang@example.edu".into()]),
@@ -1496,7 +1504,14 @@ async fn observation(
     review::save(
         &mut tx,
         c.crawl,
-        review::Source::Page { id: c.id, kind },
+        if kind == PageKind::List {
+            review::Source::List { id: c.id }
+        } else {
+            review::Source::Profile {
+                id: c.id,
+                own: true,
+            }
+        },
         site.url(path).as_str(),
         Person {
             fields,
@@ -1537,24 +1552,29 @@ async fn profile_fixture(db: &SqlitePool, site: &Site) -> (Claim, tokio::task::J
     save(db, &root, &Outcome::Failed("fixture root".into()))
         .await
         .unwrap();
+    // The model knows a person's page by its title, and finds their line in a directory.
     let server = tokio::spawn(async move {
         while let Some(r) = provider.requests.recv().await {
             let data: Value =
                 serde_json::from_str(r.body["messages"][1]["content"].as_str().unwrap()).unwrap();
-            let title = data["title"].as_str().unwrap();
-            let name = if title == "教师名单" {
-                "张三"
-            } else {
-                title
-            };
-            let email = if name == "李四" {
+            let title = mentor::intake::comparable(data["title"].as_str().unwrap());
+            let target = &data["target"];
+            let name = target["name"].as_str().unwrap();
+            let mut answer = targeted(if name == "李四" {
                 "li@example.edu"
             } else {
                 "zhang@example.edu"
-            };
-            r.respond
-                .send(Response::answer(&person(name, email).to_string()))
-                .ok();
+            });
+            let theirs = std::iter::once(&target["name"])
+                .chain(target["aliases"].as_array().unwrap())
+                .any(|n| mentor::intake::comparable(n.as_str().unwrap()) == title);
+            if !theirs {
+                answer["relation"] = json!("mismatched");
+                if title != "教师名单" {
+                    answer["emails"] = json!([]);
+                }
+            }
+            r.respond.send(Response::answer(&answer.to_string())).ok();
         }
     });
     (root, server)
@@ -1598,7 +1618,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
     let claim = queue::next(&db).await.unwrap().unwrap();
     assert!(matches!(
         process_claim(&db, &site, &claim).await,
-        Outcome::Done(_)
+        Outcome::Failed(_)
     ));
     assert_eq!(candidate_ids(&db).await, ids);
     assert_eq!(
@@ -1608,16 +1628,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
     assert_eq!(page.status, PageStatus::Failed);
-    assert_eq!(
-        page.error.as_deref(),
-        Some(
-            format!(
-                "个人页跳到了 {}，读到的姓名是「李四」，和名单上的「张三」对不上，没有补入",
-                site.url("/li").as_str()
-            )
-            .as_str()
-        )
-    );
+    assert!(page.error.as_deref().unwrap().contains("张三"));
     let identities: Vec<String> =
         sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=? ORDER BY url")
             .bind(ids[0])
@@ -1704,44 +1715,33 @@ async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {
         .await;
     }
     let ids = candidate_ids(&db).await;
-    let before = serde_json::to_value(review::detail(&db, ids[1]).await.unwrap()).unwrap();
-    let first = queue::next(&db).await.unwrap().unwrap();
-    process_claim(&db, &site, &first).await;
-    let second = queue::next(&db).await.unwrap().unwrap();
-    process_claim(&db, &site, &second).await;
+    // Each name is on the directory, so each reads its own line; the directory is neither's own
+    // page and identifies nobody.
+    for _ in 0..2 {
+        let claim = queue::next(&db).await.unwrap().unwrap();
+        assert!(matches!(
+            process_claim(&db, &site, &claim).await,
+            Outcome::Done(_)
+        ));
+    }
     assert_eq!(candidate_ids(&db).await, ids);
-    assert_eq!(
-        serde_json::to_value(review::detail(&db, ids[1]).await.unwrap()).unwrap(),
-        before
-    );
-    let first = review::detail(&db, ids[0])
-        .await
-        .unwrap()
-        .unwrap()
-        .candidate;
-    assert_eq!(first.fields.name, "张三");
-    assert!(first.fields.aliases.is_empty());
-    assert_eq!(first.fields.emails, vec!["zhang@example.edu"]);
-    let identities: Vec<String> =
-        sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=?")
-            .bind(ids[1])
-            .fetch_all(&db)
-            .await
-            .unwrap();
-    assert_eq!(identities, vec![site.url("/old-li").as_str()]);
-    let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
-    let page = detail.pages.iter().find(|p| p.id == second.id).unwrap();
-    assert_eq!(page.status, PageStatus::Failed);
-    assert_eq!(
-        page.error.as_deref(),
-        Some(
-            format!(
-                "个人页跳到了 {}，读到的姓名是「张三」，和名单上的「李四」对不上，没有补入",
-                site.url("/directory").as_str()
-            )
-            .as_str()
-        )
-    );
+    for (id, path, name, email) in [
+        (ids[0], "/old-zhang", "张三", "zhang@example.edu"),
+        (ids[1], "/old-li", "李四", "li@example.edu"),
+    ] {
+        let candidate = review::detail(&db, id).await.unwrap().unwrap().candidate;
+        assert_eq!(candidate.fields.name, name);
+        assert!(candidate.fields.aliases.is_empty());
+        assert_eq!(candidate.fields.emails, vec![email]);
+        assert!(candidate.fields.homepages.is_empty());
+        let identities: Vec<String> =
+            sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=?")
+                .bind(id)
+                .fetch_all(&db)
+                .await
+                .unwrap();
+        assert_eq!(identities, vec![site.url(path).as_str()]);
+    }
     server.abort();
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -1806,16 +1806,7 @@ async fn b3_same_request_changed_destination_must_not_merge(db: SqlitePool) {
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == retry.id).unwrap();
     assert_eq!(page.status, PageStatus::Failed);
-    assert_eq!(
-        page.error.as_deref(),
-        Some(
-            format!(
-                "个人页跳到了 {}，读到的姓名是「李四」，和名单上的「张三」对不上，没有补入",
-                site.url("/li").as_str()
-            )
-            .as_str()
-        )
-    );
+    assert!(page.error.as_deref().unwrap().contains("张三"));
     server.abort();
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -1931,10 +1922,7 @@ async fn b3_direct_external_profile_same_site_redirect(db: SqlitePool) {
         review::save(
             &mut tx,
             root.crawl,
-            review::Source::Page {
-                id: root.id,
-                kind: PageKind::List,
-            },
+            review::Source::List { id: root.id },
             material.url.as_str(),
             person,
         )
@@ -1976,7 +1964,7 @@ async fn redirected_profile_matches_normalized_candidate_alias(db: SqlitePool) {
             .candidate
             .fields
             .name,
-        "Zhang San"
+        "张三"
     );
     let identities: Vec<String> =
         sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
@@ -1990,7 +1978,7 @@ async fn redirected_profile_matches_normalized_candidate_alias(db: SqlitePool) {
     server.abort();
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn non_redirected_profile_keeps_queue_candidate_when_name_changes(db: SqlitePool) {
+async fn a_listed_profile_link_to_another_teacher_fills_nothing(db: SqlitePool) {
     let site = Site::new().await;
     site.page("/profile", "<title>李四</title><p>李四 li@example.edu</p>");
     let (root, server) = profile_fixture(&db, &site).await;
@@ -2004,29 +1992,18 @@ async fn non_redirected_profile_keeps_queue_candidate_when_name_changes(db: Sqli
     )
     .await;
     let ids = candidate_ids(&db).await;
+    let before = serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
     process_claim(&db, &site, &claim).await;
     assert_eq!(candidate_ids(&db).await, ids);
     assert_eq!(
-        review::detail(&db, ids[0])
-            .await
-            .unwrap()
-            .unwrap()
-            .candidate
-            .fields
-            .name,
-        "李四"
+        serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap(),
+        before
     );
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
-    assert_eq!(
-        detail
-            .pages
-            .iter()
-            .find(|p| p.id == claim.id)
-            .unwrap()
-            .status,
-        PageStatus::Success
-    );
+    let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
+    assert_eq!(page.status, PageStatus::Failed);
+    assert!(page.error.as_deref().unwrap().contains("张三"));
     server.abort();
 }
 
@@ -2073,8 +2050,9 @@ async fn profile_from_list(
 async fn expect_completed_profile(
     db: &SqlitePool,
     claim: &Claim,
-    destination: &PageUrl,
+    identities: &[&PageUrl],
     name: &str,
+    aliases: &[&str],
     email: &str,
 ) {
     let crawl = queue::detail(db, claim.crawl, 1).await.unwrap().unwrap();
@@ -2084,17 +2062,24 @@ async fn expect_completed_profile(
     assert_eq!(ids.len(), 1);
     let detail = review::detail(db, ids[0]).await.unwrap().unwrap();
     assert_eq!(detail.candidate.fields.name, name);
+    assert_eq!(detail.candidate.fields.aliases, aliases);
     assert_eq!(detail.candidate.fields.emails, vec![email]);
     assert_eq!(detail.evidence.len(), 2);
-    let identities: Vec<String> =
-        sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
-            .fetch_all(db)
-            .await
-            .unwrap();
-    let mut expected = vec![claim.url.as_str(), destination.as_str()];
-    expected.sort();
-    assert_eq!(identities, expected);
+    let actual: Vec<String> = sqlx::query_scalar("SELECT url FROM candidate_profile ORDER BY url")
+        .fetch_all(db)
+        .await
+        .unwrap();
+    let mut expected: Vec<_> = identities.iter().map(|url| url.as_str()).collect();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
     assert!(queue::next(db).await.unwrap().is_none());
+}
+
+/// The model's answer for a page of the person, written there also as `alias`.
+fn theirs(email: &str, alias: Option<&str>) -> Value {
+    let mut answer = targeted(email);
+    answer["aliases"] = json!(alias.into_iter().collect::<Vec<_>>());
+    answer
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -2106,15 +2091,16 @@ async fn b4_slash_english_from_real_sample_should_complete(db: SqlitePool) {
         &db,
         &site,
         "周志华",
-        person("Zhi-Hua Zhou", "zhouzh@nju.edu.cn"),
+        theirs("zhouzh@nju.edu.cn", Some("Zhi-Hua Zhou")),
     )
     .await;
     process_claim(&db, &site, &claim).await;
     expect_completed_profile(
         &db,
         &claim,
-        &site.url("/profile/"),
-        "Zhi-Hua Zhou",
+        &[&claim.url, &site.url("/profile/")],
+        "周志华",
+        &["Zhi-Hua Zhou"],
         "zhouzh@nju.edu.cn",
     )
     .await;
@@ -2136,11 +2122,18 @@ async fn b4_www_profile_with_chinese_alias_should_complete(db: SqlitePool) {
         destination.as_str(),
         "<title>Zhang San</title><p>Zhang San（张三） zhang@example.edu</p>",
     );
-    let mut profile = person("Zhang San", "zhang@example.edu");
-    profile["aliases"] = json!(["张三"]);
+    let profile = theirs("zhang@example.edu", Some("Zhang San"));
     let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
     process_claim(&db, &site, &claim).await;
-    expect_completed_profile(&db, &claim, &destination, "Zhang San", "zhang@example.edu").await;
+    expect_completed_profile(
+        &db,
+        &claim,
+        &[&claim.url, &destination],
+        "张三",
+        &["Zhang San"],
+        "zhang@example.edu",
+    )
+    .await;
     server.abort();
 }
 
@@ -2154,11 +2147,18 @@ async fn b4_https_profile_with_chinese_alias_should_complete(db: SqlitePool) {
         destination.as_str(),
         "<title>Zhang San</title><p>Zhang San（张三） zhang@example.edu</p>",
     );
-    let mut profile = person("Zhang San", "zhang@example.edu");
-    profile["aliases"] = json!(["张三"]);
+    let profile = theirs("zhang@example.edu", Some("Zhang San"));
     let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
     process_claim(&db, &site, &claim).await;
-    expect_completed_profile(&db, &claim, &destination, "Zhang San", "zhang@example.edu").await;
+    expect_completed_profile(
+        &db,
+        &claim,
+        &[&claim.url, &destination],
+        "张三",
+        &["Zhang San"],
+        "zhang@example.edu",
+    )
+    .await;
     assert!(
         site.visits
             .lock()
@@ -2177,13 +2177,14 @@ async fn b4_slash_profile_with_title_should_complete(db: SqlitePool) {
         "<title>张三 教授</title><p>张三 教授 zhang@example.edu</p>",
     );
     let (claim, server) =
-        profile_from_list(&db, &site, "张三", person("张三 教授", "zhang@example.edu")).await;
+        profile_from_list(&db, &site, "张三", theirs("zhang@example.edu", None)).await;
     process_claim(&db, &site, &claim).await;
     expect_completed_profile(
         &db,
         &claim,
-        &site.url("/profile/"),
-        "张三 教授",
+        &[&claim.url, &site.url("/profile/")],
+        "张三",
+        &[],
         "zhang@example.edu",
     )
     .await;
@@ -2198,15 +2199,15 @@ async fn b4_changed_path_matches_page_alias_should_complete(db: SqlitePool) {
         "/renamed",
         "<title>Zhang San</title><p>Zhang San（张三） zhang@example.edu</p>",
     );
-    let mut profile = person("Zhang San", "zhang@example.edu");
-    profile["aliases"] = json!(["　张三　"]);
+    let profile = theirs("zhang@example.edu", Some("　Zhang San　"));
     let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
     process_claim(&db, &site, &claim).await;
     expect_completed_profile(
         &db,
         &claim,
-        &site.url("/renamed"),
-        "Zhang San",
+        &[&claim.url, &site.url("/renamed")],
+        "张三",
+        &["Zhang San"],
         "zhang@example.edu",
     )
     .await;
@@ -2214,41 +2215,43 @@ async fn b4_changed_path_matches_page_alias_should_complete(db: SqlitePool) {
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn b4_changed_path_english_without_alias_still_fails(db: SqlitePool) {
+async fn a_redirected_profile_the_model_is_unsure_of_fills_without_identifying(db: SqlitePool) {
     let site = Site::new().await;
     site.redirect("/profile", "/renamed");
     site.page(
         "/renamed",
         "<title>Zhang San</title><p>Zhang San zhang@example.edu</p>",
     );
-    let (claim, server) =
-        profile_from_list(&db, &site, "张三", person("Zhang San", "zhang@example.edu")).await;
-    let ids = candidate_ids(&db).await;
-    let before = serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap();
+    let mut profile = theirs("zhang@example.edu", Some("Zhang San"));
+    profile["relation"] = json!("uncertain");
+    let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
     process_claim(&db, &site, &claim).await;
-    assert_eq!(candidate_ids(&db).await, ids);
-    assert_eq!(
-        serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap(),
-        before
+    expect_completed_profile(
+        &db,
+        &claim,
+        &[&claim.url],
+        "张三",
+        &["Zhang San"],
+        "zhang@example.edu",
+    )
+    .await;
+    server.abort();
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_profile_the_model_is_unsure_of_gives_only_the_addresses_by_their_name(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page(
+        "/profile",
+        "<title>学院通讯录</title><p>张三 zhang@example.edu</p><p>李四 li@example.edu</p>",
     );
-    let detail = queue::detail(&db, claim.crawl, 1).await.unwrap().unwrap();
-    let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
-    assert_eq!(page.status, PageStatus::Failed);
-    assert_eq!(
-        page.error.as_deref(),
-        Some(
-            format!(
-                "个人页跳到了 {}，读到的姓名是「Zhang San」，和名单上的「张三」对不上，没有补入",
-                site.url("/renamed").as_str(),
-            )
-            .as_str()
-        )
-    );
-    let identities: Vec<String> = sqlx::query_scalar("SELECT url FROM candidate_profile")
-        .fetch_all(&db)
-        .await
-        .unwrap();
-    assert_eq!(identities, vec![claim.url.as_str()]);
+    let mut profile = targeted("zhang@example.edu");
+    profile["relation"] = json!("uncertain");
+    profile["emails"] = json!(["zhang@example.edu", "li@example.edu"]);
+    profile["names"] = json!(["张三", "李四"]);
+    let (claim, server) = profile_from_list(&db, &site, "张三", profile).await;
+    process_claim(&db, &site, &claim).await;
+    expect_completed_profile(&db, &claim, &[&claim.url], "张三", &[], "zhang@example.edu").await;
     server.abort();
 }
 
@@ -2283,13 +2286,15 @@ async fn redirected_profiles(db: &SqlitePool, paths: &[&str], in_flight: bool) {
             r.respond
                 .send(Response::answer(
                     &json!({
-                        "name": "张三",
+                        "relation": "matched",
                         "aliases": [],
                         "emails": [],
                         "affiliations": [],
                         "homepages": [1],
                         "research": null,
-                        "papers": []
+                        "papers": [],
+                        "names": ["张三"],
+                        "next": []
                     })
                     .to_string(),
                 ))
@@ -2414,9 +2419,9 @@ async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool)
     review::save(
         &mut tx,
         c.crawl,
-        review::Source::Page {
+        review::Source::Profile {
             id: c.id,
-            kind: PageKind::Profile,
+            own: true,
         },
         site.url("/canonical").as_str(),
         Person {

@@ -54,7 +54,9 @@ pub struct Unit {
     pub path: Vec<usize>,
     /// UTF-8 positions after rendered line breaks; the block itself starts at zero.
     pub line_starts: Vec<usize>,
-    pub in_footer_or_nav: bool,
+    /// The footer or navigation the block is in, as the element ordinal of the innermost one: some
+    /// sites wrap the whole page in an element whose class names a footer.
+    pub footer_or_nav: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -468,7 +470,12 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
     }
     finish(&mut current, &mut units, emails);
     for unit in &mut units {
-        unit.in_footer_or_nav = regions.iter().any(|ordinal| unit.path.contains(ordinal));
+        unit.footer_or_nav = unit
+            .path
+            .iter()
+            .rev()
+            .copied()
+            .find(|o| regions.contains(o));
     }
     let pagination = pagination::extract(&controls, url, has_scripts);
     let script_entry = document.select(&SELECTORS.scripts).any(|e| {
