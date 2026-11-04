@@ -63,7 +63,7 @@
 - 工作区没有文档测试，`pnpm check` 只跑 `--lib --bins --tests`，省得为每个 library 启动一次 rustdoc。
 - 界面用 TypeScript 7。typescript-eslint 还不支持它，lint 用 oxlint 和它的类型感知规则。
 - 界面的测试用 Vitest，和代码放在一起（`*.test.ts`）；要用 DOM 的在文件开头声明 happy-dom 环境。
-- CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，只做推送后的确认，master 不要求检查通过才能推送；推送前在本地跑完 `pnpm check`。
+- CI 在 macOS 和 Windows 上各跑一遍 `pnpm check`，只做推送后的确认，只改 `docs/` 和根目录 Markdown 的推送不跑；master 不要求检查通过才能推送，推送前在本地跑完 `pnpm check`。
 
 ### 官方账号
 
