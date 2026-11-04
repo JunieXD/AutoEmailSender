@@ -9,7 +9,6 @@
     <a href="https://github.com/JunieXD/AutoEmailSender/releases"><img src="https://img.shields.io/github/downloads/JunieXD/AutoEmailSender/total?label=downloads&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzM3NDE1MSI%2BPHBhdGggZD0iTTUgMjBoMTR2LTJINXYyem0xNC05aC00VjNIOXY4SDVsNyA3IDctN3oiLz48L3N2Zz4%3D&amp;color=16a34a&amp;style=flat&amp;labelColor=f3f4f6&amp;logoColor=374151" alt="Total downloads" /></a>
     <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest"><img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzM3NDE1MSI%2BPHBhdGggZD0iTTAgMy40IDkuOCAydjkuNEgwek0xMSAxLjggMjQgMHYxMS40SDExek0wIDEyLjZoOS44VjIyTDAgMjAuNnpNMTEgMTIuNmgxM1YyNGwtMTMtMS44eiIvPjwvc3ZnPg%3D%3D&amp;style=flat&amp;labelColor=f3f4f6&amp;logoColor=374151" alt="Platform: Windows x64" /></a>
     <a href="https://github.com/JunieXD/AutoEmailSender/releases/latest"><img src="https://img.shields.io/badge/macOS-ARM64-6b7280?logo=apple&amp;style=flat&amp;labelColor=f3f4f6&amp;logoColor=374151" alt="Platform: macOS ARM64" /></a>
-    <a href="https://afdian.com/a/juniexd"><img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9-946ce6?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzM3NDE1MSI%2BPHBhdGggZD0iTTEyIDIxLjM1bC0xLjQ1LTEuMzJDNS40IDE1LjM2IDIgMTIuMjggMiA4LjUgMiA1LjQyIDQuNDIgMyA3LjUgM2MxLjc0IDAgMy40MS44MSA0LjUgMi4wOUMxMy4wOSAzLjgxIDE0Ljc2IDMgMTYuNSAzIDE5LjU4IDMgMjIgNS40MiAyMiA4LjVjMCAzLjc4LTMuNCA2Ljg2LTguNTUgMTEuNTRMMTIgMjEuMzV6Ii8%2BPC9zdmc%2B&amp;style=flat&amp;labelColor=f3f4f6&amp;logoColor=374151" alt="在爱发电赞助" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/JunieXD/AutoEmailSender?label=license&amp;logo=gnu&amp;color=2563eb&amp;style=flat&amp;labelColor=f3f4f6&amp;logoColor=374151" alt="License: GPL-3.0" /></a>
   </p>
 </div>
@@ -54,7 +53,6 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 - [导师抓取 Skill](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)
 - [下载桌面版](https://github.com/JunieXD/AutoEmailSender/releases)
 - [问题反馈](https://github.com/JunieXD/AutoEmailSender/issues)
-- [在爱发电赞助](https://afdian.com/a/juniexd)：本地功能一直免费，赞助用来支付服务器和导师库的整理
 - QQ 交流群：`952383261`
 
 ## 交流与反馈
