@@ -30,7 +30,7 @@ fn library_record(emails: &[&str]) -> cloud_api::library::Record {
     }
 }
 
-async fn library_context(db: SqlitePool) -> (Context, test_fixtures::provider::Provider, i64) {
+async fn signed_in(db: SqlitePool) -> (Context, test_fixtures::provider::Provider) {
     let server = test_fixtures::provider::Provider::start().await.unwrap();
     let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     ctx.account =
@@ -41,6 +41,11 @@ async fn library_context(db: SqlitePool) -> (Context, test_fixtures::provider::P
     .execute(&ctx.db)
     .await
     .unwrap();
+    (ctx, server)
+}
+
+async fn library_context(db: SqlitePool) -> (Context, test_fixtures::provider::Provider, i64) {
+    let (ctx, server) = signed_in(db).await;
     let mentor = mentor::create(
         &ctx.db,
         &mentor::MentorFields {
@@ -332,6 +337,11 @@ async fn account_confirmations_use_the_input_email_without_the_password(db: Sqli
             json!({"email":"first@example.invalid", "code":"123456",
                 "password":"private-test-password"}),
         ),
+        (
+            "registerAccount",
+            json!({"email":"first@example.invalid", "code":"123456",
+                "password":"private-test-password"}),
+        ),
     ] {
         let (registered, waiting) = tokio::sync::oneshot::channel();
         let calling = call_agent(
@@ -363,6 +373,80 @@ async fn account_confirmations_use_the_input_email_without_the_password(db: Sqli
         let error = tokio::join!(calling, answer).0.unwrap_err();
         assert!(error.message.contains("在应用里拒绝"));
     }
+}
+
+/// Answers the next request to the server, which must start with `line`, and returns its body.
+async fn reply(server: &mut test_fixtures::provider::Provider, line: &str, body: Value) -> Value {
+    let request = server.requests.recv().await.unwrap();
+    assert!(request.line.starts_with(line), "{}", request.line);
+    request
+        .respond
+        .send(test_fixtures::provider::Response::Raw {
+            status: 200,
+            content: body.to_string(),
+        })
+        .unwrap();
+    request.completed.await.unwrap();
+    request.body
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_plus_order_is_confirmed_at_the_price_the_server_sells_it_for(db: SqlitePool) {
+    let (ctx, mut server) = signed_in(db).await;
+    let items = |price: u32| {
+        json!({"tiers":[{"item":"1m","duration":{"months":1},"price":price,
+            "until":1_800_000_000_000_i64,"available":true}],
+            "packs":[],"latest":1_900_000_000_000_i64,"refunded":false})
+    };
+    for later in [1990, 1880] {
+        let (shown, waiting) = tokio::sync::oneshot::channel();
+        let calling = call_agent(
+            &ctx,
+            "createPlusOrder",
+            json!({"item":"1m", "method":"wxpay"}),
+            |description| shown.send(description.targets.clone()).unwrap(),
+            pending(),
+        );
+        let answering =
+            async {
+                reply(&mut server, "GET /v1/plus/items ", items(1880)).await;
+                let [target] = &waiting.await.unwrap()[..] else {
+                    panic!("one order to confirm")
+                };
+                assert!(target.starts_with(
+                    "账号 student@example.invalid：Plus 一个月，18.8 元，开通后 Plus 到"
+                ));
+                assert!(target.ends_with("，用微信支付付款"));
+                let requests = call(&ctx, "listAgentRequests", json!({})).await.unwrap();
+                call(
+                    &ctx,
+                    "answerAgentRequest",
+                    json!({"id":requests[0]["id"], "allow":true}),
+                )
+                .await
+                .unwrap();
+                reply(&mut server, "GET /v1/plus/items ", items(later)).await;
+                if later == 1880 {
+                    let order = reply(
+                        &mut server,
+                        "POST /v1/plus/orders ",
+                        json!({"order":7, "payUrl":"https://pay.example.invalid/AES7"}),
+                    )
+                    .await;
+                    assert_eq!(
+                        (&order["item"], &order["method"]),
+                        (&json!("1m"), &json!("wxpay"))
+                    );
+                }
+            };
+        let result = tokio::join!(calling, answering).0;
+        if later == 1880 {
+            assert_eq!(result.unwrap()["order"], 7);
+        } else {
+            assert!(result.unwrap_err().message.contains("情况变了"));
+        }
+    }
+    assert!(server.requests.try_recv().is_err());
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

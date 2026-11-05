@@ -6,6 +6,8 @@ use serde::{Serialize, de::DeserializeOwned};
 use sqlx::{SqliteConnection, types::Json};
 use ts_rs::TS;
 
+use cloud_api::plus::{Duration, Method};
+
 use crate::{CallError, Context};
 
 #[derive(Clone, PartialEq, Eq, Serialize, TS)]
@@ -206,12 +208,16 @@ async fn sending(
 }
 
 fn display_time(at: i64) -> String {
+    display(at, "%Y年%-m月%-d日 %H:%M")
+}
+
+fn display_day(at: i64) -> String {
+    display(at, "%Y年%-m月%-d日")
+}
+
+fn display(at: i64, format: &str) -> String {
     chrono::DateTime::from_timestamp_millis(at)
-        .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%Y年%-m月%-d日 %H:%M")
-                .to_string()
-        })
+        .map(|at| at.with_timezone(&chrono::Local).format(format).to_string())
         .unwrap_or_else(|| format!("无法识别的时间：{at}"))
 }
 
@@ -301,8 +307,68 @@ pub(crate) async fn confirmation(
     op: &str,
     input: &serde_json::Value,
 ) -> Result<Option<Description>, CallError> {
+    if op == "createPlusOrder" {
+        return plus_order(ctx, parse(input)?).await.map(Some);
+    }
     let mut tx = ctx.db.begin().await?;
     describe(&mut tx, op, input).await
+}
+
+/// The terms the user agrees to, in the version this app has.
+fn agreeing(terms: &str, version: &str) -> String {
+    format!("同意{terms}（{version} 生效的版本，在设置的“关于和日志”里可以阅读）")
+}
+
+async fn signed_in(conn: &mut SqliteConnection) -> Result<String, sqlx::Error> {
+    let email = sqlx::query_scalar!("SELECT email FROM account")
+        .fetch_optional(conn)
+        .await?;
+    Ok(email.map_or_else(|| "现在没有登录".into(), |email| format!("账号 {email}")))
+}
+
+/// What the order buys and for how much, as the server sells it now.
+async fn plus_order(
+    ctx: &Context,
+    input: crate::accounts::PlusOrderInput,
+) -> Result<Description, CallError> {
+    let items = ctx.account.plus_items(&ctx.db).await?;
+    let yuan = |fen: u32| format!("{} 元", f64::from(fen) / 100.0);
+    let what = if let Some(tier) = items.tiers.iter().find(|tier| tier.item == input.item) {
+        let duration = match tier.duration {
+            Duration::Days(days) => format!("{days} 天"),
+            Duration::Months(1) => "一个月".into(),
+            Duration::Months(3) => "三个月".into(),
+            Duration::Months(months) => format!("{months} 个月"),
+        };
+        format!(
+            "Plus {duration}，{}，开通后 Plus 到{}",
+            yuan(tier.price),
+            display_day(tier.until)
+        )
+    } else if let Some(pack) = items.packs.iter().find(|pack| pack.item == input.item) {
+        format!(
+            "邮件追踪额度包 {} 封，{}，{}到期",
+            pack.count,
+            yuan(pack.price),
+            display_day(pack.expires_at)
+        )
+    } else {
+        return Err(CallError::invalid(
+            "没有这一档，先用 getPlusItems 查看能买的".into(),
+        ));
+    };
+    let method = match input.method {
+        Method::Alipay => "支付宝",
+        Method::Wxpay => "微信支付",
+    };
+    let account = signed_in(&mut *ctx.db.acquire().await?).await?;
+    Ok(object(
+        &format!(
+            "下单购买，代表你{}；下单不扣钱，在浏览器的付款页付款后才扣钱",
+            agreeing("Plus 服务协议", account::plus_terms())
+        ),
+        format!("{account}：{what}，用{method}付款"),
+    ))
 }
 
 async fn describe(
@@ -318,13 +384,23 @@ async fn describe(
                 input.email,
             )
         }
+        "registerAccount" => {
+            let input: crate::accounts::AccountVerification = parse(input)?;
+            object(
+                &format!(
+                    "注册账号并登录，代表你{}",
+                    agreeing("用户服务协议和隐私政策", account::terms())
+                ),
+                input.email,
+            )
+        }
+        "acceptTerms" => object(
+            &agreeing("用户服务协议和隐私政策", account::terms()),
+            signed_in(conn).await?,
+        ),
         "enableCloudBackup" => {
             let input: crate::backup::cloud::Enable = parse(input)?;
-            let email = sqlx::query_scalar!("SELECT email FROM account")
-                .fetch_optional(&mut *conn)
-                .await?;
-            let account =
-                email.map_or_else(|| "现在没有登录".into(), |email| format!("账号 {email}"));
+            let account = signed_in(conn).await?;
             object(
                 "开启云端备份，把导师、邮件、模板和材料等数据加密后上传到官方服务器",
                 match input.replace {
@@ -1093,11 +1169,13 @@ mod tests {
         assert_eq!(
             always,
             BTreeSet::from([
+                "acceptTerms",
                 "agreeModel",
                 "approveFirstEmail",
                 "approveFollowUp",
                 "approveReply",
                 "approveTaskEmails",
+                "createPlusOrder",
                 "deleteAccount",
                 "deleteCloudBackup",
                 "deleteCrawl",
@@ -1111,6 +1189,7 @@ mod tests {
                 "deleteTodo",
                 "enableCloudBackup",
                 "mergeMentors",
+                "registerAccount",
                 "rescheduleEmail",
                 "resendEmail",
                 "resetAccountPassword",

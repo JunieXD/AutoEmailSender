@@ -414,11 +414,11 @@ operations! {
         /// 读取可以买的 Plus 时长和邮件追踪额度包：价格（分）、现在买的话到期到哪天、能不能买、最多能买到哪天，以及这个账号是不是退过款。
         "getPlusItems" [none] => get_plus_items(Nothing) -> cloud_api::plus::Items;
         /// 下单购买一种 Plus 时长或额度包，返回订单编号和付款页地址；用户在浏览器里打开付款页完成付款。
-        "createPlusOrder" [none] => create_plus_order(PlusOrderInput) -> cloud_api::plus::Created;
+        "createPlusOrder" [confirm] => create_plus_order(PlusOrderInput) -> cloud_api::plus::Created;
         /// 查订单开通了没有：pending 是还没收到付款；applied 是已开通，带账号现在的 Plus 到期时间和追踪额度；refunded 是开通后已退款或收回。
         "getPlusOrder" [none] => get_plus_order(PlusOrderId) -> cloud_api::plus::OrderState;
         /// 同意应用里这一版的用户服务协议和隐私政策。
-        "acceptTerms" [none] => accept_terms(Nothing) -> ();
+        "acceptTerms" [confirm] => accept_terms(Nothing) -> ();
         /// 读取邀请码、已邀请人数和填写期限。
         "getInvite" [none] => get_invite(Nothing) -> cloud_api::Invite;
         /// 填写同学的邀请码，双方各得 3 天 Plus。
@@ -428,7 +428,7 @@ operations! {
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
         "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();
         /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。
-        "registerAccount" [none] => register_account(AccountVerification) -> account::State;
+        "registerAccount" [confirm] => register_account(AccountVerification) -> account::State;
         /// 登录账号；密码只在本机派生钥匙。账号正在注销时返回 account_deleting，带 restore 再登录一次撤销注销。
         "loginAccount" [none] => login_account(AccountLogin) -> account::State;
         /// 向已注册的邮箱发送重置密码验证码。
