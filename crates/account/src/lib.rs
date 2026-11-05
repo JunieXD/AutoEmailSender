@@ -70,7 +70,8 @@ pub fn plus_terms() -> &'static str {
     version(PLUS_TERMS)
 }
 
-fn outdated(agreed: Option<&str>) -> bool {
+/// Whether an account that agreed to `agreed` has yet to agree to this app's terms.
+pub fn outdated(agreed: Option<&str>) -> bool {
     agreed.is_none_or(|agreed| agreed < terms())
 }
 
@@ -555,7 +556,8 @@ pub struct Login {
     token: String,
     /// Missing for logins from before cloud backup; logging in again derives it.
     pub backup_key: Option<[u8; 32]>,
-    terms_outdated: bool,
+    /// Only what `without_terms` allows reaches the server; background work waits instead.
+    pub terms_outdated: bool,
 }
 
 /// What an account that has not agreed to the current terms may still do: read itself, agree,
@@ -710,13 +712,14 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
-/// A day as the user's clock has it, like `11月19日` (docs/ui.md#文案).
-fn date(at: i64) -> String {
-    chrono::DateTime::from_timestamp_millis(at)
-        .unwrap_or_default()
-        .with_timezone(&chrono::Local)
-        .format("%-m月%-d日")
-        .to_string()
+/// A day as the user's clock has it, like `11月19日` (docs/ui.md#文案); none for a time the
+/// server should never have sent.
+fn date(at: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp_millis(at).map(|at| {
+        at.with_timezone(&chrono::Local)
+            .format("%-m月%-d日")
+            .to_string()
+    })
 }
 
 impl Error {
@@ -734,15 +737,17 @@ impl Error {
             }
             Self::SignedOut => "登录已失效，请重新登录。".into(),
             Self::AccountChanged => "要注销的账号已经不是当前登录的账号，请刷新后重试。".into(),
-            Self::Deleting(at) => format!("账号正在注销，将于{}删除。", date(*at)),
+            Self::Deleting(at) => match date(*at) {
+                Some(date) => format!("账号正在注销，将于{date}删除。"),
+                None => "账号正在注销。".into(),
+            },
             Self::TermsOutdated => "尚未同意新版条款，同意后方可使用官方服务。".into(),
             Self::Server(error) => match error.code {
                 ErrorCode::InvalidInput => "填写的账号信息不正确，请检查后重试。".into(),
                 ErrorCode::EmailRegistered => "这个邮箱已注册，请直接登录。".into(),
-                ErrorCode::AccountDeleting => match error.delete_at {
-                    Some(at) => format!(
-                        "该邮箱的账号正在注销，{}后方可重新注册；如需撤销注销，请直接登录。",
-                        date(at)
+                ErrorCode::AccountDeleting => match error.delete_at.and_then(date) {
+                    Some(date) => format!(
+                        "该邮箱的账号正在注销，{date}后方可重新注册；如需撤销注销，请直接登录。"
                     ),
                     None => "该邮箱的账号正在注销；如需撤销注销，请直接登录。".into(),
                 },

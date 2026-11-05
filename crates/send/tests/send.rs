@@ -3788,7 +3788,7 @@ async fn letters_carry_a_tracking_image_while_on_and_the_quota_covers_them(db: S
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn letters_go_without_a_tracking_image_once_plus_ends(db: SqlitePool) {
+async fn letters_go_without_a_tracking_image_once_plus_ends_or_the_terms_change(db: SqlitePool) {
     let writes = db::Writes::default();
     let (net, inbox) = mailbox(&db, SECRET).await;
     track(&db, true, 5).await;
@@ -3805,9 +3805,19 @@ async fn letters_go_without_a_tracking_image_once_plus_ends(db: SqlitePool) {
     send::step(&db, &writes, &net, nowhere(), || T + MINUTE)
         .await
         .unwrap();
+    // Plus again, but the terms changed and the account has not agreed to them yet.
+    sqlx::query("UPDATE account SET tracking_until = 4000000000000, terms = '2000-01-01'")
+        .execute(&db)
+        .await
+        .unwrap();
+    approve(&db, "outdated@example.edu.cn", &[], T).await;
+    send::step(&db, &writes, &net, nowhere(), || T + DAY)
+        .await
+        .unwrap();
     let mail = inbox.lock().unwrap().clone();
     assert!(tracking_image(&mail[0]).is_some());
     assert_eq!(tracking_image(&mail[1]), None);
+    assert_eq!(tracking_image(&mail[2]), None);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

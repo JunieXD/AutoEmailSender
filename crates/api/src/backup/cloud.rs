@@ -832,16 +832,20 @@ pub async fn run(ctx: std::sync::Arc<Context>) {
 }
 
 /// Whether the hourly check backs up now: a day after the last success, or again after a failure,
-/// which the backup page shows meanwhile.
+/// which the backup page shows meanwhile. Backups pause, not fail, until the terms are agreed to.
 pub async fn due(db: &SqlitePool, now: i64) -> Result<bool> {
     let day_ago = now - DAY;
+    let terms = account::terms();
     Ok(sqlx::query_scalar!(
         r#"SELECT cloud_backup = 1
             AND (last_backup_at IS NULL OR last_backup_at <= ? OR cloud_backup_failed_at IS NOT NULL)
-            AND EXISTS (SELECT 1 FROM account WHERE token IS NOT NULL AND backup_key IS NOT NULL)
+            AND EXISTS (
+                SELECT 1 FROM account
+                WHERE token IS NOT NULL AND backup_key IS NOT NULL AND terms >= ?)
             AS "due!: bool"
         FROM profile"#,
-        day_ago
+        day_ago,
+        terms
     )
     .fetch_one(db)
     .await?)

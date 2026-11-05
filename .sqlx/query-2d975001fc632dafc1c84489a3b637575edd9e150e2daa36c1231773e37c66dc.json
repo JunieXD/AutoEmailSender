@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT email, token AS \"token!\", library_revision, library_checked_at\n            FROM account WHERE token IS NOT NULL",
+  "query": "SELECT email, token AS \"token!\", library_revision, library_checked_at, terms\n            FROM account WHERE token IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -46,6 +46,17 @@
             "name": "library_checked_at"
           }
         }
+      },
+      {
+        "name": "terms",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "terms"
+          }
+        }
       }
     ],
     "parameters": {
@@ -55,8 +66,9 @@
       false,
       true,
       false,
+      true,
       true
     ]
   },
-  "hash": "209cdfeae3300b62882d12709288092d6cca3cb40955e83f7b578792a2f75d3d"
+  "hash": "2d975001fc632dafc1c84489a3b637575edd9e150e2daa36c1231773e37c66dc"
 }

@@ -160,6 +160,29 @@ async fn letters_are_registered_while_the_quota_lasts_and_opens_come_back(db: Sq
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn registering_waits_without_failing_until_the_terms_are_agreed_to(db: SqlitePool) {
+    let setup = Setup::new(db, 1).await;
+    setup.sent(&id(1)).await;
+    let agree = |terms: &'static str| {
+        sqlx::query("UPDATE account SET terms = ?")
+            .bind(terms)
+            .execute(&setup.ctx.db)
+    };
+    agree("2000-01-01").await.unwrap();
+    assert!(!api::tracking::sync(&setup.ctx, true, NOW).await.unwrap());
+    let failure: Option<String> = sqlx::query_scalar("SELECT tracking_error FROM account")
+        .fetch_one(&setup.ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(failure, None);
+    assert_eq!(setup.emails().await[0].1, Tracked::Pending);
+
+    agree("9999-12-31").await.unwrap();
+    api::tracking::sync(&setup.ctx, true, NOW).await.unwrap();
+    assert_eq!(setup.emails().await[0].1, Tracked::Tracked);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn opens_come_in_pages_and_a_failed_page_is_fetched_again(db: SqlitePool) {
     let setup = Setup::new(db, 5).await;
     for n in 1..=3 {

@@ -64,15 +64,13 @@ const WAIT = 15 * 60_000;
 export function PayDialog({ email, purchase, onClose }: { email: string; purchase: Purchase; onClose: () => void }) {
   const [agreed, setAgreed] = useState(false);
   const order = useMutation({
-    mutationFn: async (method: Method) => {
-      const created = await call("createPlusOrder", {
-        item: ("tier" in purchase ? purchase.tier : purchase.pack).item,
-        method,
-      });
-      await openUrl(created.payUrl);
-      return created.order;
-    },
+    mutationFn: (method: Method) =>
+      call("createPlusOrder", { item: ("tier" in purchase ? purchase.tier : purchase.pack).item, method }),
   });
+  // Also from a button of its own: a phone's browser may not open a page the click did not open
+  // itself, and the order stays the same either way.
+  const page = useMutation({ mutationFn: (url: string) => openUrl(url) });
+  const pay = (method: Method) => order.mutate(method, { onSuccess: (created) => page.mutate(created.payUrl) });
   const what =
     "tier" in purchase
       ? `Plus ${durationLabel(purchase.tier.duration)}，${yuan(purchase.tier.price)}。开通后 Plus 到${day(purchase.tier.until)}。`
@@ -99,16 +97,22 @@ export function PayDialog({ email, purchase, onClose }: { email: string; purchas
               <p className="grow text-sm text-destructive" role="alert">
                 {order.error && errorMessage(order.error)}
               </p>
-              <Button disabled={!agreed || order.isPending} onClick={() => order.mutate("alipay")}>
+              <Button disabled={!agreed || order.isPending} onClick={() => pay("alipay")}>
                 支付宝
               </Button>
-              <Button disabled={!agreed || order.isPending} onClick={() => order.mutate("wxpay")}>
+              <Button disabled={!agreed || order.isPending} onClick={() => pay("wxpay")}>
                 微信支付
               </Button>
             </DialogFooter>
           </>
         ) : (
-          <Paying email={email} order={order.data} pack={!("tier" in purchase)} />
+          <Paying
+            email={email}
+            order={order.data.order}
+            pack={!("tier" in purchase)}
+            reopen={() => page.mutate(order.data.payUrl)}
+            openError={page.error}
+          />
         )}
       </DialogContent>
     </Dialog>
@@ -116,7 +120,19 @@ export function PayDialog({ email, purchase, onClose }: { email: string; purchas
 }
 
 /** Asks the server after the order until it is applied, for as long as paying takes. */
-function Paying({ email, order, pack }: { email: string; order: number; pack: boolean }) {
+function Paying({
+  email,
+  order,
+  pack,
+  reopen,
+  openError,
+}: {
+  email: string;
+  order: number;
+  pack: boolean;
+  reopen: () => void;
+  openError: Error | null;
+}) {
   const refresh = useRefreshPlus(email);
   const [waited, setWaited] = useState(false);
   useEffect(() => {
@@ -147,6 +163,12 @@ function Paying({ email, order, pack }: { email: string; order: number; pack: bo
         ) : (
           <>
             <p>{waited ? "尚未收到付款。如已付款，稍后会自动开通。" : "请在浏览器中完成付款，付款后自动开通。"}</p>
+            <div className="flex items-center gap-3">
+              <Button variant="quiet" size="sm" onClick={reopen}>
+                重新打开付款页
+              </Button>
+              {openError && <span className="text-destructive">付款页未能打开：{errorMessage(openError)}</span>}
+            </div>
             {state.error && <p className="text-muted-foreground">订单状态暂时未能读取：{errorMessage(state.error)}</p>}
           </>
         )}

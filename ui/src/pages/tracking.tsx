@@ -79,7 +79,7 @@ export function TrackingSection() {
         </div>
       )}
       {server && !outdated && plusUntil !== null && email && (
-        <Quota email={email} plusUntil={plusUntil} quota={server.tracking} />
+        <Quota key={email} email={email} plusUntil={plusUntil} quota={server.tracking} />
       )}
       {enabled && quota && (
         <>

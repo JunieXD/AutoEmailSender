@@ -513,12 +513,15 @@ async fn run(ctx: Arc<Context>, mut commands: mpsc::UnboundedReceiver<Command>) 
     }
 }
 
-/// The login and room to connect with, when phone access is on and someone is logged in.
+/// The login and room to connect with, when phone access is on and someone is logged in who has
+/// agreed to the terms.
 async fn target(ctx: &Context) -> Result<Option<(account::Login, String)>, CallError> {
     if !profile::phone_access(&ctx.db).await? {
         return Ok(None);
     }
     let login = match account::saved_login(&ctx.db).await {
+        // Agreeing changes the login, which connects again.
+        Ok(login) if login.terms_outdated => return Ok(None),
         Ok(login) => login,
         Err(account::Error::SignedOut) => return Ok(None),
         Err(error) => return Err(error.into()),

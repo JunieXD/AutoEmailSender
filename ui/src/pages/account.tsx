@@ -333,7 +333,8 @@ function DeleteDialog({ email, onClose }: { email: string; onClose: () => void }
     // A session found to have run out turns the section to "expired"; a deletion, to logged out.
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["getAccount"] }),
   });
-  const server = tracking.data?.account?.kind === "read" ? tracking.data.account : null;
+  const read = tracking.data?.account;
+  const server = read?.kind === "read" ? read : null;
   const kept = [
     server?.plusUntil != null && server.plusUntil > now && `Plus 到${day(server.plusUntil)}`,
     server && server.tracking.packLeft > 0 && `额度包还剩 ${server.tracking.packLeft} 封`,
@@ -372,11 +373,21 @@ function DeleteDialog({ email, onClose }: { email: string; onClose: () => void }
                   <LegalLink legal="privacy" />
                   。本机的数据不受影响。
                 </p>
-                {kept.length > 0 && (
-                  <p>
-                    {kept.join("、")}
-                    ，注销后一并放弃，冷静期内照常计时。如需退款，请先发邮件到 support@auto-email-sender.cn。
+                {/* What is given up is shown before the password counts. */}
+                {tracking.error || read?.kind === "unreadable" ? (
+                  <p className="text-destructive">
+                    Plus 和额度包未能读取：
+                    {read?.kind === "unreadable" ? read.reason : errorMessage(tracking.error)}
                   </p>
+                ) : !server ? (
+                  <p className="text-muted-foreground">正在读取 Plus 和额度包…</p>
+                ) : (
+                  kept.length > 0 && (
+                    <p>
+                      {kept.join("、")}
+                      ，注销后一并放弃，冷静期内照常计时。如需退款，请先发邮件到 support@auto-email-sender.cn。
+                    </p>
+                  )
                 )}
                 <Field label="密码" id="account-delete-password">
                   <Input
@@ -395,7 +406,7 @@ function DeleteDialog({ email, onClose }: { email: string; onClose: () => void }
                 {remove.error && errorMessage(remove.error)}
               </p>
               <DialogClose render={<Button variant="ghost" />}>取消</DialogClose>
-              <Button type="submit" disabled={remove.isPending || password === ""}>
+              <Button type="submit" disabled={remove.isPending || password === "" || !server}>
                 {remove.isPending ? "正在注销…" : "注销账号"}
               </Button>
             </DialogFooter>

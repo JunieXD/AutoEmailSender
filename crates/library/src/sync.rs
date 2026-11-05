@@ -43,7 +43,7 @@ impl Synchronizer {
     ) -> Result<u32, Error> {
         let _guard = self.acquire().await;
         let Some(account) = sqlx::query!(
-            r#"SELECT email, token AS "token!", library_revision, library_checked_at
+            r#"SELECT email, token AS "token!", library_revision, library_checked_at, terms
             FROM account WHERE token IS NOT NULL"#
         )
         .fetch_optional(db)
@@ -55,6 +55,14 @@ impl Synchronizer {
                 Ok(0)
             };
         };
+        // Paused, not failing, until the terms are agreed to.
+        if account::outdated(account.terms.as_deref()) {
+            return if force {
+                Err(account::Error::TermsOutdated.into())
+            } else {
+                Ok(0)
+            };
+        }
         if !force && account.library_checked_at.is_some_and(|at| now - at < DAY) {
             return Ok(0);
         }

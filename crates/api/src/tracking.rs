@@ -67,6 +67,8 @@ pub async fn run(ctx: std::sync::Arc<Context>, changed: impl Fn()) {
 /// is kept for that login, until one succeeds.
 pub async fn sync(ctx: &Context, full: bool, now: i64) -> Result<bool, account::Error> {
     let login = match account::saved_login(&ctx.db).await {
+        // Paused, not failing, until the terms are agreed to.
+        Ok(login) if login.terms_outdated => return Ok(false),
         Ok(login) => login,
         Err(account::Error::SignedOut) => return Ok(false),
         Err(error) => return Err(error),

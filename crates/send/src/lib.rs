@@ -557,7 +557,7 @@ async fn mark_sending(
     let fresh = uuid::Uuid::new_v4().simple().to_string();
     // Only what goes out has the image: the app shows the letter without it, so that reading
     // one's own letter there is no open.
-    let html = match email::tracking::assign(&mut tx, id, &fresh, at).await? {
+    let html = match email::tracking::assign(&mut tx, id, &fresh, account::terms(), at).await? {
         Some(tracking) => format!(
             r#"{}<img src="{}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">"#,
             handover.html,

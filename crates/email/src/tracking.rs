@@ -33,12 +33,14 @@ pub struct Tracking {
 
 /// The tracking id the email goes with this time: the one an earlier attempt chose, which may be
 /// out, so that a resend looks the same; or else `fresh` when tracking is on, the account logged
-/// in has Plus at `now`, the email is a first letter or follow-up and the quota left covers it
-/// besides the account's others not registered yet. None for an email that goes without the image.
+/// in has agreed to `terms` or later and has Plus at `now`, the email is a first letter or
+/// follow-up and the quota left covers it besides the account's others not registered yet. None
+/// for an email that goes without the image.
 pub async fn assign(
     conn: &mut SqliteConnection,
     email: i64,
     fresh: &str,
+    terms: &str,
     now: i64,
 ) -> Result<Option<String>, sqlx::Error> {
     sqlx::query!(
@@ -47,13 +49,14 @@ pub async fn assign(
             tracking_chosen_at = ?3
         WHERE id = ?1 AND tracking_id IS NULL AND kind IN ('first', 'follow_up')
           AND (SELECT email_tracking FROM profile) = 1
-          AND (SELECT a.tracking_until > ?3 AND a.tracking_left > (
+          AND (SELECT a.terms >= ?4 AND a.tracking_until > ?3 AND a.tracking_left > (
                 SELECT count(*) FROM email
                 WHERE tracking_state = 'pending' AND tracking_account = a.email)
               FROM account a WHERE a.token IS NOT NULL)"#,
         email,
         fresh,
-        now
+        now,
+        terms
     )
     .execute(&mut *conn)
     .await?;

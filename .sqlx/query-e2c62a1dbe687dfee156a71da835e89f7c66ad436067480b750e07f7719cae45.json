@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET tracking_id = ?2, tracking_state = 'pending',\n            tracking_account = (SELECT email FROM account WHERE token IS NOT NULL),\n            tracking_chosen_at = ?3\n        WHERE id = ?1 AND tracking_id IS NULL AND kind IN ('first', 'follow_up')\n          AND (SELECT email_tracking FROM profile) = 1\n          AND (SELECT a.terms >= ?4 AND a.tracking_until > ?3 AND a.tracking_left > (\n                SELECT count(*) FROM email\n                WHERE tracking_state = 'pending' AND tracking_account = a.email)\n              FROM account a WHERE a.token IS NOT NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "e2c62a1dbe687dfee156a71da835e89f7c66ad436067480b750e07f7719cae45"
+}
