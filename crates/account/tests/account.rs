@@ -49,6 +49,11 @@ async fn orders_carry_the_plus_terms_and_older_terms_stop_the_official_services(
             .await
             .unwrap();
         assert_eq!(created.order, 7);
+        let local = client
+            .create_plus_order(&db, "1m".into(), PayMethod::Wxpay)
+            .await
+            .unwrap();
+        assert_eq!(local.pay_url, "http://127.0.0.1:8788/pay/AES9");
         assert!(matches!(
             client
                 .create_plus_order(&db, "1m".into(), PayMethod::Alipay)
@@ -93,6 +98,11 @@ async fn orders_carry_the_plus_terms_and_older_terms_stop_the_official_services(
                 "POST",
                 path::PLUS_ORDERS.to_string(),
                 json!({"order":7,"payUrl":"https://pay.example.invalid/AES7"}),
+            ),
+            (
+                "POST",
+                path::PLUS_ORDERS.to_string(),
+                json!({"order":9,"payUrl":"http://127.0.0.1:8788/pay/AES9"}),
             ),
             (
                 "POST",
