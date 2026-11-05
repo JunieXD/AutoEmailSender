@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE\n        FROM crawl_page\n        WHERE crawl_id = ?1 AND kind = 'profile' AND work_state = 'queued'\n        AND fetched_at IS NULL AND url IN (SELECT url FROM candidate_profile WHERE\n            candidate_id = ?2 AND mismatched_at IS NULL) AND url IS NOT ?3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "48e1b45ad26aec7b1d81a4e08fc2eb7584dfd682c082eb1d9bbf74a47f79e440"
+}

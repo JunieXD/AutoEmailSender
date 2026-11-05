@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n        SET homepages = ?3, profile_url = CASE WHEN profile_url IS ?2 THEN (\n            SELECT p.url\n            FROM candidate_profile p\n            WHERE p.candidate_id = ?1 AND p.mismatched_at IS NULL AND NOT EXISTS (\n                SELECT 1 FROM candidate o WHERE o.crawl_id = candidate.crawl_id AND o.profile_url = p.url\n            )\n            ORDER BY p.url\n            LIMIT 1\n        ) ELSE profile_url END\n        WHERE id = ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "017764188ef6fbe6feb7b4fe0e00528d58e3be57e84d5a1840a5b5c41ed6e53c"
+}

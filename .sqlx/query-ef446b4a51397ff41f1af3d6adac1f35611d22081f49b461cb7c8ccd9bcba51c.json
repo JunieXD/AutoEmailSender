@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT homepages AS \"homepages: Json<Vec<String>>\" FROM candidate WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "homepages: Json<Vec<String>>",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "homepages"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "ef446b4a51397ff41f1af3d6adac1f35611d22081f49b461cb7c8ccd9bcba51c"
+}

@@ -262,10 +262,14 @@ struct Page {
     next: Vec<PageUrl>,
     /// The page proved to be its one person's own, so where it ended up identifies them.
     own: bool,
+    /// The candidate a list's profile page was read for.
+    target: Option<i64>,
 }
 enum Outcome {
     Done(Page),
     Failed(String),
+    /// The page proved not to be the candidate's it was read for.
+    Mismatched(i64, String),
     Pause(String, Option<Chosen>),
     /// With the round of the limited request.
     RateLimit(RateLimit, Chosen, u64),
@@ -277,6 +281,7 @@ enum Outcome {
 #[derive(Debug)]
 enum ReadError {
     Failed(String),
+    Mismatched(i64, String),
     Pause(String),
     Database {
         source: sqlx::Error,
@@ -488,6 +493,7 @@ async fn process(
                 Outcome::Pause(reason.into(), Some(chosen))
             }
             Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
+            Err(ReadError::Mismatched(candidate, reason)) => Outcome::Mismatched(candidate, reason),
             Err(ReadError::RateLimit(limit, round)) => Outcome::RateLimit(limit, chosen, round),
             Err(ReadError::Wait) => Outcome::Wait,
             Err(ReadError::Gone) => Outcome::Gone,
@@ -539,6 +545,7 @@ async fn read(
             people: vec![],
             next: vec![],
             own: false,
+            target: None,
         });
     }
     if targeted {
@@ -604,6 +611,7 @@ async fn read(
         people,
         next,
         own: kind == PageKind::Profile,
+        target: None,
     })
 }
 /// Reads a profile page or enrichment page for the one candidate it was queued for.
@@ -620,20 +628,10 @@ async fn read_for_candidate(
         .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?;
     let id = match c.candidate_id {
         Some(id) => id,
-        // The candidate the profile page is saved into, as review::save picks it.
-        None => sqlx::query_scalar!(
-            r#"SELECT candidate_id AS "candidate_id!: i64"
-            FROM candidate_profile
-            WHERE crawl_id = ? AND url = ?
-            ORDER BY candidate_id
-            LIMIT 1"#,
-            c.crawl,
-            c.url
-        )
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?
-        .ok_or(ReadError::Gone)?,
+        None => review::read_for(&mut conn, c.crawl, c.url.as_str())
+            .await
+            .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?
+            .ok_or(ReadError::Gone)?,
     };
     let candidate = review::read(&mut conn, &[id])
         .await
@@ -666,10 +664,16 @@ async fn read_for_candidate(
             reason = "identity_mismatch",
             "page rejected"
         );
-        return Err(ReadError::Failed(format!(
+        let reason = format!(
             "模型判断这页是别人的或多人的页面，页面上也没出现「{}」，没有补入",
             target.name
-        )));
+        );
+        // A subpage is only one the profile links to, never the candidate's own link.
+        return Err(if c.kind == PageKind::EnrichChild {
+            ReadError::Failed(reason)
+        } else {
+            ReadError::Mismatched(id, reason)
+        });
     }
     let mut next = Vec::new();
     if c.kind == PageKind::EnrichProfile {
@@ -732,6 +736,7 @@ async fn read_for_candidate(
         people: vec![person],
         next,
         own,
+        target: (c.kind == PageKind::Profile).then_some(id),
     })
 }
 fn browser(reason: &crate::BrowserReason) -> &'static str {
@@ -789,6 +794,9 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                         enrich::enqueue(&mut tx, c.crawl, id, url, &c.scope, PageKind::EnrichChild)
                             .await?;
                     }
+                }
+                if c.kind == PageKind::EnrichProfile && p.own {
+                    review::matched(&mut tx, id, c.url.as_str()).await?;
                 }
                 for person in &p.people {
                     enrich::apply(&mut tx, id, p.material.url.as_str(), person).await?;
@@ -873,6 +881,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                             review::Source::Profile {
                                 id: c.id,
                                 own: p.own,
+                                target: p.target,
                             }
                         },
                         p.material.url.as_str(),
@@ -886,7 +895,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                 }
             }
         }
-        Outcome::Failed(reason) => {
+        Outcome::Failed(reason) | Outcome::Mismatched(_, reason) => {
             sqlx::query!(
                 r#"UPDATE crawl_page
                 SET work_state = 'done', status = 'failed', error = ?, fetched_at = ?
@@ -897,6 +906,9 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             )
             .execute(&mut *tx)
             .await?;
+            if let Outcome::Mismatched(candidate, _) = outcome {
+                review::mismatched(&mut tx, *candidate, c.url.as_str(), now()).await?;
+            }
         }
         Outcome::Pause(reason, expected) => {
             sqlx::query!(
@@ -959,7 +971,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             needs_browser = p.material.needs_browser.is_some(),
             "page completed"
         ),
-        Outcome::Failed(_) => tracing::info!(
+        Outcome::Failed(_) | Outcome::Mismatched(..) => tracing::info!(
             url = c.url.as_str(),
             kind = ?c.kind,
             "page failed"
@@ -1197,7 +1209,12 @@ async fn run_with_pages(
                     .retry("save crawl", || save(&db, &c, &outcome))
                     .instrument(crate::span(c.crawl))
                     .await;
-                if applied && matches!(outcome, Outcome::Done(_) | Outcome::Failed(_)) {
+                if applied
+                    && matches!(
+                        outcome,
+                        Outcome::Done(_) | Outcome::Failed(_) | Outcome::Mismatched(..)
+                    )
+                {
                     limited.remove(&c.crawl);
                 }
                 changed();

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT candidate_id AS \"candidate_id!: i64\"\n            FROM candidate_profile\n            WHERE crawl_id = ?1 AND url IN (SELECT value FROM json_each(?2))\n            ORDER BY url IS ?3 DESC, candidate_id\n            LIMIT 1",
+  "query": "SELECT candidate_id AS \"candidate_id!: i64\"\n        FROM candidate_profile\n        WHERE crawl_id = ? AND url = ?\n        ORDER BY mismatched_at IS NOT NULL, mismatched_at DESC, candidate_id\n        LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 2
     },
     "nullable": [
       null
     ]
   },
-  "hash": "0e2fe8a47262dfbe8a3c39f6b58fb7fab9a6a3f0fe1bb00068d987b6eb931d15"
+  "hash": "38ac57962c49c39ba197a0574f2c471a74e5e379e76e754d0b9aee60db8b545d"
 }

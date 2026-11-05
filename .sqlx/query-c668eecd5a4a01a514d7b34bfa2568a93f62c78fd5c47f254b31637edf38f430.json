@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n        SET profile_url = ?2\n        WHERE id = ?1 AND profile_url IS NULL AND EXISTS (\n            SELECT 1 FROM candidate_profile WHERE candidate_id = ?1 AND url = ?2\n        ) AND NOT EXISTS (\n            SELECT 1 FROM candidate o WHERE o.crawl_id = candidate.crawl_id AND o.profile_url = ?2\n        )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "c668eecd5a4a01a514d7b34bfa2568a93f62c78fd5c47f254b31637edf38f430"
+}

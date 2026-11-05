@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT url AS \"url!: String\", mismatched_at\n        FROM candidate_profile\n        WHERE candidate_id IN (SELECT value FROM json_each(?))\n        ORDER BY candidate_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "url!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate_profile",
+            "name": "url"
+          }
+        }
+      },
+      {
+        "name": "mismatched_at",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "candidate_profile",
+            "name": "mismatched_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "6a2307ea44c5524274916b12f2ed2b37334d0bbd204b044926f68d08666c0ac5"
+}

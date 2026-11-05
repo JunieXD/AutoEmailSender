@@ -613,6 +613,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
             review::Source::Profile {
                 id: claim.id,
                 own: true,
+                target: None,
             },
             url.as_str(),
             Person {
@@ -682,6 +683,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
             review::Source::Profile {
                 id: claim.id,
                 own: true,
+                target: None,
             },
             site.url(&format!("/limit/{n}")).as_str(),
             Person {
@@ -1121,6 +1123,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
             review::Source::Profile {
                 id: page.id,
                 own: true,
+                target: None,
             },
             site.url(&format!("/people/{name}")).as_str(),
             Person {
@@ -1187,6 +1190,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
             review::Source::Profile {
                 id: page.id,
                 own: true,
+                target: None,
             },
             site.url(&format!("/same/{n}")).as_str(),
             Person {
@@ -1285,6 +1289,7 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
         review::Source::Profile {
             id: page.id,
             own: true,
+            target: None,
         },
         url.as_str(),
         person(vec![]),
@@ -1326,6 +1331,7 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
         review::Source::Profile {
             id: page.id,
             own: true,
+            target: None,
         },
         url.as_str(),
         person(vec!["新补到的论文".into()]),
@@ -1381,6 +1387,7 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
             review::Source::Profile {
                 id: page.id,
                 own: true,
+                target: None,
             },
             u.as_str(),
             person(u.clone(), vec![]),
@@ -1424,6 +1431,7 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
             review::Source::Profile {
                 id: page.id,
                 own: true,
+                target: None,
             },
             u.as_str(),
             person(u.clone(), vec!["zhang@example.edu".into()]),
@@ -1510,6 +1518,7 @@ async fn observation(
             review::Source::Profile {
                 id: c.id,
                 own: true,
+                target: None,
             }
         },
         site.url(path).as_str(),
@@ -1530,6 +1539,25 @@ fn observed(name: &str, emails: &[&str], research: Option<&str>) -> MentorFields
         research: research.map(Into::into),
         ..Default::default()
     }
+}
+/// The candidate's profile link, and each of their links with whether its page proved not theirs.
+async fn links(db: &SqlitePool, candidate: i64) -> (Option<String>, Vec<(String, bool)>) {
+    let profile = sqlx::query_scalar("SELECT profile_url FROM candidate WHERE id = ?")
+        .bind(candidate)
+        .fetch_one(db)
+        .await
+        .unwrap();
+    let links = sqlx::query_as(
+        r#"SELECT url, mismatched_at IS NOT NULL
+        FROM candidate_profile
+        WHERE candidate_id = ?
+        ORDER BY url"#,
+    )
+    .bind(candidate)
+    .fetch_all(db)
+    .await
+    .unwrap();
+    (profile, links)
 }
 async fn candidate_ids(db: &SqlitePool) -> Vec<i64> {
     sqlx::query_scalar("SELECT id FROM candidate ORDER BY id")
@@ -1618,24 +1646,25 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
     let claim = queue::next(&db).await.unwrap().unwrap();
     assert!(matches!(
         process_claim(&db, &site, &claim).await,
-        Outcome::Failed(_)
+        Outcome::Mismatched(id, _) if id == ids[0]
     ));
     assert_eq!(candidate_ids(&db).await, ids);
+    // The link is no profile or homepage of his any more, and identifies nobody.
+    let mut expected = before;
+    expected["fields"]["homepages"] = json!([]);
     assert_eq!(
         serde_json::to_value(review::detail(&db, ids[0]).await.unwrap()).unwrap(),
-        before
+        expected
+    );
+    let old_zhang = site.url("/old-zhang").as_str().to_owned();
+    assert_eq!(
+        links(&db, ids[0]).await,
+        (None, vec![(old_zhang.clone(), true)])
     );
     let detail = queue::detail(&db, root.crawl, 1).await.unwrap().unwrap();
     let page = detail.pages.iter().find(|p| p.id == claim.id).unwrap();
     assert_eq!(page.status, PageStatus::Failed);
     assert!(page.error.as_deref().unwrap().contains("张三"));
-    let identities: Vec<String> =
-        sqlx::query_scalar("SELECT url FROM candidate_profile WHERE candidate_id=? ORDER BY url")
-            .bind(ids[0])
-            .fetch_all(&db)
-            .await
-            .unwrap();
-    assert_eq!(identities, vec![site.url("/old-zhang").as_str()]);
     let li = queue::next(&db).await.unwrap().unwrap();
     assert_eq!(li.url, site.url("/li"));
     process_claim(&db, &site, &li).await;
@@ -1688,6 +1717,73 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
             .status,
         PageStatus::Success
     );
+    // Read for him again, the page proves his own, and the link is his again.
+    assert_eq!(
+        links(&db, ids[0]).await,
+        (
+            Some(old_zhang.clone()),
+            vec![
+                (old_zhang, false),
+                (site.url("/zhang").as_str().to_owned(), false)
+            ]
+        )
+    );
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_link_found_not_to_be_theirs_is_read_again_for_whom_another_list_gives_it(
+    db: SqlitePool,
+) {
+    let site = Site::new().await;
+    site.page("/li", "<title>李四</title><p>李四 li@example.edu</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    let link = site.url("/li").as_str().to_owned();
+    observation(
+        &db,
+        &root,
+        &site,
+        "/li",
+        PageKind::List,
+        observed("张三", &["zhang@example.edu"], None),
+    )
+    .await;
+    let zhang = candidate_ids(&db).await[0];
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    assert!(matches!(
+        process_claim(&db, &site, &claim).await,
+        Outcome::Mismatched(..)
+    ));
+    // The owner's own list line does not merge into the one the link proved not to be.
+    observation(
+        &db,
+        &root,
+        &site,
+        "/li",
+        PageKind::List,
+        observed("李四", &["li@example.edu"], None),
+    )
+    .await;
+    let ids = candidate_ids(&db).await;
+    assert_eq!(ids.len(), 2);
+    let li = ids[1];
+    let again = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(again.id, claim.id);
+    assert!(matches!(
+        process_claim(&db, &site, &again).await,
+        Outcome::Done(_)
+    ));
+    assert!(queue::next(&db).await.unwrap().is_none());
+    assert_eq!(
+        links(&db, li).await,
+        (Some(link.clone()), vec![(link.clone(), false)])
+    );
+    assert_eq!(links(&db, zhang).await, (None, vec![(link.clone(), true)]));
+    let li = review::detail(&db, li).await.unwrap().unwrap().candidate;
+    assert_eq!(li.fields.emails, ["li@example.edu"]);
+    assert_eq!(li.fields.homepages, [link]);
+    let zhang = review::detail(&db, zhang).await.unwrap().unwrap().candidate;
+    assert_eq!(zhang.fields.emails, ["zhang@example.edu"]);
+    assert!(zhang.fields.homepages.is_empty());
     server.abort();
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -2422,6 +2518,7 @@ async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool)
         review::Source::Profile {
             id: c.id,
             own: true,
+            target: None,
         },
         site.url("/canonical").as_str(),
         Person {

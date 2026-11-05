@@ -773,6 +773,15 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
                     .unwrap()
                     .contains("张三")
             );
+            // The link is no profile or homepage of theirs any more.
+            assert!(d.candidate.fields.homepages.is_empty(), "{path}");
+            let profile: Option<String> =
+                sqlx::query_scalar("SELECT profile_url FROM candidate WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&db)
+                    .await
+                    .unwrap();
+            assert_eq!(profile, None, "{path}");
         }
     }
     site.page("/merged", "<p>张三 a@example.edu</p>");
@@ -830,6 +839,7 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
         review::Source::Profile {
             id: page,
             own: true,
+            target: None,
         },
         site.url("/merged").as_str(),
         extract::Person {
@@ -911,6 +921,7 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
         review::Source::Profile {
             id: page,
             own: true,
+            target: None,
         },
         site.url("/active").as_str(),
         extract::Person {

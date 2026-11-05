@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate_profile SET mismatched_at = ? WHERE candidate_id = ? AND url = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "015c08ac4eea98ca8665b62c7263f4286a9f99825d94cb9f36cec14d6d98c07b"
+}
