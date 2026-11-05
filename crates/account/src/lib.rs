@@ -363,8 +363,7 @@ impl Client {
         // runs the fake 七相PAY.
         if !reqwest::Url::parse(&created.pay_url).is_ok_and(|url| {
             url.scheme() == "https"
-                || url.scheme() == "http"
-                    && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+                || url.scheme() == "http" && url.host_str().is_some_and(net::proxy::is_local)
         }) {
             return Err(Error::Invalid(
                 "服务器给的付款地址不正确，请稍后重试或升级应用。",

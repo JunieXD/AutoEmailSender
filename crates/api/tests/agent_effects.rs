@@ -338,9 +338,8 @@ async fn account_confirmations_use_the_input_email_without_the_password(db: Sqli
                 "password":"private-test-password"}),
         ),
         (
-            "registerAccount",
-            json!({"email":"first@example.invalid", "code":"123456",
-                "password":"private-test-password"}),
+            "sendRegistrationCode",
+            json!({"email":"first@example.invalid"}),
         ),
     ] {
         let (registered, waiting) = tokio::sync::oneshot::channel();

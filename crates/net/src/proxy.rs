@@ -46,10 +46,14 @@ impl Proxy {
 
 /// The proxy for a connection to `host`, unless the host is this computer.
 pub fn for_host(host: &str) -> Option<Proxy> {
+    if is_local(host) { None } else { system() }
+}
+
+/// Whether `host`, as a URL writes it, is this computer.
+pub fn is_local(host: &str) -> bool {
     let bare = host.trim_start_matches('[').trim_end_matches(']');
-    let local = bare.eq_ignore_ascii_case("localhost")
-        || bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback());
-    if local { None } else { system() }
+    bare.eq_ignore_ascii_case("localhost")
+        || bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 /// The proxy set in System Settings › Network, if any.

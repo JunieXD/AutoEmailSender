@@ -426,9 +426,9 @@ operations! {
         /// 兑换 Plus 天数，返回天数和新的到期时间。
         "redeemCode" [none] => redeem_code(cloud_api::CodeRequest) -> cloud_api::Redeemed;
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
-        "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();
+        "sendRegistrationCode" [confirm] => send_registration_code(AccountEmail) -> ();
         /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。
-        "registerAccount" [confirm] => register_account(AccountVerification) -> account::State;
+        "registerAccount" [none] => register_account(AccountVerification) -> account::State;
         /// 登录账号；密码只在本机派生钥匙。账号正在注销时返回 account_deleting，带 restore 再登录一次撤销注销。
         "loginAccount" [none] => login_account(AccountLogin) -> account::State;
         /// 向已注册的邮箱发送重置密码验证码。

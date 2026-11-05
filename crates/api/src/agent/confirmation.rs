@@ -384,11 +384,13 @@ async fn describe(
                 input.email,
             )
         }
-        "registerAccount" => {
-            let input: crate::accounts::AccountVerification = parse(input)?;
+        // Agreed to before the address goes to the server, as the window asks before sending the
+        // code; the code then proves it for registering.
+        "sendRegistrationCode" => {
+            let input: crate::accounts::AccountEmail = parse(input)?;
             object(
                 &format!(
-                    "注册账号并登录，代表你{}",
+                    "把这个邮箱交给官方服务器、发注册验证码，代表你{}",
                     agreeing("用户服务协议和隐私政策", account::terms())
                 ),
                 input.email,
@@ -1189,12 +1191,12 @@ mod tests {
                 "deleteTodo",
                 "enableCloudBackup",
                 "mergeMentors",
-                "registerAccount",
                 "rescheduleEmail",
                 "resendEmail",
                 "resetAccountPassword",
                 "retryEmail",
                 "sendEmailNow",
+                "sendRegistrationCode",
             ])
         );
         let conditional: BTreeSet<_> = catalog
