@@ -22,7 +22,7 @@ use tracing::Instrument;
 use ts_rs::TS;
 /// Crawls share it: they can use the same model and websites.
 type Cooldown = model::background::Cooldown<i64>;
-const READ_FAILED: &str = "抓取数据暂时无法读取，请继续或重启应用。";
+const READ_FAILED: &str = "整理数据暂时无法读取，请继续或重启应用。";
 const SAVE_FAILED: &str = "网页资料暂时无法保存，请继续或重启应用。";
 const MODEL_READ_FAILED: &str = "模型配置暂时无法读取，请重试。";
 const CANDIDATE_READ_FAILED: &str = "候选资料暂时无法读取，请继续或重启应用。";
@@ -1008,7 +1008,7 @@ async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Er
             sqlx::query!(
                 r#"UPDATE crawl
                 SET state = 'failed',
-                    error = '本次抓取未能处理任何页面，请查看页面原因后重试'
+                    error = '本次整理未能处理任何页面，请查看页面原因后重试'
                 WHERE id = ? AND NOT EXISTS (
                     SELECT 1
                     FROM crawl_page
@@ -1034,7 +1034,7 @@ async fn finish(db: &SqlitePool, at: i64) -> Result<Vec<CrawlFinished>, sqlx::Er
         let mut messages = Vec::new();
         if activity.iter().any(|p| p.candidate_id.is_none()) {
             messages.push(format!(
-                "抓取完成：找到 {candidates} 位候选，{failed} 个页面未打开"
+                "整理完成：找到 {candidates} 位候选，{failed} 个页面未打开"
             ));
         }
         let enriched = activity
@@ -1167,7 +1167,7 @@ async fn run_with_pages(
                             Err(e) => {
                                 crate::span(c.crawl).in_scope(|| tracing::error!("crawl database: {e}"));
                                 Outcome::Pause(
-                                    "抓取数据暂时无法保存，请继续或重启应用。".into(),
+                                    "整理数据暂时无法保存，请继续或重启应用。".into(),
                                     None,
                                 )
                             }
@@ -1189,7 +1189,7 @@ async fn run_with_pages(
                         crate::span(c.crawl).in_scope(|| tracing::error!("crawl worker: {e}"));
                         (
                             c,
-                            Outcome::Pause("抓取意外中断，请继续或重启应用。".into(), None),
+                            Outcome::Pause("整理意外中断，请继续或重启应用。".into(), None),
                         )
                     }
                 };

@@ -536,32 +536,32 @@ operations! {
         /// 查询今天待处理的邮件和任务。
         "todayWork" [none] => today_work(TodayWorkQuery) -> stats::TodayWork;
     }
-    "抓取与候选" {
+    "整理与候选" {
         /// 把你从学校官网整理的导师送进候选区，由用户审核后入库；收集导师前先读这个操作的说明。
         #[doc = include_str!("submit-candidates.md")]
         "submitCandidates" [none] => submit_candidates(crawl::submit::SubmitCandidates)
             -> crawl::submit::Submitted;
-        /// 检查并整理抓取网址，urls 为按行分隔的网址。
+        /// 检查并规范化整理用的网址，urls 为按行分隔的网址。
         "checkCrawlUrls" [none] => check_crawl_urls(CrawlUrls) -> Vec<String>;
-        /// 查询指定时间范围内抓取的后台进度。
+        /// 查询指定时间范围内整理的后台进度。
         "crawlWork" [none] => crawl_work(CrawlWorkQuery) -> Vec<crawl::queue::CrawlSummary>;
-        /// 从给定网址启动导师抓取。
+        /// 从给定网址开始整理导师信息。
         "startCrawl" [none] => start_crawl(CrawlStart) -> CrawlId;
-        /// 分页列出抓取记录。
+        /// 分页列出整理记录。
         "listCrawls" [none] => list_crawls(CrawlQuery) -> crawl::queue::CrawlList;
-        /// 列出可用于筛选的抓取。
+        /// 列出可用于筛选的整理记录。
         "crawlOptions" [none] => crawl_options(Nothing) -> Vec<crawl::queue::CrawlOption>;
-        /// 读取指定 id 的抓取详情。
+        /// 读取指定 id 的整理详情。
         "getCrawl" [none] => get_crawl(CrawlDetailQuery) -> crawl::queue::CrawlDetail;
-        /// 暂停指定抓取。
+        /// 暂停指定整理。
         "pauseCrawl" [none] => pause_crawl(CrawlId) -> ();
-        /// 继续指定抓取。
+        /// 继续指定整理。
         "resumeCrawl" [none] => resume_crawl(CrawlId) -> ();
-        /// 取消指定抓取。
+        /// 取消指定整理。
         "cancelCrawl" [none] => cancel_crawl(CrawlId) -> ();
-        /// 重试抓取中失败或指定的页面。
+        /// 重试整理中失败或指定的页面。
         "retryCrawl" [none] => retry_crawl(CrawlRetry) -> u64;
-        /// 永久删除指定抓取及尚未审核的候选资料。
+        /// 永久删除指定整理及尚未审核的候选资料。
         "deleteCrawl" [confirm] => delete_crawl(CrawlId) -> ();
         /// 预览指定候选导师可补充的资料。
         "previewEnrich" [none] => preview_enrich(CandidateIds) -> crawl::enrich::EnrichPlan;

@@ -155,7 +155,7 @@ export function MentorsPage() {
               search={findSearch({ tab: "crawl" })}
               className={buttonVariants({ variant: "ghost", className: "w-full justify-start" })}
             >
-              智能抓取
+              智能整理
             </Link>
             <Link
               to="/find"

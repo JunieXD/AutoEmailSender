@@ -120,7 +120,7 @@ export function WelcomePage() {
       title: "添加导师",
       done: mentors.data.total > 0,
       result: `${mentors.data.total} 位导师`,
-      intro: "从导师库挑选，从学院网站智能抓取，导入整理好的表格，或者一位一位手动添加。",
+      intro: "从导师库挑选，从学院官网智能整理，导入表格，或者逐位手动添加。",
       action: <AddMentors />,
     },
     {
@@ -404,7 +404,7 @@ function AddMentors() {
         从导师库添加
       </Link>
       <Link to="/find" search={findSearch({ tab: "crawl" })} className={buttonVariants({ variant: "quiet" })}>
-        智能抓取
+        智能整理
       </Link>
       <Button variant="quiet" onClick={() => setImporting(true)}>
         导入表格

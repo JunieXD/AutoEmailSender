@@ -1554,7 +1554,7 @@ async fn enrichment_completion_counts_unreported_candidates_and_distinguishes_cr
         .await
         .unwrap();
         let results = finish(&db, 150).await.unwrap();
-        assert_eq!(results[0].message.contains("抓取完成"), crawling);
+        assert_eq!(results[0].message.contains("整理完成"), crawling);
         assert!(results[0].message.contains("信息补全完成：2 位"));
         assert_eq!(
             sqlx::query_scalar::<_, Option<i64>>("SELECT reported_at FROM crawl WHERE id=?")
@@ -1577,7 +1577,7 @@ async fn enrichment_completion_counts_unreported_candidates_and_distinguishes_cr
             .await
             .unwrap();
         let results = finish(&db, 250).await.unwrap();
-        assert!(results[0].message.contains("抓取完成"));
+        assert!(results[0].message.contains("整理完成"));
         assert!(!results[0].message.contains("信息补全"));
     }
 }
@@ -1625,7 +1625,7 @@ async fn enrichment_completion_includes_work_before_pause(db: SqlitePool) {
     assert_eq!(events.len(), 1);
     let event = &events[0];
     assert!(event.message.contains("信息补全完成：2 位"));
-    assert!(!event.message.contains("抓取完成"));
+    assert!(!event.message.contains("整理完成"));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

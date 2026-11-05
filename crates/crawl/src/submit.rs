@@ -153,7 +153,7 @@ pub async fn submit(
             .ok_or(SubmitError::Deleted)?;
         if kind != "agent" {
             return Err(SubmitError::Invalid(
-                "只能追加到 Agent 提交的抓取记录。".into(),
+                "只能追加到 Agent 提交的整理记录。".into(),
             ));
         }
         sqlx::query!(
@@ -206,7 +206,7 @@ pub async fn submit(
         .await?;
     if result.total > PERSON_LIMIT {
         return Err(SubmitError::Invalid(
-            "这条抓取记录最多容纳 1000 位候选导师，请不带 crawlId 重新提交，新开一条记录。".into(),
+            "这条整理记录最多容纳 1000 位候选导师，请不带 crawlId 重新提交，新开一条记录。".into(),
         ));
     }
     tx.commit().await?;

@@ -137,7 +137,7 @@ fn crawl_content(
     };
     let mut out = environment();
     out.push_str(&format!(
-        "抓取编号：{}
+        "整理编号：{}
 起始网址：{urls}
 开始时间：{started}（本机时间）
 当前状态：{state}
@@ -148,7 +148,7 @@ fn crawl_content(
     ));
     let lines = crawl_lines(dir, detail.summary.id, created_at)?;
     out.push_str(if lines.is_empty() {
-        "没有找到这次抓取的日志。\n"
+        "没有找到这次整理的日志。\n"
     } else {
         &lines
     });
@@ -164,7 +164,7 @@ fn crawl_filename(detail: &CrawlDetail, date: &str) -> Result<String, Box<dyn Er
         None => "Agent 提交".into(),
     };
     // IPv6 hostnames contain colons, which Windows does not allow in filenames.
-    Ok(format!("抓取日志 {} {date}.txt", host.replace(':', "_")))
+    Ok(format!("整理日志 {} {date}.txt", host.replace(':', "_")))
 }
 
 pub fn export_crawl(
@@ -274,7 +274,7 @@ mod tests {
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
             std::env::consts::ARCH,
-            "抓取编号：5",
+            "整理编号：5",
             &detail.urls[0],
             started,
             "已暂停",
@@ -285,7 +285,7 @@ mod tests {
         }
         assert_eq!(
             crawl_filename(&detail, "2026-10-26").unwrap(),
-            "抓取日志 school.example.edu 2026-10-26.txt"
+            "整理日志 school.example.edu 2026-10-26.txt"
         );
         let file = std::fs::File::create(dir.path().join("app.2026-10-26.log")).unwrap();
         let subscriber = tracing_subscriber::fmt()
@@ -302,7 +302,7 @@ mod tests {
         detail.urls.clear();
         assert_eq!(
             crawl_filename(&detail, "2026-10-26").unwrap(),
-            "抓取日志 Agent 提交 2026-10-26.txt"
+            "整理日志 Agent 提交 2026-10-26.txt"
         );
         assert!(
             crawl_content(dir.path(), &detail, created_at, started)

@@ -32,7 +32,7 @@ function LocalBackup() {
     <Row label="本地备份">
       <p className="text-sm text-muted-foreground">
         把全部数据导出成一个文件，换电脑或者数据丢了时用它恢复。备份里没有邮箱授权码、API
-        Key、抓取时保存的网页和日志，恢复后要重新填授权码和 API Key。
+        Key、整理时保存的网页和日志，恢复后要重新填授权码和 API Key。
       </p>
       <div className="mt-1.5 flex flex-col items-start gap-1.5">
         <Button disabled={exported.isPending} onClick={() => exported.mutate()}>
@@ -308,7 +308,7 @@ function EnableDialog({
                 <>
                   <p>
                     每天把导师、邮件、模板和材料等数据加密后上传到官方服务器，数据有变化才上传。邮箱授权码、API
-                    Key、抓取的网页和日志不上传。
+                    Key、整理时保存的网页和日志不上传。
                   </p>
                   <p>
                     备份钥匙由账号密码在这台电脑上算出，服务器读不了备份。用邮箱验证码重置密码后，旧的备份就解不开了。

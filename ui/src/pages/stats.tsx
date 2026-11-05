@@ -22,7 +22,7 @@ const TREND: readonly [Series, Series] = [
   { name: "回信", unit: "封", color: "var(--info)" },
 ];
 const PURPOSES: Record<UsagePurpose, string> = {
-  crawl: "智能抓取",
+  crawl: "智能整理",
   match: "匹配分析",
   draft: "AI 起草",
   rewrite: "AI 改写",
@@ -289,11 +289,11 @@ function Mentors({ overview: o }: { overview: MentorOverview }) {
   if (o.total === 0)
     return (
       <Empty>
-        还没有导师。去
+        尚无导师，可去
         <Link to="/find" search={findSearch({})} className="mx-1 text-brand-text hover:underline">
           找导师
         </Link>
-        抓取或导入吧。
+        整理或添加。
       </Empty>
     );
   return (

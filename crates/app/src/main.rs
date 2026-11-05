@@ -56,18 +56,18 @@ async fn export_crawl_log(
 ) -> Result<bool, String> {
     let detail = crawl::queue::detail(&ctx.db, id, 1)
         .await
-        .map_err(|e| format!("抓取日志未能导出：{e}"))?
-        .ok_or("这次抓取已被删除")?;
+        .map_err(|e| format!("整理日志未能导出：{e}"))?
+        .ok_or("这次整理已被删除")?;
     let at = DateTime::from_timestamp_millis(detail.summary.created_at)
-        .ok_or("抓取开始时间不正确，无法导出日志")?;
+        .ok_or("整理开始时间不正确，无法导出日志")?;
     let dir = data_dir(&app)
-        .map_err(|e| format!("抓取日志未能导出：{e}"))?
+        .map_err(|e| format!("整理日志未能导出：{e}"))?
         .join("logs");
     tauri::async_runtime::spawn_blocking(move || {
-        logs::export_crawl(&app, &dir, &detail, at).map_err(|e| format!("抓取日志未能导出：{e}"))
+        logs::export_crawl(&app, &dir, &detail, at).map_err(|e| format!("整理日志未能导出：{e}"))
     })
     .await
-    .map_err(|e| format!("抓取日志未能导出：{e}"))?
+    .map_err(|e| format!("整理日志未能导出：{e}"))?
 }
 
 /// Saves the exported table through the native file picker, away from the async executor.

@@ -36,7 +36,7 @@ pub(super) async fn submit_candidates(
         .await
         .map_err(|e| match e {
             crawl::submit::SubmitError::Invalid(message) => CallError::invalid(message),
-            crawl::submit::SubmitError::Deleted => CallError::not_found("这次抓取已被删除"),
+            crawl::submit::SubmitError::Deleted => CallError::not_found("这次整理已被删除"),
             crawl::submit::SubmitError::Db(error) => error.into(),
         })
 }
@@ -104,7 +104,7 @@ pub(super) async fn get_crawl(
 ) -> Result<queue::CrawlDetail, CallError> {
     queue::detail(&ctx.db, input.id, input.page)
         .await?
-        .ok_or_else(|| CallError::not_found("这次抓取已被删除"))
+        .ok_or_else(|| CallError::not_found("这次整理已被删除"))
 }
 pub(super) async fn pause_crawl(ctx: &Context, input: CrawlId) -> Result<(), CallError> {
     queue::control(&ctx.db, input.id, "pause", now()).await?;

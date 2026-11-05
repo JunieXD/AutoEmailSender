@@ -556,7 +556,7 @@ pub async fn run(path: &Path) -> Result {
     );
     crawl::enrich::start(&db, &enrich_ids, NOW).await?;
     report(
-        "后台抓取与补全进度（10 万页、1 万候选）",
+        "后台整理与补全进度（10 万页、1 万候选）",
         median(async || crawl::queue::work(&db, NOW, NOW + 1).await.map(drop)).await?,
         home,
     );

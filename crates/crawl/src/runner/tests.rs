@@ -619,7 +619,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
                 fields: MentorFields {
                     name: name.into(),
                     emails: emails.into_iter().map(Into::into).collect(),
-                    research: Some("抓取方向".into()),
+                    research: Some("整理方向".into()),
                     ..Default::default()
                 },
                 papers: vec!["论文".into()],
@@ -1878,7 +1878,7 @@ async fn b3_redirect_external_is_rejected(db: SqlitePool) {
     let Outcome::Failed(reason) = process_claim(&db, &site, &claim).await else {
         panic!("external redirect was not rejected")
     };
-    assert_eq!(reason, "页面超出了这次抓取允许访问的网站。");
+    assert_eq!(reason, "页面超出了这次整理允许访问的网站。");
     assert_eq!(*site.visits.lock().unwrap(), vec!["/old"]);
     assert!(provider.requests.try_recv().is_err());
     let identities: Vec<String> = sqlx::query_scalar("SELECT url FROM candidate_profile")

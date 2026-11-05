@@ -71,7 +71,7 @@ impl CrawlError {
     pub fn message(&self) -> String {
         match self {
             Self::Url => "网址无法使用。请填写公开的 http 或 https 网页地址。".into(),
-            Self::OutsideSite => "页面超出了这次抓取允许访问的网站。".into(),
+            Self::OutsideSite => "页面超出了这次整理允许访问的网站。".into(),
             Self::Redirect => "网页的跳转地址无效，或跳转次数过多。请检查原网址。".into(),
             Self::TooLarge => "网页过大，无法读取。请改用具体的名单页或导师个人页。".into(),
             Self::TimedOut => "读取网页超时。请检查网络，稍后重试。".into(),

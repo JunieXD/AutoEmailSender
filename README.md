@@ -18,9 +18,9 @@
 
 ---
 
-> 利用 Agent 从学校导师页智能抓取导师信息，结合 LLM 分析匹配度，完成模板改写、定时批量发送和回复追踪。
+> 利用 Agent 从学校导师页智能整理导师信息，结合 LLM 分析匹配度，完成模板改写、定时批量发送和回复追踪。
 
-Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取、匹配分析、邮件草稿生成，到定时批量发送和回复追踪，整个流程在一个应用内完成。适合要联系很多位导师、又不想群发模板的同学。
+Auto Email Sender 是一个本地运行的导师联系工具。从导师信息整理、匹配分析、邮件草稿生成，到定时批量发送和回复追踪，整个流程在一个应用内完成。适合要联系很多位导师、又不想群发模板的同学。
 
 整理信息和重复写信的活交给工具，发给谁、什么时候发、发什么内容，由你自己决定。
 
@@ -50,7 +50,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 
 - [官网](https://juniexd.github.io/AutoEmailSender/)
 - [文档](https://juniexd.github.io/AutoEmailSender/docs/getting-started)
-- [导师抓取 Skill](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)
+- [导师整理 Skill](https://juniexd.github.io/AutoEmailSender/docs/mentor-crawler-skill)
 - [下载桌面版](https://github.com/JunieXD/AutoEmailSender/releases)
 - [问题反馈](https://github.com/JunieXD/AutoEmailSender/issues)
 - QQ 交流群：`952383261`
@@ -71,7 +71,7 @@ Auto Email Sender 是一个本地运行的导师联系工具。从导师抓取�
 
 ### 导师资料
 
-- **智能抓取：** 从学校官网整理邮箱、院系、研究方向、近期论文和主页链接，抓取结果要经你审核，才会进入导师库。
+- **智能整理：** 从学校官网整理邮箱、院系、研究方向、近期论文和主页链接，整理结果要经你审核，才会进入导师库。
 - **社区导师库：** 浏览并导入已整理的公开导师资料，导入前可预览差异和处理冲突。
 
 ### 匹配与写信

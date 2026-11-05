@@ -756,21 +756,21 @@ async fn describe(
                         .chain(row.school)
                         .collect::<Vec<_>>();
                     let name = if parts.is_empty() {
-                        "导师抓取".into()
+                        "智能整理".into()
                     } else {
                         parts.join(" ")
                     };
                     object(
                         &format!(
-                            "永久删除 1 项抓取记录、{} 位未审核候选、{} 个抓取页面和 {} 项运行记录",
+                            "永久删除 1 项整理记录、{} 位未审核候选、{} 个已读取的页面和 {} 项运行记录",
                             row.candidates, row.pages, row.runs
                         ),
                         name,
                     )
                 }
                 None => object(
-                    "永久删除 1 项抓取记录",
-                    "找不到的抓取（可能已被删除）".into(),
+                    "永久删除 1 项整理记录",
+                    "找不到的整理记录（可能已被删除）".into(),
                 ),
             }
         }

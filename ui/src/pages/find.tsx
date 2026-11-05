@@ -37,7 +37,7 @@ const FILTERS = {
 } as const;
 const EMPTY: Decisions = { take: [], matches: [], restore: [] };
 const TABS = ["candidates", "crawl", "library"] as const;
-const TAB_NAMES: Record<(typeof TABS)[number], string> = { candidates: "候选", crawl: "智能抓取", library: "导师库" };
+const TAB_NAMES: Record<(typeof TABS)[number], string> = { candidates: "候选", crawl: "智能整理", library: "导师库" };
 const STAGES: Record<CrawlStage, string> = {
   lists: "正在找名单",
   profiles: "正在读个人页",
@@ -180,7 +180,7 @@ function Crawls() {
           onWrite={() => start.mutate()}
         >
           <AiIcon />
-          {start.isPending ? "正在开始…" : "开始抓取"}
+          {start.isPending ? "正在开始…" : "开始整理"}
         </ModelAction>
         <div id="crawl-url-error" className="text-sm text-muted-foreground">
           {urls.trim() &&
@@ -189,9 +189,9 @@ function Crawls() {
         <ErrorText error={models.error ?? start.error} />
       </section>
       {s.detail && <OpenedCrawl key={s.detail} id={s.detail} />}
-      <h2 className="mb-3 text-lg font-medium">抓取记录</h2>
+      <h2 className="mb-3 text-lg font-medium">整理记录</h2>
       <ErrorText error={records.error} />
-      {records.data?.total === 0 && <p className="text-muted-foreground">尚无抓取记录，从上方填写网址开始</p>}
+      {records.data?.total === 0 && <p className="text-muted-foreground">尚无整理记录，从上方填写网址开始</p>}
       <div className="space-y-3">
         {records.data?.crawls
           .filter((c) => c.id !== s.detail)
@@ -297,8 +297,8 @@ function CrawlControls({ crawl: c }: { crawl: CrawlSummary }) {
               取消
             </Button>
           }
-          message="取消这次抓取？已找到的候选和补到的资料会保留，仍可审核。"
-          action="取消抓取"
+          message="取消这次整理？已找到的候选和补到的资料会保留，仍可审核。"
+          action="取消整理"
           onConfirm={() => mutation.mutate("cancelCrawl")}
         />
       )}
@@ -400,17 +400,17 @@ function CrawlDetails({ id, modelId, modelIds }: { id: number; modelId: number |
           <div className="flex flex-wrap items-center gap-3">
             {desktop && (
               <Button variant="quiet" disabled={exported.isPending} onClick={() => exported.mutate()}>
-                导出这次抓取的日志
+                导出这次整理的日志
               </Button>
             )}
             {exported.data && <span className="text-muted-foreground">已导出</span>}
             <Confirm
               trigger={
                 <Button variant="ghost" className="ml-auto text-destructive" disabled={remove.isPending}>
-                  删除这次抓取
+                  删除这次整理
                 </Button>
               }
-              message="删除这次抓取？运行记录、读过的页面和还没处理的候选会一起删除；已经接受的导师不受影响。"
+              message="删除这次整理？运行记录、读过的页面和还没处理的候选会一起删除；已经接受的导师不受影响。"
               action="删除"
               onConfirm={() => remove.mutate()}
             />
@@ -461,12 +461,12 @@ function Candidates() {
       <div className="shrink-0 space-y-3 px-6 pb-4 phone:px-4">
         <div className="flex flex-wrap items-center gap-2">
           <NativeSelect
-            aria-label="按抓取筛选"
+            aria-label="按整理记录筛选"
             className="max-w-full"
             value={s.crawl ?? ""}
             onChange={(e) => change({ crawl: Number(e.target.value) || undefined })}
           >
-            <option value="">全部抓取</option>
+            <option value="">全部整理记录</option>
             {crawls.data?.map((c) => (
               <option key={c.id} value={c.id}>
                 {day(c.createdAt)} {time(c.createdAt)} · {crawlName(c)}
@@ -518,7 +518,7 @@ function Candidates() {
         )}
         {items.length === 0 && !list.isPending && (
           <p className="py-12 text-center text-muted-foreground">
-            {s.processed ? "暂无已处理的候选" : "暂无符合条件的候选，可从智能抓取开始"}
+            {s.processed ? "暂无已处理的候选" : "暂无符合条件的候选，可从智能整理开始"}
           </p>
         )}
         <div className="space-y-2">
@@ -664,7 +664,7 @@ const ENRICH_FIELDS: Record<EnrichField, string> = {
 };
 const ENRICH_SKIP = {
   missing_profile: "没有个人页",
-  deleted_crawl: "原抓取已删除",
+  deleted_crawl: "原整理记录已删除",
   complete: "资料已全",
   active: "正在补全",
   reviewed: "已处理或已删除",
@@ -725,7 +725,7 @@ function EnrichDialog({
             。仅为估算，以实际页面和服务商报告为准。
           </p>
           <p className="text-muted-foreground">
-            只补空着的资料，保留已有值。网页内容和候选姓名、别名、已有单位将发给模型服务商。可在后台暂停或取消；所属抓取已暂停时，补全也会等待继续。
+            只补空着的资料，保留已有值。网页内容和候选姓名、别名、已有单位将发给模型服务商。可在后台暂停或取消；所属整理已暂停时，补全也会等待继续。
           </p>
           <ErrorText error={preview.error ?? models.error ?? start.error} />
         </DialogBody>
