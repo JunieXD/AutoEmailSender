@@ -120,6 +120,8 @@ pub enum ErrorCode {
     /// expired.
     SignedOut,
     NeedsAgreement,
+    /// Logging in to an account in its cooling-off period; logging in with `restore` keeps it.
+    AccountDeleting,
     Internal,
 }
 
@@ -407,37 +409,41 @@ operations! {
     "账号" {
         /// 从本机读取账号状态和邮箱，不连接服务器。
         "getAccount" [none] => get_account(Nothing) -> account::State;
-        /// 读取服务器上的赞助到期时间。
-        "getSponsor" [none] => get_sponsor(Nothing) -> account::Sponsor;
-        /// 读取赞助时长和邮件追踪额度包的价格，以及带当前账号编号的爱发电链接。
-        "getSponsorTiers" [none] => get_sponsor_tiers(Nothing) -> cloud_api::SponsorTiers;
+        /// 读取服务器上的 Plus 到期时间。
+        "getPlus" [none] => get_plus(Nothing) -> account::Plus;
+        /// 读取可以买的 Plus 时长和邮件追踪额度包：价格（分）、现在买的话到期到哪天、能不能买、最多能买到哪天，以及这个账号是不是退过款。
+        "getPlusItems" [none] => get_plus_items(Nothing) -> cloud_api::plus::Items;
+        /// 下单购买一种 Plus 时长或额度包，返回订单编号和付款页地址；用户在浏览器里打开付款页完成付款。
+        "createPlusOrder" [none] => create_plus_order(PlusOrderInput) -> cloud_api::plus::Created;
+        /// 查订单开通了没有；开通后返回新的 Plus 到期时间和追踪额度。
+        "getPlusOrder" [none] => get_plus_order(PlusOrderId) -> cloud_api::plus::OrderState;
+        /// 同意应用里这一版的用户服务协议和隐私政策。
+        "acceptTerms" [none] => accept_terms(Nothing) -> ();
         /// 读取邀请码、已邀请人数和填写期限。
         "getInvite" [none] => get_invite(Nothing) -> cloud_api::Invite;
-        /// 填写同学的邀请码，双方各得 3 天赞助。
-        "fillInvite" [none] => fill_invite(cloud_api::CodeRequest) -> account::Sponsor;
-        /// 兑换赞助天数，返回天数和新的到期时间。
+        /// 填写同学的邀请码，双方各得 3 天 Plus。
+        "fillInvite" [none] => fill_invite(cloud_api::CodeRequest) -> account::Plus;
+        /// 兑换 Plus 天数，返回天数和新的到期时间。
         "redeemCode" [none] => redeem_code(cloud_api::CodeRequest) -> cloud_api::Redeemed;
-        /// 用爱发电订单号开通赞助或加邮件追踪额度，返回新的到期时间和剩余额度。
-        "claimSponsorOrder" [none] => claim_sponsor_order(SponsorOrder) -> cloud_api::Account;
         /// 向注册邮箱发送验证码，60 秒后可重发，10 分钟内有效。
         "sendRegistrationCode" [none] => send_registration_code(AccountEmail) -> ();
         /// 用验证码注册并登录；密码至少 8 位，只在本机派生钥匙。
         "registerAccount" [none] => register_account(AccountVerification) -> account::State;
-        /// 登录账号；密码只在本机派生钥匙。
-        "loginAccount" [none] => login_account(AccountCredentials) -> account::State;
+        /// 登录账号；密码只在本机派生钥匙。账号正在注销时返回 account_deleting，带 restore 再登录一次撤销注销。
+        "loginAccount" [none] => login_account(AccountLogin) -> account::State;
         /// 向已注册的邮箱发送重置密码验证码。
         "sendPasswordResetCode" [none] => send_password_reset_code(AccountEmail) -> ();
         /// 用验证码重置密码，所有设备的旧会话失效，旧的云端备份用新密码解不开。
         "resetAccountPassword" [confirm] => reset_account_password(AccountVerification) -> ();
         /// 撤销当前设备的会话并退出登录。
         "logoutAccount" [none] => logout_account(Nothing) -> ();
-        /// 输入邮箱和密码注销账号，删除服务器上的全部账号数据，本机数据保留。
-        "deleteAccount" [confirm] => delete_account(AccountCredentials) -> ();
+        /// 输入邮箱和密码注销账号：15 天冷静期后删除服务器上的全部账号数据，期间登录可以撤销；本机数据保留。返回删除时间。
+        "deleteAccount" [confirm] => delete_account(AccountCredentials) -> i64;
     }
     "云端备份" {
         /// 读取本机的云端备份设置、上次备份的时间和最近的失败，不连接服务器。
         "getCloudBackup" [none] => get_cloud_backup(Nothing) -> backup::cloud::Status;
-        /// 读取赞助到期时间和云端那份备份：大小、是不是这台电脑的、导出时间和导师、邮件数。
+        /// 读取 Plus 到期时间和云端那份备份：大小、是不是这台电脑的、导出时间和导师、邮件数。
         "getCloudBackupServer" [none] => get_cloud_backup_server(Nothing) -> backup::cloud::Server;
         /// 开启每天自动备份，把加密后的数据上传到官方服务器。云端是另一台电脑的备份时返回它的信息，
         /// 用 replace 带上它的 committedAt 再调用一次才替换。没有备份钥匙时要带上账号密码。
@@ -450,9 +456,9 @@ operations! {
         "deleteCloudBackup" [confirm] => delete_cloud_backup(Nothing) -> ();
     }
     "邮件追踪" {
-        /// 读取开关、上次同步失败的原因和服务器上的赞助到期时间、剩余额度（读不到时带上原因）。
+        /// 读取开关、上次同步失败的原因和服务器上的 Plus 到期时间、追踪额度（读不到时带上原因）。
         "getTracking" [none] => get_tracking(Nothing) -> tracking::Status;
-        /// 打开或关闭邮件追踪；打开要已登录、赞助有效。
+        /// 打开或关闭邮件追踪；打开要已登录、Plus 有效。
         "setTracking" [none] => set_tracking(tracking::TrackingSwitch) -> ();
     }
     "导师库" {
@@ -462,7 +468,7 @@ operations! {
         "listLibraryMentors" [none] => library_mentors(cloud_api::library::ListRequest) -> library::Mentors;
         /// 预览导师库记录，不含邮箱，带本机标记。
         "previewLibraryMentor" [none] => library_preview(LibraryId) -> library::Preview;
-        /// 查询今天还能添加多少位，赞助者为 null。
+        /// 查询今天还能添加多少位。
         "getLibraryQuota" [none] => library_quota(Nothing) -> cloud_api::library::Quota;
         /// 取得完整资料并预览添加结果；第一次取得记录会计入今天的数量。
         "previewLibraryAdd" [none] => library_add_preview(library::add::Selection) -> library::add::Preview;

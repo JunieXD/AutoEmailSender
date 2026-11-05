@@ -28,7 +28,7 @@ export function TrackingNote({ tracking: t }: { tracking: EmailTracking }) {
 
 const UNTRACKED = {
   no_quota: "额度不足",
-  not_sponsored: "赞助已到期",
+  no_plus: "Plus 已到期",
   expired: "交出 30 天内一直没能登记到服务器",
 } satisfies Record<Exclude<EmailTracking["state"], "pending" | "tracked">, string>;
 

@@ -25,7 +25,7 @@ impl Setup {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(State {
             now: NOW,
-            sponsor_until: Some(NOW + DAY),
+            plus_until: Some(NOW + DAY),
             ..Default::default()
         })
         .await
@@ -35,8 +35,8 @@ impl Setup {
         fs::create_dir(&ctx.materials).unwrap();
         fs::write(ctx.materials.join("1"), RESUME).unwrap();
         sqlx::query(
-            r#"INSERT INTO account (id, email, token, backup_key)
-            VALUES (1, 'student@example.invalid', 'token', ?)"#,
+            r#"INSERT INTO account (terms, id, email, token, backup_key)
+            VALUES ('9999-12-31', 1, 'student@example.invalid', 'token', ?)"#,
         )
         .bind(KEY.as_slice())
         .execute(&ctx.db)
@@ -282,15 +282,15 @@ async fn uploads_of_attempts_that_never_committed_do_not_fill_the_room(db: Sqlit
     .unwrap();
     // The commit is refused, leaving its uploads behind as a lost connection would.
     setup.server.state.lock().unwrap().before_commit =
-        Some(Box::new(|state| state.sponsor_until = None));
+        Some(Box::new(|state| state.plus_until = None));
     assert!(matches!(
         cloud::back_up(&setup.ctx, NOW + 1).await,
-        Err(Error::SponsorRequired)
+        Err(Error::PlusRequired)
     ));
     assert_eq!(setup.uploads(), 3 + 3);
     {
         let mut state = setup.server.state.lock().unwrap();
-        state.sponsor_until = Some(NOW + DAY);
+        state.plus_until = Some(NOW + DAY);
         // As the databases of many attempts like it.
         state.objects.insert(
             "d".repeat(32),
@@ -459,7 +459,7 @@ async fn another_computers_commit_during_a_backup_is_not_replaced(db: SqlitePool
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn backups_stop_when_off_unsponsored_or_logged_out(db: SqlitePool) {
+async fn backups_stop_when_off_without_plus_or_logged_out(db: SqlitePool) {
     let setup = Setup::new(db).await;
     cloud::disable(&setup.ctx.db).await.unwrap();
     // Turning it on is where the user agrees, so nothing goes out while it is off.
@@ -471,10 +471,10 @@ async fn backups_stop_when_off_unsponsored_or_logged_out(db: SqlitePool) {
         .execute(&setup.ctx.db)
         .await
         .unwrap();
-    setup.server.state.lock().unwrap().sponsor_until = Some(NOW);
+    setup.server.state.lock().unwrap().plus_until = Some(NOW);
     assert!(matches!(
         cloud::back_up(&setup.ctx, NOW).await,
-        Err(Error::SponsorRequired)
+        Err(Error::PlusRequired)
     ));
     let status = cloud::status(&setup.ctx).await.unwrap();
     assert!(status.enabled && status.failure.is_none());

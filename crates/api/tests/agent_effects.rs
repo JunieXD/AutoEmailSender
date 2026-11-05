@@ -36,7 +36,7 @@ async fn library_context(db: SqlitePool) -> (Context, test_fixtures::provider::P
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        "INSERT INTO account (id,email,token) VALUES (1,'student@example.invalid','test-token')",
+        "INSERT INTO account (terms,id,email,token) VALUES ('9999-12-31',1,'student@example.invalid','test-token')",
     )
     .execute(&ctx.db)
     .await
@@ -69,7 +69,7 @@ async fn library_response(
             content: serde_json::to_string(&cloud_api::library::Fetched {
                 records: vec![record],
                 missing: vec![],
-                remaining: Some(199),
+                remaining: 199,
             })
             .unwrap(),
         })
@@ -369,7 +369,7 @@ async fn account_confirmations_use_the_input_email_without_the_password(db: Sqli
 async fn enabling_cloud_backup_is_bound_to_the_account_it_was_confirmed_for(db: SqlitePool) {
     let ctx = Context::new(db, net::Net::new(vec![]).unwrap(), std::path::Path::new(""));
     sqlx::query(
-        "INSERT INTO account (id,email,token) VALUES (1,'student@example.invalid','test-token')",
+        "INSERT INTO account (terms,id,email,token) VALUES ('9999-12-31',1,'student@example.invalid','test-token')",
     )
     .execute(&ctx.db)
     .await
@@ -384,7 +384,7 @@ async fn enabling_cloud_backup_is_bound_to_the_account_it_was_confirmed_for(db: 
                 .await
                 .unwrap();
             sqlx::query(
-                "INSERT INTO account (id,email,token) VALUES (1,'other@example.invalid','other')",
+                "INSERT INTO account (terms,id,email,token) VALUES ('9999-12-31',1,'other@example.invalid','other')",
             )
             .execute(&ctx.db)
             .await
@@ -403,7 +403,7 @@ async fn library_addition_confirms_before_changing_an_approved_recipient(db: Sql
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        "INSERT INTO account (id,email,token) VALUES (1,'student@example.invalid','test-token')",
+        "INSERT INTO account (terms,id,email,token) VALUES ('9999-12-31',1,'student@example.invalid','test-token')",
     )
     .execute(&ctx.db)
     .await
@@ -429,7 +429,7 @@ async fn library_addition_confirms_before_changing_an_approved_recipient(db: Sql
         let body = cloud_api::library::Fetched {
             records: vec![record],
             missing: vec![],
-            remaining: Some(199),
+            remaining: 199,
         };
         request
             .respond

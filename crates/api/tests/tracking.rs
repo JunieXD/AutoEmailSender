@@ -21,7 +21,7 @@ impl Setup {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(State {
             now: NOW,
-            sponsor_until: Some(NOW + DAY),
+            plus_until: Some(NOW + DAY),
             left,
             ..Default::default()
         })
@@ -30,8 +30,8 @@ impl Setup {
         let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), dir.path());
         ctx.account = account::Client::with_address(&ctx.net, server.address.clone());
         sqlx::raw_sql(
-            r#"INSERT INTO account (id, email, token)
-            VALUES (1, 'student@example.invalid', 'token');
+            r#"INSERT INTO account (terms, id, email, token)
+            VALUES ('9999-12-31', 1, 'student@example.invalid', 'token');
             UPDATE profile SET email_tracking = 1;
             INSERT INTO mentor (name, created_at, updated_at) VALUES ('王伟', 0, 0);"#,
         )
@@ -75,7 +75,7 @@ impl Setup {
             .execute(db)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO account (id, email, token) VALUES (1, ?, ?)")
+        sqlx::query("INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, ?, ?)")
             .bind(email)
             .bind(format!("{email}-token"))
             .execute(db)
@@ -152,11 +152,11 @@ async fn letters_are_registered_while_the_quota_lasts_and_opens_come_back(db: Sq
     assert_eq!(setup.emails().await[0].2, Some(2));
     assert_eq!(setup.emails().await[0].3, Some(NOW + 2000));
 
-    // Without a sponsorship, letters are not registered; their opens would not count.
-    setup.server().sponsor_until = Some(NOW - 1);
+    // Without Plus, letters are not registered; their opens would not count.
+    setup.server().plus_until = Some(NOW - 1);
     setup.sent(&id(3)).await;
     api::tracking::sync(&setup.ctx, false, NOW).await.unwrap();
-    assert_eq!(setup.emails().await[2].1, Tracked::NotSponsored);
+    assert_eq!(setup.emails().await[2].1, Tracked::NoPlus);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -210,7 +210,7 @@ async fn another_account_fetches_opens_from_the_start(db: SqlitePool) {
     // Logging in to another account replaces the row, progress and all, and turns tracking off.
     sqlx::raw_sql(
         r#"DELETE FROM account;
-        INSERT INTO account (id, email, token) VALUES (1, 'other@example.invalid', 'other');"#,
+        INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, 'other@example.invalid', 'other');"#,
     )
     .execute(&setup.ctx.db)
     .await
@@ -291,7 +291,7 @@ async fn a_registration_answered_after_logging_in_again_is_not_noted(db: SqliteP
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn tracking_is_not_turned_on_by_the_sponsorship_of_the_login_before(db: SqlitePool) {
+async fn tracking_is_not_turned_on_by_the_plus_of_the_login_before(db: SqlitePool) {
     let mut provider = Provider::start().await.unwrap();
     let mut setup = Setup::new(db, 5).await;
     setup.answered_by(&provider);
@@ -311,8 +311,9 @@ async fn tracking_is_not_turned_on_by_the_sponsorship_of_the_login_before(db: Sq
             .respond
             .send(reply(json!({
                 "email": "student@example.invalid",
-                "sponsorUntil": 4_000_000_000_000_i64,
-                "trackingLeft": 5
+                "plusUntil": 4_000_000_000_000_i64,
+                "tracking": {"used": 0, "limit": 500, "packLeft": 0, "packExpiresAt": null},
+                "terms": "9999-12-31"
             })))
             .unwrap();
     };

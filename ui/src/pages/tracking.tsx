@@ -1,18 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { call, errorMessage } from "@/api/call";
-import type { TrackingPack } from "@/api/types";
-import { useAccount } from "@/components/account";
+import type { Pack, Quota as TrackingQuota } from "@/api/types";
+import { TermsNotice, useAccount, useTermsOutdated } from "@/components/account";
+import { PayDialog, REFUNDED, usePlusItems, yuan } from "@/components/plus";
 import { TRACKING_CAVEAT } from "@/components/tracking";
 import { buttonVariants, Button } from "@/components/ui/button";
+import { day } from "@/format";
 import { useNow } from "@/now";
 import { Section, SwitchButton } from "./settings";
 
 /**
- * Settings › 邮件 › 邮件追踪 (docs/ui.md#交互). The quota lives on the server and packs are bought in
- * the browser, so coming back reads it again.
+ * Settings › 邮件 › 邮件追踪 (docs/ui.md#交互). The quota lives on the server and packs are paid for
+ * in the browser, so coming back reads it again.
  */
 export function TrackingSection() {
   const account = useAccount();
@@ -30,10 +31,13 @@ export function TrackingSection() {
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
   }, [refetch]);
+  const outdated = useTermsOutdated();
   const data = status.data;
   const server = data?.account?.kind === "read" ? data.account : null;
-  const sponsored = server?.sponsorUntil != null && server.sponsorUntil > now;
+  const plusUntil = server?.plusUntil != null && server.plusUntil > now ? server.plusUntil : null;
+  const plus = plusUntil !== null;
   const enabled = data?.enabled ?? false;
+  const quota = server?.tracking;
   return (
     <Section title="邮件追踪">
       <div>
@@ -42,7 +46,7 @@ export function TrackingSection() {
           <SwitchButton
             label="邮件追踪"
             checked={enabled}
-            disabled={!data || save.isPending || (!enabled && !sponsored)}
+            disabled={!data || save.isPending || (!enabled && (!plus || outdated))}
             onClick={() => save.mutate(!enabled)}
           />
         </div>
@@ -51,7 +55,7 @@ export function TrackingSection() {
             开启后，发给导师的首封和追问里会放一张看不见的小图片，导师打开邮件、加载图片时记一次，往来里能看到打开了几次。回复不放。
           </p>
           <p>
-            官方服务器能看到每封信的随机编号、打开时间、打开者的 IP
+            官方服务器能看到每封邮件的随机编号、打开时间、打开者的 IP
             和设备信息，只保存编号、次数和时间，看不到收件人和邮件内容。
           </p>
           <p>{TRACKING_CAVEAT}</p>
@@ -59,32 +63,35 @@ export function TrackingSection() {
         {status.error && <p className="mt-2 text-sm text-destructive">设置未能加载：{errorMessage(status.error)}</p>}
         {save.error && <p className="mt-2 text-sm text-destructive">{errorMessage(save.error)}</p>}
       </div>
-      {data && !data.account && <Prompt text="登录并成为赞助者后可以用。" action="去登录" />}
+      {data && !data.account && <Prompt text="登录并开通 Plus 后可使用。" action="去登录" />}
       {data?.account?.kind === "unreadable" && (
         <p className="text-sm text-destructive">额度未能读取：{data.account.reason}</p>
       )}
-      {server && !sponsored && (
-        <Prompt
-          text={
-            server.left > 0
-              ? `赞助者可以用邮件追踪。还剩 ${server.left} 封，续上赞助后接着用。`
-              : "赞助者可以用邮件追踪。"
-          }
-          action="去赞助"
-        />
-      )}
-      {server && sponsored && <Quota left={server.left} email={email} />}
-      {enabled && server && (
-        <>
-          {!sponsored && (
-            <p className="text-sm text-warning">赞助已到期，之后发出的信不带追踪图片，已追踪的照常更新。</p>
+      {server && outdated && <TermsNotice />}
+      {server && !outdated && !plus && (
+        <div className="flex flex-col gap-1.5">
+          <Prompt text="开通 Plus 后可使用邮件追踪，每 30 天 500 封。" action="开通 Plus" />
+          {server.tracking.packLeft > 0 && (
+            <p className="text-sm text-muted-foreground">
+              额度包还剩 {server.tracking.packLeft} 封，Plus 有效时可继续使用。
+            </p>
           )}
-          {sponsored && server.left === 0 && (
-            <p className="text-sm text-warning">额度已用完，之后发出的信不带追踪图片。</p>
+        </div>
+      )}
+      {server && !outdated && plusUntil !== null && email && (
+        <Quota email={email} plusUntil={plusUntil} quota={server.tracking} />
+      )}
+      {enabled && quota && (
+        <>
+          {!plus && <p className="text-sm text-warning">Plus 已到期，之后发出的邮件不带追踪图片，已追踪的照常更新。</p>}
+          {plus && quota.used >= quota.limit && quota.packLeft === 0 && (
+            <p className="text-sm text-warning">
+              最近 30 天的 {quota.limit} 封和额度包均已用完，之后发出的邮件不带追踪图片。
+            </p>
           )}
         </>
       )}
-      {data?.failure && <p className="text-sm text-destructive">同步打开记录失败：{data.failure}之后会自动再试。</p>}
+      {data?.failure && <p className="text-sm text-destructive">同步打开记录失败：{data.failure}之后会自动重试。</p>}
     </Section>
   );
 }
@@ -100,38 +107,47 @@ function Prompt({ text, action }: { text: string; action: string }) {
   );
 }
 
-function Quota({ left, email }: { left: number; email: string | null }) {
-  const tiers = useQuery({ queryKey: ["getSponsorTiers", email], queryFn: () => call("getSponsorTiers", {}) });
-  const open = useMutation({ mutationFn: (pack: TrackingPack) => openUrl(pack.url) });
+function Quota({ email, plusUntil, quota }: { email: string; plusUntil: number; quota: TrackingQuota }) {
+  const items = usePlusItems(email);
+  const [buying, setBuying] = useState<Pack | null>(null);
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="font-medium">剩余 {left} 封</p>
-      {tiers.error ? (
-        <p className="text-sm text-destructive">额度包未能读取：{errorMessage(tiers.error)}</p>
+      <p className="font-medium">
+        最近 30 天已用 {quota.used} / {quota.limit} 封
+      </p>
+      {quota.packLeft > 0 && quota.packExpiresAt != null && (
+        <p className="text-sm">
+          额度包剩 {quota.packLeft} 封，最早{day(quota.packExpiresAt)}到期
+        </p>
+      )}
+      {items.error ? (
+        <p className="text-sm text-destructive">额度包未能读取：{errorMessage(items.error)}</p>
       ) : (
-        tiers.data && (
+        items.data &&
+        (items.data.refunded ? (
+          <p className="text-sm text-muted-foreground">{REFUNDED}</p>
+        ) : (
           <div className="grid max-w-md grid-cols-3 gap-2">
-            {tiers.data.packs.map((pack) => (
+            {items.data.packs.map((pack) => (
               <Button
-                key={pack.url}
+                key={pack.item}
                 variant="quiet"
                 className="h-auto flex-col items-start gap-0.5 px-3 py-2.5 text-left font-normal whitespace-normal"
-                disabled={open.isPending}
-                onClick={() => open.mutate(pack)}
+                onClick={() => setBuying(pack)}
               >
                 <span className="text-sm">{pack.count} 封</span>
-                <span className="text-lg font-semibold">{pack.price / 100} 元</span>
+                <span className="text-lg font-semibold">{yuan(pack.price)}</span>
               </Button>
             ))}
           </div>
-        )
+        ))
       )}
       <p className="text-xs text-muted-foreground">
-        一封信用 1 封，打开多少次都不再扣。额度不过期，赞助有效时才能用，赞助到期后续上就能接着用。
+        一封邮件算 1 封，打开多少次都不再计。每 30 天 {quota.limit} 封，按最近 30
+        天计算，用完后使用额度包，先用快到期的。额度包自开通起 365 天内有效，Plus 有效时方可使用，Plus
+        到期期间照常计时。
       </p>
-      {open.error && (
-        <p className="text-sm text-destructive">未能打开爱发电：{errorMessage(open.error)}。请检查默认浏览器后再试。</p>
-      )}
+      {buying && <PayDialog email={email} purchase={{ pack: buying, plusUntil }} onClose={() => setBuying(null)} />}
     </div>
   );
 }

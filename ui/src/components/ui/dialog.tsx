@@ -30,13 +30,16 @@ function DialogContent({ className, children, ...props }: DialogPrimitive.Popup.
   );
 }
 
-function DialogHeader({ children }: { children: React.ReactNode }) {
+/** `closable={false}` for a dialog that has to be answered with one of its buttons. */
+function DialogHeader({ children, closable = true }: { children: React.ReactNode; closable?: boolean }) {
   return (
     <div className="flex items-center gap-3 pt-[18px] pr-[18px] pb-1.5 pl-6 phone:pl-4">
       <DialogPrimitive.Title className="grow text-xl font-semibold">{children}</DialogPrimitive.Title>
-      <DialogPrimitive.Close render={<Button variant="ghost" size="icon" aria-label="关闭" />}>
-        <XIcon strokeWidth={1.6} />
-      </DialogPrimitive.Close>
+      {closable && (
+        <DialogPrimitive.Close render={<Button variant="ghost" size="icon" aria-label="关闭" />}>
+          <XIcon strokeWidth={1.6} />
+        </DialogPrimitive.Close>
+      )}
     </div>
   );
 }

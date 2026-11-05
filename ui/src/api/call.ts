@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CallError, Operations } from "./types";
+import type { CallError, ErrorCode, Operations } from "./types";
 
 /** Runs an operation in the core (crates/api). Rejects with a `CallError`. */
 export function call<K extends keyof Operations>(
@@ -12,6 +12,11 @@ export function call<K extends keyof Operations>(
 /** The message to show for a failed call, or for anything else that was thrown. */
 export function errorMessage(error: unknown): string {
   return isCallError(error) ? error.message : String(error);
+}
+
+/** The code of a failed call, for the few failures a page answers itself. */
+export function errorCode(error: unknown): ErrorCode | undefined {
+  return isCallError(error) ? error.code : undefined;
 }
 
 function isCallError(error: unknown): error is CallError {

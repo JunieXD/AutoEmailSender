@@ -37,7 +37,7 @@ fn record(id: &str, name: &str, email: &str) -> wire::Record {
 
 async fn setup(db: &SqlitePool) -> (account::Client, Provider) {
     sqlx::query(
-        "INSERT INTO account(id,email,token) VALUES(1,'student@example.invalid','test-token')",
+        "INSERT INTO account (terms,id,email,token) VALUES('9999-12-31',1,'student@example.invalid','test-token')",
     )
     .execute(db)
     .await
@@ -82,7 +82,7 @@ async fn adding(
     let body = wire::Fetched {
         records,
         missing,
-        remaining: Some(199),
+        remaining: 199,
     };
     let library = sync::Synchronizer::default();
     let (result, ()) = tokio::join!(
@@ -192,7 +192,7 @@ async fn adding_matches_emails_skips_trash_and_can_be_repeated(db: SqlitePool) {
             "trash@demo.edu.example",
         )],
         missing: vec![],
-        remaining: Some(199),
+        remaining: 199,
     };
     let library = sync::Synchronizer::default();
     let (result, ()) = tokio::join!(
@@ -568,6 +568,7 @@ async fn interrupted_page_replays_without_duplicating_additions_or_pending_rows(
                 content: serde_json::to_string(&cloud_api::ApiError {
                     code: cloud_api::ErrorCode::Internal,
                     retry_after_seconds: None,
+                    delete_at: None,
                 })
                 .unwrap(),
             })
@@ -689,6 +690,7 @@ async fn quota_failure_is_reported_and_expired_sessions_stop_sync(db: SqlitePool
                 content: serde_json::to_string(&cloud_api::ApiError {
                     code: cloud_api::ErrorCode::QuotaExceeded,
                     retry_after_seconds: None,
+                    delete_at: None,
                 })
                 .unwrap(),
             })
@@ -707,6 +709,7 @@ async fn quota_failure_is_reported_and_expired_sessions_stop_sync(db: SqlitePool
                 content: serde_json::to_string(&cloud_api::ApiError {
                     code: cloud_api::ErrorCode::SessionExpired,
                     retry_after_seconds: None,
+                    delete_at: None,
                 })
                 .unwrap(),
             })
@@ -792,7 +795,7 @@ async fn intake_rows_keep_selected_ids_when_fetched_order_changes_and_errors_inc
     let mut fetched = wire::Fetched {
         records: vec![good, bad],
         missing: vec!["mentor_missing".into()],
-        remaining: Some(198),
+        remaining: 198,
     };
     let (preview, ()) = tokio::join!(
         add::preview(&client, &db, &input),
@@ -1137,7 +1140,7 @@ async fn readding_current_profiles_clears_scalar_pending_updates(db: SqlitePool)
     let fetched = wire::Fetched {
         records: vec![row],
         missing: vec![],
-        remaining: Some(199),
+        remaining: 199,
     };
     let mut input = add::Selection {
         ids: vec!["mentor_one".into()],

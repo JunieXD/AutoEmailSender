@@ -3,8 +3,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod account;
 pub mod backup;
 pub mod library;
+pub mod plus;
 pub mod relay;
 pub mod tracking;
 
@@ -16,8 +18,10 @@ pub mod path {
     pub const RESET_CODE: &str = "/v1/account/reset-code";
     pub const RESET_PASSWORD: &str = "/v1/account/reset-password";
     pub const ACCOUNT: &str = "/v1/account";
-    pub const SPONSOR_TIERS: &str = "/v1/sponsor/tiers";
-    pub const SPONSOR_CLAIM: &str = "/v1/sponsor/claim";
+    pub const ACCOUNT_TERMS: &str = "/v1/account/terms";
+    pub const PLUS_ITEMS: &str = "/v1/plus/items";
+    /// Followed by `/{order}` to read one.
+    pub const PLUS_ORDERS: &str = "/v1/plus/orders";
     pub const INVITE: &str = "/v1/invite";
     pub const REDEEM: &str = "/v1/redeem";
     pub const LIBRARY_ORGS: &str = "/v1/library/orgs";
@@ -42,8 +46,23 @@ pub struct EmailRequest {
 pub struct LoginRequest {
     pub email: String,
     pub login_key: String,
+    /// Cancels the account's deletion during its cooling-off period; without it such a login
+    /// fails with `account_deleting`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub restore: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegisterRequest {
+    pub email: String,
+    pub code: String,
+    pub login_key: String,
+    /// The version of the terms of service and privacy policy the user agreed to.
+    pub terms: String,
+}
+
+/// Resets the password.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VerifyRequest {
@@ -56,51 +75,6 @@ pub struct VerifyRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeleteRequest {
     pub login_key: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ClaimRequest {
-    pub order_number: String,
-}
-
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Duration {
-    Days(u32),
-    Months(u32),
-}
-
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SponsorTier {
-    pub duration: Duration,
-    pub price: u32,
-    pub url: String,
-}
-
-/// Emails of tracking quota, bought apart from sponsorship.
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TrackingPack {
-    pub count: u32,
-    pub price: u32,
-    pub url: String,
-}
-
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SponsorTiers {
-    pub tiers: Vec<SponsorTier>,
-    pub packs: Vec<TrackingPack>,
-}
-
-#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Sponsor {
-    pub sponsor_until: Option<i64>,
 }
 
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -131,7 +105,7 @@ pub struct CodeRequest {
 #[serde(rename_all = "camelCase")]
 pub struct Redeemed {
     pub days: u32,
-    pub sponsor_until: i64,
+    pub plus_until: i64,
 }
 
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -139,9 +113,11 @@ pub struct Redeemed {
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     pub email: String,
-    pub sponsor_until: Option<i64>,
-    /// Emails of tracking quota; usable while the sponsorship lasts.
-    pub tracking_left: u32,
+    pub plus_until: Option<i64>,
+    pub tracking: tracking::Quota,
+    /// The version of the terms of service and privacy policy the account agreed to; none for
+    /// accounts from before the terms.
+    pub terms: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -169,10 +145,18 @@ pub enum ErrorCode {
     NotFound,
     MethodNotAllowed,
     QuotaExceeded,
+    /// The account is in its cooling-off period after asking to be deleted; `delete_at` says
+    /// when it goes.
+    AccountDeleting,
     OrderNotFound,
-    OrderClaimed,
-    OrderNotSponsorship,
-    SponsorUnavailable,
+    /// Payment is not configured, or the payment service did not take the order.
+    PlusUnavailable,
+    /// The account has had a refund without a reason and cannot buy again.
+    PlusRefunded,
+    /// Needs Plus in effect.
+    PlusRequired,
+    /// The tier would take Plus past a year from now.
+    PlusTooLong,
     InviteNotFound,
     InviteFull,
     InviteOwn,
@@ -183,7 +167,6 @@ pub enum ErrorCode {
     CodeExpired,
     CodeUsed,
     EmailIneligible,
-    SponsorRequired,
     BackupNotFound,
     BackupIncomplete,
     BackupChanged,
@@ -198,6 +181,8 @@ pub struct ApiError {
     pub code: ErrorCode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delete_at: Option<i64>,
 }
 
 /// This is part of the key derivation protocol; changing it would lock existing accounts out.

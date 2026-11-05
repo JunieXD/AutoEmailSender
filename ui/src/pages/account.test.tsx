@@ -3,22 +3,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import type { Sponsor } from "@/api/types";
+import type { Plus } from "@/api/types";
 import { AccountSection } from "./account";
 
-const remote = vi.hoisted(() => ({ getSponsor: vi.fn<() => Promise<Sponsor>>(), redeem: vi.fn() }));
+const remote = vi.hoisted(() => ({ getPlus: vi.fn<() => Promise<Plus>>(), redeem: vi.fn() }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
 vi.mock("@/api/call", () => ({
   call: async (op: string) => {
-    if (op === "getAccount") return { kind: "loggedIn", email: "lisi@163.com" };
-    if (op === "getSponsor") return remote.getSponsor();
-    if (op === "getSponsorTiers") return { tiers: [], packs: [] };
+    if (op === "getAccount") return { kind: "loggedIn", email: "lisi@163.com", termsOutdated: false };
+    if (op === "getPlus") return remote.getPlus();
+    if (op === "getPlusItems") return { tiers: [], packs: [], latest: AFTER, refunded: false };
     if (op === "getInvite") return { status: "ineligible" };
     if (op === "redeemCode") {
       remote.redeem();
-      return { days: 7, sponsorUntil: AFTER };
+      return { days: 7, plusUntil: AFTER };
     }
     throw new Error(`unexpected operation: ${op}`);
   },
@@ -33,11 +33,11 @@ function button(text: string) {
 }
 
 it("shows the period after a redeem even when a read started before it answers last", async () => {
-  let answerOldRead!: (sponsor: Sponsor) => void;
-  remote.getSponsor
+  let answerOldRead!: (plus: Plus) => void;
+  remote.getPlus
     .mockReset()
     .mockReturnValueOnce(new Promise((resolve) => (answerOldRead = resolve)))
-    .mockResolvedValue({ sponsorUntil: AFTER });
+    .mockResolvedValue({ plusUntil: AFTER });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const container = document.createElement("div");
   document.body.append(container);
@@ -53,14 +53,14 @@ it("shows the period after a redeem even when a read started before it answers l
     await vi.waitFor(() => expect(button("有兑换码？")).toBeDefined());
     await act(async () => button("有兑换码？")?.click());
     await act(async () => {
-      const input = document.querySelector<HTMLInputElement>("#sponsor-code");
+      const input = document.querySelector<HTMLInputElement>("#redeem-code");
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "ABCD-EFGH-JKLM");
       input?.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => button("兑换")?.click());
     await vi.waitFor(() => expect(remote.redeem).toHaveBeenCalled());
-    await act(async () => answerOldRead({ sponsorUntil: BEFORE }));
-    await vi.waitFor(() => expect(container.textContent).toContain("兑换成功，加了 7 天赞助。"));
+    await act(async () => answerOldRead({ plusUntil: BEFORE }));
+    await vi.waitFor(() => expect(container.textContent).toContain("兑换成功，Plus 增加 7 天。"));
     expect(container.textContent).toContain("1月8日");
     expect(container.textContent).not.toContain("1月1日");
   } finally {

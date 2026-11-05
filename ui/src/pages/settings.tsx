@@ -11,6 +11,7 @@ import { UpdateDialog, useUpdate } from "@/components/update";
 import { Button } from "@/components/ui/button";
 import { Segments } from "@/components/ui/segments";
 import { desktop } from "@/host";
+import { LegalLink } from "@/legal";
 import { savedTheme, setTheme } from "@/theme";
 
 // docs/ui.md#页面: sections in groups; only the ones that exist so far.
@@ -42,7 +43,7 @@ const GROUPS = [
       { to: "/settings/background", label: "后台运行", desktopOnly: true },
       { to: "/settings/backup", label: "备份" },
       { to: "/settings/remote", label: "手机和 Agent", desktopOnly: true },
-      { to: "/settings/account", label: "账号和赞助" },
+      { to: "/settings/account", label: "账号和 Plus" },
       { to: "/settings/about", label: "关于和日志" },
     ],
   },
@@ -158,6 +159,13 @@ export function AboutSection() {
         {desktop && <CheckUpdate />}
       </Row>
       {desktop && <ComputerSide />}
+      <Row label="条款">
+        <p className="flex flex-wrap text-sm">
+          <LegalLink legal="terms" />
+          <LegalLink legal="privacy" />
+          <LegalLink legal="plus" />
+        </p>
+      </Row>
     </Section>
   );
 }

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use cloud_api::{
     Account,
-    tracking::{Open, Opens, Register, Registered},
+    tracking::{ALLOWANCE, Open, Opens, Quota, Register, Registered},
 };
 
 use crate::http::{Reply, error, ok};
@@ -12,7 +12,8 @@ use crate::http::{Reply, error, ok};
 pub struct State {
     pub now: i64,
     pub email: String,
-    pub sponsor_until: Option<i64>,
+    pub plus_until: Option<i64>,
+    /// What the packs have left; the allowance of the 30 days is used up.
     pub left: u32,
     /// Registered ids, and the opens of those opened.
     pub emails: BTreeMap<String, Option<Opened>>,
@@ -36,7 +37,7 @@ impl Default for State {
         Self {
             now: 0,
             email: "student@example.invalid".into(),
-            sponsor_until: None,
+            plus_until: None,
             left: 0,
             emails: BTreeMap::new(),
             revision: 0,
@@ -47,6 +48,16 @@ impl Default for State {
 }
 
 impl State {
+    fn quota(&self) -> Quota {
+        Quota {
+            used: ALLOWANCE,
+            limit: ALLOWANCE,
+            pack_left: self.left,
+            pack_expires_at: (self.left > 0)
+                .then_some(self.now + cloud_api::tracking::PACK_LIFETIME),
+        }
+    }
+
     /// The image of a registered email loads.
     #[expect(clippy::unwrap_used, reason = "tests open only emails they registered")]
     pub fn open(&mut self, id: &str) {
@@ -77,17 +88,19 @@ impl Server {
     reason = "test fixture request failures must panic at their source"
 )]
 fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply {
-    let sponsored = state.sponsor_until.is_some_and(|until| until > state.now);
+    let plus = state.plus_until.is_some_and(|until| until > state.now);
     match (method, path.split_once('?').unwrap_or((path, ""))) {
         ("GET", ("/v1/account", _)) => ok(serde_json::to_value(Account {
             email: state.email.clone(),
-            sponsor_until: state.sponsor_until,
-            tracking_left: state.left,
+            plus_until: state.plus_until,
+            tracking: state.quota(),
+            // No older than any terms the app has, so its login counts as agreed.
+            terms: Some("9999-12-31".into()),
         })
         .unwrap()),
         ("POST", ("/v1/tracking", _)) => {
-            if !sponsored {
-                return error(403, "sponsor_required");
+            if !plus {
+                return error(403, "plus_required");
             }
             let register: Register = serde_json::from_slice(&body).unwrap();
             let (mut accepted, mut rejected) = (Vec::new(), Vec::new());
@@ -105,7 +118,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             ok(serde_json::to_value(Registered {
                 accepted,
                 rejected,
-                left: state.left,
+                tracking: state.quota(),
             })
             .unwrap())
         }

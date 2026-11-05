@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 argon2 = "0.6"
 base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cloud-api.workspace = true
 hkdf = "0.13"
 net.workspace = true

@@ -12,7 +12,10 @@ pub enum State {
     Pending,
     Tracked,
     NoQuota,
-    NotSponsored,
+    /// Plus had ended; stored under its name from before Plus, as the email table's CHECK has
+    /// it.
+    #[sqlx(rename = "not_sponsored")]
+    NoPlus,
     /// Not registered within `cloud_api::tracking::REGISTER_WITHIN`.
     Expired,
 }
@@ -30,7 +33,7 @@ pub struct Tracking {
 
 /// The tracking id the email goes with this time: the one an earlier attempt chose, which may be
 /// out, so that a resend looks the same; or else `fresh` when tracking is on, the account logged
-/// in is sponsored at `now`, the email is a first letter or follow-up and the quota left covers it
+/// in has Plus at `now`, the email is a first letter or follow-up and the quota left covers it
 /// besides the account's others not registered yet. None for an email that goes without the image.
 pub async fn assign(
     conn: &mut SqliteConnection,
@@ -92,7 +95,7 @@ pub async fn pending(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rejected {
     NoQuota,
-    NotSponsored,
+    NoPlus,
 }
 
 /// What the server made of a registration: `accepted` are tracked from `now`, `rejected` not.
@@ -115,7 +118,7 @@ pub async fn registered(
     }
     let state = match why {
         Rejected::NoQuota => State::NoQuota,
-        Rejected::NotSponsored => State::NotSponsored,
+        Rejected::NoPlus => State::NoPlus,
     };
     for id in rejected {
         sqlx::query!(

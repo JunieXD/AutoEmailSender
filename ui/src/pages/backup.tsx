@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { cancelRestore, exportBackup, prepareCloudRestore, prepareRestore, restoreBackup } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import type { CloudBackupCopy, RestoreInfo } from "@/api/types";
-import { AccountDialog, useAccount } from "@/components/account";
+import { AccountDialog, TermsNotice, useAccount, useTermsOutdated } from "@/components/account";
 import { Field, formClose } from "@/components/form";
 import { scheduledAt } from "@/components/schedule";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -63,7 +63,7 @@ function CloudBackupRow() {
       {state && state.kind !== "loggedIn" && (
         <>
           <p className="text-sm text-muted-foreground">
-            登录后，赞助者可以把数据加密备份到云端，换电脑时登录就能恢复。
+            登录并开通 Plus 后，可把数据加密备份到云端，换电脑时登录即可恢复。
           </p>
           <div className="mt-1.5">
             <Button variant="quiet" onClick={() => setLogin(true)}>
@@ -87,6 +87,8 @@ function CloudBackupRow() {
 function CloudBackup({ email }: { email: string }) {
   const queryClient = useQueryClient();
   const now = useNow();
+  // The backup can still be restored, but not changed, until the new terms are agreed to.
+  const outdated = useTermsOutdated();
   const local = useQuery({ queryKey: ["getCloudBackup"], queryFn: () => call("getCloudBackup", {}) });
   const server = useQuery({
     // A scheduled backup changes what the cloud holds as well.
@@ -138,11 +140,11 @@ function CloudBackup({ email }: { email: string }) {
     );
   }
   if (!server.data) return <p className="text-sm text-muted-foreground">正在读取…</p>;
-  const { sponsorUntil, deleteAt, backup } = server.data;
-  const sponsored = sponsorUntil != null && sponsorUntil > now;
+  const { plusUntil, deleteAt, backup } = server.data;
+  const plus = plusUntil != null && plusUntil > now;
   // Another computer's backup, or one this account's key cannot read: replaced only with consent.
   const other = backup && !(backup.thisDevice && backup.summary) ? backup : null;
-  const backingUp = status.enabled && sponsored;
+  const backingUp = status.enabled && plus && !outdated;
   const replacing = other != null && backingUp && status.replace === other.committedAt;
   const paused = other != null && backingUp && !replacing;
   const running = backUp.isPending || status.running;
@@ -151,7 +153,9 @@ function CloudBackup({ email }: { email: string }) {
     : backUp.error && errorMessage(backUp.error);
   return (
     <>
-      {sponsored ? (
+      {outdated ? (
+        <TermsNotice />
+      ) : plus ? (
         <>
           {autoBackup}
           <p className="text-sm text-muted-foreground">
@@ -162,11 +166,11 @@ function CloudBackup({ email }: { email: string }) {
         <div className="flex items-center justify-between gap-4">
           <p className="text-sm text-muted-foreground">
             {backup
-              ? `赞助已到期，云端备份已停止。现有的备份还能恢复${deleteAt == null ? "" : `，将于${day(deleteAt)}删除`}。`
-              : "云端备份是赞助者专享：每天自动备份，换电脑时登录就能恢复。"}
+              ? `Plus 已到期，云端备份已停止。现有的备份仍可恢复${deleteAt == null ? "" : `，将于${day(deleteAt)}删除`}。`
+              : "云端备份是 Plus 专享：每天自动备份，换电脑时登录即可恢复。"}
           </p>
           <Link to="/settings/account" className={buttonVariants({ variant: "quiet", size: "sm" })}>
-            {backup ? "续赞助" : "去赞助"}
+            {backup ? "续 Plus" : "开通 Plus"}
           </Link>
         </div>
       )}
@@ -202,7 +206,7 @@ function CloudBackup({ email }: { email: string }) {
               {restore.isPending ? "正在下载…" : "从云端恢复"}
             </Button>
           )}
-          {backup && (
+          {backup && !outdated && (
             <Button variant="ghost" onClick={() => setDialog("delete")}>
               删除云端备份
             </Button>

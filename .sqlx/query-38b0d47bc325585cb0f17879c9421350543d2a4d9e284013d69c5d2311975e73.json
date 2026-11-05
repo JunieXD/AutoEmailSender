@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE account SET terms = ?1 WHERE token = ?2 AND terms IS NOT ?1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "38b0d47bc325585cb0f17879c9421350543d2a4d9e284013d69c5d2311975e73"
+}

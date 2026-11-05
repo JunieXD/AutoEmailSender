@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT email, token AS \"token!\", backup_key FROM account WHERE token IS NOT NULL",
+  "query": "SELECT email, token AS \"token!\", backup_key, terms\n        FROM account WHERE token IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -35,6 +35,17 @@
             "name": "backup_key"
           }
         }
+      },
+      {
+        "name": "terms",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "terms"
+          }
+        }
       }
     ],
     "parameters": {
@@ -43,8 +54,9 @@
     "nullable": [
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "a81066c18b09485097c4f75bc01d10b6ef84f12ec5287b79653cfb541bb13cb6"
+  "hash": "eef217588c3d48ba2929322bca49c211b673201dd9e207a48a5287ee551367f9"
 }

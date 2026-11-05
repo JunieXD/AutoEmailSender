@@ -22,20 +22,69 @@ pub struct AccountVerification {
 }
 
 #[derive(Deserialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SponsorOrder {
-    pub order_number: String,
+pub struct AccountLogin {
+    pub email: String,
+    pub password: String,
+    /// Cancels the deletion of an account in its cooling-off period.
+    #[serde(default)]
+    #[ts(optional)]
+    pub restore: Option<bool>,
 }
 
-pub async fn get_sponsor(ctx: &Context, _: Nothing) -> Result<account::Sponsor, CallError> {
-    Ok(ctx.account.get_sponsor(&ctx.db).await?)
+#[derive(Deserialize, TS)]
+pub struct PlusOrderInput {
+    pub item: String,
+    pub method: cloud_api::plus::Method,
 }
 
-pub async fn get_sponsor_tiers(
+#[derive(Deserialize, TS)]
+pub struct PlusOrderId {
+    pub order: i64,
+}
+
+pub async fn get_plus(ctx: &Context, _: Nothing) -> Result<account::Plus, CallError> {
+    let login = account::saved_login(&ctx.db).await?;
+    let account = crate::tracking::read(ctx, &login).await?;
+    Ok(account::Plus {
+        plus_until: account.plus_until,
+    })
+}
+
+pub async fn get_plus_items(
     ctx: &Context,
     _: Nothing,
-) -> Result<cloud_api::SponsorTiers, CallError> {
-    Ok(ctx.account.sponsor_tiers(&ctx.db).await?)
+) -> Result<cloud_api::plus::Items, CallError> {
+    Ok(ctx.account.plus_items(&ctx.db).await?)
+}
+
+pub async fn create_plus_order(
+    ctx: &Context,
+    input: PlusOrderInput,
+) -> Result<cloud_api::plus::Created, CallError> {
+    Ok(ctx
+        .account
+        .create_plus_order(&ctx.db, input.item, input.method)
+        .await?)
+}
+
+pub async fn get_plus_order(
+    ctx: &Context,
+    input: PlusOrderId,
+) -> Result<cloud_api::plus::OrderState, CallError> {
+    let login = account::saved_login(&ctx.db).await?;
+    let state = ctx.account.plus_order(&ctx.db, &login, input.order).await?;
+    if let cloud_api::plus::OrderState::Applied {
+        plus_until,
+        tracking,
+    } = &state
+    {
+        crate::tracking::note(&ctx.db, &login, *plus_until, tracking).await?;
+    }
+    Ok(state)
+}
+
+pub async fn accept_terms(ctx: &Context, _: Nothing) -> Result<(), CallError> {
+    Ok(ctx.account.accept_terms(&ctx.db).await?)
 }
 
 pub async fn get_invite(ctx: &Context, _: Nothing) -> Result<cloud_api::Invite, CallError> {
@@ -45,7 +94,7 @@ pub async fn get_invite(ctx: &Context, _: Nothing) -> Result<cloud_api::Invite, 
 pub async fn fill_invite(
     ctx: &Context,
     input: cloud_api::CodeRequest,
-) -> Result<account::Sponsor, CallError> {
+) -> Result<account::Plus, CallError> {
     Ok(ctx.account.fill_invite(&ctx.db, &input.code).await?)
 }
 
@@ -54,19 +103,6 @@ pub async fn redeem_code(
     input: cloud_api::CodeRequest,
 ) -> Result<cloud_api::Redeemed, CallError> {
     Ok(ctx.account.redeem(&ctx.db, &input.code).await?)
-}
-
-pub async fn claim_sponsor_order(
-    ctx: &Context,
-    input: SponsorOrder,
-) -> Result<cloud_api::Account, CallError> {
-    let login = account::saved_login(&ctx.db).await?;
-    let account = ctx
-        .account
-        .claim_sponsor_order(&ctx.db, &login, &input.order_number)
-        .await?;
-    crate::tracking::note(&ctx.db, &login, &account).await?;
-    Ok(account)
 }
 
 pub async fn get_account(ctx: &Context, _: Nothing) -> Result<account::State, CallError> {
@@ -89,11 +125,16 @@ pub async fn register_account(
 
 pub async fn login_account(
     ctx: &Context,
-    input: AccountCredentials,
+    input: AccountLogin,
 ) -> Result<account::State, CallError> {
     Ok(ctx
         .account
-        .login(&ctx.db, &input.email, input.password)
+        .login(
+            &ctx.db,
+            &input.email,
+            input.password,
+            input.restore.unwrap_or(false),
+        )
         .await?)
 }
 
@@ -115,7 +156,8 @@ pub async fn logout_account(ctx: &Context, _: Nothing) -> Result<(), CallError> 
     Ok(ctx.account.logout(&ctx.db).await?)
 }
 
-pub async fn delete_account(ctx: &Context, input: AccountCredentials) -> Result<(), CallError> {
+/// When the account goes, after its cooling-off period.
+pub async fn delete_account(ctx: &Context, input: AccountCredentials) -> Result<i64, CallError> {
     Ok(ctx
         .account
         .delete(&ctx.db, &input.email, input.password)
@@ -129,6 +171,8 @@ impl From<account::Error> for CallError {
             account::Error::Invalid(_) | account::Error::AccountChanged => ErrorCode::Invalid,
             account::Error::Database(_) | account::Error::Worker(_) => ErrorCode::Internal,
             account::Error::SignedOut => ErrorCode::SignedOut,
+            account::Error::Deleting(_) => ErrorCode::AccountDeleting,
+            account::Error::TermsOutdated => ErrorCode::Invalid,
             _ => ErrorCode::External,
         };
         Self {

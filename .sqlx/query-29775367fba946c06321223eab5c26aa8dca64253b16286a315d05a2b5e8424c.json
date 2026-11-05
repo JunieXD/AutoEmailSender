@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT email, token IS NOT NULL AS \"logged_in!: bool\"\n        FROM account",
+  "query": "SELECT email, token IS NOT NULL AS \"logged_in!: bool\", terms\n        FROM account",
   "describe": {
     "columns": [
       {
@@ -19,6 +19,17 @@
         "ordinal": 1,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "terms",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "terms"
+          }
+        }
       }
     ],
     "parameters": {
@@ -26,8 +37,9 @@
     },
     "nullable": [
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "8dc6171c46f3a9349a33be20a15f233bef00e914dae8729f246599159f95ae84"
+  "hash": "29775367fba946c06321223eab5c26aa8dca64253b16286a315d05a2b5e8424c"
 }

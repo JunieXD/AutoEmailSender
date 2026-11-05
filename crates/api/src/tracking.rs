@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use cloud_api::{
     Empty, ErrorCode,
-    tracking::{MAX_IDS, OPENS, Opens, REGISTER, REGISTER_WITHIN, RETENTION, Register, Registered},
+    tracking::{
+        MAX_IDS, OPENS, Opens, Quota, REGISTER, REGISTER_WITHIN, RETENTION, Register, Registered,
+    },
 };
 use email::tracking::Rejected;
 use reqwest::Method;
@@ -117,17 +119,8 @@ async fn exchange(
     let db = &ctx.db;
     let mut changed = false;
     if full {
-        let account = ctx
-            .account
-            .authenticated_as(
-                db,
-                login,
-                Method::GET,
-                cloud_api::path::ACCOUNT,
-                None::<&Empty>,
-            )
-            .await?;
-        changed |= note(db, login, &account).await?;
+        let account = ctx.account.account(db, login).await?;
+        changed |= note(db, login, account.plus_until, &account.tracking).await?;
     }
     changed |= email::tracking::expire(&mut *db.acquire().await?, now - REGISTER_WITHIN).await?;
     loop {
@@ -158,16 +151,16 @@ async fn exchange(
                     now,
                 )
                 .await?;
-                sqlx::query!("UPDATE account SET tracking_left = ?", r.left)
+                let left = available(&r.tracking);
+                sqlx::query!("UPDATE account SET tracking_left = ?", left)
                     .execute(&mut *tx)
                     .await?;
             }
             Err(account::Error::Server(cloud_api::ApiError {
-                code: ErrorCode::SponsorRequired,
+                code: ErrorCode::PlusRequired,
                 ..
             })) => {
-                email::tracking::registered(&mut tx, &[], &ids, Rejected::NotSponsored, now)
-                    .await?;
+                email::tracking::registered(&mut tx, &[], &ids, Rejected::NoPlus, now).await?;
                 sqlx::query!("UPDATE account SET tracking_until = NULL")
                     .execute(&mut *tx)
                     .await?;
@@ -230,20 +223,27 @@ async fn same_login(
     }
 }
 
-/// Notes the quota and sponsorship of `account`, as the server just answered `login`; true when
+/// The emails `tracking` still covers: what is left of the 30 days' allowance, and of the packs.
+fn available(tracking: &Quota) -> u32 {
+    tracking.limit.saturating_sub(tracking.used) + tracking.pack_left
+}
+
+/// Notes when Plus ends and the tracking quota, as the server just answered `login`; true when
 /// they differ from what was noted.
 pub(crate) async fn note(
     db: &sqlx::SqlitePool,
     login: &account::Login,
-    account: &cloud_api::Account,
+    plus_until: Option<i64>,
+    tracking: &Quota,
 ) -> Result<bool, account::Error> {
+    let left = available(tracking);
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     same_login(&mut tx, login).await?;
     let changed = sqlx::query!(
         r#"UPDATE account SET tracking_left = ?1, tracking_until = ?2
         WHERE tracking_left IS NOT ?1 OR tracking_until IS NOT ?2"#,
-        account.tracking_left,
-        account.sponsor_until
+        left,
+        plus_until
     )
     .execute(&mut *tx)
     .await?
@@ -260,7 +260,7 @@ pub struct Status {
     pub enabled: bool,
     /// Why synchronizing last failed, until it succeeds again.
     pub failure: Option<String>,
-    /// The account's sponsorship and quota on the server; None while logged out.
+    /// The account's Plus and quota on the server; None while logged out.
     pub account: Option<Remote>,
 }
 
@@ -273,8 +273,8 @@ pub struct Status {
 #[ts(rename = "TrackingAccount")]
 pub enum Remote {
     Read {
-        sponsor_until: Option<i64>,
-        left: u32,
+        plus_until: Option<i64>,
+        tracking: Quota,
     },
     Unreadable {
         reason: String,
@@ -291,8 +291,8 @@ pub async fn get_tracking(ctx: &Context, _: Nothing) -> Result<Status, CallError
     let account = match account::saved_login(&ctx.db).await {
         Ok(login) => Some(match read(ctx, &login).await {
             Ok(account) => Remote::Read {
-                sponsor_until: account.sponsor_until,
-                left: account.tracking_left,
+                plus_until: account.plus_until,
+                tracking: account.tracking,
             },
             Err(error) => Remote::Unreadable {
                 reason: error.message(),
@@ -308,19 +308,13 @@ pub async fn get_tracking(ctx: &Context, _: Nothing) -> Result<Status, CallError
     })
 }
 
-/// The account on the server as `login`, noting its quota and sponsorship.
-async fn read(ctx: &Context, login: &account::Login) -> Result<cloud_api::Account, account::Error> {
-    let account = ctx
-        .account
-        .authenticated_as(
-            &ctx.db,
-            login,
-            Method::GET,
-            cloud_api::path::ACCOUNT,
-            None::<&Empty>,
-        )
-        .await?;
-    note(&ctx.db, login, &account).await?;
+/// The account on the server as `login`, noting its Plus and quota.
+pub(crate) async fn read(
+    ctx: &Context,
+    login: &account::Login,
+) -> Result<cloud_api::Account, account::Error> {
+    let account = ctx.account.account(&ctx.db, login).await?;
+    note(&ctx.db, login, account.plus_until, &account.tracking).await?;
     Ok(account)
 }
 
@@ -339,18 +333,17 @@ pub async fn set_tracking(ctx: &Context, input: TrackingSwitch) -> Result<(), Ca
     let login = match account::saved_login(&ctx.db).await {
         Err(account::Error::SignedOut) => {
             return Err(CallError::invalid(
-                "登录并成为赞助者后可以用邮件追踪。".into(),
+                "登录并开通 Plus 后可以用邮件追踪。".into(),
             ));
         }
         login => login?,
     };
     // With the quota used up it can still be on, for when more is bought.
     let account = read(ctx, &login).await?;
-    if !account
-        .sponsor_until
-        .is_some_and(|until| until > crate::now())
-    {
-        return Err(CallError::invalid("赞助者可以用邮件追踪。".into()));
+    if !account.plus_until.is_some_and(|until| until > crate::now()) {
+        return Err(CallError::invalid(
+            "开通 Plus 后可以用邮件追踪，每 30 天 500 封。".into(),
+        ));
     }
     let mut tx = ctx.db.begin_with("BEGIN IMMEDIATE").await?;
     same_login(&mut tx, &login).await?;

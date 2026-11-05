@@ -4,7 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { LibraryAddPreview, LibraryAdded, LibraryMentor, LibraryOrg } from "@/api/types";
-import { AccountDialog, type AccountMode, useAccount } from "@/components/account";
+import { AccountDialog, type AccountMode, AgreeTermsButton, useAccount } from "@/components/account";
 import { addedMessage, LibraryAddDialog, needsChoices, refreshLibrary } from "@/components/library";
 import { ExternalLink, Missing, placeOf } from "@/components/mentor";
 import { Pager, useLastPage } from "@/components/mentor-table";
@@ -25,6 +25,15 @@ export function LibraryTab() {
   const state = account.data;
   if (account.error) return <Notice title="账号未能读取" detail={errorMessage(account.error)} />;
   if (!state) return null;
+  if (state.kind === "loggedIn" && state.termsOutdated) {
+    return (
+      <Notice title="尚未同意新版条款" detail="同意新版《用户服务协议》和《隐私政策》后，方可使用导师库。">
+        <div className="mt-4">
+          <AgreeTermsButton />
+        </div>
+      </Notice>
+    );
+  }
   if (state.kind === "loggedIn") return <Library />;
   return (
     <Notice
@@ -213,7 +222,7 @@ function Library() {
           </span>
         )}
         <Button
-          disabled={selected.size === 0 || add.isPending || (remaining != null && counted > remaining)}
+          disabled={selected.size === 0 || add.isPending || (remaining !== undefined && counted > remaining)}
           onClick={() => add.mutate([...selected.keys()])}
         >
           {add.isPending ? "正在添加…" : "添加到导师列表"}
@@ -234,16 +243,15 @@ function Library() {
   );
 }
 
-function Quota({ remaining, counted }: { remaining: number | null | undefined; counted: number }) {
+function Quota({ remaining, counted }: { remaining: number | undefined; counted: number }) {
   if (remaining === undefined) return null;
-  if (remaining === null) return <span className="text-muted-foreground">赞助者不限数量</span>;
   return (
     <span className={counted > remaining ? "text-warning" : "text-muted-foreground"}>
       {remaining === 0
-        ? "今天的数量用完了，明天 0 点（北京时间）恢复；赞助者不限数量"
+        ? "今天的数量已用完，明天 0 点（北京时间）恢复"
         : counted > remaining
-          ? `今天还可以添加 ${remaining} 位，已选的有 ${counted} 位要算数量`
-          : `今天还可以添加 ${remaining} 位`}
+          ? `今天还可添加 ${remaining} 位，已选的有 ${counted} 位要计入数量`
+          : `今天还可添加 ${remaining} 位`}
     </span>
   );
 }

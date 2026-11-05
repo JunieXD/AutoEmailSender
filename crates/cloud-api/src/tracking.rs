@@ -28,6 +28,26 @@ pub const RETENTION: i64 = 180 * 24 * 60 * 60 * 1000;
 /// answer was lost, and does not charge for it again.
 pub const REGISTER_WITHIN: i64 = 30 * 24 * 60 * 60 * 1000;
 
+/// Emails tracked in each rolling 30 days while Plus is in effect, before packs are used.
+pub const ALLOWANCE: u32 = 500;
+/// The rolling window of `ALLOWANCE`, in milliseconds.
+pub const WINDOW: i64 = 30 * 24 * 60 * 60 * 1000;
+/// How long a pack lasts from when it is added, in milliseconds.
+pub const PACK_LIFETIME: i64 = 365 * 24 * 60 * 60 * 1000;
+
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Quota {
+    /// Of the allowance, in the last 30 days.
+    pub used: u32,
+    pub limit: u32,
+    /// Left in the packs that have not expired.
+    pub pack_left: u32,
+    /// The earliest expiry among packs with some left.
+    pub pack_expires_at: Option<i64>,
+}
+
 /// Emails handed to the mail server with these ids; each new one uses one email of the quota.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,8 +60,8 @@ pub struct Registered {
     pub accepted: Vec<String>,
     /// Over the quota, or registered by another account.
     pub rejected: Vec<String>,
-    /// The quota left afterwards.
-    pub left: u32,
+    /// The quota afterwards.
+    pub tracking: Quota,
 }
 
 #[derive(Serialize, Deserialize)]

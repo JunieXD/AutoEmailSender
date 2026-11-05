@@ -60,7 +60,7 @@ pub enum Error {
     /// The account changed while the operation waited for the server.
     AccountChanged,
     Disabled,
-    SponsorRequired,
+    PlusRequired,
     OtherDevice,
     TooLarge(String),
     NotFound,
@@ -74,9 +74,9 @@ impl From<account::Error> for Error {
     fn from(e: account::Error) -> Self {
         match e {
             account::Error::Server(ApiError {
-                code: ErrorCode::SponsorRequired,
+                code: ErrorCode::PlusRequired,
                 ..
-            }) => Self::SponsorRequired,
+            }) => Self::PlusRequired,
             e => Self::Account(e),
         }
     }
@@ -112,7 +112,7 @@ impl std::fmt::Display for Error {
             Self::NeedsPassword => write!(f, "cloud backup: no backup key"),
             Self::AccountChanged => write!(f, "cloud backup: account changed"),
             Self::Disabled => write!(f, "cloud backup: turned off"),
-            Self::SponsorRequired => write!(f, "cloud backup: not sponsoring"),
+            Self::PlusRequired => write!(f, "cloud backup: Plus has ended"),
             Self::OtherDevice => write!(f, "cloud backup: from another computer"),
             Self::TooLarge(_) => write!(f, "cloud backup: over the limit"),
             Self::NotFound => write!(f, "cloud backup: none on the server"),
@@ -135,7 +135,7 @@ impl Error {
             Self::NeedsPassword => "请先输入账号密码，算出这台电脑的备份钥匙。".into(),
             Self::AccountChanged => "登录的账号刚刚变了，请重试。".into(),
             Self::Disabled => "云端备份没有开启。".into(),
-            Self::SponsorRequired => "赞助已到期，云端备份已停止。".into(),
+            Self::PlusRequired => "Plus 已到期，云端备份已停止。".into(),
             Self::OtherDevice => "云端备份来自另一台电脑，这台电脑不再自动备份。".into(),
             Self::TooLarge(message) => message.clone(),
             Self::NotFound => "云端没有备份。".into(),
@@ -181,8 +181,8 @@ pub struct Failure {
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "CloudBackupServer")]
 pub struct Server {
-    pub sponsor_until: Option<i64>,
-    /// When a backup whose sponsorship has ended is deleted.
+    pub plus_until: Option<i64>,
+    /// When a backup whose Plus has ended is deleted.
     pub delete_at: Option<i64>,
     pub backup: Option<Backup>,
 }
@@ -285,30 +285,30 @@ pub async fn server(ctx: &Context, now: i64) -> Result<Server> {
     };
     Ok(Server {
         delete_at: status
-            .sponsor_until
+            .plus_until
             .filter(|until| backup.is_some() && *until <= now)
             .map(|until| until + RETENTION),
-        sponsor_until: status.sponsor_until,
+        plus_until: status.plus_until,
         backup,
     })
 }
 
 pub async fn enable(ctx: &Context, input: Enable, now: i64) -> Result<Enabled> {
     if let Some(password) = input.password {
-        let (account::State::LoggedIn { email } | account::State::Expired { email }) =
+        let (account::State::LoggedIn { email, .. } | account::State::Expired { email }) =
             account::state(&ctx.db).await?
         else {
             return Err(account::Error::SignedOut.into());
         };
-        ctx.account.login(&ctx.db, &email, password).await?;
+        ctx.account.login(&ctx.db, &email, password, false).await?;
     }
     let login = account::saved_login(&ctx.db).await?;
     let Some(key) = login.backup_key else {
         return Err(Error::NeedsPassword);
     };
     let status = remote(ctx, &login).await?;
-    if !status.sponsor_until.is_some_and(|until| until > now) {
-        return Err(Error::SponsorRequired);
+    if !status.plus_until.is_some_and(|until| until > now) {
+        return Err(Error::PlusRequired);
     }
     let device = device(&ctx.db).await?;
     if let Some(current) = &status.current
@@ -417,8 +417,8 @@ pub async fn back_up(ctx: &Context, now: i64) -> Result<()> {
             .execute(&ctx.db)
             .await?;
         }
-        // Not failing: backups pause until the user sponsors again.
-        Err(Error::SponsorRequired) => {
+        // Not failing: backups pause until Plus is renewed.
+        Err(Error::PlusRequired) => {
             sqlx::query!(
                 r#"UPDATE profile SET cloud_backup_failed_at = NULL, cloud_backup_error = NULL
                 WHERE EXISTS (SELECT 1 FROM account WHERE backup_key = ?)"#,
@@ -485,8 +485,8 @@ async fn upload(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64)
 
 async fn attempt(ctx: &Context, login: &account::Login, key: &[u8; 32], now: i64) -> Result<()> {
     let status = remote(ctx, login).await?;
-    if !status.sponsor_until.is_some_and(|until| until > now) {
-        return Err(Error::SponsorRequired);
+    if !status.plus_until.is_some_and(|until| until > now) {
+        return Err(Error::PlusRequired);
     }
     let device = device(&ctx.db).await?;
     let profile = sqlx::query!("SELECT cloud_backup_commit, cloud_backup_replace FROM profile")

@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { PhoneCode, RelayStatus } from "@/api/types";
-import { AccountDialog, useAccount } from "@/components/account";
+import { AccountDialog, TermsNotice, useAccount } from "@/components/account";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { day, time } from "@/format";
@@ -19,7 +19,7 @@ export function PhonesRow() {
   return (
     <Row label="手机">
       {account.error && <p className="text-sm text-destructive">账号未能读取：{errorMessage(account.error)}</p>}
-      {state?.kind === "loggedIn" && <Phones key={state.email} />}
+      {state?.kind === "loggedIn" && (state.termsOutdated ? <TermsNotice /> : <Phones key={state.email} />)}
       {state && state.kind !== "loggedIn" && (
         <>
           <p className="text-sm text-muted-foreground">登录后，可以用手机浏览器远程使用这台电脑上的应用。</p>

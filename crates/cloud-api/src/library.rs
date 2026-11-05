@@ -105,7 +105,8 @@ pub struct Record {
 #[cfg_attr(feature = "ts-rs", ts(rename = "LibraryQuota"))]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Quota {
-    pub remaining: Option<u32>,
+    /// Records this account may still add today.
+    pub remaining: u32,
 }
 
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -122,7 +123,7 @@ pub struct FetchRequest {
 pub struct Fetched {
     pub records: Vec<Record>,
     pub missing: Vec<String>,
-    pub remaining: Option<u32>,
+    pub remaining: u32,
 }
 
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]

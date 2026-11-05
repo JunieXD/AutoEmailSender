@@ -1,8 +1,18 @@
 use account::{Client, Error, State, keys};
-use cloud_api::{Account, ApiError, ErrorCode, LoginRequest, Session, path};
+use cloud_api::{
+    Account, ApiError, ErrorCode, LoginRequest, Session, path, plus::Method as PayMethod,
+    tracking::Quota,
+};
 use serde_json::json;
 use sqlx::SqlitePool;
 use test_fixtures::provider::{Provider, Response};
+
+const QUOTA: Quota = Quota {
+    used: 0,
+    limit: 500,
+    pack_left: 0,
+    pack_expires_at: None,
+};
 
 /// HKDF-SHA256 with info `backup` over the same Argon2id output as the login key.
 const BACKUP_KEY: [u8; 32] = [
@@ -10,64 +20,100 @@ const BACKUP_KEY: [u8; 32] = [
     0xf7, 0x73, 0xf7, 0x21, 0xa4, 0x2a, 0x92, 0x5e, 0x9a, 0xe9, 0x5a, 0x18, 0x22, 0xee, 0xee, 0x1d,
 ];
 
+fn account_json(email: &str, terms: &str) -> serde_json::Value {
+    json!({
+        "email": email,
+        "plusUntil": null,
+        "tracking": {"used": 0, "limit": 500, "packLeft": 0, "packExpiresAt": null},
+        "terms": terms,
+    })
+}
+
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePool) {
+async fn orders_carry_the_plus_terms_and_older_terms_stop_the_official_services(db: SqlitePool) {
     let mut server = Provider::start().await.unwrap();
     let net = net::Net::new(vec![]).unwrap();
     let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        r#"INSERT INTO account (id, email, token)
-        VALUES (1, 'student@example.invalid', 'sponsor-token')"#,
+        r#"INSERT INTO account (terms, id, email, token)
+        VALUES ('9999-12-31', 1, 'student@example.invalid', 'plus-token')"#,
     )
     .execute(&db)
     .await
     .unwrap();
-    let login = account::saved_login(&db).await.unwrap();
     let calls = async {
-        assert_eq!(client.get_sponsor(&db).await.unwrap().sponsor_until, None);
-        assert_eq!(
-            client.sponsor_tiers(&db).await.unwrap().tiers[0].url,
-            "https://afdian.com/order/create?custom_order_id=123"
-        );
-        assert_eq!(
+        let items = client.plus_items(&db).await.unwrap();
+        assert_eq!(items.tiers[0].item, "1m");
+        let created = client
+            .create_plus_order(&db, "1m".into(), PayMethod::Wxpay)
+            .await
+            .unwrap();
+        assert_eq!(created.order, 7);
+        assert!(matches!(
             client
-                .claim_sponsor_order(&db, &login, "  AbC123\n")
-                .await
-                .unwrap()
-                .sponsor_until,
-            Some(1_800_000_000_000)
+                .create_plus_order(&db, "1m".into(), PayMethod::Alipay)
+                .await,
+            Err(Error::Invalid(_))
+        ));
+        // The account agreed to older terms elsewhere: only what works without them goes out.
+        let login = account::saved_login(&db).await.unwrap();
+        assert_eq!(
+            client.account(&db, &login).await.unwrap().terms.as_deref(),
+            Some("2000-01-01")
         );
-        for invalid in ["", "   ", "订单号", "abc-123", &"a".repeat(65)] {
-            assert!(matches!(
-                client.claim_sponsor_order(&db, &login, invalid).await,
-                Err(Error::Invalid(_))
-            ));
-        }
+        assert!(matches!(
+            account::state(&db).await.unwrap(),
+            State::LoggedIn {
+                terms_outdated: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            client.invite(&db).await,
+            Err(Error::TermsOutdated)
+        ));
+        client.accept_terms(&db).await.unwrap();
+        assert!(matches!(
+            account::state(&db).await.unwrap(),
+            State::LoggedIn {
+                terms_outdated: false,
+                ..
+            }
+        ));
     };
     let replies = async {
         for (method, path, body) in [
             (
                 "GET",
-                path::ACCOUNT,
-                json!({"email":"student@example.invalid", "sponsorUntil":null, "trackingLeft":0}),
-            ),
-            (
-                "GET",
-                path::SPONSOR_TIERS,
-                json!({"tiers":[{"duration":{"days":7},"price":660,"url":"https://afdian.com/order/create?custom_order_id=123"}],"packs":[]}),
+                path::PLUS_ITEMS.to_string(),
+                json!({"tiers":[{"item":"1m","duration":{"months":1},"price":1880,"until":1,"available":true}],
+                    "packs":[],"latest":2,"refunded":false}),
             ),
             (
                 "POST",
-                path::SPONSOR_CLAIM,
-                json!({"email":"student@example.invalid", "sponsorUntil":1_800_000_000_000_i64, "trackingLeft":100}),
+                path::PLUS_ORDERS.to_string(),
+                json!({"order":7,"payUrl":"https://pay.example.invalid/AES7"}),
             ),
+            (
+                "POST",
+                path::PLUS_ORDERS.to_string(),
+                json!({"order":8,"payUrl":"http://pay.example.invalid/AES8"}),
+            ),
+            (
+                "GET",
+                path::ACCOUNT.to_string(),
+                account_json("student@example.invalid", "2000-01-01"),
+            ),
+            ("POST", path::ACCOUNT_TERMS.to_string(), json!({})),
         ] {
             let request = server.requests.recv().await.unwrap();
             assert!(request.line.starts_with(&format!("{method} {path} ")));
-            assert_eq!(request.authorization, "Bearer sponsor-token");
-            if method == "POST" {
-                let claim: cloud_api::ClaimRequest = serde_json::from_value(request.body).unwrap();
-                assert_eq!(claim.order_number, "AbC123");
+            assert_eq!(request.authorization, "Bearer plus-token");
+            if path == path::PLUS_ORDERS {
+                assert_eq!(request.body["terms"], account::plus_terms());
+            }
+            if path == path::ACCOUNT_TERMS {
+                assert_eq!(request.body, json!({"terms": account::terms()}));
             }
             request
                 .respond
@@ -83,52 +129,14 @@ async fn sponsorship_reads_live_state_and_claims_a_normalized_order(db: SqlitePo
     assert!(server.requests.try_recv().is_err());
 }
 
-#[sqlx::test(migrator = "db::MIGRATOR")]
-async fn sponsorship_preserves_server_error_codes(db: SqlitePool) {
-    let mut server = Provider::start().await.unwrap();
-    let net = net::Net::new(vec![]).unwrap();
-    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
-    sqlx::query(
-        r#"INSERT INTO account (id, email, token)
-        VALUES (1, 'student@example.invalid', 'sponsor-token')"#,
-    )
-    .execute(&db)
-    .await
-    .unwrap();
-    const CODES: [ErrorCode; 4] = [
-        ErrorCode::OrderNotFound,
-        ErrorCode::OrderClaimed,
-        ErrorCode::OrderNotSponsorship,
-        ErrorCode::SponsorUnavailable,
-    ];
-    let login = account::saved_login(&db).await.unwrap();
-    let calls = async {
-        for code in CODES {
-            let error = client
-                .claim_sponsor_order(&db, &login, "abc123")
-                .await
-                .unwrap_err();
-            assert!(matches!(error, Error::Server(ref error) if error.code == code));
-        }
-    };
-    let replies = async {
-        for code in CODES {
-            let request = server.requests.recv().await.unwrap();
-            request
-                .respond
-                .send(Response::Raw {
-                    status: 400,
-                    content: serde_json::to_string(&ApiError {
-                        code,
-                        retry_after_seconds: None,
-                    })
-                    .unwrap(),
-                })
-                .unwrap();
-            request.completed.await.unwrap();
-        }
-    };
-    tokio::join!(calls, replies);
+#[test]
+fn the_terms_versions_are_the_dates_the_texts_take_effect() {
+    for version in [account::terms(), account::plus_terms()] {
+        assert!(
+            chrono::NaiveDate::parse_from_str(version, "%Y-%m-%d").is_ok(),
+            "{version}"
+        );
+    }
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -137,7 +145,7 @@ async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db
     let net = net::Net::new(vec![]).unwrap();
     let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        "INSERT INTO account (id, email, token) VALUES (1, 'student@qq.com', 'code-token')",
+        "INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, 'student@qq.com', 'code-token')",
     )
     .execute(&db)
     .await
@@ -156,7 +164,7 @@ async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db
                 .fill_invite(&db, "  ａｂｃｄ-２３４５ ")
                 .await
                 .unwrap()
-                .sponsor_until,
+                .plus_until,
             Some(1800000000000)
         );
         let redeemed = client
@@ -164,7 +172,7 @@ async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db
             .await
             .unwrap();
         assert_eq!(redeemed.days, 7);
-        assert_eq!(redeemed.sponsor_until, 1800604800000);
+        assert_eq!(redeemed.plus_until, 1800604800000);
         let error = client.fill_invite(&db, "ABCDEFGH").await.unwrap_err();
         assert!(matches!(error, Error::Server(ref error) if error.code == ErrorCode::InviteFull));
         assert!(error.message().contains("4 位"));
@@ -194,14 +202,14 @@ async fn invitation_and_redemption_send_normalized_codes_and_preserve_results(db
                 path::INVITE,
                 Some("ABCD2345"),
                 200,
-                json!({"sponsorUntil":1800000000000_i64}),
+                json!({"plusUntil":1800000000000_i64}),
             ),
             (
                 "POST",
                 path::REDEEM,
                 Some("ABCD2345EFGH"),
                 200,
-                json!({"days":7,"sponsorUntil":1800604800000_i64}),
+                json!({"days":7,"plusUntil":1800604800000_i64}),
             ),
             (
                 "POST",
@@ -267,13 +275,14 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
                 &db,
                 " Student@example.invalid ",
                 "fixed-password-123".into(),
+                false,
             )
             .await
             .unwrap();
         let public = serde_json::to_value(&state).unwrap();
         assert_eq!(
             public,
-            json!({"kind":"loggedIn", "email":"student@example.invalid"})
+            json!({"kind":"loggedIn", "email":"student@example.invalid", "termsOutdated":false})
         );
         assert!(matches!(
             account::state(&db).await.unwrap(),
@@ -328,8 +337,9 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
             token: "test-session-token".into(),
             account: Account {
                 email: input.email,
-                sponsor_until: Some(1234),
-                tracking_left: 0,
+                plus_until: Some(1234),
+                tracking: QUOTA,
+                terms: Some("9999-12-31".into()),
             },
         })
         .unwrap();
@@ -355,6 +365,7 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
                 content: serde_json::to_string(&ApiError {
                     code: ErrorCode::SessionExpired,
                     retry_after_seconds: None,
+                    delete_at: None,
                 })
                 .unwrap(),
             })
@@ -365,19 +376,101 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_account_being_deleted_logs_in_only_to_restore_it(db: SqlitePool) {
+    let mut server = Provider::start().await.unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
+    let delete_at = 1_800_000_000_000_i64;
+    let calls = async {
+        let error = client
+            .login(
+                &db,
+                "student@example.invalid",
+                "fixed-password-123".into(),
+                false,
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Deleting(at) if at == delete_at));
+        assert!(error.message().contains("正在注销"), "{}", error.message());
+        assert!(matches!(
+            account::state(&db).await.unwrap(),
+            State::LoggedOut
+        ));
+        client
+            .login(
+                &db,
+                "student@example.invalid",
+                "fixed-password-123".into(),
+                true,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .delete(&db, "student@example.invalid", "fixed-password-123".into())
+                .await
+                .unwrap(),
+            delete_at
+        );
+        assert!(matches!(
+            account::state(&db).await.unwrap(),
+            State::LoggedOut
+        ));
+    };
+    let replies = async {
+        let deleting = json!({"code": "account_deleting", "deleteAt": delete_at});
+        let session = json!({
+            "token": "restored-token",
+            "account": account_json("student@example.invalid", "9999-12-31"),
+        });
+        for (path, restore, status, body) in [
+            (path::LOGIN, Some(false), 409, deleting),
+            (path::LOGIN, Some(true), 200, session),
+            (path::ACCOUNT, None, 200, json!({"deleteAt": delete_at})),
+        ] {
+            let request = server.requests.recv().await.unwrap();
+            assert!(
+                request.line.contains(&format!(" {path} ")),
+                "{}",
+                request.line
+            );
+            if let Some(restore) = restore {
+                let input: LoginRequest = serde_json::from_value(request.body).unwrap();
+                assert_eq!(input.restore, restore);
+            }
+            request
+                .respond
+                .send(Response::Raw {
+                    status,
+                    content: body.to_string(),
+                })
+                .unwrap();
+            request.completed.await.unwrap();
+        }
+    };
+    tokio::join!(calls, replies);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: SqlitePool) {
     let mut server = Provider::start().await.unwrap();
     let net = net::Net::new(vec![]).unwrap();
     let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        r#"INSERT INTO account (id, email, token)
-        VALUES (1, 'first@example.invalid', 'first-token')"#,
+        r#"INSERT INTO account (terms, id, email, token)
+        VALUES ('9999-12-31', 1, 'first@example.invalid', 'first-token')"#,
     )
     .execute(&db)
     .await
     .unwrap();
 
-    let login = client.login(&db, "second@example.invalid", "shared-password".into());
+    let login = client.login(
+        &db,
+        "second@example.invalid",
+        "shared-password".into(),
+        false,
+    );
     tokio::pin!(login);
     let request = tokio::select! {
         request = server.requests.recv() => request.unwrap(),
@@ -386,7 +479,7 @@ async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: Sqlite
     assert!(request.line.starts_with(&format!("POST {} ", path::LOGIN)));
     assert!(matches!(
         account::state(&db).await.unwrap(),
-        State::LoggedIn { email } if email == "first@example.invalid"
+        State::LoggedIn { email, .. } if email == "first@example.invalid"
     ));
 
     // The deletion of A must wait behind B's unfinished login before reading local state.
@@ -405,8 +498,9 @@ async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: Sqlite
                 token: "second-token".into(),
                 account: Account {
                     email: "second@example.invalid".into(),
-                    sponsor_until: None,
-                    tracking_left: 0,
+                    plus_until: None,
+                    tracking: QUOTA,
+                    terms: Some("9999-12-31".into()),
                 },
             })
             .unwrap(),
@@ -422,7 +516,7 @@ async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: Sqlite
     };
     assert!(matches!(
         logged_in.unwrap(),
-        State::LoggedIn { email } if email == "second@example.invalid"
+        State::LoggedIn { email, .. } if email == "second@example.invalid"
     ));
     assert!(matches!(deleted, Err(Error::AccountChanged)));
     let saved: (String, String) = sqlx::query_as("SELECT email, token FROM account")
@@ -473,6 +567,7 @@ async fn wire_errors_become_actionable_messages() {
                     content: serde_json::to_string(&ApiError {
                         code,
                         retry_after_seconds: Some(61),
+                        delete_at: None,
                     })
                     .unwrap(),
                 })
@@ -492,11 +587,29 @@ async fn wire_errors_become_actionable_messages() {
 }
 
 #[test]
+fn refused_orders_and_a_deleting_address_say_why() {
+    let message = |code, delete_at| {
+        Error::Server(ApiError {
+            code,
+            retry_after_seconds: None,
+            delete_at,
+        })
+        .message()
+    };
+    assert!(message(ErrorCode::PlusTooLong, None).contains("一年"));
+    assert!(message(ErrorCode::PlusRefunded, None).contains("无理由退款"));
+    assert!(message(ErrorCode::PlusRequired, None).contains("Plus"));
+    let deleting = message(ErrorCode::AccountDeleting, Some(1_800_000_000_000));
+    assert!(deleting.contains("后方可重新注册"), "{deleting}");
+}
+
+#[test]
 fn a_busy_server_is_waited_for_in_seconds() {
     let wait = |seconds| {
         Error::Server(ApiError {
             code: ErrorCode::RateLimited,
             retry_after_seconds: Some(seconds),
+            delete_at: None,
         })
         .message()
     };
@@ -541,8 +654,8 @@ async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
     let net = net::Net::new(vec![]).unwrap();
     let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        r#"INSERT INTO account (id, email, token, library_revision, library_checked_at)
-        VALUES (1, 'first@example.invalid', 'old-token', 42, 100)"#,
+        r#"INSERT INTO account (terms, id, email, token, library_revision, library_checked_at)
+        VALUES ('9999-12-31', 1, 'first@example.invalid', 'old-token', 42, 100)"#,
     )
     .execute(&db)
     .await
@@ -551,7 +664,7 @@ async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
         ("first@example.invalid", (42, Some(100))),
         ("second@example.invalid", (0, None)),
     ] {
-        let login = client.login(&db, email, "fixed-password-123".into());
+        let login = client.login(&db, email, "fixed-password-123".into(), false);
         let reply = async {
             let request = server.requests.recv().await.unwrap();
             request
@@ -562,8 +675,9 @@ async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
                         token: "new-test-token".into(),
                         account: Account {
                             email: email.into(),
-                            sponsor_until: None,
-                            tracking_left: 0,
+                            plus_until: None,
+                            tracking: QUOTA,
+                            terms: Some("9999-12-31".into()),
                         },
                     })
                     .unwrap(),

@@ -3724,11 +3724,11 @@ fn tracking_image(mail: &str) -> Option<String> {
     Some(rest.split_once(".gif").unwrap().0.into())
 }
 
-/// A sponsored login with `left` emails of tracking quota.
+/// A login with Plus and `left` emails of tracking quota.
 async fn track(db: &SqlitePool, on: bool, left: i64) {
     sqlx::query(
-        "INSERT INTO account (id, email, token, tracking_left, tracking_until)
-         VALUES (1, 'student@example.invalid', 'token', ?, 4000000000000)
+        "INSERT INTO account (terms, id, email, token, tracking_left, tracking_until)
+         VALUES ('9999-12-31', 1, 'student@example.invalid', 'token', ?, 4000000000000)
          ON CONFLICT (id) DO UPDATE SET tracking_left = excluded.tracking_left",
     )
     .bind(left)
@@ -3788,7 +3788,7 @@ async fn letters_carry_a_tracking_image_while_on_and_the_quota_covers_them(db: S
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn letters_go_without_a_tracking_image_once_the_sponsorship_ends(db: SqlitePool) {
+async fn letters_go_without_a_tracking_image_once_plus_ends(db: SqlitePool) {
     let writes = db::Writes::default();
     let (net, inbox) = mailbox(&db, SECRET).await;
     track(&db, true, 5).await;
@@ -3821,8 +3821,8 @@ async fn letters_waiting_for_another_account_leave_this_ones_quota_alone(db: Sql
         .unwrap();
     sqlx::raw_sql(
         r#"DELETE FROM account;
-        INSERT INTO account (id, email, token, tracking_left, tracking_until)
-        VALUES (1, 'other@example.invalid', 'other', 1, 4000000000000);
+        INSERT INTO account (terms, id, email, token, tracking_left, tracking_until)
+        VALUES ('9999-12-31', 1, 'other@example.invalid', 'other', 1, 4000000000000);
         UPDATE profile SET email_tracking = 1;"#,
     )
     .execute(&db)

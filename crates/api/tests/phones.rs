@@ -33,7 +33,7 @@ impl Setup {
         let mut ctx = Context::new(db, net::Net::new(vec![]).unwrap(), dir.path());
         ctx.account = account::Client::with_address(&ctx.net, relay.address.clone());
         sqlx::query(
-            "INSERT INTO account (id, email, token) VALUES (1, 'student@example.invalid', ?)",
+            "INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, 'student@example.invalid', ?)",
         )
         .bind(token)
         .execute(&ctx.db)
@@ -273,7 +273,7 @@ async fn turning_access_off_disconnects_and_another_account_forgets_the_phones(d
     };
     sqlx::raw_sql(
         "DELETE FROM account;
-        INSERT INTO account (id, email, token) VALUES (1, 'student@example.invalid', 'token');",
+        INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, 'student@example.invalid', 'token');",
     )
     .execute(&setup.ctx.db)
     .await
@@ -285,7 +285,7 @@ async fn turning_access_off_disconnects_and_another_account_forgets_the_phones(d
     );
     sqlx::raw_sql(
         "DELETE FROM account;
-        INSERT INTO account (id, email, token) VALUES (1, 'other@example.invalid', 'token');",
+        INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, 'other@example.invalid', 'token');",
     )
     .execute(&setup.ctx.db)
     .await
@@ -362,7 +362,7 @@ async fn an_answer_after_another_account_logged_in_pairs_nothing(db: SqlitePool)
     // Logged in, and the old account's phones cleared, before phone remote hears of it.
     sqlx::raw_sql(
         "DELETE FROM account;
-        INSERT INTO account (id, email, token) VALUES (1, 'other@example.invalid', 'token');",
+        INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, 'other@example.invalid', 'token');",
     )
     .execute(&setup.ctx.db)
     .await

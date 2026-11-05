@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 pub const LIMIT: u64 = 30 * 1024 * 1024;
 /// The most objects in one backup: its manifest, its database and the materials.
 pub const OBJECTS: usize = 500;
-/// How long a backup is kept after sponsorship ends, in milliseconds.
+/// How long a backup is kept after Plus ends, in milliseconds.
 pub const RETENTION: i64 = 90 * 24 * 60 * 60 * 1000;
 
 /// Object and device ids are 128 random bits chosen by the client, as 32 lowercase hex digits.
@@ -22,7 +22,7 @@ pub fn valid_id(value: &str) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub current: Option<Current>,
-    pub sponsor_until: Option<i64>,
+    pub plus_until: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

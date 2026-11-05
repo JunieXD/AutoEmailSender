@@ -1,12 +1,17 @@
 //! Official account access. Passwords live only for derivation; saved tokens never reach callers.
 
 mod key;
-pub use cloud_api::Sponsor;
+pub use cloud_api::plus::Plus;
 pub use key::{Keys, keys};
 
 use std::time::Duration;
 
-use cloud_api::{ApiError, Empty, ErrorCode, Session, path};
+use cloud_api::{
+    ApiError, Empty, ErrorCode, Session,
+    account::{Deleting, Terms},
+    path,
+    plus::{Created, Items, Method as PayMethod, OrderRequest, OrderState},
+};
 use reqwest::{Method, RequestBuilder, StatusCode};
 use reqwest_websocket::Upgrade;
 pub use reqwest_websocket::WebSocket;
@@ -32,8 +37,41 @@ const SERVER_URL: &str = if cfg!(debug_assertions) {
 #[ts(rename = "AccountState")]
 pub enum State {
     LoggedOut,
-    LoggedIn { email: String },
-    Expired { email: String },
+    LoggedIn {
+        email: String,
+        /// The account agreed to older terms than this app's, as far as this computer knows.
+        terms_outdated: bool,
+    },
+    Expired {
+        email: String,
+    },
+}
+
+/// The terms the app shows: their first line gives the date they take effect, which is their
+/// version.
+const TERMS: &str = include_str!("../../../legal/terms.md");
+const PRIVACY: &str = include_str!("../../../legal/privacy.md");
+const PLUS_TERMS: &str = include_str!("../../../legal/plus.md");
+
+fn version(text: &'static str) -> &'static str {
+    text.lines()
+        .next()
+        .and_then(|line| line.strip_prefix("生效日期："))
+        .unwrap_or_else(|| unreachable!("each of the terms starts with the date it takes effect"))
+}
+
+/// The version of the terms of service and privacy policy, agreed to together: the later date.
+pub fn terms() -> &'static str {
+    version(TERMS).max(version(PRIVACY))
+}
+
+/// The version of the Plus terms, agreed to with each order.
+pub fn plus_terms() -> &'static str {
+    version(PLUS_TERMS)
+}
+
+fn outdated(agreed: Option<&str>) -> bool {
+    agreed.is_none_or(|agreed| agreed < terms())
 }
 
 /// The official service this run talks to, which `AUTOEMAIL_SERVER_URL` can point elsewhere.
@@ -56,14 +94,17 @@ pub fn tracking_image(id: &str) -> String {
 
 pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
     let row = sqlx::query!(
-        r#"SELECT email, token IS NOT NULL AS "logged_in!: bool"
+        r#"SELECT email, token IS NOT NULL AS "logged_in!: bool", terms
         FROM account"#,
     )
     .fetch_optional(db)
     .await?;
     Ok(match row {
         None => State::LoggedOut,
-        Some(row) if row.logged_in => State::LoggedIn { email: row.email },
+        Some(row) if row.logged_in => State::LoggedIn {
+            email: row.email,
+            terms_outdated: outdated(row.terms.as_deref()),
+        },
         Some(row) => State::Expired { email: row.email },
     })
 }
@@ -71,7 +112,8 @@ pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
 /// Read once by operations that must keep using one account throughout.
 pub async fn saved_login(db: &SqlitePool) -> Result<Login, Error> {
     let row = sqlx::query!(
-        r#"SELECT email, token AS "token!", backup_key FROM account WHERE token IS NOT NULL"#
+        r#"SELECT email, token AS "token!", backup_key, terms
+        FROM account WHERE token IS NOT NULL"#
     )
     .fetch_optional(db)
     .await?
@@ -80,6 +122,7 @@ pub async fn saved_login(db: &SqlitePool) -> Result<Login, Error> {
         email: row.email,
         token: row.token,
         backup_key: row.backup_key.and_then(|key| key.try_into().ok()),
+        terms_outdated: outdated(row.terms.as_deref()),
     })
 }
 
@@ -147,11 +190,14 @@ impl Client {
         Ok(())
     }
 
+    /// With `restore`, logging in to an account in its cooling-off period cancels its deletion;
+    /// without, it fails with `Error::Deleting`.
     pub async fn login(
         &self,
         db: &SqlitePool,
         email: &str,
         password: String,
+        restore: bool,
     ) -> Result<State, Error> {
         let _guard = self.change.lock().await;
         let email = checked_email(email)?;
@@ -160,9 +206,18 @@ impl Client {
             &cloud_api::LoginRequest {
                 email,
                 login_key: keys.login,
+                restore,
             },
         ))
-        .await?;
+        .await
+        .map_err(|error| match error {
+            Error::Server(ApiError {
+                code: ErrorCode::AccountDeleting,
+                delete_at: Some(at),
+                ..
+            }) => Error::Deleting(at),
+            error => error,
+        })?;
         let state = save_session(db, session, &keys.backup).await?;
         self.changed.send_replace(());
         Ok(state)
@@ -177,6 +232,12 @@ impl Client {
     ) -> Result<State, Error> {
         let _guard = self.change.lock().await;
         let (request, backup) = verified(email, code, password).await?;
+        let request = cloud_api::RegisterRequest {
+            email: request.email,
+            code: request.code,
+            login_key: request.login_key,
+            terms: terms().into(),
+        };
         let session: Session =
             response(self.request(Method::POST, path::REGISTER).json(&request)).await?;
         let state = save_session(db, session, &backup).await?;
@@ -224,18 +285,103 @@ impl Client {
         Ok(())
     }
 
-    pub async fn get_sponsor(&self, db: &SqlitePool) -> Result<Sponsor, Error> {
+    /// The account as the server has it, noting the terms it agreed to.
+    pub async fn account(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+    ) -> Result<cloud_api::Account, Error> {
         let account: cloud_api::Account = self
-            .authenticated(db, Method::GET, path::ACCOUNT, None::<&Empty>)
+            .authenticated_as(db, login, Method::GET, path::ACCOUNT, None::<&Empty>)
             .await?;
-        Ok(Sponsor {
-            sponsor_until: account.sponsor_until,
-        })
+        self.note_terms(db, login, account.terms.as_deref()).await?;
+        Ok(account)
     }
 
-    pub async fn sponsor_tiers(&self, db: &SqlitePool) -> Result<cloud_api::SponsorTiers, Error> {
-        self.authenticated(db, Method::GET, path::SPONSOR_TIERS, None::<&Empty>)
+    /// Notes the terms the account agreed to, as long as `login` is still the saved login.
+    async fn note_terms(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+        terms: Option<&str>,
+    ) -> Result<(), Error> {
+        let noted = sqlx::query!(
+            "UPDATE account SET terms = ?1 WHERE token = ?2 AND terms IS NOT ?1",
+            terms,
+            login.token
+        )
+        .execute(db)
+        .await?;
+        if noted.rows_affected() > 0 {
+            self.changed.send_replace(());
+        }
+        Ok(())
+    }
+
+    /// Agrees to this app's terms of service and privacy policy.
+    pub async fn accept_terms(&self, db: &SqlitePool) -> Result<(), Error> {
+        let login = saved_login(db).await?;
+        self.authenticated_as::<Empty>(
+            db,
+            &login,
+            Method::POST,
+            path::ACCOUNT_TERMS,
+            Some(&Terms {
+                terms: terms().into(),
+            }),
+        )
+        .await?;
+        self.note_terms(db, &login, Some(terms())).await
+    }
+
+    pub async fn plus_items(&self, db: &SqlitePool) -> Result<Items, Error> {
+        self.authenticated(db, Method::GET, path::PLUS_ITEMS, None::<&Empty>)
             .await
+    }
+
+    /// Places an order, agreeing to this app's Plus terms; the user pays on its page.
+    pub async fn create_plus_order(
+        &self,
+        db: &SqlitePool,
+        item: String,
+        method: PayMethod,
+    ) -> Result<Created, Error> {
+        let created: Created = self
+            .authenticated(
+                db,
+                Method::POST,
+                path::PLUS_ORDERS,
+                Some(&OrderRequest {
+                    item,
+                    method,
+                    terms: plus_terms().into(),
+                }),
+            )
+            .await?;
+        // The page opens in the browser.
+        if !reqwest::Url::parse(&created.pay_url).is_ok_and(|url| url.scheme() == "https") {
+            return Err(Error::Invalid(
+                "服务器给的付款地址不正确，请稍后重试或升级应用。",
+            ));
+        }
+        Ok(created)
+    }
+
+    /// As `login`, so that what it answers is noted for the account it is about.
+    pub async fn plus_order(
+        &self,
+        db: &SqlitePool,
+        login: &Login,
+        order: i64,
+    ) -> Result<OrderState, Error> {
+        self.authenticated_as(
+            db,
+            login,
+            Method::GET,
+            &format!("{}/{order}", path::PLUS_ORDERS),
+            None::<&Empty>,
+        )
+        .await
     }
 
     pub async fn invite(&self, db: &SqlitePool) -> Result<cloud_api::Invite, Error> {
@@ -243,7 +389,7 @@ impl Client {
             .await
     }
 
-    pub async fn fill_invite(&self, db: &SqlitePool, code: &str) -> Result<Sponsor, Error> {
+    pub async fn fill_invite(&self, db: &SqlitePool, code: &str) -> Result<Plus, Error> {
         let code = cloud_api::normalize_code(code);
         if code.is_empty() {
             return Err(Error::Invalid("请输入邀请码"));
@@ -271,40 +417,13 @@ impl Client {
         .await
     }
 
-    /// As `login`, so that the account answered is the one the caller notes it for.
-    pub async fn claim_sponsor_order(
-        &self,
-        db: &SqlitePool,
-        login: &Login,
-        order_number: &str,
-    ) -> Result<cloud_api::Account, Error> {
-        let order_number = order_number.trim();
-        if order_number.is_empty() {
-            return Err(Error::Invalid("请填写爱发电的订单号。"));
-        }
-        if order_number.len() > 64 || !order_number.bytes().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(Error::Invalid(
-                "订单号只有字母和数字，请从爱发电的“我的订单”里复制。",
-            ));
-        }
-        self.authenticated_as(
-            db,
-            login,
-            Method::POST,
-            path::SPONSOR_CLAIM,
-            Some(&cloud_api::ClaimRequest {
-                order_number: order_number.into(),
-            }),
-        )
-        .await
-    }
-
+    /// Asks for the account to be deleted after its cooling-off period; when it goes.
     pub async fn delete(
         &self,
         db: &SqlitePool,
         email: &str,
         password: String,
-    ) -> Result<(), Error> {
+    ) -> Result<i64, Error> {
         let _guard = self.change.lock().await;
         let current_email =
             sqlx::query_scalar!("SELECT email FROM account WHERE token IS NOT NULL")
@@ -316,16 +435,17 @@ impl Client {
             return Err(Error::AccountChanged);
         }
         let login_key = keys(&email, password).await?.login;
-        self.authenticated::<Empty>(
-            db,
-            Method::DELETE,
-            path::ACCOUNT,
-            Some(&cloud_api::DeleteRequest { login_key }),
-        )
-        .await?;
+        let deleting: Deleting = self
+            .authenticated(
+                db,
+                Method::DELETE,
+                path::ACCOUNT,
+                Some(&cloud_api::DeleteRequest { login_key }),
+            )
+            .await?;
         sqlx::query!("DELETE FROM account").execute(db).await?;
         self.changed.send_replace(());
-        Ok(())
+        Ok(deleting.delete_at)
     }
 
     pub async fn authenticated<T: DeserializeOwned>(
@@ -361,13 +481,19 @@ impl Client {
 
     /// All official services use this: an expired session clears only that token, retaining the
     /// email for the next login. A response for an older token cannot clear a newer login.
+    /// A login that has not agreed to the current terms only gets `without_terms`.
     pub async fn send(
         &self,
         db: &SqlitePool,
         login: &Login,
         request: RequestBuilder,
     ) -> Result<reqwest::Response, Error> {
-        self.signed_in(db, login, checked(request.bearer_auth(&login.token)).await)
+        let (http, request) = request.bearer_auth(&login.token).build_split();
+        let request = request.map_err(Error::Network)?;
+        if login.terms_outdated && !without_terms(request.method(), request.url().path()) {
+            return Err(Error::TermsOutdated);
+        }
+        self.signed_in(db, login, checked(http.execute(request).await).await)
             .await
     }
 
@@ -378,6 +504,9 @@ impl Client {
         login: &Login,
         path: &str,
     ) -> Result<WebSocket, Error> {
+        if login.terms_outdated {
+            return Err(Error::TermsOutdated);
+        }
         let response = self
             .request(Method::GET, path)
             .bearer_auth(&login.token)
@@ -426,6 +555,24 @@ pub struct Login {
     token: String,
     /// Missing for logins from before cloud backup; logging in again derives it.
     pub backup_key: Option<[u8; 32]>,
+    terms_outdated: bool,
+}
+
+/// What an account that has not agreed to the current terms may still do: read itself, agree,
+/// log out, be deleted, and restore its cloud backup.
+fn without_terms(method: &Method, path: &str) -> bool {
+    match *method {
+        Method::GET => {
+            path == path::ACCOUNT
+                || path == path::BACKUP
+                || path
+                    .strip_prefix(path::BACKUP_OBJECTS)
+                    .is_some_and(|id| id.starts_with('/'))
+        }
+        Method::POST => path == path::ACCOUNT_TERMS || path == path::LOGOUT,
+        Method::DELETE => path == path::ACCOUNT,
+        _ => false,
+    }
 }
 
 impl Login {
@@ -441,8 +588,8 @@ impl Login {
     }
 }
 
-async fn checked(request: RequestBuilder) -> Result<reqwest::Response, Error> {
-    let response = request.send().await.map_err(Error::Network)?;
+async fn checked(response: reqwest::Result<reqwest::Response>) -> Result<reqwest::Response, Error> {
+    let response = response.map_err(Error::Network)?;
     if response.status().is_success() {
         Ok(response)
     } else {
@@ -453,7 +600,11 @@ async fn checked(request: RequestBuilder) -> Result<reqwest::Response, Error> {
 }
 
 async fn response<T: DeserializeOwned>(request: RequestBuilder) -> Result<T, Error> {
-    checked(request).await?.json().await.map_err(Error::Network)
+    checked(request.send().await)
+        .await?
+        .json()
+        .await
+        .map_err(Error::Network)
 }
 
 fn checked_email(email: &str) -> Result<String, Error> {
@@ -503,17 +654,20 @@ async fn save_session(
     .execute(&mut *tx)
     .await?;
     sqlx::query!(
-        r#"INSERT INTO account (id, email, token, backup_key) VALUES (1, ?, ?, ?)
-        ON CONFLICT (id) DO UPDATE SET token = excluded.token, backup_key = excluded.backup_key"#,
+        r#"INSERT INTO account (id, email, token, backup_key, terms) VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT (id) DO UPDATE SET token = excluded.token, backup_key = excluded.backup_key,
+            terms = excluded.terms"#,
         session.account.email,
         session.token,
-        backup_key
+        backup_key,
+        session.account.terms
     )
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(State::LoggedIn {
         email: session.account.email,
+        terms_outdated: outdated(session.account.terms.as_deref()),
     })
 }
 
@@ -527,6 +681,9 @@ pub enum Error {
     Server(ApiError),
     SignedOut,
     AccountChanged,
+    /// Logging in to an account waiting to be deleted at this time.
+    Deleting(i64),
+    TermsOutdated,
 }
 
 impl From<sqlx::Error> for Error {
@@ -546,10 +703,21 @@ impl std::fmt::Display for Error {
             Self::Invalid(_) => write!(f, "invalid account input"),
             Self::SignedOut => write!(f, "account session expired"),
             Self::AccountChanged => write!(f, "account deletion target changed"),
+            Self::Deleting(_) => write!(f, "account is being deleted"),
+            Self::TermsOutdated => write!(f, "account has not agreed to the current terms"),
         }
     }
 }
 impl std::error::Error for Error {}
+
+/// A day as the user's clock has it, like `11月19日` (docs/ui.md#文案).
+fn date(at: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(at)
+        .unwrap_or_default()
+        .with_timezone(&chrono::Local)
+        .format("%-m月%-d日")
+        .to_string()
+}
 
 impl Error {
     pub fn message(&self) -> String {
@@ -566,9 +734,18 @@ impl Error {
             }
             Self::SignedOut => "登录已失效，请重新登录。".into(),
             Self::AccountChanged => "要注销的账号已经不是当前登录的账号，请刷新后重试。".into(),
+            Self::Deleting(at) => format!("账号正在注销，将于{}删除。", date(*at)),
+            Self::TermsOutdated => "尚未同意新版条款，同意后方可使用官方服务。".into(),
             Self::Server(error) => match error.code {
                 ErrorCode::InvalidInput => "填写的账号信息不正确，请检查后重试。".into(),
                 ErrorCode::EmailRegistered => "这个邮箱已注册，请直接登录。".into(),
+                ErrorCode::AccountDeleting => match error.delete_at {
+                    Some(at) => format!(
+                        "该邮箱的账号正在注销，{}后方可重新注册；如需撤销注销，请直接登录。",
+                        date(at)
+                    ),
+                    None => "该邮箱的账号正在注销；如需撤销注销，请直接登录。".into(),
+                },
                 ErrorCode::EmailNotRegistered => "这个邮箱还没注册，请先注册。".into(),
                 ErrorCode::InvalidCode => "验证码不对或已过期，请重新获取验证码。".into(),
                 ErrorCode::InvalidCredentials => "邮箱或密码不对，请检查后重试。".into(),
@@ -584,14 +761,13 @@ impl Error {
                 ErrorCode::MailUnavailable => "验证码暂时无法发送，请稍后重试。".into(),
                 ErrorCode::Internal => "服务器暂时无法处理，请稍后重试。".into(),
                 ErrorCode::QuotaExceeded => "今天还能添加的数量不够了，少选几位或明天再来。".into(),
-                ErrorCode::OrderNotFound => {
-                    "查不到这笔订单，请检查订单号；刚付款请稍等几分钟再试。".into()
+                ErrorCode::OrderNotFound => "未找到该订单，请重新下单。".into(),
+                ErrorCode::PlusUnavailable => "暂时无法购买，请稍后重试。".into(),
+                ErrorCode::PlusRefunded => {
+                    "该账号已办理过无理由退款，不能再购买 Plus 和额度包。".into()
                 }
-                ErrorCode::OrderClaimed => "这笔订单已经给别的账号开通过赞助。".into(),
-                ErrorCode::OrderNotSponsorship => {
-                    "这笔订单不是赞助方案，请在爱发电的赞助方案付款后再开通。".into()
-                }
-                ErrorCode::SponsorUnavailable => "赞助暂时不可用，请稍后重试。".into(),
+                ErrorCode::PlusRequired => "Plus 有效期内方可使用此功能。".into(),
+                ErrorCode::PlusTooLong => "加上这一档后超过一年，Plus 最多可购买至一年后。".into(),
                 ErrorCode::InviteNotFound => "没有这个邀请码，请检查后重试。".into(),
                 ErrorCode::InviteFull => "这个邀请码已经邀请满 4 位同学了。".into(),
                 ErrorCode::InviteOwn => "不能填自己的邀请码。".into(),
@@ -604,7 +780,6 @@ impl Error {
                 ErrorCode::EmailIneligible => {
                     "用常用邮箱（QQ、163、Gmail 等）或学校邮箱注册的账号才能参加。".into()
                 }
-                ErrorCode::SponsorRequired => "赞助已到期，云端备份已停止。".into(),
                 ErrorCode::BackupNotFound => {
                     "云端的备份刚被另一台电脑替换或删除了，请刷新后重试。".into()
                 }

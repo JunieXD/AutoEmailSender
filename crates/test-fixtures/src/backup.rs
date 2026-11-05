@@ -10,7 +10,7 @@ use crate::http::{Reply, error, ok};
 #[derive(Default)]
 pub struct State {
     pub now: i64,
-    pub sponsor_until: Option<i64>,
+    pub plus_until: Option<i64>,
     pub objects: BTreeMap<String, Vec<u8>>,
     pub current: Option<Current>,
     /// The objects the current backup holds.
@@ -36,7 +36,7 @@ impl Server {
     reason = "test fixture request failures must panic at their source"
 )]
 fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply {
-    let sponsored = |state: &State| state.sponsor_until.is_some_and(|until| until > state.now);
+    let plus = |state: &State| state.plus_until.is_some_and(|until| until > state.now);
     match (method, path.strip_prefix("/v1/backup")) {
         ("GET", Some("")) => ok(serde_json::to_value(Status {
             current: state.current.as_ref().map(|current| Current {
@@ -45,7 +45,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
                 committed_at: current.committed_at,
                 size: current.size,
             }),
-            sponsor_until: state.sponsor_until,
+            plus_until: state.plus_until,
         })
         .unwrap()),
         ("GET", Some(object)) => match state.objects.get(object.trim_start_matches("/objects/")) {
@@ -53,8 +53,8 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             None => error(404, "backup_not_found"),
         },
         ("PUT", Some(object)) => {
-            if !sponsored(state) {
-                return error(403, "sponsor_required");
+            if !plus(state) {
+                return error(403, "plus_required");
             }
             let object = object.trim_start_matches("/objects/").to_owned();
             let stored: usize = state.objects.values().map(Vec::len).sum();
@@ -78,8 +78,8 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             if let Some(before) = state.before_commit.take() {
                 before(state);
             }
-            if !sponsored(state) {
-                return error(403, "sponsor_required");
+            if !plus(state) {
+                return error(403, "plus_required");
             }
             let commit: Commit = serde_json::from_slice(&body).unwrap();
             if commit.replaces.as_ref() != state.current.as_ref().map(|current| &current.manifest) {

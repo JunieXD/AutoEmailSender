@@ -14,8 +14,8 @@ async fn background_library_expiration_notifies_account_subscribers(db: SqlitePo
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        r#"INSERT INTO account (id, email, token)
-        VALUES (1, 'student@example.invalid', 'test-token')"#,
+        r#"INSERT INTO account (terms, id, email, token)
+        VALUES ('9999-12-31', 1, 'student@example.invalid', 'test-token')"#,
     )
     .execute(&ctx.db)
     .await
@@ -32,6 +32,7 @@ async fn background_library_expiration_notifies_account_subscribers(db: SqlitePo
                 content: serde_json::to_string(&ApiError {
                     code: ErrorCode::SessionExpired,
                     retry_after_seconds: None,
+                    delete_at: None,
                 })
                 .unwrap(),
             })
@@ -57,8 +58,8 @@ async fn signed_in(db: SqlitePool) -> (Provider, Arc<Context>) {
     ctx.account =
         account::Client::with_address(&ctx.net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        r#"INSERT INTO account (id, email, token)
-        VALUES (1, 'student@example.invalid', 'test-token')"#,
+        r#"INSERT INTO account (terms, id, email, token)
+        VALUES ('9999-12-31', 1, 'student@example.invalid', 'test-token')"#,
     )
     .execute(&ctx.db)
     .await
@@ -75,6 +76,7 @@ async fn fail(request: Request, ctx: &Context) {
             content: serde_json::to_string(&ApiError {
                 code: ErrorCode::Internal,
                 retry_after_seconds: None,
+                delete_at: None,
             })
             .unwrap(),
         })

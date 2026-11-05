@@ -19,7 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { StartupFailure } from "@/components/startup-failure";
 import { AgentRequests } from "@/components/agent-requests";
 import { LibraryUpdatesDialog } from "@/components/library";
-import { useAccount } from "@/components/account";
+import { TermsUpdate, useAccount } from "@/components/account";
 import { UpdateEntry } from "@/components/update";
 import { useResume } from "@/pages/mailboxes";
 import { desktop } from "@/host";
@@ -158,6 +158,7 @@ export function Shell() {
       <main className="relative my-3 mr-3 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl bg-background phone:m-0 phone:min-h-0 phone:rounded-none">
         <Outlet />
         {desktop && <AgentRequests />}
+        {desktop && <TermsUpdate />}
         {completed && (
           <div
             role="status"

@@ -62,8 +62,8 @@ async fn round_trip_strips_private_data_preserves_approval_and_installs_on_start
     let dir = tempfile::tempdir().unwrap();
     fixture(&db, dir.path()).await;
     sqlx::query(
-        r#"INSERT INTO account (id, email, token)
-        VALUES (1, 'student@example.invalid', 'private-account-token')"#,
+        r#"INSERT INTO account (terms, id, email, token)
+        VALUES ('9999-12-31', 1, 'student@example.invalid', 'private-account-token')"#,
     )
     .execute(&db)
     .await
