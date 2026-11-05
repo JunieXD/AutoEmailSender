@@ -551,15 +551,7 @@ pub(crate) async fn save(
     {
         intake::add_candidate(&mut fields, &mut papers, incoming, extra);
     }
-    // A link whose page proved not to be one of theirs is no homepage or profile of theirs.
-    let mismatched = sqlx::query_scalar!(
-        r#"SELECT url AS "url!: String"
-        FROM candidate_profile
-        WHERE candidate_id IN (SELECT value FROM json_each(?)) AND mismatched_at IS NOT NULL"#,
-        Json(&ids)
-    )
-    .fetch_all(&mut *conn)
-    .await?;
+    let mismatched = mismatched_links(conn, &ids).await?;
     fields.homepages.retain(|url| !mismatched.contains(url));
     let names = Json(
         std::iter::once(&fields.name)
@@ -697,7 +689,12 @@ pub(crate) async fn save(
         FROM crawl_page
         WHERE crawl_id = ?1 AND kind = 'profile' AND work_state = 'queued'
         AND fetched_at IS NULL AND url IN (SELECT url FROM candidate_profile WHERE
-            candidate_id = ?2 AND mismatched_at IS NULL) AND url IS NOT ?3"#,
+            candidate_id = ?2 AND mismatched_at IS NULL) AND url IS NOT ?3
+        AND NOT EXISTS (
+            SELECT 1
+            FROM candidate
+            WHERE crawl_id = ?1 AND profile_url = crawl_page.url AND id != ?2
+        )"#,
         crawl,
         id,
         canonical_profile
@@ -716,16 +713,17 @@ pub(crate) async fn save(
         .fetch_one(&mut *conn)
         .await?;
         queue::enqueue(conn, crawl, &link, &scope, 0, PageKind::Profile).await?;
-        // Read last for someone it proved not to be, the page is read again for this one.
+        // Read last for someone it proved not to be, the page is read again for this one; a page
+        // found as a profile by itself was read for nobody, and someone it proved not to be will do.
         sqlx::query!(
             r#"UPDATE crawl_page
             SET work_state = 'queued', claim = claim + 1
             WHERE crawl_id = ?1 AND url = ?2 AND steps = '[]' AND candidate_id IS NULL
             AND work_state = 'done' AND target_id IS NOT ?3 AND EXISTS (
                 SELECT 1
-                FROM candidate_profile
-                WHERE candidate_id = crawl_page.target_id AND url = ?2
-                AND mismatched_at IS NOT NULL
+                FROM candidate_profile p
+                WHERE p.crawl_id = ?1 AND p.url = ?2 AND p.mismatched_at IS NOT NULL
+                AND (p.candidate_id = crawl_page.target_id OR crawl_page.target_id IS NULL)
             )"#,
             crawl,
             link,
@@ -789,6 +787,21 @@ pub(crate) async fn matched(
     clear_mismatch(conn, &[candidate], urls).await?;
     choose_profile(conn, candidate, urls.first().copied()).await?;
     Ok(())
+}
+
+/// The links of the candidates whose pages proved not to be theirs: no homepages of theirs.
+pub(crate) async fn mismatched_links(
+    conn: &mut SqliteConnection,
+    candidates: &[i64],
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT url AS "url!: String"
+        FROM candidate_profile
+        WHERE candidate_id IN (SELECT value FROM json_each(?)) AND mismatched_at IS NOT NULL"#,
+        Json(candidates)
+    )
+    .fetch_all(conn)
+    .await
 }
 
 async fn clear_mismatch(

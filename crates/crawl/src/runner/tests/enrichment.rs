@@ -728,6 +728,40 @@ async fn enrichment_rate_limit_cools_other_pages_format_retry(db: SqlitePool) {
     );
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_link_proved_not_theirs_is_no_homepage_when_a_retry_is_unsure(db: SqlitePool) {
+    let site = Site::new().await;
+    let mut p = Provider::start().await.unwrap();
+    config(&db, &p.address).await;
+    site.redirect("/u", "/v");
+    site.page("/v", "<title>李四</title><p>李四 b@example.edu</p>");
+    let (crawl, id) = candidate(&db, &site, "/u").await;
+    let link = site.url("/u").as_str().to_owned();
+    sqlx::query("INSERT INTO candidate_profile (candidate_id, crawl_id, url) VALUES (?, ?, ?)")
+        .bind(id)
+        .bind(crawl)
+        .bind(&link)
+        .execute(&db)
+        .await
+        .unwrap();
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let c = queue::next(&db).await.unwrap().unwrap();
+    let mut a = answer("b@example.edu", json!([]));
+    a["relation"] = json!("mismatched");
+    let result = process_answer(&db, &site, &mut p, &c, a).await;
+    save(&db, &c, &result).await.unwrap();
+    // Read again, the page now tells of a team with him in it and links to where it started.
+    site.page("/v", "<p>团队：张三、李四</p><a href='/u'>张三的主页</a>");
+    assert_eq!(queue::retry(&db, crawl, Some(c.id), 3).await.unwrap(), 1);
+    let retry = queue::next(&db).await.unwrap().unwrap();
+    let mut a = answer("a@example.edu", json!([]));
+    a["relation"] = json!("uncertain");
+    a["homepages"] = json!([1]);
+    let result = process_answer(&db, &site, &mut p, &retry, a).await;
+    save(&db, &retry, &result).await.unwrap();
+    assert!(detail(&db, id).await.candidate.fields.homepages.is_empty());
+    assert_eq!(links(&db, id).await, (None, vec![(link, true)]));
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_results(db: SqlitePool) {
     let site = Site::new().await;
     let mut p = Provider::start().await.unwrap();

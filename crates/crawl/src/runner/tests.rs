@@ -1953,6 +1953,130 @@ async fn merging_in_a_link_proved_not_theirs_takes_it_from_the_profile(db: Sqlit
     );
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_page_found_as_a_profile_by_itself_is_read_again_for_whom_a_list_gives_it(
+    db: SqlitePool,
+) {
+    let (site, root) = review_fixture(&db).await;
+    // The start page itself proved to be 张三's profile, read for nobody in particular.
+    sqlx::query(
+        r#"UPDATE crawl_page
+        SET kind = 'profile', work_state = 'done', status = 'success', error = NULL, text = ''
+        WHERE id = ?"#,
+    )
+    .bind(root.id)
+    .execute(&db)
+    .await
+    .unwrap();
+    let link = site.url("/");
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    review::save(
+        &mut tx,
+        root.crawl,
+        review::Source::Profile {
+            id: root.id,
+            own: true,
+            target: None,
+        },
+        link.as_str(),
+        Person {
+            fields: observed("张三", &["zhang@example.edu"], None),
+            papers: vec![],
+            profile: Some(link.clone()),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let zhang = candidate_ids(&db).await[0];
+    // Enriching him later found it not to be his.
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    review::mismatched(&mut tx, zhang, &[link.as_str()], 2)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    observation(
+        &db,
+        &root,
+        &site,
+        "/",
+        PageKind::List,
+        observed("李四", &["li@example.edu"], None),
+    )
+    .await;
+    let li = candidate_ids(&db).await[1];
+    let again = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(again.id, root.id);
+    let target: Option<i64> = sqlx::query_scalar("SELECT target_id FROM crawl_page WHERE id = ?")
+        .bind(root.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(target, Some(li));
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_profile_reached_from_another_confirmed_candidates_page_is_still_read_for_its_own(
+    db: SqlitePool,
+) {
+    let (site, c) = review_fixture(&db).await;
+    for (path, name) in [("/li", "李四"), ("/zhang", "张三")] {
+        observation(
+            &db,
+            &c,
+            &site,
+            path,
+            PageKind::List,
+            observed(name, &[], None),
+        )
+        .await;
+        review::accept(
+            &db,
+            &ReviewInput {
+                ids: vec![*candidate_ids(&db).await.last().unwrap()],
+                decisions: Decisions {
+                    matches: vec![mentor::import::GroupChoice { row: 1, id: None }],
+                    ..Default::default()
+                },
+            },
+            2,
+        )
+        .await
+        .unwrap();
+    }
+    let ids = candidate_ids(&db).await;
+    let li_page = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(li_page.url, site.url("/li"));
+    // 李四's page ended up at 张三's profile and proved his; the two stay apart.
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    review::save(
+        &mut tx,
+        c.crawl,
+        review::Source::Profile {
+            id: li_page.id,
+            own: true,
+            target: Some(ids[0]),
+        },
+        site.url("/zhang").as_str(),
+        Person {
+            fields: observed("李四", &[], None),
+            papers: vec![],
+            profile: Some(site.url("/li")),
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(candidate_ids(&db).await, ids);
+    // 张三's profile is still read, for him.
+    let zhang_page = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(zhang_page.url, site.url("/zhang"));
+    let target: Option<i64> = sqlx::query_scalar("SELECT target_id FROM crawl_page WHERE id = ?")
+        .bind(zhang_page.id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+    assert_eq!(target, Some(ids[1]));
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {
     let site = Site::new().await;
     site.redirect("/old-zhang", "/directory");

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "UPDATE crawl_page\n        SET work_state = 'running', claim = claim + 1, target_id = CASE WHEN kind = 'profile' THEN (\n            SELECT candidate_id\n            FROM candidate_profile\n            WHERE crawl_id = crawl_page.crawl_id AND url = crawl_page.url\n            ORDER BY mismatched_at IS NOT NULL, mismatched_at DESC, candidate_id\n            LIMIT 1\n        ) END\n        WHERE id = (\n            SELECT p.id\n            FROM crawl_page p\n            JOIN crawl c ON c.id = p.crawl_id\n            WHERE p.work_state = 'queued' AND c.state = 'running'\n            ORDER BY p.kind = 'profile', p.id\n            LIMIT 1\n        )\n        RETURNING id, crawl_id, claim, url AS \"url: PageUrl\",\n            scope_url AS \"scope!: PageUrl\", depth, kind AS \"kind: PageKind\",\n            candidate_id, steps AS \"steps: Json<Vec<PageStep>>\"",
+  "query": "UPDATE crawl_page\n        SET work_state = 'running', claim = claim + 1, target_id = CASE WHEN kind = 'profile' THEN (\n            SELECT p.candidate_id\n            FROM candidate_profile p\n            JOIN candidate c ON c.id = p.candidate_id\n            WHERE p.crawl_id = crawl_page.crawl_id AND p.url = crawl_page.url\n            ORDER BY p.mismatched_at IS NOT NULL, p.mismatched_at DESC,\n                c.profile_url IS NOT p.url, p.candidate_id\n            LIMIT 1\n        ) END\n        WHERE id = (\n            SELECT p.id\n            FROM crawl_page p\n            JOIN crawl c ON c.id = p.crawl_id\n            WHERE p.work_state = 'queued' AND c.state = 'running'\n            ORDER BY p.kind = 'profile', p.id\n            LIMIT 1\n        )\n        RETURNING id, crawl_id, claim, url AS \"url: PageUrl\",\n            scope_url AS \"scope!: PageUrl\", depth, kind AS \"kind: PageKind\",\n            candidate_id, steps AS \"steps: Json<Vec<PageStep>>\"",
   "describe": {
     "columns": [
       {
@@ -118,5 +118,5 @@
       false
     ]
   },
-  "hash": "04793195678247513f96473b56bfea8138528b062c9d1308e076eb595d1711ac"
+  "hash": "88f0fbe3a09d19231d48e539871b350075af10a2223c25719a0a97ead3519426"
 }

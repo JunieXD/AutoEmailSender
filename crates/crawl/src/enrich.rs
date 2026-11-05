@@ -229,6 +229,15 @@ pub(crate) async fn apply(
         .await?
         .pop()
         .ok_or(sqlx::Error::RowNotFound)?;
+    // Only a page proving it theirs, which clears that first, brings such a link back.
+    let mismatched = review::mismatched_links(conn, &[id]).await?;
+    let homepages: Vec<_> = person
+        .fields
+        .homepages
+        .iter()
+        .filter(|url| !mismatched.contains(url))
+        .cloned()
+        .collect();
     let f = &mut old.fields;
     let incoming = &person.fields;
     let changes = &mut old.enrichment.enrich_changes;
@@ -242,7 +251,7 @@ pub(crate) async fn apply(
     }
     fill_list!(f.emails, incoming.emails, EnrichField::Email);
     fill_list!(f.aliases, incoming.aliases, EnrichField::Alias);
-    fill_list!(f.homepages, incoming.homepages, EnrichField::Homepage);
+    fill_list!(f.homepages, homepages, EnrichField::Homepage);
     fill_list!(old.papers, person.papers, EnrichField::Paper);
     if f.research.as_deref().is_none_or(|s| s.trim().is_empty()) && incoming.research.is_some() {
         f.research = incoming.research.clone();
