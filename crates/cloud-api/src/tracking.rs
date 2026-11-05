@@ -56,10 +56,13 @@ pub struct Register {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Registered {
     pub accepted: Vec<String>,
-    /// Over the quota, or registered by another account.
+    /// Over the quota, or registered by another account; or, once Plus has ended, every email not
+    /// registered before.
     pub rejected: Vec<String>,
+    pub plus_ended: bool,
     /// The quota afterwards.
     pub tracking: Quota,
 }

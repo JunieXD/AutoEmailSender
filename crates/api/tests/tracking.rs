@@ -152,11 +152,18 @@ async fn letters_are_registered_while_the_quota_lasts_and_opens_come_back(db: Sq
     assert_eq!(setup.emails().await[0].2, Some(2));
     assert_eq!(setup.emails().await[0].3, Some(NOW + 2000));
 
-    // Without Plus, letters are not registered; their opens would not count.
+    // Without Plus, new letters are not registered, as their opens would not count; one the
+    // server took before Plus ended, but whose answer was lost, still is, in the same batch.
     setup.server().plus_until = Some(NOW - 1);
     setup.sent(&id(3)).await;
+    setup.sent(&id(4)).await;
+    setup.server().emails.insert(id(4), None);
     api::tracking::sync(&setup.ctx, false, NOW).await.unwrap();
-    assert_eq!(setup.emails().await[2].1, Tracked::NoPlus);
+    let emails = setup.emails().await;
+    assert_eq!(
+        (emails[2].1, emails[3].1),
+        (Tracked::NoPlus, Tracked::Tracked)
+    );
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

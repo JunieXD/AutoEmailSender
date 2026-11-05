@@ -99,15 +99,12 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
         })
         .unwrap()),
         ("POST", ("/v1/tracking", _)) => {
-            if !plus {
-                return error(403, "plus_required");
-            }
             let register: Register = serde_json::from_slice(&body).unwrap();
             let (mut accepted, mut rejected) = (Vec::new(), Vec::new());
             for id in register.ids {
                 if state.emails.contains_key(&id) {
                     accepted.push(id);
-                } else if state.left > 0 {
+                } else if plus && state.left > 0 {
                     state.left -= 1;
                     state.emails.insert(id.clone(), None);
                     accepted.push(id);
@@ -118,6 +115,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             ok(serde_json::to_value(Registered {
                 accepted,
                 rejected,
+                plus_ended: !plus,
                 tracking: state.quota(),
             })
             .unwrap())

@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use cloud_api::{
-    Empty, ErrorCode,
+    Empty,
     tracking::{
         MAX_IDS, OPENS, Opens, Quota, REGISTER, REGISTER_WITHIN, RETENTION, Register, Registered,
     },
@@ -138,37 +138,31 @@ async fn exchange(
                 login,
                 Method::POST,
                 REGISTER,
-                Some(&Register { ids: ids.clone() }),
+                Some(&Register { ids }),
             )
-            .await;
+            .await?;
         let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
         same_login(&mut tx, login).await?;
-        match registered {
-            Ok(r) => {
-                email::tracking::registered(
-                    &mut tx,
-                    &r.accepted,
-                    &r.rejected,
-                    Rejected::NoQuota,
-                    now,
-                )
+        let why = if registered.plus_ended {
+            sqlx::query!("UPDATE account SET tracking_until = NULL")
+                .execute(&mut *tx)
                 .await?;
-                let left = available(&r.tracking);
-                sqlx::query!("UPDATE account SET tracking_left = ?", left)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-            Err(account::Error::Server(cloud_api::ApiError {
-                code: ErrorCode::PlusRequired,
-                ..
-            })) => {
-                email::tracking::registered(&mut tx, &[], &ids, Rejected::NoPlus, now).await?;
-                sqlx::query!("UPDATE account SET tracking_until = NULL")
-                    .execute(&mut *tx)
-                    .await?;
-            }
-            Err(error) => return Err(error),
-        }
+            Rejected::NoPlus
+        } else {
+            Rejected::NoQuota
+        };
+        email::tracking::registered(
+            &mut tx,
+            &registered.accepted,
+            &registered.rejected,
+            why,
+            now,
+        )
+        .await?;
+        let left = available(&registered.tracking);
+        sqlx::query!("UPDATE account SET tracking_left = ?", left)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         changed = true;
     }
