@@ -314,7 +314,7 @@ async fn describe(
         "deleteAccount" => {
             let input: crate::accounts::AccountCredentials = parse(input)?;
             object(
-                "注销账号并删除服务器上的全部账号数据，本机数据保留",
+                "注销账号：15 天冷静期内用密码登录可撤销，期满删除服务器上的全部账号数据；未到期的 Plus 和未用完的额度包一并放弃，本机数据保留",
                 input.email,
             )
         }

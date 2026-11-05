@@ -147,10 +147,11 @@ function Paying({
       return answer;
     },
     // The user pays in the browser, with the app in the background.
-    refetchInterval: (query) => (waited || query.state.data?.state === "applied" ? false : 3000),
+    refetchInterval: (query) => (waited || (query.state.data?.state ?? "pending") !== "pending" ? false : 3000),
     refetchIntervalInBackground: true,
   });
   const applied = state.data?.state === "applied" ? state.data : null;
+  const refunded = state.data?.state === "refunded";
   return (
     <>
       <DialogBody className="flex flex-col gap-3 text-sm">
@@ -160,6 +161,8 @@ function Paying({
               ? `已开通，额度包剩 ${applied.tracking.packLeft} 封。`
               : `已开通${applied.plusUntil == null ? "" : `，Plus 到${day(applied.plusUntil)}`}。`}
           </p>
+        ) : refunded ? (
+          <p>这笔订单已退款。</p>
         ) : (
           <>
             <p>{waited ? "尚未收到付款。如已付款，稍后会自动开通。" : "请在浏览器中完成付款，付款后自动开通。"}</p>
@@ -177,7 +180,7 @@ function Paying({
         {applied ? (
           <DialogClose render={<Button />}>完成</DialogClose>
         ) : (
-          <DialogClose render={<Button variant="ghost" />}>{waited ? "关闭" : "取消"}</DialogClose>
+          <DialogClose render={<Button variant="ghost" />}>{waited || refunded ? "关闭" : "取消"}</DialogClose>
         )}
       </DialogFooter>
     </>

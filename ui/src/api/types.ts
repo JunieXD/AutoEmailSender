@@ -701,7 +701,7 @@ export type OperationName = { name: string, };
 
 export type OperationSummary = { name: string, summary: string, group: string, confirmation: OperationConfirmation, };
 
-export type OrderState = { "state": "pending" } | { "state": "applied", plusUntil: number | null, tracking: Quota, };
+export type OrderState = { "state": "pending" } | { "state": "applied", plusUntil: number | null, tracking: Quota, } | { "state": "refunded" };
 
 export type OutcomeMarking = { "state": "marking" } | { "state": "failed", reason: string, };
 

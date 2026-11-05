@@ -88,10 +88,13 @@ pub struct Created {
 )]
 pub enum OrderState {
     Pending,
+    /// With the account's Plus and tracking quota now.
     Applied {
         plus_until: Option<i64>,
         tracking: Quota,
     },
+    /// Refunded or taken back after it was applied.
+    Refunded,
 }
 
 /// The account's Plus.

@@ -102,11 +102,16 @@ function PlusRow({ email, outdated }: { email: string; outdated: boolean }) {
   const [redeeming, setRedeeming] = useState(false);
   const [redeemed, setRedeemed] = useState<number | null>(null);
   const { refetch } = plus;
+  const { refetch: refetchItems } = items;
   useEffect(() => {
-    const refresh = () => void refetch({ cancelRefetch: false });
+    // What each tier would extend Plus to moves with Plus.
+    const refresh = () => {
+      void refetch({ cancelRefetch: false });
+      if (!outdated) void refetchItems({ cancelRefetch: false });
+    };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, [refetch]);
+  }, [refetch, refetchItems, outdated]);
   const until = plus.data?.plusUntil;
   const active = until != null && until > now;
   return (
@@ -334,7 +339,8 @@ function DeleteDialog({ email, onClose }: { email: string; onClose: () => void }
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["getAccount"] }),
   });
   const read = tracking.data?.account;
-  const server = read?.kind === "read" ? read : null;
+  // A read that failed keeps the last data, which must not stand in for it.
+  const server = !tracking.error && read?.kind === "read" ? read : null;
   const kept = [
     server?.plusUntil != null && server.plusUntil > now && `Plus 到${day(server.plusUntil)}`,
     server && server.tracking.packLeft > 0 && `额度包还剩 ${server.tracking.packLeft} 封`,

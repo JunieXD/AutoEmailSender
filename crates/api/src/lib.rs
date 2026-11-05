@@ -415,7 +415,7 @@ operations! {
         "getPlusItems" [none] => get_plus_items(Nothing) -> cloud_api::plus::Items;
         /// 下单购买一种 Plus 时长或额度包，返回订单编号和付款页地址；用户在浏览器里打开付款页完成付款。
         "createPlusOrder" [none] => create_plus_order(PlusOrderInput) -> cloud_api::plus::Created;
-        /// 查订单开通了没有；开通后返回新的 Plus 到期时间和追踪额度。
+        /// 查订单开通了没有：pending 是还没收到付款；applied 是已开通，带账号现在的 Plus 到期时间和追踪额度；refunded 是开通后已退款或收回。
         "getPlusOrder" [none] => get_plus_order(PlusOrderId) -> cloud_api::plus::OrderState;
         /// 同意应用里这一版的用户服务协议和隐私政策。
         "acceptTerms" [none] => accept_terms(Nothing) -> ();
