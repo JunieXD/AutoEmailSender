@@ -391,7 +391,8 @@ pub(crate) enum Source {
         id: i64,
     },
     /// `own` says the page proved to be the person's own, so where it ended up identifies them;
-    /// `target` is the candidate a list's profile page was read for.
+    /// `target` is whom a list's profile page was read for, which it adds to even when its link
+    /// proved not to be theirs before.
     Profile {
         id: i64,
         own: bool,
@@ -418,31 +419,9 @@ pub(crate) async fn save(
         Source::Agent { note } => (None, None, profile == Some(url), None, note.as_deref()),
     };
     let identities: Vec<_> = profile.into_iter().chain(reached).collect();
-    // A list's profile page adds to whom it was read for, or to whom they were merged into since.
-    let target = match (&source, profile) {
-        (
-            Source::Profile {
-                own,
-                target: Some(target),
-                ..
-            },
-            Some(link),
-        ) => {
-            let target = match sqlx::query_scalar!("SELECT id FROM candidate WHERE id = ?", target)
-                .fetch_optional(&mut *conn)
-                .await?
-            {
-                Some(id) => id,
-                None => read_for(conn, crawl, link)
-                    .await?
-                    .ok_or(sqlx::Error::RowNotFound)?,
-            };
-            if *own {
-                matched(conn, target, link).await?;
-            }
-            Some(target)
-        }
-        _ => None,
+    let (target, proved) = match &source {
+        Source::Profile { own, target, .. } => (*target, *own),
+        _ => (None, false),
     };
     let names: Vec<_> = std::iter::once(&f.name)
         .chain(&f.aliases)
@@ -500,6 +479,9 @@ pub(crate) async fn save(
         old.retain(|c| Some(c.id) == keep);
     }
     let ids: Vec<_> = old.iter().map(|c| c.id).collect();
+    if proved {
+        clear_mismatch(conn, &ids, &identities).await?;
+    }
     if ids.len() > 1 {
         crate::enrich::stop(conn, &ids).await?;
     }
@@ -579,7 +561,6 @@ pub(crate) async fn save(
     .fetch_all(&mut *conn)
     .await?;
     fields.homepages.retain(|url| !mismatched.contains(url));
-    let profile = profile.filter(|url| !mismatched.iter().any(|m| m == url));
     let names = Json(
         std::iter::once(&fields.name)
             .chain(&fields.aliases)
@@ -604,7 +585,7 @@ pub(crate) async fn save(
     )
     .fetch_all(&mut *conn)
     .await?;
-    let (id, canonical_profile) = if let Some(first) = old.first() {
+    let id = if let Some(first) = old.first() {
         let id = first.id;
         let review = if matches!(first.review.as_str(), "accepted" | "merged")
             && (fields != first.fields || papers != first.papers)
@@ -613,21 +594,31 @@ pub(crate) async fn save(
         } else {
             &first.review
         };
-        for duplicate in old.iter().skip(1) {
-            sqlx::query!("DELETE FROM candidate WHERE id = ?", duplicate.id)
-                .execute(&mut *conn)
-                .await?;
-        }
-        let canonical = sqlx::query_scalar!(
+        let duplicates = Json(old.iter().skip(1).map(|c| c.id).collect::<Vec<_>>());
+        // A page being read for a duplicate counts for whom it merges into.
+        sqlx::query!(
+            r#"UPDATE crawl_page
+            SET target_id = ?
+            WHERE target_id IN (SELECT value FROM json_each(?))"#,
+            id,
+            duplicates
+        )
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query!(
+            "DELETE FROM candidate WHERE id IN (SELECT value FROM json_each(?))",
+            duplicates
+        )
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query!(
             r#"UPDATE candidate
             SET review = ?, name = ?, aliases = ?, emails = ?, affiliations = ?,
                 homepages = ?, research = ?, papers = ?, evidence = ?,
-                profile_url = coalesce(profile_url, ?),
                 list_page_id = coalesce(list_page_id, ?),
                 profile_page_id = coalesce(?, profile_page_id), profile_fields = ?,
                 match_names = ?, match_schools = ?, note = coalesce(?, note)
-            WHERE id = ?
-            RETURNING profile_url"#,
+            WHERE id = ?"#,
             review,
             fields.name,
             Json(&fields.aliases),
@@ -637,7 +628,6 @@ pub(crate) async fn save(
             fields.research,
             Json(&papers),
             Json(&sources),
-            profile,
             list_page,
             profile_page,
             profile_fields,
@@ -646,21 +636,20 @@ pub(crate) async fn save(
             note.or_else(|| old.iter().find_map(|c| c.note.as_deref())),
             id
         )
-        .fetch_one(&mut *conn)
+        .execute(&mut *conn)
         .await?;
-        (id, canonical)
+        id
     } else {
-        let id = sqlx::query_scalar!(
+        sqlx::query_scalar!(
             r#"INSERT INTO candidate (crawl_id, list_page_id, profile_page_id,
-                profile_url, review, enrich, name, aliases, emails, affiliations,
+                review, enrich, name, aliases, emails, affiliations,
                 homepages, research, papers, source_url, evidence, profile_fields,
                 match_names, match_schools, note)
-            VALUES (?, ?, ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, 'pending', 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id"#,
             crawl,
             list_page,
             profile_page,
-            profile,
             fields.name,
             Json(&fields.aliases),
             Json(&fields.emails),
@@ -676,11 +665,10 @@ pub(crate) async fn save(
             note
         )
         .fetch_one(&mut *conn)
-        .await?;
-        (id, profile.map(str::to_owned))
+        .await?
     };
-    // A link whose page proved not to be any of the merged candidates' stays so, and a list giving
-    // it again changes nothing.
+    // A link whose page proved not to be one of the merged candidates' stays so, as of the latest
+    // time, and a list giving it again changes nothing.
     for (url, mismatched_at) in known_profiles
         .iter()
         .map(|p| (p.url.as_str(), p.mismatched_at))
@@ -690,7 +678,11 @@ pub(crate) async fn save(
             r#"INSERT INTO candidate_profile(candidate_id, crawl_id, url, mismatched_at)
             VALUES (?, ?, ?, ?)
             ON CONFLICT (candidate_id, url)
-            DO UPDATE SET mismatched_at = coalesce(mismatched_at, excluded.mismatched_at)"#,
+            DO UPDATE SET mismatched_at = coalesce(
+                max(mismatched_at, excluded.mismatched_at),
+                mismatched_at,
+                excluded.mismatched_at
+            )"#,
             id,
             crawl,
             url,
@@ -699,6 +691,7 @@ pub(crate) async fn save(
         .execute(&mut *conn)
         .await?;
     }
+    let canonical_profile = choose_profile(conn, id, profile).await?;
     sqlx::query!(
         r#"DELETE
         FROM crawl_page
@@ -723,18 +716,20 @@ pub(crate) async fn save(
         .fetch_one(&mut *conn)
         .await?;
         queue::enqueue(conn, crawl, &link, &scope, 0, PageKind::Profile).await?;
-        // Read already and found not to be someone else's, the page is read again for this one.
+        // Read last for someone it proved not to be, the page is read again for this one.
         sqlx::query!(
             r#"UPDATE crawl_page
             SET work_state = 'queued', claim = claim + 1
             WHERE crawl_id = ?1 AND url = ?2 AND steps = '[]' AND candidate_id IS NULL
-            AND work_state = 'done' AND EXISTS (
+            AND work_state = 'done' AND target_id IS NOT ?3 AND EXISTS (
                 SELECT 1
                 FROM candidate_profile
-                WHERE crawl_id = ?1 AND url = ?2 AND mismatched_at IS NOT NULL
+                WHERE candidate_id = crawl_page.target_id AND url = ?2
+                AND mismatched_at IS NOT NULL
             )"#,
             crawl,
-            link
+            link,
+            id
         )
         .execute(&mut *conn)
         .await?;
@@ -742,40 +737,22 @@ pub(crate) async fn save(
     Ok(added)
 }
 
-/// The candidate a list's profile page at `url` is read for: the first it is still a link of, or
-/// else the one it last proved not to be, as a retry reads it for them again.
-pub(crate) async fn read_for(
-    conn: &mut SqliteConnection,
-    crawl: i64,
-    url: &str,
-) -> Result<Option<i64>, sqlx::Error> {
-    sqlx::query_scalar!(
-        r#"SELECT candidate_id AS "candidate_id!: i64"
-        FROM candidate_profile
-        WHERE crawl_id = ? AND url = ?
-        ORDER BY mismatched_at IS NOT NULL, mismatched_at DESC, candidate_id
-        LIMIT 1"#,
-        crawl,
-        url
-    )
-    .fetch_optional(conn)
-    .await
-}
-
-/// The page at `url`, read for the candidate, proved not to be theirs: the link no longer
-/// identifies them or stands as their profile or homepage. Only the candidate changes, not the
-/// mentor it was taken into.
+/// Pages at `urls`, read for the candidate, proved not to be theirs: the links no longer identify
+/// them or stand as their profile or homepages. Only the candidate changes, not the mentor it was
+/// taken into.
 pub(crate) async fn mismatched(
     conn: &mut SqliteConnection,
     candidate: i64,
-    url: &str,
+    urls: &[&str],
     at: i64,
 ) -> Result<(), sqlx::Error> {
     sqlx::query!(
-        "UPDATE candidate_profile SET mismatched_at = ? WHERE candidate_id = ? AND url = ?",
+        r#"UPDATE candidate_profile
+        SET mismatched_at = ?
+        WHERE candidate_id = ? AND url IN (SELECT value FROM json_each(?))"#,
         at,
         candidate,
-        url
+        Json(urls)
     )
     .execute(&mut *conn)
     .await?;
@@ -788,57 +765,81 @@ pub(crate) async fn mismatched(
     .map(|Json(homepages)| {
         homepages
             .into_iter()
-            .filter(|h| h != url)
+            .filter(|h| !urls.contains(&h.as_str()))
             .collect::<Vec<_>>()
     });
-    // Another link of theirs stands as the profile instead, unless it is someone else's.
     sqlx::query!(
-        r#"UPDATE candidate
-        SET homepages = ?3, profile_url = CASE WHEN profile_url IS ?2 THEN (
-            SELECT p.url
-            FROM candidate_profile p
-            WHERE p.candidate_id = ?1 AND p.mismatched_at IS NULL AND NOT EXISTS (
-                SELECT 1 FROM candidate o WHERE o.crawl_id = candidate.crawl_id AND o.profile_url = p.url
-            )
-            ORDER BY p.url
-            LIMIT 1
-        ) ELSE profile_url END
-        WHERE id = ?1"#,
-        candidate,
-        url,
-        homepages.map(Json)
+        "UPDATE candidate SET homepages = ? WHERE id = ?",
+        homepages.map(Json),
+        candidate
+    )
+    .execute(&mut *conn)
+    .await?;
+    choose_profile(conn, candidate, None).await?;
+    Ok(())
+}
+
+/// Pages at `urls`, read for the candidate, proved to be theirs: the links identify them again,
+/// and the first stands as their profile if they have none.
+pub(crate) async fn matched(
+    conn: &mut SqliteConnection,
+    candidate: i64,
+    urls: &[&str],
+) -> Result<(), sqlx::Error> {
+    clear_mismatch(conn, &[candidate], urls).await?;
+    choose_profile(conn, candidate, urls.first().copied()).await?;
+    Ok(())
+}
+
+async fn clear_mismatch(
+    conn: &mut SqliteConnection,
+    candidates: &[i64],
+    urls: &[&str],
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE candidate_profile
+        SET mismatched_at = NULL
+        WHERE candidate_id IN (SELECT value FROM json_each(?))
+        AND url IN (SELECT value FROM json_each(?))"#,
+        Json(candidates),
+        Json(urls)
     )
     .execute(conn)
     .await?;
     Ok(())
 }
 
-/// The page at `url`, read for the candidate, proved to be theirs: the link identifies them again,
-/// and stands as their profile if they have none.
-pub(crate) async fn matched(
+/// Keeps the candidate's profile unless its page proved to be someone else's; otherwise one of
+/// their links no page proved so and no other candidate has as profile, `preferred` first, or none.
+async fn choose_profile(
     conn: &mut SqliteConnection,
     candidate: i64,
-    url: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        "UPDATE candidate_profile SET mismatched_at = NULL WHERE candidate_id = ? AND url = ?",
-        candidate,
-        url
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query!(
+    preferred: Option<&str>,
+) -> Result<Option<String>, sqlx::Error> {
+    sqlx::query_scalar!(
         r#"UPDATE candidate
-        SET profile_url = ?2
-        WHERE id = ?1 AND profile_url IS NULL AND EXISTS (
-            SELECT 1 FROM candidate_profile WHERE candidate_id = ?1 AND url = ?2
-        ) AND NOT EXISTS (
-            SELECT 1 FROM candidate o WHERE o.crawl_id = candidate.crawl_id AND o.profile_url = ?2
-        )"#,
+        SET profile_url = coalesce(CASE WHEN NOT EXISTS (
+            SELECT 1
+            FROM candidate_profile
+            WHERE candidate_id = candidate.id AND url = candidate.profile_url
+            AND mismatched_at IS NOT NULL
+        ) THEN profile_url END, (
+            SELECT p.url
+            FROM candidate_profile p
+            WHERE p.candidate_id = candidate.id AND p.mismatched_at IS NULL
+            AND NOT EXISTS (
+                SELECT 1
+                FROM candidate o
+                WHERE o.crawl_id = candidate.crawl_id AND o.profile_url = p.url
+            )
+            ORDER BY p.url IS ?2 DESC, p.url
+            LIMIT 1
+        ))
+        WHERE id = ?1
+        RETURNING profile_url"#,
         candidate,
-        url
+        preferred
     )
-    .execute(conn)
-    .await?;
-    Ok(())
+    .fetch_one(conn)
+    .await
 }

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n        SET profile_url = coalesce(CASE WHEN NOT EXISTS (\n            SELECT 1\n            FROM candidate_profile\n            WHERE candidate_id = candidate.id AND url = candidate.profile_url\n            AND mismatched_at IS NOT NULL\n        ) THEN profile_url END, (\n            SELECT p.url\n            FROM candidate_profile p\n            WHERE p.candidate_id = candidate.id AND p.mismatched_at IS NULL\n            AND NOT EXISTS (\n                SELECT 1\n                FROM candidate o\n                WHERE o.crawl_id = candidate.crawl_id AND o.profile_url = p.url\n            )\n            ORDER BY p.url IS ?2 DESC, p.url\n            LIMIT 1\n        ))\n        WHERE id = ?1\n        RETURNING profile_url",
+  "describe": {
+    "columns": [
+      {
+        "name": "profile_url",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "candidate",
+            "name": "profile_url"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "588c84adb84243a2de504ee176f66a277e5e6f85409eb026929ea9dde20bbd4f"
+}

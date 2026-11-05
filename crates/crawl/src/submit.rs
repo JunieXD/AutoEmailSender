@@ -115,7 +115,16 @@ fn check(candidates: Vec<SubmittedCandidate>) -> Result<Vec<Checked>, SubmitErro
         if c.note.as_ref().is_some_and(|s| s.chars().count() > 500) {
             error("说明（note）最多 500 字。".into());
         }
-        if let (Ok(fields), Ok(source), Ok(profile)) = (fields, source, profile) {
+        if let (Ok(mut fields), Ok(source), Ok(profile)) = (fields, source, profile) {
+            // Written as profile links are, so a link found not to be theirs leaves the homepages.
+            let mut homepages = Vec::new();
+            for url in fields.homepages {
+                let url = PageUrl::parse(&url).map_or(url, |u| u.as_str().to_owned());
+                if !homepages.contains(&url) {
+                    homepages.push(url);
+                }
+            }
+            fields.homepages = homepages;
             checked.push(Checked {
                 person: Person {
                     fields,

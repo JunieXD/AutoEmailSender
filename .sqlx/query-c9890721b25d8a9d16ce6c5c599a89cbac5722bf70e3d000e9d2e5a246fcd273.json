@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO candidate_profile(candidate_id, crawl_id, url, mismatched_at)\n            VALUES (?, ?, ?, ?)\n            ON CONFLICT (candidate_id, url)\n            DO UPDATE SET mismatched_at = coalesce(\n                max(mismatched_at, excluded.mismatched_at),\n                mismatched_at,\n                excluded.mismatched_at\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "c9890721b25d8a9d16ce6c5c599a89cbac5722bf70e3d000e9d2e5a246fcd273"
+}

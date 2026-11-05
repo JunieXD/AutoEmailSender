@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page\n            SET target_id = ?\n            WHERE target_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "83fcd48511bd28c504ac787130169c5202d9c40ac7bec7525f617f879ba28687"
+}

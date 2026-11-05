@@ -1540,7 +1540,6 @@ fn observed(name: &str, emails: &[&str], research: Option<&str>) -> MentorFields
         ..Default::default()
     }
 }
-/// The candidate's profile link, and each of their links with whether its page proved not theirs.
 async fn links(db: &SqlitePool, candidate: i64) -> (Option<String>, Vec<(String, bool)>) {
     let profile = sqlx::query_scalar("SELECT profile_url FROM candidate WHERE id = ?")
         .bind(candidate)
@@ -1607,8 +1606,8 @@ async fn profile_fixture(db: &SqlitePool, site: &Site) -> (Claim, tokio::task::J
     });
     (root, server)
 }
-async fn process_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
-    let outcome = process(
+async fn read_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
+    process(
         db,
         &net::Net::new(vec![]).unwrap(),
         &Pages::local(site.port),
@@ -1617,9 +1616,37 @@ async fn process_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
         &Cooldown::new(Arc::default()),
     )
     .await
-    .unwrap();
+    .unwrap()
+}
+async fn process_claim(db: &SqlitePool, site: &Site, claim: &Claim) -> Outcome {
+    let outcome = read_claim(db, site, claim).await;
     assert!(save(db, claim, &outcome).await.unwrap());
     outcome
+}
+/// A list line, which gives its profile link as a homepage too.
+fn list_line(site: &Site, path: &str, name: &str, email: &str) -> MentorFields {
+    MentorFields {
+        homepages: vec![site.url(path).as_str().into()],
+        ..observed(name, &[email], None)
+    }
+}
+/// A list line without a profile link.
+async fn bare_line(db: &SqlitePool, c: &Claim, site: &Site, name: &str, emails: &[&str]) {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    review::save(
+        &mut tx,
+        c.crawl,
+        review::Source::List { id: c.id },
+        site.url("/").as_str(),
+        Person {
+            fields: observed(name, emails, None),
+            papers: vec![],
+            profile: None,
+        },
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
@@ -1637,7 +1664,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
             &site,
             path,
             PageKind::List,
-            observed(name, &[email], None),
+            list_line(&site, path, name, email),
         )
         .await;
     }
@@ -1646,7 +1673,7 @@ async fn b3_redirect_to_another_person_must_not_merge(db: SqlitePool) {
     let claim = queue::next(&db).await.unwrap().unwrap();
     assert!(matches!(
         process_claim(&db, &site, &claim).await,
-        Outcome::Mismatched(id, _) if id == ids[0]
+        Outcome::Mismatched { .. }
     ));
     assert_eq!(candidate_ids(&db).await, ids);
     // The link is no profile or homepage of his any more, and identifies nobody.
@@ -1744,25 +1771,18 @@ async fn a_link_found_not_to_be_theirs_is_read_again_for_whom_another_list_gives
         &site,
         "/li",
         PageKind::List,
-        observed("张三", &["zhang@example.edu"], None),
+        list_line(&site, "/li", "张三", "zhang@example.edu"),
     )
     .await;
     let zhang = candidate_ids(&db).await[0];
     let claim = queue::next(&db).await.unwrap().unwrap();
     assert!(matches!(
         process_claim(&db, &site, &claim).await,
-        Outcome::Mismatched(..)
+        Outcome::Mismatched { .. }
     ));
     // The owner's own list line does not merge into the one the link proved not to be.
-    observation(
-        &db,
-        &root,
-        &site,
-        "/li",
-        PageKind::List,
-        observed("李四", &["li@example.edu"], None),
-    )
-    .await;
+    let li_line = list_line(&site, "/li", "李四", "li@example.edu");
+    observation(&db, &root, &site, "/li", PageKind::List, li_line.clone()).await;
     let ids = candidate_ids(&db).await;
     assert_eq!(ids.len(), 2);
     let li = ids[1];
@@ -1784,7 +1804,153 @@ async fn a_link_found_not_to_be_theirs_is_read_again_for_whom_another_list_gives
     let zhang = review::detail(&db, zhang).await.unwrap().unwrap().candidate;
     assert_eq!(zhang.fields.emails, ["zhang@example.edu"]);
     assert!(zhang.fields.homepages.is_empty());
+    // Read for him already, the page is not read again when a list gives him the link again.
+    observation(&db, &root, &site, "/li", PageKind::List, li_line).await;
+    assert!(queue::next(&db).await.unwrap().is_none());
     server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_page_counts_for_whom_its_candidate_merges_into_while_it_is_read(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/zhang", "<title>张三</title><p>张三 zhang@example.edu</p>");
+    site.page("/wang", "<title>李四</title><p>李四 li@example.edu</p>");
+    let (root, server) = profile_fixture(&db, &site).await;
+    bare_line(&db, &root, &site, "张三", &["a@example.edu"]).await;
+    bare_line(&db, &root, &site, "王五", &["b@example.edu"]).await;
+    for (path, name, email) in [
+        ("/zhang", "张三", "c@example.edu"),
+        ("/wang", "王五", "w@example.edu"),
+    ] {
+        observation(
+            &db,
+            &root,
+            &site,
+            path,
+            PageKind::List,
+            observed(name, &[email], None),
+        )
+        .await;
+    }
+    let ids = candidate_ids(&db).await;
+    let zhang = queue::next(&db).await.unwrap().unwrap();
+    let wang = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(zhang.url, site.url("/zhang"));
+    let read = read_claim(&db, &site, &zhang).await;
+    let misread = read_claim(&db, &site, &wang).await;
+    assert!(matches!(misread, Outcome::Mismatched { .. }));
+    // Another list shows each line to be one read before.
+    bare_line(
+        &db,
+        &root,
+        &site,
+        "张三",
+        &["a@example.edu", "c@example.edu"],
+    )
+    .await;
+    bare_line(
+        &db,
+        &root,
+        &site,
+        "王五",
+        &["b@example.edu", "w@example.edu"],
+    )
+    .await;
+    assert!(save(&db, &zhang, &read).await.unwrap());
+    assert!(save(&db, &wang, &misread).await.unwrap());
+    assert_eq!(candidate_ids(&db).await, ids[..2]);
+    let zhang_link = site.url("/zhang").as_str().to_owned();
+    assert_eq!(
+        links(&db, ids[0]).await,
+        (Some(zhang_link.clone()), vec![(zhang_link, false)])
+    );
+    let a = review::detail(&db, ids[0])
+        .await
+        .unwrap()
+        .unwrap()
+        .candidate;
+    assert!(a.fields.emails.contains(&"zhang@example.edu".to_owned()));
+    let wang_link = site.url("/wang").as_str().to_owned();
+    assert_eq!(links(&db, ids[1]).await, (None, vec![(wang_link, true)]));
+    let b = review::detail(&db, ids[1])
+        .await
+        .unwrap()
+        .unwrap()
+        .candidate;
+    assert_eq!(b.fields.emails, ["b@example.edu", "w@example.edu"]);
+    server.abort();
+}
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn merging_in_a_link_proved_not_theirs_takes_it_from_the_profile(db: SqlitePool) {
+    let (site, root) = review_fixture(&db).await;
+    for (path, email) in [("/u", "a@example.edu"), ("/v", "b@example.edu")] {
+        observation(
+            &db,
+            &root,
+            &site,
+            path,
+            PageKind::List,
+            observed("张三", &[email], None),
+        )
+        .await;
+    }
+    let ids = candidate_ids(&db).await;
+    let url = |path: &str| site.url(path).as_str().to_owned();
+    // The second's page at the first's profile proved not to be theirs, and a third link neither's.
+    for (candidate, path, at) in [
+        (ids[1], "/u", 300),
+        (ids[0], "/w", 100),
+        (ids[1], "/w", 200),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO candidate_profile (candidate_id, crawl_id, url, mismatched_at)
+            VALUES (?, ?, ?, ?)"#,
+        )
+        .bind(candidate)
+        .bind(root.crawl)
+        .bind(url(path))
+        .bind(at)
+        .execute(&db)
+        .await
+        .unwrap();
+    }
+    bare_line(
+        &db,
+        &root,
+        &site,
+        "张三",
+        &["a@example.edu", "b@example.edu"],
+    )
+    .await;
+    assert_eq!(candidate_ids(&db).await, ids[..1]);
+    assert_eq!(
+        links(&db, ids[0]).await,
+        (
+            Some(url("/v")),
+            vec![(url("/u"), true), (url("/v"), false), (url("/w"), true)]
+        )
+    );
+    let latest: i64 =
+        sqlx::query_scalar("SELECT mismatched_at FROM candidate_profile WHERE url = ?")
+            .bind(url("/w"))
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert_eq!(latest, 200);
+    // The link is free for whom another list gives it.
+    observation(
+        &db,
+        &root,
+        &site,
+        "/u",
+        PageKind::List,
+        observed("李四", &["li@example.edu"], None),
+    )
+    .await;
+    let li = candidate_ids(&db).await[1];
+    assert_eq!(
+        links(&db, li).await,
+        (Some(url("/u")), vec![(url("/u"), false)])
+    );
 }
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn b3_redirects_to_directory_must_not_merge(db: SqlitePool) {

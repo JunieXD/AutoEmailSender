@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate\n            SET review = ?, name = ?, aliases = ?, emails = ?, affiliations = ?,\n                homepages = ?, research = ?, papers = ?, evidence = ?,\n                list_page_id = coalesce(list_page_id, ?),\n                profile_page_id = coalesce(?, profile_page_id), profile_fields = ?,\n                match_names = ?, match_schools = ?, note = coalesce(?, note)\n            WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 16
+    },
+    "nullable": []
+  },
+  "hash": "551e23d8f238591e79ae8da4e816f125d998af71f6e4ba4951aeea33935cb190"
+}

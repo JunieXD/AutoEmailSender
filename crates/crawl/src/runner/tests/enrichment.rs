@@ -78,6 +78,7 @@ async fn agent_submission_reopens_for_profile_and_child_enrichment(db: SqlitePoo
         &db,
         serde_json::from_value(json!({"candidates":[{
             "name":"张三", "profileUrl":site.url("/p").as_str(),
+            "homepages":[format!("{}a/../p", site.url("/").as_str())],
             "sourceUrl":site.url("/").as_str(), "note":"待补邮箱"
         }]}))
         .unwrap(),
@@ -99,6 +100,11 @@ async fn agent_submission_reopens_for_profile_and_child_enrichment(db: SqlitePoo
     .unwrap()
     .candidates[0]
         .id;
+    // Written as the profile link is, so it can leave the homepages with it.
+    assert_eq!(
+        detail(&db, id).await.candidate.fields.homepages,
+        [site.url("/p").as_str()]
+    );
     enrich::start(&db, &[id], 2).await.unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
     let mut profile = answer("a@example.edu", json!([1]));
@@ -749,7 +755,27 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
     ] {
         site.redirect(path, destination);
         site.page(destination, html);
-        let (_, id) = candidate(&db, &site, path).await;
+        let (crawl, id) = candidate(&db, &site, path).await;
+        // Proved theirs before, both where the link starts and where it ends up.
+        let mut urls = [site.url(path).as_str(), site.url(destination).as_str()].map(str::to_owned);
+        urls.sort();
+        for url in &urls {
+            sqlx::query(
+                "INSERT INTO candidate_profile (candidate_id, crawl_id, url) VALUES (?, ?, ?)",
+            )
+            .bind(id)
+            .bind(crawl)
+            .bind(url)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        sqlx::query("UPDATE candidate SET homepages = ? WHERE id = ?")
+            .bind(Json(&urls))
+            .bind(id)
+            .execute(&db)
+            .await
+            .unwrap();
         enrich::start(&db, &[id], 2).await.unwrap();
         let c = queue::next(&db).await.unwrap().unwrap();
         let mut a = answer(
@@ -773,15 +799,13 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
                     .unwrap()
                     .contains("张三")
             );
-            // The link is no profile or homepage of theirs any more.
+            // Neither the link nor where it ends up is a profile or homepage of theirs any more.
             assert!(d.candidate.fields.homepages.is_empty(), "{path}");
-            let profile: Option<String> =
-                sqlx::query_scalar("SELECT profile_url FROM candidate WHERE id = ?")
-                    .bind(id)
-                    .fetch_one(&db)
-                    .await
-                    .unwrap();
-            assert_eq!(profile, None, "{path}");
+            assert_eq!(
+                links(&db, id).await,
+                (None, urls.map(|url| (url, true)).to_vec()),
+                "{path}"
+            );
         }
     }
     site.page("/merged", "<p>张三 a@example.edu</p>");

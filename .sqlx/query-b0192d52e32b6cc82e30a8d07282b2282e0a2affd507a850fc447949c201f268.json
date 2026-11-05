@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE candidate_profile\n        SET mismatched_at = NULL\n        WHERE candidate_id IN (SELECT value FROM json_each(?))\n        AND url IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b0192d52e32b6cc82e30a8d07282b2282e0a2affd507a850fc447949c201f268"
+}

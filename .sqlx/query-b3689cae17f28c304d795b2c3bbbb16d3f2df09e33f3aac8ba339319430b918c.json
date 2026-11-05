@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM candidate WHERE id = ?",
+  "query": "SELECT target_id FROM crawl_page WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "target_id",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "candidate",
-            "name": "id"
+            "table": "crawl_page",
+            "name": "target_id"
           }
         }
       }
@@ -19,8 +19,8 @@
       "Right": 1
     },
     "nullable": [
-      false
+      true
     ]
   },
-  "hash": "a34abda9350ab5c8045d7a6e12471948b5540a2af608cf0b75c500f690e0564e"
+  "hash": "b3689cae17f28c304d795b2c3bbbb16d3f2df09e33f3aac8ba339319430b918c"
 }

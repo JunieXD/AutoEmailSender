@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE crawl_page\n            SET work_state = 'queued', claim = claim + 1\n            WHERE crawl_id = ?1 AND url = ?2 AND steps = '[]' AND candidate_id IS NULL\n            AND work_state = 'done' AND target_id IS NOT ?3 AND EXISTS (\n                SELECT 1\n                FROM candidate_profile\n                WHERE candidate_id = crawl_page.target_id AND url = ?2\n                AND mismatched_at IS NOT NULL\n            )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "4fdccf58a22f32f4d3dc76f9e4708ab8e442bd1a4475d1a58040116be1b82331"
+}

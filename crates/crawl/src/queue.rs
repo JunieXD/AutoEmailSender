@@ -199,9 +199,17 @@ pub struct Claim {
 }
 pub async fn next(db: &SqlitePool) -> Result<Option<Claim>, sqlx::Error> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    // A list's profile page is read for the first candidate it is still a link of, or else for the
+    // one it last proved not to be, as a retry reads it for them again.
     let row = sqlx::query!(
         r#"UPDATE crawl_page
-        SET work_state = 'running', claim = claim + 1
+        SET work_state = 'running', claim = claim + 1, target_id = CASE WHEN kind = 'profile' THEN (
+            SELECT candidate_id
+            FROM candidate_profile
+            WHERE crawl_id = crawl_page.crawl_id AND url = crawl_page.url
+            ORDER BY mismatched_at IS NOT NULL, mismatched_at DESC, candidate_id
+            LIMIT 1
+        ) END
         WHERE id = (
             SELECT p.id
             FROM crawl_page p

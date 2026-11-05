@@ -15,7 +15,7 @@ use model::{
     background::{CONCURRENCY, Failure, LASTING, Limit, Limited, RateLimit, Rounds},
 };
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, task::JoinSet, time::Instant};
 use tracing::Instrument;
@@ -262,14 +262,14 @@ struct Page {
     next: Vec<PageUrl>,
     /// The page proved to be its one person's own, so where it ended up identifies them.
     own: bool,
-    /// The candidate a list's profile page was read for.
-    target: Option<i64>,
 }
 enum Outcome {
     Done(Page),
     Failed(String),
-    /// The page proved not to be the candidate's it was read for.
-    Mismatched(i64, String),
+    Mismatched {
+        reason: String,
+        reached: PageUrl,
+    },
     Pause(String, Option<Chosen>),
     /// With the round of the limited request.
     RateLimit(RateLimit, Chosen, u64),
@@ -281,7 +281,10 @@ enum Outcome {
 #[derive(Debug)]
 enum ReadError {
     Failed(String),
-    Mismatched(i64, String),
+    Mismatched {
+        reason: String,
+        reached: PageUrl,
+    },
     Pause(String),
     Database {
         source: sqlx::Error,
@@ -493,7 +496,9 @@ async fn process(
                 Outcome::Pause(reason.into(), Some(chosen))
             }
             Err(ReadError::Failed(reason)) => Outcome::Failed(reason),
-            Err(ReadError::Mismatched(candidate, reason)) => Outcome::Mismatched(candidate, reason),
+            Err(ReadError::Mismatched { reason, reached }) => {
+                Outcome::Mismatched { reason, reached }
+            }
             Err(ReadError::RateLimit(limit, round)) => Outcome::RateLimit(limit, chosen, round),
             Err(ReadError::Wait) => Outcome::Wait,
             Err(ReadError::Gone) => Outcome::Gone,
@@ -545,7 +550,6 @@ async fn read(
             people: vec![],
             next: vec![],
             own: false,
-            target: None,
         });
     }
     if targeted {
@@ -611,7 +615,6 @@ async fn read(
         people,
         next,
         own: kind == PageKind::Profile,
-        target: None,
     })
 }
 /// Reads a profile page or enrichment page for the one candidate it was queued for.
@@ -628,7 +631,7 @@ async fn read_for_candidate(
         .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?;
     let id = match c.candidate_id {
         Some(id) => id,
-        None => review::read_for(&mut conn, c.crawl, c.url.as_str())
+        None => target(&mut conn, c.id)
             .await
             .map_err(database("read page candidate", CANDIDATE_READ_FAILED))?
             .ok_or(ReadError::Gone)?,
@@ -672,7 +675,10 @@ async fn read_for_candidate(
         return Err(if c.kind == PageKind::EnrichChild {
             ReadError::Failed(reason)
         } else {
-            ReadError::Mismatched(id, reason)
+            ReadError::Mismatched {
+                reason,
+                reached: m.url.clone(),
+            }
         });
     }
     let mut next = Vec::new();
@@ -736,8 +742,14 @@ async fn read_for_candidate(
         people: vec![person],
         next,
         own,
-        target: (c.kind == PageKind::Profile).then_some(id),
     })
+}
+/// Whom a list's profile page is read for, or whom they have merged into since; none when it is
+/// a link of nobody's.
+async fn target(conn: &mut SqliteConnection, page: i64) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT target_id FROM crawl_page WHERE id = ?", page)
+        .fetch_one(conn)
+        .await
 }
 fn browser(reason: &crate::BrowserReason) -> &'static str {
     match reason {
@@ -796,7 +808,8 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                     }
                 }
                 if c.kind == PageKind::EnrichProfile && p.own {
-                    review::matched(&mut tx, id, c.url.as_str()).await?;
+                    let urls = [c.url.as_str(), p.material.url.as_str()];
+                    review::matched(&mut tx, id, &urls).await?;
                 }
                 for person in &p.people {
                     enrich::apply(&mut tx, id, p.material.url.as_str(), person).await?;
@@ -870,6 +883,10 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                         .await?;
                     }
                 }
+                let target = match c.kind {
+                    PageKind::Profile if !p.people.is_empty() => target(&mut tx, c.id).await?,
+                    _ => None,
+                };
                 // The transaction serializes duplicate detection with all candidate writes.
                 for person in &p.people {
                     review::save(
@@ -881,7 +898,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                             review::Source::Profile {
                                 id: c.id,
                                 own: p.own,
-                                target: p.target,
+                                target,
                             }
                         },
                         p.material.url.as_str(),
@@ -895,7 +912,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                 }
             }
         }
-        Outcome::Failed(reason) | Outcome::Mismatched(_, reason) => {
+        Outcome::Failed(reason) | Outcome::Mismatched { reason, .. } => {
             sqlx::query!(
                 r#"UPDATE crawl_page
                 SET work_state = 'done', status = 'failed', error = ?, fetched_at = ?
@@ -906,8 +923,15 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             )
             .execute(&mut *tx)
             .await?;
-            if let Outcome::Mismatched(candidate, _) = outcome {
-                review::mismatched(&mut tx, *candidate, c.url.as_str(), now()).await?;
+            if let Outcome::Mismatched { reached, .. } = outcome {
+                let candidate = match c.candidate_id {
+                    Some(id) => id,
+                    None => target(&mut tx, c.id).await?.unwrap_or_else(|| {
+                        unreachable!("a valid claim's page has whom it was read for")
+                    }),
+                };
+                let urls = [c.url.as_str(), reached.as_str()];
+                review::mismatched(&mut tx, candidate, &urls, now()).await?;
             }
         }
         Outcome::Pause(reason, expected) => {
@@ -971,7 +995,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
             needs_browser = p.material.needs_browser.is_some(),
             "page completed"
         ),
-        Outcome::Failed(_) | Outcome::Mismatched(..) => tracing::info!(
+        Outcome::Failed(_) | Outcome::Mismatched { .. } => tracing::info!(
             url = c.url.as_str(),
             kind = ?c.kind,
             "page failed"
@@ -1212,7 +1236,7 @@ async fn run_with_pages(
                 if applied
                     && matches!(
                         outcome,
-                        Outcome::Done(_) | Outcome::Failed(_) | Outcome::Mismatched(..)
+                        Outcome::Done(_) | Outcome::Failed(_) | Outcome::Mismatched { .. }
                     )
                 {
                     limited.remove(&c.crawl);
