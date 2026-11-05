@@ -467,12 +467,12 @@ V3 的产品范围和全局决定。
 ## 发布
 
 - 本文件列出的功能全部完成后发 3.0。
-- 3.0 之前不发 GitHub Release（包括预发布），不部署官网。
+- 3.0 之前不发 GitHub Release（包括预发布）；官网只有一页，介绍软件和功能、开发记录和备案号，不放下载，3.0 发布时换成下面写的正式官网。
 - 安装包和更新文件放在 GitHub Releases。不做代码签名：macOS 用 ad-hoc 签名，Windows 不签名。
 - 两个平台都用 Tauri 自带的更新器，用单独的签名密钥校验更新包，更新清单是 `latest.json`。Windows 用 NSIS 安装包，macOS 用 DMG。不签名时更新器有已知问题要绕开，搭项目时先做实验验证。
 - 每次发布前按[手动检查](development.md#手动检查)过一遍，包括在 Windows 虚拟机里全新安装、升级和卸载。
 - V3 的应用 ID、安装目录和数据目录与 V2（`auto-email-sender-desktop`）不同，V3 不动 V2 的数据。两者显示的名字都是 Auto Email Sender：Windows 上装 V3 会顶掉 V2 的开始菜单和桌面快捷方式，卸载 V3 时连同 V2 的开机自启一起删掉；macOS 上拖进"应用程序"会替换 V2。V2 已停止维护，不为同时使用两者改名；要留着 V2 的，先把它改名。
 - V3 的更新文件不能叫 `latest.yml` 或 `appcast.xml`：没升级到 2.6.5 的 V2 客户端还会从 GitHub 的最新 Release 读这两个文件。
-- 官网在 `auto-email-sender.cn`（ICP 个人备案），只介绍软件和功能、引导下载，不放价格和购买：个人备案的网站不放经营性内容。有一张功能对比，分不用登录、登录后和 Plus 三列写各能用什么，不写价格，不放开通的入口。页脚写 ICP 备案号，链接到工信部的备案网站；上线 30 天内办公安联网备案，页脚加上公安备案号。
+- 官网在 `auto-email-sender.cn`（ICP 个人备案，备案的网站名称是“AutoEmailSender 开发记录”，所以正式官网也留着开发记录），只介绍软件和功能、引导下载，不放价格和购买：个人备案的网站不放经营性内容。有一张功能对比，分不用登录、登录后和 Plus 三列写各能用什么，不写价格，不放开通的入口。页脚写 ICP 备案号，链接到工信部的备案网站；上线 30 天内办公安联网备案，页脚加上公安备案号。
 - 本仓库原来的 GitHub Pages 项目页 `juniexd.github.io/AutoEmailSender/` 改成跳转页（根上的个人主页不动）：V2 应用链到的地址（首页、`/docs/first-run`，含锚点 `#mail-authorization-code` 和 `#llm-configuration`、`/docs/mentor-crawler-skill`、`/acknowledgements`）跳到新官网的同一地址，新官网保留这些地址。
 - V2 社区仓库 `JunieXD/AutoEmailSender-MentorData` 冻结，继续供 V2 读取，不改它的格式。

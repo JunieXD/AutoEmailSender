@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoEmailSender 开发记录</title>
+<meta name="description" content="Auto Email Sender 是帮助学生联系导师的桌面应用：整理导师信息，分析研究方向的匹配度，为每位导师起草邮件，经你确认后发出，并追踪回信。">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1d1a18" media="(prefers-color-scheme: dark)">
+<style>
+/* Tokens copied from the app (ui/src/index.css), so the mock windows look like the app. */
+:root {
+  color-scheme: light dark;
+  --sidebar: #f3f0ee;
+  --background: #ffffff;
+  --foreground: #292524;
+  --muted-foreground: #6f6762;
+  --faint: #a39b95;
+  --muted: #f6f3f1;
+  --press: #ece7e4;
+  --border: #ece7e3;
+  --input: #ddd6d1;
+  --primary: #991b1b;
+  --primary-hover: #7f1d1d;
+  --primary-foreground: #ffffff;
+  --brand-text: #991b1b;
+  --selected: #fbeeec;
+  --success: #2c7a4f;
+  --success-soft: #e4f2e8;
+  --warning: #985a0c;
+  --warning-soft: #fdf1da;
+  --destructive: #c4321f;
+  --highlight: #ffe9a8;
+  --diff-insert: #dcf0e2;
+  --diff-delete: #fbe1dd;
+  --avatar-1: #f6e2de;
+  --avatar-2: #f3e8d5;
+  --avatar-3: #e2e8f2;
+  --avatar-4: #e3eedf;
+  --pop-shadow: rgb(41 37 36 / 0.16);
+  --window-shadow: 0 1px 2px rgb(41 37 36 / 0.06), 0 24px 48px -18px rgb(41 37 36 / 0.24);
+  --band: #1d1a18;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sidebar: #141110;
+    --background: #1d1a18;
+    --foreground: #ede8e4;
+    --muted-foreground: #aba29c;
+    --faint: #7a716b;
+    --muted: #26211e;
+    --press: #302a26;
+    --border: #2e2825;
+    --input: #3f3733;
+    --primary: #c13b3b;
+    --primary-hover: #d04a48;
+    --brand-text: #f1958c;
+    --selected: #33201e;
+    --success: #7cc79a;
+    --success-soft: #18291f;
+    --warning: #e8b25a;
+    --warning-soft: #2f2416;
+    --destructive: #ff7a66;
+    --highlight: #574516;
+    --diff-insert: #183626;
+    --diff-delete: #46231f;
+    --avatar-1: #3d2624;
+    --avatar-2: #382d1e;
+    --avatar-3: #232a3a;
+    --avatar-4: #243122;
+    --pop-shadow: rgb(0 0 0 / 0.5);
+    --window-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 24px 48px -18px rgb(0 0 0 / 0.7);
+    --band: #141110;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { overflow-x: clip; scroll-behavior: smooth; scroll-padding-top: 80px; }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font: 400 17px/1.75 system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--brand-text); text-decoration-thickness: 1px; text-underline-offset: 0.22em; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 6px; }
+p, li { text-wrap: pretty; }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 0 32px; }
+.i { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Header */
+.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--background) 86%, transparent); backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--border); }
+.top .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; margin-right: auto; color: var(--foreground); font-weight: 600; text-decoration: none; }
+.top nav { display: flex; align-items: center; gap: 28px; font-size: 15px; }
+.top nav a { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); text-decoration: none; }
+.top nav a:hover { color: var(--foreground); }
+.gh { width: 18px; height: 18px; fill: currentColor; }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 22px; border: 1px solid transparent; border-radius: 10px; font-size: 16px; font-weight: 600; text-decoration: none; transition: background-color 0.15s; }
+.btn-primary { background: var(--primary); color: var(--primary-foreground); }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-ghost { background: var(--background); color: var(--foreground); border-color: var(--input); }
+.btn-ghost:hover { background: var(--muted); }
+
+/* Hero */
+.hero { padding: 80px 0 64px; }
+.hero > .wrap { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 1fr); gap: 72px; align-items: center; }
+.status { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 24px; padding: 4px 14px 4px 10px; border-radius: 999px; background: var(--selected); color: var(--brand-text); font-size: 14px; font-weight: 600; }
+.status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.hero h1 { margin: 0 0 24px; font-size: clamp(38px, 5vw, 58px); line-height: 1.15; font-weight: 700; letter-spacing: -0.02em; }
+.hero h1 span { display: block; }
+.hero .lead { margin: 0 0 32px; color: var(--muted-foreground); font-size: 18px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0; padding: 0; list-style: none; color: var(--muted-foreground); font-size: 14px; }
+.facts li { display: inline-flex; align-items: center; gap: 7px; }
+.facts .i { color: var(--success); }
+
+/* The compose window resting on an envelope. */
+.stage { position: relative; padding: 40px 0 96px 24px; }
+.envelope { position: absolute; inset: 0 -20px 72px 72px; overflow: hidden; border-radius: 18px; background: var(--selected); transform: rotate(3.5deg); }
+.envelope svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.envelope path { fill: color-mix(in srgb, var(--primary) 6%, transparent); stroke: color-mix(in srgb, var(--primary) 24%, transparent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+
+.window { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--background); box-shadow: var(--window-shadow); font-size: 14px; line-height: 1.6; }
+.bar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--sidebar); color: var(--muted-foreground); font-size: 13px; }
+.dots { display: flex; gap: 6px; margin-right: 6px; }
+.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--input); }
+.field { display: flex; align-items: center; gap: 12px; padding: 9px 18px; border-bottom: 1px solid var(--border); }
+.field > span:first-child { width: 3em; flex: none; color: var(--muted-foreground); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 3px; border-radius: 999px; background: var(--muted); font-size: 13px; white-space: nowrap; }
+.chip .i { margin-left: 5px; color: var(--muted-foreground); }
+.avatar { display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; border-radius: 50%; background: var(--avatar-1); font-size: 11px; font-weight: 600; }
+.avatar.lg { width: 34px; height: 34px; font-size: 14px; }
+.a2 { background: var(--avatar-2); } .a3 { background: var(--avatar-3); } .a4 { background: var(--avatar-4); }
+.letter { padding: 14px 18px 4px; }
+.letter p { margin: 0 0 10px; }
+.note { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; color: var(--warning); font-size: 12px; font-weight: 600; }
+.ai { padding: 1px 2px; border-radius: 3px; background: linear-gradient(var(--highlight), var(--highlight)) no-repeat 0 0 / 100% 100%; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.attach { margin: 2px 18px 14px; }
+.sendbar { display: flex; align-items: center; gap: 16px; padding: 10px 12px 10px 18px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 13px; }
+.sendbar span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ok { color: var(--success); }
+.go { display: inline-flex; align-items: center; gap: 6px; height: 32px; margin-left: auto; padding: 0 14px; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); font-weight: 600; }
+
+.float { position: absolute; z-index: 1; border: 1px solid var(--border); border-radius: 12px; background: var(--background); box-shadow: 0 14px 36px -12px var(--pop-shadow); font-size: 13px; line-height: 1.55; }
+.toast { top: 4px; right: -12px; display: flex; align-items: center; gap: 10px; padding: 10px 16px 10px 12px; }
+.toast .i { width: 18px; height: 18px; color: var(--success); }
+.reply { bottom: 0; left: -24px; width: 310px; padding: 14px 16px; }
+.reply header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.reply time { margin-left: auto; color: var(--faint); }
+.reply p { margin: 0 0 10px; }
+.tag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.tag-ok { background: var(--success-soft); color: var(--success); }
+.tag-warn { background: var(--warning-soft); color: var(--warning); }
+.tag-new { background: var(--selected); color: var(--brand-text); }
+.tag-wait { background: var(--press); color: var(--muted-foreground); }
+
+/* One sequence on load: the AI's sentence is marked, the letter is queued, a reply arrives. */
+@media (prefers-reduced-motion: no-preference) {
+  .stage .window { animation: rise 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+  .stage .ai { animation: mark 0.9s ease-out 0.7s both; }
+  .toast { animation: pop 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 1.7s both; }
+  .reply { animation: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) 2.5s both; }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+@keyframes mark { from { background-size: 0% 100%; } }
+@keyframes pop { from { opacity: 0; transform: translateY(-8px) scale(0.96); } }
+
+/* Mailboxes */
+.mailers .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-bottom: 88px; }
+.mailers p { margin: 0 12px 0 0; color: var(--muted-foreground); font-size: 15px; }
+.pill { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; font-size: 14px; }
+
+/* Sections */
+.section { padding: 112px 0; }
+.alt { background: var(--muted); }
+.head { max-width: 660px; margin: 0 0 72px; }
+.head h2 span { display: inline-block; }
+.head h2 { margin: 0 0 14px; font-size: clamp(28px, 3.4vw, 40px); line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; }
+.head p { margin: 0; color: var(--muted-foreground); font-size: 18px; }
+
+.steps { display: grid; gap: 120px; margin: 0; padding: 0; list-style: none; }
+.step { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 80px; align-items: center; }
+.step:nth-child(even) { grid-template-columns: minmax(0, 6fr) minmax(0, 5fr); }
+.step:nth-child(even) .copy { order: 2; }
+.num { display: inline-grid; place-items: center; width: 34px; height: 34px; margin-bottom: 18px; border-radius: 50%; background: var(--selected); color: var(--brand-text); font-size: 15px; font-weight: 700; }
+.step h3 { margin: 0 0 12px; font-size: 27px; line-height: 1.35; font-weight: 700; }
+.step .copy > p { margin: 0 0 20px; color: var(--muted-foreground); }
+.ticks { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: 15px; }
+.ticks li { display: flex; gap: 10px; }
+.ticks .i { margin-top: 0.4em; color: var(--success); }
+.panel { padding: 36px; border-radius: 20px; background: var(--background); }
+
+.row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.row:last-child { border-bottom: 0; }
+.who { flex: 1; min-width: 0; }
+.who b { display: block; font-weight: 600; }
+.who small { display: block; overflow: hidden; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.mini { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 1px solid var(--input); border-radius: 7px; background: var(--background); font-size: 12px; white-space: nowrap; }
+.mini.primary { border-color: transparent; background: var(--primary); color: var(--primary-foreground); }
+.progress { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 13px; color: var(--muted-foreground); }
+.track { height: 6px; margin-top: 8px; border-radius: 3px; background: var(--press); }
+.track i { display: block; width: 62%; height: 100%; border-radius: inherit; background: var(--primary); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+
+.match { display: flex; gap: 18px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.score { display: grid; place-items: center; width: 64px; height: 64px; flex: none; border-radius: 50%; background: conic-gradient(var(--success) 86%, var(--press) 0); }
+.score b { display: grid; place-items: center; width: 50px; height: 50px; border-radius: 50%; background: var(--background); font-size: 18px; }
+.match ul { margin: 0; padding-left: 1.1em; color: var(--muted-foreground); font-size: 13px; }
+.diff { padding: 14px 18px 16px; }
+.diff p { margin: 0; }
+.del { background: var(--diff-delete); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--destructive) 55%, transparent); }
+.ins { background: var(--diff-insert); }
+.legend { display: flex; align-items: center; gap: 12px; margin-top: 10px; color: var(--muted-foreground); font-size: 12px; }
+
+.checks { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.checks span { display: inline-flex; align-items: center; gap: 5px; color: var(--success); }
+.time { width: 3.2em; flex: none; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+.thread { padding: 16px; }
+.msg { margin-bottom: 12px; padding: 12px 14px; border-radius: 12px; background: var(--muted); }
+.msg header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 13px; }
+.msg header time { color: var(--faint); }
+.msg header .tag { margin-left: auto; }
+.msg p { margin: 0; }
+.todo { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px dashed var(--input); border-radius: 10px; font-size: 13px; }
+.box { width: 15px; height: 15px; flex: none; border: 1.5px solid var(--input); border-radius: 4px; }
+
+/* Principles */
+.band { padding: 104px 0; background: var(--band); color: #ede8e4; }
+.band .head h2 { color: #ffffff; }
+.band .head p { color: #aba29c; }
+.promises { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 56px; margin: 0; padding: 0; list-style: none; }
+.promises .i { width: 30px; height: 30px; margin-bottom: 18px; color: #f1958c; }
+.promises .gh { fill: #f1958c; stroke: none; }
+.promises h3 { margin: 0 0 8px; color: #ffffff; font-size: 20px; line-height: 1.45; }
+.promises p { margin: 0; color: #aba29c; }
+
+/* More features */
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 48px 36px; margin: 0; padding: 0; list-style: none; }
+.ic { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--background); color: var(--brand-text); }
+.ic .i { width: 22px; height: 22px; }
+.grid h3 { margin: 0 0 6px; font-size: 17px; }
+.grid p { margin: 0; color: var(--muted-foreground); font-size: 15px; line-height: 1.7; }
+
+/* Development log, shown as a sent-mail folder. */
+.mailbox { display: grid; grid-template-columns: 210px minmax(0, 1fr); font-size: 15px; }
+.folders { padding: 14px 10px; border-right: 1px solid var(--border); background: var(--sidebar); }
+.folder { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-radius: 8px; color: var(--muted-foreground); font-size: 14px; }
+.folder .i { width: 16px; height: 16px; }
+.folder.on { background: var(--selected); color: var(--brand-text); font-weight: 600; }
+.folder em { margin-left: auto; font-size: 12px; font-style: normal; }
+.list-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--border); }
+.list-head b { font-size: 16px; }
+.list-head span { color: var(--muted-foreground); font-size: 13px; }
+.mails { margin: 0; padding: 0; list-style: none; }
+.mails li { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 2px 16px; padding: 16px 24px; border-bottom: 1px solid var(--border); }
+.mails li:last-child { border-bottom: 0; }
+.sender { display: grid; grid-row: span 2; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--avatar-1); color: color-mix(in srgb, var(--foreground) 82%, transparent); }
+.sender .i { width: 17px; height: 17px; }
+.mails li:nth-child(4n+2) .sender { background: var(--avatar-2); }
+.mails li:nth-child(4n+3) .sender { background: var(--avatar-3); }
+.mails li:nth-child(4n) .sender { background: var(--avatar-4); }
+.mails h3 { margin: 0; font-size: 15px; line-height: 1.6; font-weight: 600; }
+.mails time { color: var(--faint); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mails p { grid-column: 2 / 4; margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.65; }
+
+/* Call to action */
+.cta { padding-top: 0; }
+.cta-card { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 40px; align-items: center; overflow: hidden; padding: 64px; border-radius: 24px; background: var(--primary); color: #ffffff; }
+.cta-card h2 { margin: 0 0 12px; font-size: clamp(26px, 3vw, 36px); line-height: 1.3; }
+.cta-card p { margin: 0; max-width: 30em; color: rgb(255 255 255 / 0.82); }
+.cta-card .mark { position: absolute; right: -40px; bottom: -70px; width: 300px; height: 300px; color: rgb(255 255 255 / 0.08); stroke-width: 1.2; }
+.qq { position: relative; padding: 20px 28px; border-radius: 16px; background: rgb(255 255 255 / 0.12); text-align: center; }
+.qq small { display: block; color: rgb(255 255 255 / 0.78); font-size: 14px; }
+.qq b { display: block; margin-bottom: 12px; font-size: 30px; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+.qq a { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 10px; background: #ffffff; color: #7f1d1d; font-size: 15px; font-weight: 600; text-decoration: none; }
+
+/* Footer */
+.foot { border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 14px; }
+.foot .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 20px 48px; padding-top: 40px; padding-bottom: 48px; }
+.foot .brand { margin-bottom: 6px; }
+.foot p { margin: 0; }
+.foot ul { display: grid; align-content: start; gap: 4px; margin: 0; padding: 0; list-style: none; }
+
+@media (max-width: 1080px) {
+  .hero > .wrap { grid-template-columns: minmax(0, 1fr); gap: 48px; }
+  .stage { max-width: 680px; }
+  .step { grid-template-columns: minmax(0, 1fr); gap: 40px; }
+  .step:nth-child(even) { grid-template-columns: minmax(0, 1fr); }
+  .step:nth-child(even) .copy { order: 0; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .promises { gap: 40px; }
+}
+@media (max-width: 760px) {
+  body { font-size: 16px; }
+  .wrap { padding: 0 20px; }
+  .top nav { gap: 18px; }
+  .top nav .optional { display: none; }
+  .hero { padding: 48px 0 40px; }
+  .stage { padding: 52px 0 128px; }
+  .envelope { inset: 18px -8px 104px 40px; }
+  .toast { top: 0; right: 4px; }
+  .reply { right: 24px; left: 8px; width: auto; }
+  .window { font-size: 13px; }
+  .sendbar .when { display: none; }
+  .mailers .wrap { padding-bottom: 56px; }
+  .section, .band { padding: 72px 0; }
+  .head { margin-bottom: 44px; }
+  .steps { gap: 72px; }
+  .panel { padding: 0; background: none; }
+  .promises, .grid { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .grid { gap: 24px; }
+  .grid li { display: grid; grid-template-columns: 46px minmax(0, 1fr); column-gap: 16px; }
+  .grid .ic { grid-row: span 2; margin: 0; }
+  .mailbox { grid-template-columns: minmax(0, 1fr); }
+  .folders { display: none; }
+  .list-head, .mails li { padding-right: 16px; padding-left: 16px; }
+  .cta-card { grid-template-columns: minmax(0, 1fr); padding: 40px 24px; }
+}
+</style>
+</head>
+<body>
+<!-- Icons from Lucide (ISC license), the set the app uses; the GitHub mark is GitHub's. -->
+<svg width="0" height="0" style="position: absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-mail" viewBox="0 0 24 24"><path d="m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7"/><rect x="2" y="4" width="20" height="16" rx="2"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></symbol>
+    <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-smartphone" viewBox="0 0 24 24"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-cloud-upload" viewBox="0 0 24 24"><path d="M12 13v8"/><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="m8 17 4-4 4 4"/></symbol>
+    <symbol id="i-library-big" viewBox="0 0 24 24"><rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/><path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></symbol>
+    <symbol id="i-repeat-2" viewBox="0 0 24 24"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-chart-column" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></symbol>
+    <symbol id="i-hard-drive" viewBox="0 0 24 24"><path d="M10 16h.01"/><path d="M2.212 11.577a2 2 0 0 0-.212.896V18a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-5.527a2 2 0 0 0-.212-.896L18.55 5.11A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><path d="M21.946 12.013H2.054"/><path d="M6 16h.01"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></symbol>
+    <symbol id="i-mails" viewBox="0 0 24 24"><path d="M17 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 1-1.732"/><path d="m22 5.5-6.419 4.179a2 2 0 0 1-2.162 0L7 5.5"/><rect x="7" y="3" width="15" height="12" rx="2"/></symbol>
+    <symbol id="i-code-xml" viewBox="0 0 24 24"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 24 24"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"/></symbol>
+    <symbol id="i-mail-check" viewBox="0 0 24 24"><path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/><path d="m16 19 2 2 4-4"/></symbol>
+    <symbol id="i-pen-line" viewBox="0 0 24 24"><path d="M13 21h8"/><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></symbol>
+    <symbol id="i-github" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/icon.svg" width="28" height="28" alt="">Auto Email Sender</a>
+    <nav aria-label="页面导航">
+      <a class="optional" href="#features">功能</a>
+      <a class="optional" href="#log">开发记录</a>
+      <a href="https://github.com/JunieXD/AutoEmailSender"><svg class="gh" aria-hidden="true"><use href="#i-github"/></svg>GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <p class="status">3.0 开发中，暂未开放下载</p>
+        <h1><span>为每位导师，</span><span>撰写一封专属邮件</span></h1>
+        <p class="lead">Auto Email Sender 是帮助学生联系导师的桌面应用。它整理导师信息，分析研究方向的匹配度，并为每位导师起草邮件。每封邮件均经你确认后发出，回信自动归入对应导师。</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="#features">了解功能</a>
+          <a class="btn btn-ghost" href="#log">查看开发记录</a>
+        </div>
+        <ul class="facts">
+          <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>支持 Windows 和 macOS</li>
+          <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>本地功能无需登录</li>
+          <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>基于 GPL-3.0 开源</li>
+        </ul>
+      </div>
+
+      <div class="stage" role="img" aria-label="示意：写给王老师的首封邮件，其中一段由 AI 依据王老师近期的论文改写；发送前检查通过后批准，计划明天 09:00 发出；随后收到王老师的回信，标记为有意向。">
+        <div class="envelope"><svg viewBox="0 0 100 60" preserveAspectRatio="none"><path d="M0 0L50 36L100 0"/></svg></div>
+        <div class="window">
+          <div class="bar"><span class="dots"><i></i><i></i><i></i></span>首封草稿</div>
+          <div class="field"><span>收件人</span><span class="chip"><span class="avatar">王</span>王老师 &lt;wang@cs.example.edu.cn&gt;</span></div>
+          <div class="field"><span>主题</span><span>报考 2027 年博士研究生的咨询</span></div>
+          <div class="letter">
+            <p>王老师您好：</p>
+            <div class="note"><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg>依据王老师近期的论文改写</div>
+            <p>我是计算机系的硕士生陈同学，<span class="ai">拜读了您今年关于图结构可解释性的论文，对文中以子图解释预测结果的思路深感兴趣，我在自己的课题中也做过类似的尝试。</span></p>
+            <p>希望报考您 2027 年的博士研究生，随信附上个人简历，期待有机会与您进一步交流。</p>
+          </div>
+          <div class="attach"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-paperclip"/></svg>简历.pdf</span></div>
+          <div class="sendbar">
+            <span class="ok"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>发送前检查通过</span>
+            <span class="when"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>明天 09:00</span>
+            <span class="go"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg>批准并查看下一封</span>
+          </div>
+        </div>
+        <div class="float toast"><svg class="i" aria-hidden="true"><use href="#i-mail-check"/></svg>已批准，明天 09:00 发出</div>
+        <div class="float reply">
+          <header><span class="avatar">王</span><b>王老师</b><span class="tag tag-new">新回信</span><time>10:24</time></header>
+          <p>来信收到，欢迎加我微信交流。</p>
+          <span class="tag tag-ok">有意向</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="mailers" aria-label="支持的邮箱">
+    <div class="wrap">
+      <p>使用你自己的邮箱发送</p>
+      <span class="pill">QQ 邮箱</span>
+      <span class="pill">163 邮箱</span>
+      <span class="pill">126 邮箱</span>
+      <span class="pill">Gmail</span>
+      <span class="pill">iCloud 邮件</span>
+      <span class="pill">腾讯企业邮箱</span>
+      <span class="pill">网易企业邮箱</span>
+      <span class="pill">阿里邮箱</span>
+      <span class="pill">学校邮箱</span>
+    </div>
+  </section>
+
+  <section class="section alt" id="features">
+    <div class="wrap">
+      <div class="head">
+        <h2><span>从查找导师到处理回信，</span><span>一个应用即可完成</span></h2>
+        <p>信息整理和邮件起草由应用完成；发送对象、内容和时间由你决定。</p>
+      </div>
+      <ol class="steps">
+        <li class="step">
+          <div class="copy">
+            <span class="num">1</span>
+            <h3>查找导师</h3>
+            <p>输入学院官网或教师名录的网址，应用自动整理导师的邮箱、研究方向、近期论文和个人主页。整理结果先列为候选导师，由你逐一接受、并入已有导师或拒绝；登录后还可从导师库直接添加。</p>
+            <ul class="ticks">
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>整理过程可随时暂停、继续或重试</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>自动标出疑似重复的导师</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>可补全缺失的信息，也可导入表格</li>
+            </ul>
+          </div>
+          <div class="panel" role="img" aria-label="示意：正在整理导师信息，3 位候选导师待审核，其中 1 位标为疑似重复。">
+            <div class="window">
+              <div class="bar"><span class="dots"><i></i><i></i><i></i></span>找导师</div>
+              <div class="progress">正在整理：已读取 42 个页面，找到 18 位导师<div class="track"><i></i></div></div>
+              <div class="row">
+                <span class="avatar lg">刘</span>
+                <div class="who"><b>刘老师</b><small>教授　计算机学院　图学习、可解释性</small><div class="tags"><span class="tag tag-wait">邮箱</span><span class="tag tag-wait">主页</span><span class="tag tag-wait">3 篇论文</span></div></div>
+                <span class="mini primary">接受</span><span class="mini">拒绝</span>
+              </div>
+              <div class="row">
+                <span class="avatar lg a3">周</span>
+                <div class="who"><b>周老师</b><small>副教授　计算机学院　知识图谱</small><div class="tags"><span class="tag tag-wait">邮箱</span><span class="tag tag-warn">疑似重复</span></div></div>
+                <span class="mini">并入</span><span class="mini">拒绝</span>
+              </div>
+              <div class="row">
+                <span class="avatar lg a4">孙</span>
+                <div class="who"><b>孙老师</b><small>研究员　人工智能研究院　推荐系统</small><div class="tags"><span class="tag tag-wait">邮箱</span><span class="tag tag-wait">2 篇论文</span></div></div>
+                <span class="mini primary">接受</span><span class="mini">拒绝</span>
+              </div>
+            </div>
+          </div>
+        </li>
+
+        <li class="step">
+          <div class="copy">
+            <span class="num">2</span>
+            <h3>分析匹配度并起草邮件</h3>
+            <p>AI 对照你的背景与导师的研究方向和论文，给出匹配度及理由。起草时以你的模板为基础，针对每位导师改写相关段落，改动之处逐一标出。</p>
+            <ul class="ticks">
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>可自行选择模型服务商</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>模板支持占位符，可从 Word 导入</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>发出前可由 AI 再次核对</li>
+            </ul>
+          </div>
+          <div class="panel" role="img" aria-label="示意：刘老师的匹配度为 86，并列出匹配理由；下方为 AI 改写前后的对照。">
+            <div class="window">
+              <div class="bar"><span class="dots"><i></i><i></i><i></i></span>刘老师</div>
+              <div class="match">
+                <span class="score"><b>86</b></span>
+                <div><b>匹配度高</b>
+                  <ul><li>研究方向均为图学习的可解释性</li><li>你的课题使用了该导师提出的方法</li><li>今年招收博士研究生</li></ul>
+                </div>
+              </div>
+              <div class="diff">
+                <p>刘老师您好：<span class="del">我对您的研究方向很感兴趣，</span><span class="ins">我拜读了您关于子图解释的论文，并在课题中复现了其中的实验，</span>希望报考您的博士研究生。</p>
+                <div class="legend"><span class="tag tag-ok">AI 改写</span>改写前后对照显示，可继续修改</div>
+              </div>
+            </div>
+          </div>
+        </li>
+
+        <li class="step">
+          <div class="copy">
+            <span class="num">3</span>
+            <h3>确认后定时发送</h3>
+            <p>批量生成首封，逐封批准后加入发送计划，按设定的时间分批发出，并可由多个邮箱轮流发送。发送前自动检查占位符、称呼和收件域名。</p>
+            <ul class="ticks">
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>未经你批准的邮件不会发出</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>邮箱被限流时自动暂停，恢复后继续发送</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>发送中途关闭应用，也不会重复发出</li>
+            </ul>
+          </div>
+          <div class="panel" role="img" aria-label="示意：发送计划中的 3 封邮件按时间由 2 个邮箱轮流发出，第 1 封已发出。">
+            <div class="window">
+              <div class="bar"><span class="dots"><i></i><i></i><i></i></span>发送计划</div>
+              <div class="checks"><span><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>占位符均已替换</span><span><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>称呼与导师一致</span><span><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>收件域名有效</span></div>
+              <div class="row"><span class="time">09:00</span><span class="avatar lg">王</span><div class="who"><b>王老师</b><small>由 chen@qq.com 发出</small></div><span class="tag tag-ok">已发出</span></div>
+              <div class="row"><span class="time">09:06</span><span class="avatar lg a3">刘</span><div class="who"><b>刘老师</b><small>由 chen@163.com 发出</small></div><span class="tag tag-wait">待发送</span></div>
+              <div class="row"><span class="time">09:13</span><span class="avatar lg a4">孙</span><div class="who"><b>孙老师</b><small>由 chen@qq.com 发出</small></div><span class="tag tag-wait">待发送</span></div>
+            </div>
+          </div>
+        </li>
+
+        <li class="step">
+          <div class="copy">
+            <span class="num">4</span>
+            <h3>处理回信和追问</h3>
+            <p>回信自动归入对应导师，AI 标出回信结果（有意向、无名额或拒绝），并提取待办事项。长时间未回复的导师，可向其发送追问。</p>
+            <ul class="ticks">
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>应用在后台运行时照常收信，收到回信即时通知</li>
+              <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>统计页显示回复率和首次回复用时</li>
+            </ul>
+          </div>
+          <div class="panel" role="img" aria-label="示意：王老师的回信标记为有意向，并提取出一条待办：添加王老师的微信。">
+            <div class="window">
+              <div class="bar"><span class="dots"><i></i><i></i><i></i></span>往来　王老师</div>
+              <div class="thread">
+                <div class="msg"><header><span class="avatar">王</span><b>王老师</b><time>今天 10:24</time><span class="tag tag-ok">有意向</span></header><p>来信收到，欢迎加我微信交流。</p></div>
+                <div class="todo"><span class="box"></span>添加王老师的微信</div>
+              </div>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="head">
+        <h2>由你做主</h2>
+        <p>AI 仅提供建议和草稿，邮件和数据始终由你掌控。</p>
+      </div>
+      <ul class="promises">
+        <li><svg class="i" aria-hidden="true"><use href="#i-shield-check"/></svg><h3>每封邮件均需你批准</h3><p>发送对象、内容和时间均由你决定，未经批准的邮件不会发出。</p></li>
+        <li><svg class="i" aria-hidden="true"><use href="#i-hard-drive"/></svg><h3>数据保存在本机</h3><p>本地功能无需登录。使用需要服务器的功能前，应用会说明发送哪些数据、发往何处。</p></li>
+        <li><svg class="i gh" aria-hidden="true"><use href="#i-github"/></svg><h3>源代码公开</h3><p>源代码以 GPL-3.0 许可证在 GitHub 公开，数据的处理方式任何人都可查验。</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section alt">
+    <div class="wrap">
+      <div class="head">
+        <h2>更多功能</h2>
+      </div>
+      <ul class="grid">
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-library-big"/></svg></span><h3>导师库</h3><p>登录后可从已整理的各校导师名录中直接添加导师。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-smartphone"/></svg></span><h3>手机远程</h3><p>不在电脑旁时，可通过手机浏览器查看和处理。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></span><h3>邮件追踪</h3><p>了解导师是否已打开你的邮件。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-cloud-upload"/></svg></span><h3>云端备份</h3><p>端到端加密，服务器无法读取；更换电脑时可恢复数据。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-bot"/></svg></span><h3>Agent 接口</h3><p>AI 助手可通过命令行或 MCP 使用本应用，发信仍需你批准。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-repeat-2"/></svg></span><h3>多邮箱轮流发送</h3><p>可设置轮换方式，也可为导师指定发件邮箱。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-chart-column"/></svg></span><h3>统计</h3><p>查看联系进度、回复情况和模型用量。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-pen-line"/></svg></span><h3>信件样式</h3><p>可设置字体、字号、行距和段首缩进。</p></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section" id="log">
+    <div class="wrap">
+      <div class="head">
+        <h2>开发记录</h2>
+        <p>3.0 于 2026 年 10 月开始从头重写，以下为目前的开发进展。</p>
+      </div>
+      <div class="window mailbox">
+        <div class="folders" aria-hidden="true">
+          <div class="folder"><svg class="i"><use href="#i-inbox"/></svg>收件箱</div>
+          <div class="folder on"><svg class="i"><use href="#i-send"/></svg>已发送<em>10</em></div>
+          <div class="folder"><svg class="i"><use href="#i-pen-line"/></svg>草稿</div>
+        </div>
+        <div>
+          <div class="list-head"><b>已发送</b><span>10 封</span></div>
+          <ol class="mails" reversed>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-globe"/></svg></span><h3>网站上线</h3><time datetime="2026-11-05">11月5日</time><p>介绍软件功能，记录 3.0 的开发进展；3.0 发布后在此提供下载。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-smartphone"/></svg></span><h3>手机远程和邮件追踪</h3><time datetime="2026-11-03">11月3日</time><p>可通过手机浏览器使用电脑上的应用；可了解导师是否已打开邮件。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-cloud-upload"/></svg></span><h3>云端备份</h3><time datetime="2026-10-30">10月30日</time><p>端到端加密，服务器无法读取；更换电脑时可恢复数据。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-library-big"/></svg></span><h3>导师库</h3><time datetime="2026-10-28">10月28日</time><p>登录后可从已整理的导师名录中直接添加导师。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-bot"/></svg></span><h3>Agent 接口和自动更新</h3><time datetime="2026-10-27">10月27日</time><p>AI 助手可通过命令行或 MCP 使用本应用，发信前需在应用内批准；应用支持自动更新。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-mails"/></svg></span><h3>批量写信和整理导师信息</h3><time datetime="2026-10-25">10月25日</time><p>批量生成首封、定时发送和追问；从学院官网整理导师信息，审核后加入导师列表。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-pen-line"/></svg></span><h3>写信与收发邮件</h3><time datetime="2026-10-24">10月24日</time><p>支持模板、AI 写信和附件；回信自动归入对应导师。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg></span><h3>开始重写 3.0</h3><time datetime="2026-10-23">10月23日</time><p>发布 V2 最终版 2.6.5，随后开始从头重写。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-tag"/></svg></span><h3>发布 V2</h3><time datetime="2026-05-05">5月5日</time><p>从学校官网整理导师信息，用 AI 分析匹配度、改写邮件，定时批量发送并追踪回信，全部在本机完成。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-flag"/></svg></span><h3>第一版</h3><time datetime="2025-09-09">2025年9月9日</time><p>管理导师名单，批量发送邮件。</p></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section cta" aria-labelledby="notify">
+    <div class="wrap">
+      <div class="cta-card">
+        <svg class="i mark" aria-hidden="true"><use href="#i-mail"/></svg>
+        <div>
+          <h2 id="notify">3.0 发布后，第一时间通知你</h2>
+          <p>发布消息将在 QQ 交流群公布，也可在 GitHub 关注本项目。使用旧版时遇到问题，欢迎在群内交流。</p>
+        </div>
+        <div class="qq">
+          <small>QQ 交流群</small>
+          <b>952383261</b>
+          <a href="https://github.com/JunieXD/AutoEmailSender"><svg class="gh" aria-hidden="true"><use href="#i-github"/></svg>在 GitHub 上关注</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="/"><img src="/icon.svg" width="24" height="24" alt="">AutoEmailSender 开发记录</a>
+      <p>帮助学生联系导师的桌面应用</p>
+    </div>
+    <ul>
+      <li>联系邮箱：<a href="mailto:support@auto-email-sender.cn">support@auto-email-sender.cn</a></li>
+      <li>QQ 交流群：952383261</li>
+      <li><a href="https://github.com/JunieXD/AutoEmailSender">源代码</a>以 GPL-3.0 许可证开源</li>
+    </ul>
+    <ul>
+      <li><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">赣ICP备2026015477号-2</a></li>
+    </ul>
+  </div>
+</footer>
+</body>
+</html>
