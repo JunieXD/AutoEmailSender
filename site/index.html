@@ -16,7 +16,6 @@
   --background: #ffffff;
   --foreground: #292524;
   --muted-foreground: #6f6762;
-  --faint: #a39b95;
   --muted: #f6f3f1;
   --press: #ece7e4;
   --border: #ece7e3;
@@ -48,7 +47,6 @@
     --background: #1d1a18;
     --foreground: #ede8e4;
     --muted-foreground: #aba29c;
-    --faint: #7a716b;
     --muted: #26211e;
     --press: #302a26;
     --border: #2e2825;
@@ -76,7 +74,8 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { overflow-x: clip; scroll-behavior: smooth; scroll-padding-top: 80px; }
+html { overflow-x: clip; scroll-padding-top: 80px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 body {
   margin: 0;
   background: var(--background);
@@ -133,6 +132,8 @@ p, li { text-wrap: pretty; }
 .field > span:first-child { width: 3em; flex: none; color: var(--muted-foreground); }
 .chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px 0 3px; border-radius: 999px; background: var(--muted); font-size: 13px; white-space: nowrap; }
 .chip .i { margin-left: 5px; color: var(--muted-foreground); }
+.field .chip { min-width: 0; }
+.clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .avatar { display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; border-radius: 50%; background: var(--avatar-1); font-size: 11px; font-weight: 600; }
 .avatar.lg { width: 34px; height: 34px; font-size: 14px; }
 .a2 { background: var(--avatar-2); } .a3 { background: var(--avatar-3); } .a4 { background: var(--avatar-4); }
@@ -151,7 +152,7 @@ p, li { text-wrap: pretty; }
 .toast .i { width: 18px; height: 18px; color: var(--success); }
 .reply { bottom: 0; left: -24px; width: 310px; padding: 14px 16px; }
 .reply header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.reply time { margin-left: auto; color: var(--faint); }
+.reply time { margin-left: auto; color: var(--muted-foreground); }
 .reply p { margin: 0 0 10px; }
 .tag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .tag-ok { background: var(--success-soft); color: var(--success); }
@@ -224,7 +225,7 @@ p, li { text-wrap: pretty; }
 .thread { padding: 16px; }
 .msg { margin-bottom: 12px; padding: 12px 14px; border-radius: 12px; background: var(--muted); }
 .msg header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 13px; }
-.msg header time { color: var(--faint); }
+.msg header time { color: var(--muted-foreground); }
 .msg header .tag { margin-left: auto; }
 .msg p { margin: 0; }
 .todo { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px dashed var(--input); border-radius: 10px; font-size: 13px; }
@@ -266,7 +267,7 @@ p, li { text-wrap: pretty; }
 .mails li:nth-child(4n+3) .sender { background: var(--avatar-3); }
 .mails li:nth-child(4n) .sender { background: var(--avatar-4); }
 .mails h3 { margin: 0; font-size: 15px; line-height: 1.6; font-weight: 600; }
-.mails time { color: var(--faint); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mails time { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mails p { grid-column: 2 / 4; margin: 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.65; }
 
 /* Call to action */
@@ -307,6 +308,7 @@ p, li { text-wrap: pretty; }
   .toast { top: 0; right: 4px; }
   .reply { right: 24px; left: 8px; width: auto; }
   .window { font-size: 13px; }
+  .sendbar { flex-wrap: wrap; }
   .sendbar .when { display: none; }
   .mailers .wrap { padding-bottom: 56px; }
   .section, .band { padding: 72px 0; }
@@ -388,7 +390,7 @@ p, li { text-wrap: pretty; }
         <div class="envelope"><svg viewBox="0 0 100 60" preserveAspectRatio="none"><path d="M0 0L50 36L100 0"/></svg></div>
         <div class="window">
           <div class="bar"><span class="dots"><i></i><i></i><i></i></span>首封草稿</div>
-          <div class="field"><span>收件人</span><span class="chip"><span class="avatar">王</span>王老师 &lt;wang@cs.example.edu.cn&gt;</span></div>
+          <div class="field"><span>收件人</span><span class="chip"><span class="avatar">王</span><span class="clip">王老师 &lt;wang@cs.example.edu.cn&gt;</span></span></div>
           <div class="field"><span>主题</span><span>报考 2027 年博士研究生的咨询</span></div>
           <div class="letter">
             <p>王老师您好：</p>
@@ -565,7 +567,7 @@ p, li { text-wrap: pretty; }
       <ul class="grid">
         <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-library-big"/></svg></span><h3>导师库</h3><p>登录后可从已整理的各校导师名录中直接添加导师。</p></li>
         <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-smartphone"/></svg></span><h3>手机远程</h3><p>不在电脑旁时，可通过手机浏览器查看和处理。</p></li>
-        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></span><h3>邮件追踪</h3><p>了解导师是否已打开你的邮件。</p></li>
+        <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg></span><h3>邮件追踪</h3><p>查看邮件的打开记录，结果仅供参考。</p></li>
         <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-cloud-upload"/></svg></span><h3>云端备份</h3><p>端到端加密，服务器无法读取；更换电脑时可恢复数据。</p></li>
         <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-bot"/></svg></span><h3>Agent 接口</h3><p>AI 助手可通过命令行或 MCP 使用本应用，发信仍需你批准。</p></li>
         <li><span class="ic"><svg class="i" aria-hidden="true"><use href="#i-repeat-2"/></svg></span><h3>多邮箱轮流发送</h3><p>可设置轮换方式，也可为导师指定发件邮箱。</p></li>
@@ -591,14 +593,14 @@ p, li { text-wrap: pretty; }
           <div class="list-head"><b>已发送</b><span>10 封</span></div>
           <ol class="mails" reversed>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-globe"/></svg></span><h3>网站上线</h3><time datetime="2026-11-05">11月5日</time><p>介绍软件功能，记录 3.0 的开发进展；3.0 发布后在此提供下载。</p></li>
-            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-smartphone"/></svg></span><h3>手机远程和邮件追踪</h3><time datetime="2026-11-03">11月3日</time><p>可通过手机浏览器使用电脑上的应用；可了解导师是否已打开邮件。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-smartphone"/></svg></span><h3>手机远程和邮件追踪</h3><time datetime="2026-11-03">11月3日</time><p>可通过手机浏览器使用电脑上的应用；可查看邮件的打开记录。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-cloud-upload"/></svg></span><h3>云端备份</h3><time datetime="2026-10-30">10月30日</time><p>端到端加密，服务器无法读取；更换电脑时可恢复数据。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-library-big"/></svg></span><h3>导师库</h3><time datetime="2026-10-28">10月28日</time><p>登录后可从已整理的导师名录中直接添加导师。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-bot"/></svg></span><h3>Agent 接口和自动更新</h3><time datetime="2026-10-27">10月27日</time><p>AI 助手可通过命令行或 MCP 使用本应用，发信前需在应用内批准；应用支持自动更新。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-mails"/></svg></span><h3>批量写信和整理导师信息</h3><time datetime="2026-10-25">10月25日</time><p>批量生成首封、定时发送和追问；从学院官网整理导师信息，审核后加入导师列表。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-pen-line"/></svg></span><h3>写信与收发邮件</h3><time datetime="2026-10-24">10月24日</time><p>支持模板、AI 写信和附件；回信自动归入对应导师。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg></span><h3>开始重写 3.0</h3><time datetime="2026-10-23">10月23日</time><p>发布 V2 最终版 2.6.5，随后开始从头重写。</p></li>
-            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-tag"/></svg></span><h3>发布 V2</h3><time datetime="2026-05-05">5月5日</time><p>从学校官网整理导师信息，用 AI 分析匹配度、改写邮件，定时批量发送并追踪回信，全部在本机完成。</p></li>
+            <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-tag"/></svg></span><h3>发布 V2</h3><time datetime="2026-05-05">5月5日</time><p>从学校官网整理导师信息，用 AI 分析匹配度、改写邮件，定时批量发送并追踪回信，整个流程在一个应用内完成。</p></li>
             <li><span class="sender"><svg class="i" aria-hidden="true"><use href="#i-flag"/></svg></span><h3>第一版</h3><time datetime="2025-09-09">2025年9月9日</time><p>管理导师名单，批量发送邮件。</p></li>
           </ol>
         </div>
