@@ -762,7 +762,7 @@ async fn describe(
                     };
                     object(
                         &format!(
-                            "永久删除 1 项整理记录、{} 位未审核候选、{} 个已读取的页面和 {} 项运行记录",
+                            "永久删除 1 项整理记录、{} 位未审核候选、{} 条页面记录和 {} 项运行记录",
                             row.candidates, row.pages, row.runs
                         ),
                         name,
