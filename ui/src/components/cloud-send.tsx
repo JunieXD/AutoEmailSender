@@ -33,6 +33,7 @@ const REASONS: Record<CloudSendUnfitReason, string> = {
   too_soon: "时间太近",
   after_plus: "晚于 Plus 到期时间",
   foreign_mailbox: "境外邮箱",
+  other_account: "负责邮箱有别的账号交给云端的邮件",
   no_mailbox: "没有能从云端发信的邮箱",
   too_late: "排不进最晚发送时间",
   too_large: "超过上限",
@@ -53,10 +54,12 @@ export function CloudSendButton({ task }: { task?: number }) {
 
 export function CloudSendDialog({ task, onClose }: { task?: number; onClose: () => void }) {
   const client = useQueryClient();
+  // Read afresh each time it opens, then kept as it is while open: forgotten once closed.
   const all = useQuery({
     queryKey: ["cloudSendPreview", task ?? null],
     queryFn: () => call("cloudSendPreview", task === undefined ? {} : { task }),
     staleTime: Infinity,
+    gcTime: 0,
   });
   // Unticked: the others are planned again without them.
   const [unticked, setUnticked] = useState<number[]>([]);
@@ -66,6 +69,7 @@ export function CloudSendDialog({ task, onClose }: { task?: number; onClose: () 
     queryFn: () => call("cloudSendPreview", { emails: ticked }),
     enabled: unticked.length > 0 && ticked.length > 0,
     staleTime: Infinity,
+    gcTime: 0,
   });
   const plan = unticked.length === 0 ? all.data : some.data;
   const [consents, setConsents] = useState<number[]>([]);

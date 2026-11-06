@@ -132,8 +132,13 @@ impl Setup {
             .unwrap();
     }
 
+    /// Whether what the UI shows changed.
     async fn sync(&self) -> bool {
-        cloud_send::sync(&self.ctx, NOW).await.unwrap()
+        let mut changed = false;
+        cloud_send::sync(&self.ctx, NOW, &mut changed)
+            .await
+            .unwrap();
+        changed
     }
 
     fn server(&self) -> std::sync::MutexGuard<'_, State> {
@@ -288,7 +293,13 @@ async fn what_became_of_the_emails_comes_back_once(db: SqlitePool) {
         server.fail_ack = true;
     }
     // Written down before the server is told: told again next time, they change nothing.
-    assert!(cloud_send::sync(&setup.ctx, NOW).await.is_err());
+    let mut changed = false;
+    assert!(
+        cloud_send::sync(&setup.ctx, NOW, &mut changed)
+            .await
+            .is_err()
+    );
+    assert!(changed);
     assert_eq!(setup.email(sent).await, ("sent".into(), None, true));
     assert_eq!(setup.email(failed).await, ("failed".into(), None, true));
     assert_eq!(setup.email(waiting).await.0, "cloud");
@@ -312,6 +323,66 @@ async fn what_became_of_the_emails_comes_back_once(db: SqlitePool) {
     assert!(!setup.server().emails.contains_key(&sent_id));
     assert!(!setup.server().emails.contains_key(&failed_id));
     assert!(!setup.sync().await);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn an_upload_the_server_may_have_kept_is_withdrawn_not_left_to_go_twice(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    let id = setup.scheduled("王伟", NOW + DAY).await;
+    // Kept, though the answer says otherwise.
+    setup.server().fail_after_keeping = true;
+    let preview = setup.preview(None).await;
+    let emails = preview.emails.iter().map(|p| p.choice.clone()).collect();
+    let handed = cloud_send::hand_off(
+        &setup.ctx,
+        HandOff {
+            emails,
+            consents: vec![1],
+        },
+        NOW,
+    )
+    .await;
+    assert!(handed.is_err());
+    assert_eq!(setup.email(id).await.0, "cloud");
+    assert_eq!(setup.server().emails.len(), 1);
+
+    setup.sync().await;
+    assert_eq!(setup.email(id).await, ("approved".into(), None, false));
+    assert!(setup.server().emails.is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn the_limits_count_only_what_can_go(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    // 45 MB each: four come to 180 MB of the 200 allowed, a fifth would not fit.
+    let mut ids = Vec::new();
+    for name in ["陈静", "王伟", "李娜", "张敏", "刘洋"] {
+        ids.push(setup.scheduled(name, NOW + DAY).await);
+    }
+    for id in &ids {
+        sqlx::query(
+            r#"INSERT INTO email_attachment (email_id, material_id, file_name, size)
+            VALUES (?, NULL, '论文.pdf', 45 * 1024 * 1024)"#,
+        )
+        .bind(id)
+        .execute(&setup.ctx.db)
+        .await
+        .unwrap();
+    }
+    // The first goes from the Gmail mailbox, which the server cannot use.
+    sqlx::query(
+        "UPDATE mentor SET mailbox_id = 2 WHERE id = (SELECT mentor_id FROM email WHERE id = ?)",
+    )
+    .bind(ids[0])
+    .execute(&setup.ctx.db)
+    .await
+    .unwrap();
+
+    let preview = setup.preview(None).await;
+    let planned: Vec<i64> = preview.emails.iter().map(|p| p.choice.id).collect();
+    assert_eq!(planned, ids[1..]);
+    let unfit: Vec<(i64, Reason)> = preview.unfit.iter().map(|u| (u.id, u.reason)).collect();
+    assert_eq!(unfit, [(ids[0], Reason::ForeignMailbox)]);
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
@@ -404,6 +475,27 @@ async fn emails_wait_for_the_account_that_handed_them_over(db: SqlitePool) {
     setup.log_in("other@example.invalid").await;
     assert!(!setup.sync().await);
     assert_eq!(setup.email(id).await.0, "cloud");
+    // Its mailbox goes from the server for that account until then.
+    let mine = setup.scheduled("李娜", NOW + 2 * DAY).await;
+    let any = setup.scheduled("张敏", NOW + 2 * DAY).await;
+    sqlx::query(
+        "UPDATE mentor SET mailbox_id = 1 WHERE id = (SELECT mentor_id FROM email WHERE id = ?)",
+    )
+    .bind(mine)
+    .execute(&setup.ctx.db)
+    .await
+    .unwrap();
+    let unfit: Vec<(i64, Reason)> = setup
+        .preview(None)
+        .await
+        .unfit
+        .iter()
+        .map(|u| (u.id, u.reason))
+        .collect();
+    assert_eq!(
+        unfit,
+        [(mine, Reason::OtherAccount), (any, Reason::NoMailbox)]
+    );
     assert!(
         cloud_send::withdraw(&setup.ctx, Withdraw::Email(id), NOW)
             .await
@@ -465,13 +557,40 @@ async fn its_copy_in_the_sent_folder_shows_the_server_sent_it(db: SqlitePool) {
             .fetch_one(&setup.ctx.db)
             .await
             .unwrap();
+    // Kept an hour and a half late, after a pause on the server.
+    let late = NOW + DAY + 90 * MINUTE;
+    sqlx::query("UPDATE email SET latest_at = ? WHERE id = ?")
+        .bind(NOW + DAY + 3 * HOUR)
+        .bind(id)
+        .execute(&setup.ctx.db)
+        .await
+        .unwrap();
     let mut conn = setup.ctx.db.acquire().await.unwrap();
-    let found = email::sent_copy(&mut conn, &message_id, &[to], NOW + DAY)
+    // As QQ keeps it, under a Message-ID of its own.
+    let candidates = email::copy_candidates(
+        &mut conn,
+        &email::Copy {
+            from_address: QQ,
+            recipient: &to,
+            subject: "申请硕士",
+            at: late,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(candidates.iter().map(|c| c.id).collect::<Vec<_>>(), [id]);
+    let found = email::sent_copy(&mut conn, &message_id, &[to], late, late)
         .await
         .unwrap();
     assert!(matches!(found, email::SentCopy::FromCloud(_)));
     drop(conn);
     assert_eq!(setup.email(id).await, ("sent".into(), None, true));
+    let sent_at: i64 = sqlx::query_scalar("SELECT sent_at FROM email WHERE id = ?")
+        .bind(id)
+        .fetch_one(&setup.ctx.db)
+        .await
+        .unwrap();
+    assert_eq!(sent_at, late);
     // The server's result is no longer wanted.
     let cloud_id = setup.server().emails.keys().next().unwrap().clone();
     setup

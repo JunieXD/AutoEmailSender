@@ -1030,7 +1030,7 @@ async fn an_email_left_sending_to_no_address_failed(db: SqlitePool) {
         .unwrap();
     // A late bounce naming no one, of a try before the address was taken out, leaves it be.
     assert!(
-        email::bounced(&mut conn, "<x@example.com>", &[], "邮件被退回", T)
+        email::bounced(&mut conn, "<x@example.com>", &[], "邮件被退回", T, T)
             .await
             .unwrap()
             .is_none()
@@ -2794,7 +2794,7 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
         let mut conn = db.acquire().await.unwrap();
         let found = match proof {
             "original" | "rejected" => {
-                email::sent_copy(&mut conn, &message_id, &recipients, at + MINUTE)
+                email::sent_copy(&mut conn, &message_id, &recipients, at, at + MINUTE)
                     .await
                     .unwrap()
                     == email::SentCopy::Confirmed
@@ -2817,6 +2817,7 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
                         id,
                         "<qq-copy@example.com>",
                         &recipients,
+                        at,
                         at + MINUTE,
                     )
                     .await
@@ -2831,6 +2832,7 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
                 &message_id,
                 &recipients,
                 "地址不存在",
+                at,
                 at + MINUTE,
             )
             .await
@@ -3546,6 +3548,7 @@ async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: Sq
                 id,
                 &format!("<unrelated-copy{offset}@example.com>"),
                 &recipients,
+                at,
                 at
             )
             .await
@@ -3554,13 +3557,13 @@ async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: Sq
         );
         if let Some(message_id) = message_id {
             assert_ne!(
-                email::sent_copy(&mut conn, &message_id, &recipients, at)
+                email::sent_copy(&mut conn, &message_id, &recipients, at, at)
                     .await
                     .unwrap(),
                 email::SentCopy::Confirmed
             );
             assert!(
-                email::bounced(&mut conn, &message_id, &recipients, "退信", at)
+                email::bounced(&mut conn, &message_id, &recipients, "退信", at, at)
                     .await
                     .unwrap()
                     .is_none()

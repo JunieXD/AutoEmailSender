@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, type ReactNode } from "react";
-import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CloudHandOff, CloudSendPlanned, CloudSendPreview, CloudSendPreviewInput } from "@/api/types";
 import { CloudSendButton } from "./cloud-send";
 
@@ -20,7 +20,7 @@ const planned = (id: number, name: string, at: number): CloudSendPlanned => ({
 const remote = vi.hoisted(() => {
   const handed: unknown[] = [];
   const previews: unknown[] = [];
-  return { handed, previews };
+  return { handed, previews, first: "王伟" };
 });
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
@@ -33,7 +33,9 @@ vi.mock("@/api/call", () => ({
       remote.previews.push(input);
       // Without the first, the second takes its place.
       const emails =
-        input.emails !== undefined ? [planned(2, "李娜", AT)] : [planned(1, "王伟", AT), planned(2, "李娜", AT + DAY)];
+        input.emails !== undefined
+          ? [planned(2, "李娜", AT)]
+          : [planned(1, remote.first, AT), planned(2, "李娜", AT + DAY)];
       const preview: CloudSendPreview = {
         blocked: null,
         emails,
@@ -52,9 +54,23 @@ vi.mock("@/api/call", () => ({
 }));
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-const container = document.createElement("div");
-document.body.append(container);
-const root = createRoot(container);
+let container: HTMLDivElement;
+let root: Root;
+beforeEach(async () => {
+  remote.handed.length = 0;
+  remote.previews.length = 0;
+  remote.first = "王伟";
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  await act(async () => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <CloudSendButton />
+      </QueryClientProvider>,
+    );
+  });
+});
 afterEach(async () => {
   await act(async () => root.unmount());
   client.clear();
@@ -69,13 +85,6 @@ function label(text: string): HTMLLabelElement | undefined {
 }
 
 it("hands over the ticked emails as planned again, once the secret is agreed to", async () => {
-  await act(async () => {
-    root.render(
-      <QueryClientProvider client={client}>
-        <CloudSendButton />
-      </QueryClientProvider>,
-    );
-  });
   await act(async () => button("交给云端发送")?.click());
   await vi.waitFor(() => expect(document.body.textContent).toContain("王伟"));
   expect(document.body.textContent).toContain("不能交的 1 封：追问 1 封");
@@ -93,4 +102,16 @@ it("hands over the ticked emails as planned again, once the secret is agreed to"
   await act(async () => button("交给云端")?.click());
   await vi.waitFor(() => expect(document.body.textContent).toContain("已交给云端 1 封"));
   expect(remote.handed).toEqual([{ emails: [{ id: 2, mailboxId: 1, at: AT }], consents: [1] }]);
+});
+
+it("reads what can go afresh each time it opens", async () => {
+  await act(async () => button("交给云端发送")?.click());
+  await vi.waitFor(() => expect(document.body.textContent).toContain("王伟"));
+  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="关闭"]')?.click());
+  // Forgotten once closed.
+  await vi.waitFor(() => expect(client.getQueryCache().findAll({ queryKey: ["cloudSendPreview"] })).toEqual([]));
+  remote.first = "赵磊";
+  await act(async () => button("交给云端发送")?.click());
+  await vi.waitFor(() => expect(document.body.textContent).toContain("赵磊"));
+  expect(document.body.textContent).not.toContain("王伟");
 });

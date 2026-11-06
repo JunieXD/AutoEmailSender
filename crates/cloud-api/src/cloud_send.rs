@@ -26,7 +26,7 @@ pub const MAX_WAITING_SIZE: usize = 200 * 1024 * 1024;
 pub const MAX_SIZE: usize = 50 * 1024 * 1024;
 /// The most one email comes to uncompressed, so that a small upload cannot unpack into a huge one.
 pub const MAX_MESSAGE: usize = 96 * 1024 * 1024;
-/// How long before its time an email must be handed over, in milliseconds.
+/// How long before its time the app hands an email over, in milliseconds.
 pub const LEAD: i64 = 2 * 60 * 1000;
 /// How long the server keeps a result the app has not acknowledged, in milliseconds.
 pub const RETENTION: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -71,7 +71,7 @@ pub struct EmailUpload {
     /// The address of a mailbox the account uploaded.
     pub mailbox: String,
     pub recipient: String,
-    /// At least `LEAD` from now, and no later than the end of Plus.
+    /// No later than the end of Plus. One that arrives after it, uploaded slowly, goes at once.
     pub planned_at: i64,
     /// Returned if not sent by then; after `planned_at`.
     pub latest_at: i64,
@@ -125,7 +125,8 @@ pub struct Results {
     rename_all_fields = "camelCase"
 )]
 pub enum Withdrawal {
-    /// Never there, or taken back now.
+    /// Never there, or taken back now: from now on the id is refused, so that an upload still
+    /// on its way cannot bring it back.
     Withdrawn,
     /// Being handed to the mail server; its outcome comes with the results.
     Sending,

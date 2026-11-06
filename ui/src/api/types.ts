@@ -186,7 +186,7 @@ task?: number, };
 
 export type CloudSendUnfit = { id: number, mentorName: string, taskName: string | null, reason: CloudSendUnfitReason, };
 
-export type CloudSendUnfitReason = "follow_up" | "tried" | "task_paused" | "no_address" | "too_soon" | "after_plus" | "foreign_mailbox" | "no_mailbox" | "too_late" | "too_large";
+export type CloudSendUnfitReason = "follow_up" | "tried" | "task_paused" | "no_address" | "too_soon" | "after_plus" | "foreign_mailbox" | "other_account" | "no_mailbox" | "too_late" | "too_large";
 
 export type CloudWithdraw = { "email": number } | { "task": number };
 

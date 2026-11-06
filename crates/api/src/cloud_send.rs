@@ -5,14 +5,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
-use cloud_api::Empty;
 use cloud_api::cloud_send::{
     EMAILS, EmailUpload, Ids, LEAD, MAILBOXES, MAX_IDS, MAX_SIZE, MAX_WAITING, MAX_WAITING_SIZE,
     MailboxSaved, Mailboxes, Outcome, RESULTS, RESULTS_ACK, Results, Withdrawal,
 };
+use cloud_api::{ApiError, Empty, ErrorCode};
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use sqlx::SqliteConnection;
+use sqlx::{Connection, SqliteConnection};
 use tokio::sync::{Mutex, Notify};
 use ts_rs::TS;
 
@@ -38,9 +38,9 @@ impl CloudSend {
     }
 }
 
-/// Syncs at startup, when woken and every few minutes, calling `changed` when what the UI shows
+/// Syncs at startup, when woken and every few minutes, calling `notify` when what the UI shows
 /// may differ.
-pub async fn run(ctx: Arc<Context>, changed: impl Fn()) {
+pub async fn run(ctx: Arc<Context>, notify: impl Fn()) {
     let mut ticks = tokio::time::interval(EVERY);
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -49,32 +49,36 @@ pub async fn run(ctx: Arc<Context>, changed: impl Fn()) {
             () = ctx.cloud_send.wake.notified() => {}
         }
         let _busy = ctx.cloud_send.busy.lock().await;
-        match sync(&ctx, crate::now()).await {
-            Ok(false) => {}
-            Ok(true) => changed(),
-            Err(error) => tracing::warn!(
+        let mut changed = false;
+        let result = sync(&ctx, crate::now(), &mut changed).await;
+        // Also when it failed after writing some down.
+        if changed {
+            ctx.sender.wake();
+            notify();
+        }
+        if let Err(error) = result {
+            tracing::warn!(
                 error = error.message(),
                 "cloud sending synchronization failed"
-            ),
+            );
         }
     }
 }
 
 /// Withdraws what was cut short or canceled, gives the server what changed of their mailboxes,
 /// and brings back what became of the rest, all as the login saved at the start: only that
-/// account's emails, the others waiting for theirs. True when what the UI shows changed. Asks the
-/// server nothing when it has nothing of the account's.
-pub async fn sync(ctx: &Context, now: i64) -> Result<bool, account::Error> {
+/// account's emails, the others waiting for theirs. Sets `changed` once what the UI shows changes,
+/// even when it then fails. Asks the server nothing when it has nothing of the account's.
+pub async fn sync(ctx: &Context, now: i64, changed: &mut bool) -> Result<(), account::Error> {
     let login = match account::saved_login(&ctx.db).await {
         Ok(login) => login,
-        Err(account::Error::SignedOut) => return Ok(false),
+        Err(account::Error::SignedOut) => return Ok(()),
         Err(error) => return Err(error),
     };
     let db = &ctx.db;
     let account = &login.email;
-    let mut changed = false;
     for cloud_id in email::cloud::to_withdraw(&mut *db.acquire().await?, account).await? {
-        changed |= !matches!(
+        *changed |= !matches!(
             take_back(ctx, &login, &cloud_id, now).await?,
             Withdrawal::Sending
         );
@@ -100,15 +104,19 @@ pub async fn sync(ctx: &Context, now: i64) -> Result<bool, account::Error> {
             .account
             .authenticated_as(db, &login, Method::POST, RESULTS, Some(&Ids { ids }))
             .await?;
-        let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+        // Durable, as the server is then told to delete them.
+        let mut conn = db::durable(db).await?;
+        let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
         same_login(&mut tx, &login).await?;
         // Only those asked about: an acknowledged id is deleted on the server.
+        let mut recorded = false;
         for r in answer.results.iter().filter(|r| handed.contains(&r.id)) {
             record(&mut tx, &r.id, &r.outcome, account, now).await?;
-            changed = true;
+            recorded = true;
         }
-        changed |= mailbox::cloud::synced(&mut tx, account, &answer.mailboxes).await?;
+        recorded |= mailbox::cloud::synced(&mut tx, account, &answer.mailboxes).await?;
         tx.commit().await?;
+        *changed |= recorded;
     }
     let written = email::cloud::unacknowledged(&mut *db.acquire().await?, account).await?;
     for ids in written.chunks(MAX_IDS) {
@@ -124,10 +132,7 @@ pub async fn sync(ctx: &Context, now: i64) -> Result<bool, account::Error> {
             .await?;
         email::cloud::acknowledged(&mut *db.acquire().await?, ids).await?;
     }
-    if changed {
-        ctx.sender.wake();
-    }
-    Ok(changed)
+    Ok(())
 }
 
 /// Writes down what became of an email, to be acknowledged: one that went out, or may have, is
@@ -147,7 +152,8 @@ async fn record(
     email::cloud::to_acknowledge(conn, cloud_id, account).await
 }
 
-/// Asks the server to give an email back, and writes down what it answered.
+/// Asks the server to give an email back, and writes down what it answered, durably: an outcome
+/// is told of as written down, and the server then deletes it.
 async fn take_back(
     ctx: &Context,
     login: &account::Login,
@@ -164,7 +170,8 @@ async fn take_back(
             None::<&Empty>,
         )
         .await?;
-    let mut tx = ctx.db.begin_with("BEGIN IMMEDIATE").await?;
+    let mut conn = db::durable(&ctx.db).await?;
+    let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
     same_login(&mut tx, login).await?;
     match &answer {
         Withdrawal::Withdrawn => email::cloud::withdrawn(&mut tx, cloud_id, now).await?,
@@ -287,6 +294,9 @@ pub enum Reason {
     AfterPlus,
     /// Its mentor's mailbox is one the server cannot send from.
     ForeignMailbox,
+    /// Its mentor's mailbox has emails on the server for another account: it goes from there for
+    /// one at a time.
+    OtherAccount,
     /// No mailbox the server can send from.
     NoMailbox,
     /// No room in its mailbox before its latest time.
@@ -409,90 +419,104 @@ async fn assess(
     plus_until: i64,
     now: i64,
 ) -> Result<Assessed, sqlx::Error> {
-    let candidates = email::cloud::candidates(conn, ids, task, now).await?;
-    let (mut count, mut total) = email::cloud::waiting(conn, account).await?;
     let mut fit = Vec::new();
     let mut unfit = Vec::new();
-    for c in candidates {
+    for c in email::cloud::candidates(conn, ids, task, now).await? {
         let reason = if c.follow_up {
-            Some(Reason::FollowUp)
+            Reason::FollowUp
         } else if c.tried {
-            Some(Reason::Tried)
+            Reason::Tried
         } else if c.task_paused {
-            Some(Reason::TaskPaused)
+            Reason::TaskPaused
         } else if !c.has_address {
-            Some(Reason::NoAddress)
+            Reason::NoAddress
         } else if c.planned_at < now + LEAD {
-            Some(Reason::TooSoon)
+            Reason::TooSoon
         } else if c.planned_at > plus_until {
-            Some(Reason::AfterPlus)
-        } else if c.size > MAX_SIZE as i64
-            || count >= MAX_WAITING
-            || total + c.size > MAX_WAITING_SIZE as i64
-        {
-            Some(Reason::TooLarge)
+            Reason::AfterPlus
+        } else if c.size > MAX_SIZE as i64 {
+            Reason::TooLarge
         } else {
-            None
+            fit.push(c);
+            continue;
         };
-        match reason {
-            Some(reason) => unfit.push(Unfit {
-                id: c.id,
-                mentor_name: c.mentor_name,
-                task_name: c.task_name,
-                reason,
-            }),
-            None => {
+        unfit.push(Unfit::of(c, reason));
+    }
+    let waiting = email::cloud::waiting(conn, account).await?;
+    // Each email planned takes room in its mailbox from those after it, so the plan is made again
+    // without those over the account's limits, until all it plans can go.
+    loop {
+        let wanted: Vec<send::Wanted> = fit
+            .iter()
+            .map(|c| send::Wanted {
+                own: c.own,
+                from: c.planned_at,
+                // Sent before Plus ends.
+                latest_at: c.latest_at.min(plus_until + 1),
+            })
+            .collect();
+        let plans = send::plan_cloud(conn, &wanted, account, now).await?;
+        let (mut count, mut total) = waiting;
+        let mut over = Vec::new();
+        for (c, _) in fit.iter().zip(&plans).filter(|(_, plan)| plan.is_ok()) {
+            if count >= MAX_WAITING || total + c.size > MAX_WAITING_SIZE as i64 {
+                over.push(c.id);
+            } else {
                 count += 1;
                 total += c.size;
-                fit.push(c);
             }
         }
+        if !over.is_empty() {
+            let (gone, kept): (Vec<_>, Vec<_>) =
+                fit.into_iter().partition(|c| over.contains(&c.id));
+            fit = kept;
+            unfit.extend(gone.into_iter().map(|c| Unfit::of(c, Reason::TooLarge)));
+            continue;
+        }
+        let mut planned = Vec::new();
+        let mut size = 0;
+        for (c, plan) in fit.into_iter().zip(plans) {
+            let reason = match plan {
+                Ok((mailbox_id, at)) => {
+                    size += c.size;
+                    planned.push(Planned {
+                        choice: Choice {
+                            id: c.id,
+                            mailbox_id,
+                            at,
+                        },
+                        mentor_name: c.mentor_name,
+                        task_id: c.task_id,
+                        task_name: c.task_name,
+                        planned_at: c.planned_at,
+                    });
+                    continue;
+                }
+                Err(send::Unplanned::OwnMailbox) => Reason::ForeignMailbox,
+                Err(send::Unplanned::OtherAccount) => Reason::OtherAccount,
+                Err(send::Unplanned::NoMailbox) => Reason::NoMailbox,
+                Err(send::Unplanned::TooLate) if c.latest_at > plus_until + 1 => Reason::AfterPlus,
+                Err(send::Unplanned::TooLate) => Reason::TooLate,
+            };
+            unfit.push(Unfit::of(c, reason));
+        }
+        return Ok(Assessed {
+            planned,
+            unfit,
+            size,
+        });
     }
-    let wanted: Vec<send::Wanted> = fit
-        .iter()
-        .map(|c| send::Wanted {
-            own: c.own,
-            from: c.planned_at,
-            latest_at: c.latest_at,
-        })
-        .collect();
-    let plans = send::plan_cloud(conn, &wanted, now).await?;
-    let mut planned = Vec::new();
-    let mut size = 0;
-    for (c, plan) in fit.into_iter().zip(plans) {
-        let reason = match plan {
-            Ok((mailbox_id, at)) if at <= plus_until => {
-                size += c.size;
-                planned.push(Planned {
-                    choice: Choice {
-                        id: c.id,
-                        mailbox_id,
-                        at,
-                    },
-                    mentor_name: c.mentor_name,
-                    task_id: c.task_id,
-                    task_name: c.task_name,
-                    planned_at: c.planned_at,
-                });
-                continue;
-            }
-            Ok(_) => Reason::AfterPlus,
-            Err(send::Unplanned::OwnMailbox) => Reason::ForeignMailbox,
-            Err(send::Unplanned::NoMailbox) => Reason::NoMailbox,
-            Err(send::Unplanned::TooLate) => Reason::TooLate,
-        };
-        unfit.push(Unfit {
+}
+
+impl Unfit {
+    fn of(c: email::cloud::Candidate, reason: Reason) -> Self {
+        Self {
             id: c.id,
             mentor_name: c.mentor_name,
             task_name: c.task_name,
             reason,
-        });
+        }
     }
-    Ok(Assessed {
-        planned,
-        unfit,
-        size,
-    })
 }
 
 #[derive(Deserialize, TS)]
@@ -561,7 +585,9 @@ pub async fn hand_off(ctx: &Context, input: HandOff, now: i64) -> Result<HandedO
         .authenticated_as(&ctx.db, &login, Method::GET, MAILBOXES, None::<&Empty>)
         .await?;
     let ids: Vec<i64> = input.emails.iter().map(|c| c.id).collect();
-    let mut tx = ctx.db.begin_with("BEGIN IMMEDIATE").await?;
+    // Durable: lost to a power cut once they are up, they would go from here too.
+    let mut conn = db::durable(&ctx.db).await?;
+    let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
     same_login(&mut tx, &login).await?;
     let assessed = assess(&mut tx, Some(&ids), None, &login.email, plus_until, now).await?;
     let mut chosen = input.emails.clone();
@@ -620,7 +646,10 @@ pub async fn hand_off(ctx: &Context, input: HandOff, now: i64) -> Result<HandedO
     // They no longer go from here; any left uploading are withdrawn by the sync right after.
     ctx.sender.wake();
     ctx.cloud_send.wake();
-    upload(ctx, &login, &on_server, &mailboxes, handed, now).await
+    let uploaded = upload(ctx, &login, &on_server, &mailboxes, handed, now).await;
+    // Those left here may be due, however it ended.
+    ctx.sender.wake();
+    uploaded
 }
 
 /// The second half of handing over: uploading the mailboxes the server lacks or has old, then
@@ -666,7 +695,6 @@ async fn upload(
             }
         }
     }
-    ctx.sender.wake();
     Ok(result)
 }
 
@@ -711,10 +739,14 @@ async fn upload_email(
             email::cloud::uploaded(&mut *ctx.db.acquire().await?, cloud_id).await?;
             Ok(Ok(()))
         }
-        // The server answered no.
-        Err(error @ (account::Error::Server(_) | account::Error::SignedOut)) => {
+        // The server answered no, before keeping anything. An internal error may come after it
+        // kept the email: left uploading, the sync withdraws it.
+        Err(error @ account::Error::Server(ApiError { code, .. }))
+            if code != ErrorCode::Internal =>
+        {
             Ok(Err(error.message()))
         }
+        Err(error @ account::Error::SignedOut) => Ok(Err(error.message())),
         Err(error) => Err(error.into()),
     }
 }
@@ -766,14 +798,19 @@ pub async fn withdraw(ctx: &Context, input: Withdraw, now: i64) -> Result<Withdr
             other.account
         )));
     }
+    let mut taken = Ok(());
     for e in &emails {
-        if matches!(
-            take_back(ctx, &login, &e.cloud_id, now).await?,
-            Withdrawal::Sending
-        ) {
-            result.sending += 1;
+        match take_back(ctx, &login, &e.cloud_id, now).await {
+            Ok(Withdrawal::Sending) => result.sending += 1,
+            Ok(_) => {}
+            Err(error) => {
+                taken = Err(error);
+                break;
+            }
         }
     }
+    // Those back here may be due, however it ended.
     ctx.sender.wake();
+    taken?;
     Ok(result)
 }

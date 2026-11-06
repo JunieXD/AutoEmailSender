@@ -95,11 +95,13 @@ impl Net {
     }
 }
 
-/// Not this computer, its networks or addresses reserved for special uses.
+/// Not this computer, its networks or addresses reserved for special uses
+/// (https://www.iana.org/assignments/iana-ipv4-special-registry,
+/// https://www.iana.org/assignments/iana-ipv6-special-registry).
 fn public(addr: IpAddr) -> bool {
     match addr {
         IpAddr::V4(ip) => {
-            let [a, b, ..] = ip.octets();
+            let [a, b, c, _] = ip.octets();
             !(ip.is_unspecified()
                 || ip.is_loopback()
                 || ip.is_private()
@@ -110,16 +112,26 @@ fn public(addr: IpAddr) -> bool {
                 || a == 0
                 || a >= 240
                 // Shared by carriers' NAT (RFC 6598).
-                || (a == 100 && b & 0xc0 == 64))
+                || (a == 100 && b & 0xc0 == 64)
+                // Protocol assignments, and benchmarking networks.
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 198 && b & 0xfe == 18))
         }
         IpAddr::V6(ip) => {
-            let first = ip.segments()[0];
+            let [first, second, ..] = ip.segments();
             !(ip.is_unspecified()
                 || ip.is_loopback()
                 || ip.is_multicast()
-                // Unique local and link-local.
+                // Unique local, link-local and the old site-local.
                 || first & 0xfe00 == 0xfc00
-                || first & 0xffc0 == 0xfe80)
+                || first & 0xffc0 == 0xfe80
+                || first & 0xffc0 == 0xfec0
+                // Documentation, discard-only, and IPv4 behind translation or 6to4, which may
+                // reach private IPv4 networks.
+                || (first == 0x2001 && second == 0x0db8)
+                || ip.segments()[..4] == [0x100, 0, 0, 0]
+                || (first == 0x64 && second == 0xff9b)
+                || first == 0x2002)
         }
     }
 }
@@ -239,9 +251,18 @@ mod tests {
             "100.100.100.200",
             "0.0.0.0",
             "255.255.255.255",
+            "192.0.0.8",
+            "198.18.0.1",
+            "198.19.255.1",
             "::1",
             "fd00::1",
             "fe80::1",
+            "fec0::1",
+            "2001:db8::1",
+            "100::1",
+            "64:ff9b::a00:5",
+            "64:ff9b:1::1",
+            "2002:a00:5::1",
             "::ffff:127.0.0.1",
         ] {
             assert!(!server.reaches(addr(a)), "{a}");

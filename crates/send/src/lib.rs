@@ -376,25 +376,37 @@ pub struct Wanted {
 pub enum Unplanned {
     /// The mentor's own mailbox is one the server cannot use.
     OwnMailbox,
+    /// The mentor's own mailbox has emails on the server for another account.
+    OtherAccount,
     /// There is no mailbox the server can use.
     NoMailbox,
     /// Its mailbox has no room before its latest time.
     TooLate,
 }
 
-/// The mailbox and time the official server is to send each email from, planned in the order
-/// given by the rules of sending here (docs/design.md#云端定时发送): what went out lately and
-/// what the server is already to send count, and only mailboxes it can use take part.
+/// The mailbox and time the official server is to send each email from for `account`, planned in
+/// the order given by the rules of sending here (docs/design.md#云端定时发送): what went out
+/// lately and what the server is already to send count, and only mailboxes it can use take part.
 pub async fn plan_cloud(
     conn: &mut sqlx::SqliteConnection,
     emails: &[Wanted],
+    account: &str,
     now: i64,
 ) -> Result<Vec<Result<(i64, i64), Unplanned>>, sqlx::Error> {
     let rotation = profile::rotation(&mut *conn).await?;
+    // A mailbox goes from the server for one account at a time: its changes and pause there are
+    // kept for one.
+    let others: Vec<i64> = sqlx::query_scalar!(
+        r#"SELECT DISTINCT mailbox_id AS "id!" FROM email
+           WHERE state = 'cloud' AND cloud_account <> ?"#,
+        account
+    )
+    .fetch_all(&mut *conn)
+    .await?;
     let mut mailboxes: Vec<Usage> = usage_on(conn, now)
         .await?
         .into_iter()
-        .filter(|m| m.cloud && !m.needs_secret)
+        .filter(|m| m.cloud && !m.needs_secret && !others.contains(&m.id))
         .map(|m| Usage {
             paused_until: m.cloud_paused_until,
             ..m
@@ -403,8 +415,14 @@ pub async fn plan_cloud(
     Ok(emails
         .iter()
         .map(|e| {
-            if e.own.is_some_and(|id| mailboxes.iter().all(|m| m.id != id)) {
-                return Err(Unplanned::OwnMailbox);
+            if let Some(own) = e.own
+                && mailboxes.iter().all(|m| m.id != own)
+            {
+                return Err(if others.contains(&own) {
+                    Unplanned::OtherAccount
+                } else {
+                    Unplanned::OwnMailbox
+                });
             }
             let (id, at) =
                 choose(rotation, e.own, false, &mailboxes, e.from).ok_or(Unplanned::NoMailbox)?;
@@ -664,9 +682,8 @@ impl BeforeHandover {
     }
 }
 
-/// Marks the email as being handed over in a transaction synced to the disk itself: were the mark
-/// lost to a power cut, the email would go out again after a restart. The connection is closed
-/// after, so the pool's connections keep their faster setting.
+/// Marks the email as being handed over in a durable transaction: were the mark lost to a power
+/// cut, the email would go out again after a restart.
 async fn mark_sending(
     db: &SqlitePool,
     id: i64,
@@ -676,17 +693,23 @@ async fn mark_sending(
     attached: &[email::Attached],
     files: Result<Vec<transport::File>, String>,
 ) -> Result<Option<Marked>, sqlx::Error> {
-    let mut conn = db.acquire().await?.detach();
-    // fullfsync, on macOS, gets the commit past the drive's own cache.
-    sqlx::raw_sql("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON")
-        .execute(&mut conn)
-        .await?;
+    let mut conn = db::durable(db).await?;
     let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
     // Edited since the login, the mailbox is logged in to again as it is now, next step.
     if mailbox::account(&mut *tx, mailbox_id).await?.as_ref() != Some(account) {
         return Ok(None);
     }
     let at = now();
+    // Emails handed to the official server meanwhile may have taken its room: the next step
+    // plans again.
+    let room = usage_on(&mut tx, at).await?;
+    if room
+        .iter()
+        .find(|m| m.id == mailbox_id)
+        .is_none_or(|m| m.ready_at(at) > at)
+    {
+        return Ok(None);
+    }
     let Some(before) = sqlx::query_as!(
         BeforeHandover,
         r#"SELECT latest_at, mailbox_id, from_address, to_address, message_id, copy_message_id,

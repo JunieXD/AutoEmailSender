@@ -13,17 +13,16 @@ async fn rebuilding_the_email_table_keeps_emails_and_what_refers_to_them() {
         std::fs::remove_dir_all(&dir).unwrap();
     }
     std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("app.db");
     let options = SqliteConnectOptions::new()
-        .filename(dir.join("app.db"))
+        .filename(&path)
         .create_if_missing(true)
         .foreign_keys(true);
-    // One connection, the one the upgrade ran on.
-    let db = SqlitePoolOptions::new()
-        .max_connections(1)
+    let old = SqlitePoolOptions::new()
         .connect_with(options)
         .await
         .unwrap();
-    db::MIGRATOR.run_to(18, &db).await.unwrap();
+    db::MIGRATOR.run_to(18, &old).await.unwrap();
     sqlx::raw_sql(
         r#"INSERT INTO mentor (id, name, created_at, updated_at) VALUES (1, '王伟', 0, 0);
         INSERT INTO email (id, mentor_id, kind, state, planned_at, latest_at, subject, body_md,
@@ -41,11 +40,13 @@ async fn rebuilding_the_email_table_keeps_emails_and_what_refers_to_them() {
             output_tokens)
           VALUES (0, 'm', 'draft', 1, 1, 0, 1);"#,
     )
-    .execute(&db)
+    .execute(&old)
     .await
     .unwrap();
+    old.close().await;
 
-    db::MIGRATOR.run(&db).await.unwrap();
+    // As the app upgrades.
+    let db = db::open(&path).await.unwrap();
     let emails: Vec<(i64, String, Option<i64>, Option<i64>)> =
         sqlx::query_as("SELECT id, state, latest_at, resend_of FROM email ORDER BY id")
             .fetch_all(&db)
@@ -76,10 +77,15 @@ async fn rebuilding_the_email_table_keeps_emails_and_what_refers_to_them() {
     assert!(broken.is_empty());
 
     // The triggers and views work on the new table, and foreign keys are enforced again.
-    sqlx::query("UPDATE email SET state = 'sent', sent_at = 30, mailbox_id = NULL, from_address = 'me@example.com', to_address = 'wang@example.edu', message_id = '<1@example.com>', latest_at = NULL WHERE id = 1")
-        .execute(&db)
-        .await
-        .unwrap();
+    sqlx::query(
+        r#"UPDATE email
+        SET state = 'sent', sent_at = 30, mailbox_id = NULL, from_address = 'me@example.com',
+            to_address = 'wang@example.edu', message_id = '<1@example.com>', latest_at = NULL
+        WHERE id = 1"#,
+    )
+    .execute(&db)
+    .await
+    .unwrap();
     let out: Option<i64> =
         sqlx::query_scalar("SELECT last_out_at FROM mentor_contact WHERE mentor_id = 1")
             .fetch_one(&db)
@@ -87,7 +93,8 @@ async fn rebuilding_the_email_table_keeps_emails_and_what_refers_to_them() {
             .unwrap();
     assert_eq!(out, Some(30));
     let orphan = sqlx::query(
-        "INSERT INTO email_attachment (email_id, material_id, file_name, size) VALUES (99, NULL, 'x', 1)",
+        r#"INSERT INTO email_attachment (email_id, material_id, file_name, size)
+        VALUES (99, NULL, 'x', 1)"#,
     )
     .execute(&db)
     .await;

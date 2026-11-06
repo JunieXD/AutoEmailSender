@@ -335,12 +335,13 @@ pub async fn finished(
 
 /// An email still with the official server that its mailbox shows went out, to one of
 /// `recipients` (to any when none are known), as its copy in the sent folder or a bounce does:
-/// written down as sent at its time, and its result on the server no longer wanted. None when it
-/// is not with the server.
+/// written down as sent when they show, `at`, though not before its planned time, and its result
+/// on the server no longer wanted. None when it is not with the server.
 pub(crate) async fn went_out(
     conn: &mut SqliteConnection,
     id: i64,
     recipients: &[String],
+    at: i64,
     now: i64,
 ) -> Result<Option<Handed>, sqlx::Error> {
     let Some(r) = sqlx::query!(
@@ -357,7 +358,8 @@ pub(crate) async fn went_out(
         return Ok(None);
     };
     to_acknowledge(conn, &r.cloud_id, &r.account).await?;
-    finished(conn, &r.cloud_id, &Outcome::Sent { at: r.at }, now).await
+    let at = at.max(r.at);
+    finished(conn, &r.cloud_id, &Outcome::Sent { at }, now).await
 }
 
 /// Outcomes written down here that the server is to be told of.

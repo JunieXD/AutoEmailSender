@@ -807,7 +807,7 @@ pub async fn start_sending(
              copy_message_id = CASE WHEN to_address IS (SELECT address FROM mentor_email
                WHERE mentor_id = email.mentor_id ORDER BY POSITION LIMIT 1)
                THEN copy_message_id END,
-             sent_at = ?4, updated_at = ?4
+             sent_at = ?4, by_cloud = 0, updated_at = ?4
            WHERE id = ?5
              AND state = 'approved'
              AND planned_at <= ?4
@@ -925,11 +925,12 @@ pub enum SentCopy {
 }
 
 /// Looks up the email the app sent with this Message-ID, or whose copy had it, and marks it sent if
-/// it was not known to be. `recipients` are the copy's, in lowercase.
+/// it was not known to be. `recipients` are the copy's, in lowercase; `at` is when it was kept.
 pub async fn sent_copy(
     conn: &mut SqliteConnection,
     message_id: &str,
     recipients: &[String],
+    at: i64,
     now: i64,
 ) -> Result<SentCopy, sqlx::Error> {
     let found = sqlx::query_scalar!(
@@ -939,7 +940,7 @@ pub async fn sent_copy(
     .fetch_optional(&mut *conn)
     .await?;
     match found {
-        Some(id) => copied(conn, id, message_id, recipients, now).await,
+        Some(id) => copied(conn, id, message_id, recipients, at, now).await,
         None => Ok(SentCopy::Foreign),
     }
 }
@@ -967,8 +968,8 @@ const COPY_WINDOW: i64 = 60 * 60 * 1000;
 
 /// Some providers (QQ) keep the copy of an email under a Message-ID of their own. The emails it may
 /// be a copy of, nearest in time first: sent, or tried, from the same sender address about the same
-/// time to the same address, with the same subject, and no copy turned up yet. Which one it is, if
-/// any, the text and attachments tell.
+/// time (with the official server, any time it may have gone) to the same address, with the same
+/// subject, and no copy turned up yet. Which one it is, if any, the text and attachments tell.
 pub async fn copy_candidates(
     conn: &mut SqliteConnection,
     copy: &Copy<'_>,
@@ -982,7 +983,8 @@ pub async fn copy_candidates(
              AND (state IN ('approved', 'failed', 'cloud', 'sending', 'maybe_sent', 'sent',
                  'bounced')
                OR (state = 'canceled' AND sent_at IS NOT NULL))
-             AND coalesce(sent_at, cloud_at) BETWEEN ?2 - ?3 AND ?2 + ?3
+             AND (sent_at BETWEEN ?2 - ?3 AND ?2 + ?3
+               OR ?2 BETWEEN cloud_at - ?3 AND latest_at + ?3)
              AND copy_message_id IS NULL AND subject = ?4 AND to_address = ?5
            ORDER BY abs(coalesce(sent_at, cloud_at) - ?2)"#,
         copy.from_address,
@@ -1013,6 +1015,7 @@ pub async fn copied(
     id: i64,
     copy_message_id: &str,
     recipients: &[String],
+    at: i64,
     now: i64,
 ) -> Result<SentCopy, sqlx::Error> {
     let mut tx = conn.begin().await?;
@@ -1023,7 +1026,7 @@ pub async fn copied(
     )
     .execute(&mut *tx)
     .await?;
-    if let Some(handed) = cloud::went_out(&mut tx, id, recipients, now).await? {
+    if let Some(handed) = cloud::went_out(&mut tx, id, recipients, at, now).await? {
         tx.commit().await?;
         return Ok(SentCopy::FromCloud(handed));
     }
@@ -1060,12 +1063,13 @@ pub async fn copied(
 /// an earlier try, to an address since changed; one being sent to no address cannot bounce. One
 /// waiting to be sent again, or turned down when sent again, bounces like `copied` confirms it:
 /// only while it would go to the same address. None when it was marked already, or the app sent
-/// no such email.
+/// no such email. `at` is when the bounce was written.
 pub async fn bounced(
     conn: &mut SqliteConnection,
     message_id: &str,
     recipients: &[String],
     reason: &str,
+    at: i64,
     now: i64,
 ) -> Result<Option<Bounced>, sqlx::Error> {
     let cloud = sqlx::query_scalar!(
@@ -1075,7 +1079,9 @@ pub async fn bounced(
     .fetch_optional(&mut *conn)
     .await?;
     let from_cloud = match cloud {
-        Some(id) => cloud::went_out(conn, id, recipients, now).await?.is_some(),
+        Some(id) => cloud::went_out(conn, id, recipients, at, now)
+            .await?
+            .is_some(),
         None => false,
     };
     let recipients = Json(recipients);

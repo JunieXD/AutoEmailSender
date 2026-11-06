@@ -1,12 +1,12 @@
 //! An in-memory cloud sending server following the official server's rules (the server
 //! repository's docs/cloud-send.md), for one account. Tests decide what becomes of each email.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 use cloud_api::{
     Account, Empty,
     cloud_send::{
-        EMAILS, EmailUpload, Finished, Ids, LEAD, MAILBOXES, Mailbox, MailboxSaved, MailboxUpload,
+        EMAILS, EmailUpload, Finished, Ids, MAILBOXES, Mailbox, MailboxSaved, MailboxUpload,
         Mailboxes, Outcome, RESULTS, RESULTS_ACK, Results, Withdrawal,
     },
     tracking::Quota,
@@ -25,8 +25,11 @@ pub struct State {
     pub refused: BTreeMap<String, String>,
     /// By id.
     pub emails: BTreeMap<String, Email>,
-    /// Uploading the email with this recipient fails as the server answers this code.
-    pub reject_to: Option<(String, &'static str)>,
+    /// Ids withdrawn, refused from then on.
+    pub withdrawn: BTreeSet<String>,
+    /// Uploads are kept, then answered with an internal error, as when the answer to the commit
+    /// was lost.
+    pub fail_after_keeping: bool,
     /// Acknowledgements fail.
     pub fail_ack: bool,
 }
@@ -40,7 +43,8 @@ impl Default for State {
             mailboxes: BTreeMap::new(),
             refused: BTreeMap::new(),
             emails: BTreeMap::new(),
-            reject_to: None,
+            withdrawn: BTreeSet::new(),
+            fail_after_keeping: false,
             fail_ack: false,
         }
     }
@@ -156,12 +160,8 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             if state.emails.contains_key(id) {
                 return ok(serde_json::to_value(Empty {}).unwrap());
             }
-            if let Some((_, code)) = state
-                .reject_to
-                .as_ref()
-                .filter(|(to, _)| *to == upload.recipient)
-            {
-                return error(400, code);
+            if state.withdrawn.contains(id) {
+                return error(400, "invalid_input");
             }
             if !state.plus()
                 || state
@@ -173,7 +173,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             if !state.mailboxes.contains_key(&upload.mailbox) {
                 return error(400, "unknown_mailbox");
             }
-            if upload.planned_at < state.now + LEAD || upload.latest_at <= upload.planned_at {
+            if upload.latest_at <= upload.planned_at || upload.latest_at <= state.now {
                 return error(400, "invalid_input");
             }
             let compressed = BASE64_URL_SAFE_NO_PAD.decode(&upload.message).unwrap();
@@ -186,14 +186,21 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
                     state: Sending::Waiting,
                 },
             );
+            if state.fail_after_keeping {
+                return error(500, "internal");
+            }
             ok(serde_json::to_value(Empty {}).unwrap())
         }
         ("DELETE", _, Some(id)) => {
             let answer = match state.emails.get(id).map(|e| e.state.clone()) {
-                None => Withdrawal::Withdrawn,
+                None => {
+                    state.withdrawn.insert(id.into());
+                    Withdrawal::Withdrawn
+                }
                 Some(Sending::Waiting) => {
                     let email = state.emails.remove(id).unwrap();
                     state.release(&email.upload.mailbox);
+                    state.withdrawn.insert(id.into());
                     Withdrawal::Withdrawn
                 }
                 Some(Sending::Sending) => Withdrawal::Sending,

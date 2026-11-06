@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Once};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sqlx::SqlitePool;
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::{Connection, SqliteConnection, SqlitePool};
 
 mod writes;
 pub use writes::Writes;
@@ -116,13 +116,16 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(Duration::from_secs(5));
-    let pool = SqlitePoolOptions::new()
-        .connect_with(options)
+    // Upgraded on a connection of its own with foreign keys off, as rebuilding a table takes
+    // (https://sqlite.org/lang_altertable.html#otheralter): dropping the old table then neither
+    // deletes nor clears what refers to it. Foreign keys cannot be turned off inside a
+    // transaction, and so each migration still runs in one with its record.
+    let mut conn = SqliteConnection::connect_with(&options.clone().foreign_keys(false))
         .await
         .map_err(OpenError::Open)?;
-    let upgrading = upgrading(&pool).await.map_err(OpenError::Open)?;
+    let upgrading = upgrading(&mut conn).await.map_err(OpenError::Open)?;
     let backup = if upgrading {
-        let backup = back_up(&pool, &path.with_file_name("backups"))
+        let backup = back_up(&mut conn, &path.with_file_name("backups"))
             .await
             .map_err(OpenError::Backup)?;
         tracing::info!("upgrading the database, backed up first");
@@ -131,34 +134,50 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         None
     };
     MIGRATOR
-        .run(&pool)
+        .run(&mut conn)
         .await
         .map_err(|error| OpenError::Upgrade { error, backup })?;
+    conn.close().await.map_err(OpenError::Open)?;
     if upgrading {
         let version = MIGRATOR.iter().map(|m| m.version).max();
         tracing::info!(version, "upgraded the database");
     }
-    Ok(pool)
+    SqlitePoolOptions::new()
+        .connect_with(options)
+        .await
+        .map_err(OpenError::Open)
+}
+
+/// A connection whose commits are synced to the disk itself, for a change that must not be lost
+/// to a power cut once something outside the app acts on it. Closed when dropped, so that the
+/// pool's connections keep their faster setting.
+pub async fn durable(db: &SqlitePool) -> Result<SqliteConnection, sqlx::Error> {
+    let mut conn = db.acquire().await?.detach();
+    // fullfsync, on macOS, gets the commit past the drive's own cache.
+    sqlx::raw_sql("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON")
+        .execute(&mut conn)
+        .await?;
+    Ok(conn)
 }
 
 /// Whether this is an existing database with migrations still to run.
-async fn upgrading(pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+async fn upgrading(conn: &mut SqliteConnection) -> Result<bool, sqlx::Error> {
     let existing: bool = sqlx::query_scalar(
         "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     if !existing {
         return Ok(false);
     }
     let applied: Vec<i64> = sqlx::query_scalar("SELECT version FROM _sqlx_migrations")
-        .fetch_all(pool)
+        .fetch_all(conn)
         .await?;
     Ok(MIGRATOR.iter().any(|m| !applied.contains(&m.version)))
 }
 
 /// Copies the database into `dir` and drops the oldest copies beyond `BACKUPS_KEPT`.
-async fn back_up(pool: &SqlitePool, dir: &Path) -> Result<PathBuf, sqlx::Error> {
+async fn back_up(conn: &mut SqliteConnection, dir: &Path) -> Result<PathBuf, sqlx::Error> {
     std::fs::create_dir_all(dir)?;
     // Copied under another name first, so a copy cut short by a full disk or a crash never counts
     // as a backup. VACUUM INTO refuses to overwrite such a leftover.
@@ -168,7 +187,7 @@ async fn back_up(pool: &SqlitePool, dir: &Path) -> Result<PathBuf, sqlx::Error> 
     }
     sqlx::query("VACUUM INTO ?")
         .bind(copying.to_string_lossy())
-        .execute(pool)
+        .execute(conn)
         .await?;
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)

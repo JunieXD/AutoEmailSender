@@ -1,11 +1,8 @@
--- no-transaction
 -- Cloud sending (docs/data-model.md#联系). An email handed to the official server keeps its latest
 -- time and may carry a cancel reason, which the email table's checks did not allow, so the table
--- is rebuilt (https://sqlite.org/lang_altertable.html#otheralter): with foreign keys off, so that
--- dropping the old table neither deletes nor clears what refers to it, and with the legacy rename,
--- so that the views and triggers naming the table are kept as they are and find the new one.
-PRAGMA foreign_keys = OFF;
-BEGIN;
+-- is rebuilt (https://sqlite.org/lang_altertable.html#otheralter), with foreign keys off as
+-- db::open upgrades, and with the legacy rename, so that the views and triggers naming the table
+-- are kept as they are and find the new one.
 
 CREATE TABLE email_new (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -185,6 +182,3 @@ CREATE TABLE cloud_ack (
   account TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-PRAGMA foreign_key_check;
-COMMIT;
-PRAGMA foreign_keys = ON;

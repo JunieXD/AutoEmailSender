@@ -439,7 +439,7 @@ impl Session<'_> {
                 uid: head.uid,
             };
             let sent_at = head.received_at.or(headers.date).unwrap_or(self.now);
-            let plan = self.plan(role, &headers, &threads).await?;
+            let plan = self.plan(role, &headers, sent_at, &threads).await?;
             if let (Plan::Keep { mentors, .. }, Some(id)) = (&plan, &headers.message_id) {
                 threads.insert(id.clone(), mentors.clone());
             }
@@ -498,6 +498,7 @@ impl Session<'_> {
         &mut self,
         role: Role,
         headers: &mail::Headers,
+        sent_at: i64,
         threads: &HashMap<String, Vec<i64>>,
     ) -> Result<Plan, Error> {
         let Some(from) = &headers.from else {
@@ -509,18 +510,15 @@ impl Session<'_> {
         }
         if role == Role::Sent {
             if let Some(id) = &headers.message_id {
-                let mut conn = self.db.acquire().await?;
-                match email::sent_copy(&mut conn, id, &headers.recipients, self.now).await? {
+                let mut tx = self.db.begin().await?;
+                let found =
+                    email::sent_copy(&mut tx, id, &headers.recipients, sent_at, self.now).await?;
+                from_cloud(&mut tx, &found).await?;
+                tx.commit().await?;
+                match found {
                     SentCopy::Foreign => {}
                     SentCopy::Own => return Ok(Plan::Skip),
-                    SentCopy::Confirmed => {
-                        self.round.changed = true;
-                        return Ok(Plan::Skip);
-                    }
-                    SentCopy::FromCloud(handed) => {
-                        if let Some(mailbox) = handed.mailbox_id {
-                            mentor::assign_mailbox(&mut conn, handed.mentor_id, mailbox).await?;
-                        }
+                    SentCopy::Confirmed | SentCopy::FromCloud(_) => {
                         self.round.changed = true;
                         return Ok(Plan::Skip);
                     }
@@ -625,24 +623,26 @@ impl Session<'_> {
         }) else {
             return Ok(false);
         };
-        let mut conn = self.db.acquire().await?;
-        Ok(
-            match email::copied(&mut conn, c.id, message_id, &headers.recipients, self.now).await? {
-                SentCopy::Foreign => false,
-                SentCopy::Own => true,
-                SentCopy::Confirmed => {
-                    self.round.changed = true;
-                    true
-                }
-                SentCopy::FromCloud(handed) => {
-                    if let Some(mailbox) = handed.mailbox_id {
-                        mentor::assign_mailbox(&mut conn, handed.mentor_id, mailbox).await?;
-                    }
-                    self.round.changed = true;
-                    true
-                }
-            },
+        let mut tx = self.db.begin().await?;
+        let found = email::copied(
+            &mut tx,
+            c.id,
+            message_id,
+            &headers.recipients,
+            sent_at,
+            self.now,
         )
+        .await?;
+        from_cloud(&mut tx, &found).await?;
+        tx.commit().await?;
+        Ok(match found {
+            SentCopy::Foreign => false,
+            SentCopy::Own => true,
+            SentCopy::Confirmed | SentCopy::FromCloud(_) => {
+                self.round.changed = true;
+                true
+            }
+        })
     }
 
     async fn store(
@@ -753,7 +753,7 @@ impl Session<'_> {
         for failure in &bounce.failures {
             let (to, reason) = (&failure.recipients, &failure.reason);
             let Some(bounced) =
-                email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?
+                email::bounced(&mut tx, &bounce.original, to, reason, sent_at, self.now).await?
             else {
                 continue;
             };
@@ -1009,4 +1009,15 @@ fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+/// A copy showing the official server sent an email: its mentor's later emails go from that
+/// mailbox, written with it.
+async fn from_cloud(conn: &mut sqlx::SqliteConnection, found: &SentCopy) -> Result<(), Error> {
+    if let SentCopy::FromCloud(handed) = found
+        && let Some(mailbox) = handed.mailbox_id
+    {
+        mentor::assign_mailbox(conn, handed.mentor_id, mailbox).await?;
+    }
+    Ok(())
 }
