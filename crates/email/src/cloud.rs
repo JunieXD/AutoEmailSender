@@ -82,7 +82,8 @@ pub async fn candidates(
 }
 
 /// Hands an email to the official server as `cloud_id`, for `account` (`account_id` on the
-/// server), to go at `at` from `mailbox_id`: marked uploading until `uploaded`. False when it no longer can go, as when it was changed meanwhile.
+/// server), to go at `at` from `mailbox_id`: marked uploading until `uploaded`. False when it no
+/// longer can go, as when it was changed meanwhile.
 /// Its Message-ID is chosen now, or kept from a try turned down, so that replies and its copy in
 /// the sent folder are known.
 #[expect(
@@ -273,8 +274,8 @@ pub async fn withdrawn(
              state = CASE WHEN cancel_reason IS NULL THEN 'approved' ELSE 'canceled' END,
              planned_at = CASE WHEN cancel_reason IS NULL THEN planned_at END,
              latest_at = CASE WHEN cancel_reason IS NULL THEN latest_at END,
-             cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL, cloud_at = NULL, cloud_uploading = 0,
-             sent_at = NULL, updated_at = ?1
+             cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL, cloud_at = NULL,
+             cloud_uploading = 0, sent_at = NULL, updated_at = ?1
            WHERE cloud_id = ?2"#,
         now,
         cloud_id,
@@ -374,8 +375,8 @@ pub async fn finished(
              sent_at = CASE WHEN ?1 = 'failed' THEN NULL ELSE ?3 END,
              tracking_chosen_at = CASE WHEN tracking_state = 'pending' THEN ?3
                ELSE tracking_chosen_at END,
-             by_cloud = 1, cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL, cloud_at = NULL,
-             cloud_uploading = 0, updated_at = ?4
+             by_cloud = 1, cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL,
+             cloud_at = NULL, cloud_uploading = 0, updated_at = ?4
            WHERE cloud_id = ?5
            RETURNING mentor_id, mailbox_id"#,
         state,

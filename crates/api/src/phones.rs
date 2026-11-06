@@ -356,7 +356,7 @@ async fn paired_count(db: &sqlx::SqlitePool) -> Result<i64, sqlx::Error> {
 async fn room(db: &sqlx::SqlitePool) -> Result<Option<String>, CallError> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
     let row = sqlx::query!(
-        r#"SELECT a.email, p.phone_room
+        r#"SELECT a.server_id, p.phone_room
         FROM account a, profile p
         WHERE a.token IS NOT NULL"#
     )
@@ -372,7 +372,7 @@ async fn room(db: &sqlx::SqlitePool) -> Result<Option<String>, CallError> {
             sqlx::query!(
                 "UPDATE profile SET phone_room = ?, phone_room_account = ?",
                 room,
-                row.email
+                row.server_id
             )
             .execute(&mut *tx)
             .await?;

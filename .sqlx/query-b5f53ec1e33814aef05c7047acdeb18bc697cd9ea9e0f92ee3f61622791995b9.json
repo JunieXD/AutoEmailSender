@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT a.email, p.phone_room\n        FROM account a, profile p\n        WHERE a.token IS NOT NULL",
+  "query": "SELECT a.server_id, p.phone_room\n        FROM account a, profile p\n        WHERE a.token IS NOT NULL",
   "describe": {
     "columns": [
       {
-        "name": "email",
+        "name": "server_id",
         "ordinal": 0,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "account",
-            "name": "email"
+            "name": "server_id"
           }
         }
       },
@@ -30,9 +30,9 @@
       "Right": 0
     },
     "nullable": [
-      false,
+      true,
       true
     ]
   },
-  "hash": "4e275b5187cfe3f182d048c1b7acb47c5f68a9cd57a23f276806a406a09b5d2c"
+  "hash": "b5f53ec1e33814aef05c7047acdeb18bc697cd9ea9e0f92ee3f61622791995b9"
 }

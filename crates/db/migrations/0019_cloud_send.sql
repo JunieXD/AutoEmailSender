@@ -191,3 +191,19 @@ CREATE TABLE cloud_ack (
 -- The account's number on the server: one registered again with the same email, after the first
 -- was deleted, has another. Missing for logins from before; logging in again sets it.
 ALTER TABLE account ADD COLUMN server_id INTEGER;
+
+-- The phone room belongs to the account's number, so that logging into one registered again with
+-- the same email leaves it, as logging into another email does. Missing for rooms made by logins
+-- from before the numbers were kept: logging in again leaves those.
+DROP TRIGGER account_phone_room;
+ALTER TABLE profile DROP COLUMN phone_room_account;
+ALTER TABLE profile ADD COLUMN phone_room_account INTEGER
+  CHECK (phone_room IS NOT NULL OR phone_room_account IS NULL);
+
+-- Logging into another account leaves the room, with the phones paired in it; logging out and in
+-- again with the same account keeps them.
+CREATE TRIGGER account_phone_room AFTER INSERT ON account
+WHEN NEW.server_id IS NOT (SELECT phone_room_account FROM profile) BEGIN
+  DELETE FROM phone;
+  UPDATE profile SET phone_room = NULL, phone_room_account = NULL;
+END;
