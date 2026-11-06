@@ -136,9 +136,9 @@ fn lines(gray: &GrayImage) -> Vec<(u32, u32)> {
     if bands.is_empty() {
         return vec![(0, gray.height())];
     }
-    // A band much shorter and narrower than the nearer band beside it, such as the dots over i and
-    // j or an underscore, belongs to it; a line of small text under a large title is short, but
-    // has ink across a line.
+    // A band much shorter and narrower than the nearer band beside it and close to it, such as the
+    // dots over i and j or an underscore, belongs to it. A line of small text under a large title
+    // is short, and may be narrow, but stands apart from it.
     while let Some((short, into)) = (0..bands.len()).find_map(|i| {
         let above = i
             .checked_sub(1)
@@ -146,9 +146,12 @@ fn lines(gray: &GrayImage) -> Vec<(u32, u32)> {
         let below = bands
             .get(i + 1)
             .map(|next| (i + 1, next.top - bands[i].bottom));
-        let (j, _) = above.into_iter().chain(below).min_by_key(|&(_, gap)| gap)?;
-        (bands[i].height() * 3 < bands[j].height() && bands[i].width() * 3 < bands[j].width())
-            .then_some((i, j))
+        let (j, gap) = above.into_iter().chain(below).min_by_key(|&(_, gap)| gap)?;
+        let line = &bands[j];
+        (bands[i].height() * 3 < line.height()
+            && bands[i].width() * 3 < line.width()
+            && gap * 2 < line.height())
+        .then_some((i, j))
     }) {
         let band = bands.remove(short);
         bands[if into > short { into - 1 } else { into }].join(band);

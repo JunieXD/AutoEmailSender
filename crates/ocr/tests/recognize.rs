@@ -6,8 +6,9 @@ fn an_address_drawn_as_a_picture_is_read() {
 
 #[test]
 fn lines_on_a_transparent_background_are_read_one_by_one() {
+    // A name above an address: narrower, close, but as tall.
     let text = ocr::recognize(include_bytes!("lines.png")).unwrap();
-    assert_eq!(text, "电话：010-62751234\n邮箱：chen_jun@pku.edu.cn");
+    assert_eq!(text, "陈军\n邮箱:chen_jun@pku.edu.cn");
 }
 
 #[test]
@@ -26,6 +27,9 @@ fn a_rule_under_an_address_is_no_line_of_text() {
 fn a_line_of_small_text_under_a_large_title_is_a_line_of_its_own() {
     let text = ocr::recognize(include_bytes!("title.png")).unwrap();
     assert_eq!(text, "CONTACT\nwangxm@cs.example.edu");
+    // A short address, narrower than a third of the title.
+    let text = ocr::recognize(include_bytes!("short.png")).unwrap();
+    assert_eq!(text, "CONTACT\nli@x.edu.cn");
 }
 
 #[test]
