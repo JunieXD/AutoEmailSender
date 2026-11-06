@@ -35,7 +35,7 @@ const STAGGER: Duration = Duration::from_millis(250);
 const FAREWELL: Duration = Duration::from_secs(5);
 
 /// Encrypts a connection to `host`.
-pub(crate) async fn encrypt(
+pub async fn encrypt(
     net: &Net,
     host: &str,
     stream: TcpStream,
@@ -54,7 +54,7 @@ pub(crate) async fn encrypt(
 }
 
 /// The same trust for lettre, which upgrades SMTP connections with STARTTLS itself.
-pub(crate) fn lettre_tls(net: &Net, host: &str) -> Result<TlsParameters, MailError> {
+pub fn lettre_tls(net: &Net, host: &str) -> Result<TlsParameters, MailError> {
     let builder = net
         .roots()
         .iter()
@@ -70,7 +70,7 @@ pub(crate) fn lettre_tls(net: &Net, host: &str) -> Result<TlsParameters, MailErr
 }
 
 /// Runs one check or send against `server`, giving up after `TIMEOUT`.
-pub(crate) async fn within<T>(
+pub async fn within<T>(
     server: &Server,
     work: impl Future<Output = Result<T, MailError>>,
 ) -> Result<T, MailError> {
@@ -79,7 +79,7 @@ pub(crate) async fn within<T>(
 
 /// Uploads an email of `size` bytes to `server`, giving up after `TIMEOUT` and the time the upload
 /// may take.
-pub(crate) async fn uploading<T>(
+pub async fn uploading<T>(
     server: &Server,
     size: usize,
     work: impl Future<Output = Result<T, MailError>>,
@@ -103,7 +103,7 @@ async fn limit<T>(
 
 /// Says goodbye to a server in the background once its work is done. Its answer changes nothing,
 /// and some servers, such as Gmail through a proxy, drop the connection or never answer.
-pub(crate) fn farewell(
+pub fn farewell(
     server: &str,
     goodbye: impl Future<Output = Result<(), MailError>> + Send + 'static,
 ) {
@@ -118,7 +118,7 @@ pub(crate) fn farewell(
 }
 
 /// A plain connection to `host:port`, through the system proxy unless the host is this computer.
-pub(crate) async fn connect(host: &str, port: u16) -> Result<TcpStream, MailError> {
+pub async fn connect(host: &str, port: u16) -> Result<TcpStream, MailError> {
     let proxy = proxy::for_host(host);
     match &proxy {
         Some(p) => tracing::info!("connecting to {host}:{port} through {}", p.endpoint()),

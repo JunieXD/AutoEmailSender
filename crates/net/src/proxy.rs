@@ -105,6 +105,12 @@ fn system() -> Option<Proxy> {
     windows_proxy(&settings.get_value::<String, _>("ProxyServer").ok()?)
 }
 
+/// The official server, on Linux, connects directly.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn system() -> Option<Proxy> {
+    None
+}
+
 /// Windows' `ProxyServer`: `host:port` for every protocol, or `http=host:port;https=host:port;
 /// socks=host:port` per protocol. HTTP comes first, as Windows may mean SOCKS4 by `socks`.
 #[cfg(any(windows, test))]

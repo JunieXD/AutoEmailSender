@@ -7,19 +7,12 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ts_rs::TS;
 
-mod connect;
-mod error;
 mod imap;
 pub mod pause;
 pub mod providers;
-mod smtp;
 
-pub use error::MailError;
 pub use imap::{Head, Imap, Opened, check_receiving};
-pub use smtp::{
-    File, Letter, Outgoing, SendError, SendStatus, Smtp, check_sending, compose, login, message_id,
-    send_test,
-};
+use transport::{Security, Sender, Server};
 
 /// A mailbox as the settings show it. Its secret never leaves the core.
 #[derive(Debug, Serialize, TS)]
@@ -37,27 +30,8 @@ pub struct Mailbox {
     pub min_interval_s: u32,
     /// Why the last round of receiving failed.
     pub receive_error: Option<String>,
-    pub pause: Option<pause::Pause>,
+    pub pause: Option<transport::pause::Pause>,
     pub needs_secret: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-pub struct Server {
-    #[ts(type = "string")]
-    pub host: Cow<'static, str>,
-    pub port: u16,
-    pub security: Security,
-}
-
-/// How the connection is encrypted; mail is never sent unencrypted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, sqlx::Type)]
-#[serde(rename_all = "snake_case")]
-#[sqlx(rename_all = "snake_case")]
-pub enum Security {
-    /// Encrypted from the start, usually ports 465 and 993.
-    Tls,
-    /// Plain at first, then upgraded, usually ports 587 and 143.
-    Starttls,
 }
 
 /// A mailbox as the user entered it, without its secret; `check` validates it.
@@ -139,24 +113,23 @@ pub fn checked_secret(secret: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// What logging in to a mailbox takes.
+/// What logging in to a mailbox takes: sending, and receiving with the same address and secret.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Account {
-    pub address: lettre::Address,
-    pub sender_name: String,
-    pub smtp: Server,
+    pub sender: Sender,
     pub imap: Server,
-    pub secret: String,
 }
 
 impl MailboxFields {
     pub fn account(&self, secret: String) -> Account {
         Account {
-            address: self.address.clone(),
-            sender_name: self.sender_name.clone(),
-            smtp: self.smtp.clone(),
+            sender: Sender {
+                address: self.address.clone(),
+                sender_name: self.sender_name.clone(),
+                smtp: self.smtp.clone(),
+                secret,
+            },
             imap: self.imap.clone(),
-            secret,
         }
     }
 }
@@ -216,7 +189,7 @@ pub async fn list(db: &SqlitePool, now: i64) -> Result<Vec<Mailbox>, sqlx::Error
                 .paused_until
                 .zip(r.pause_reason)
                 .filter(|(until, _)| *until > now)
-                .map(|(until, reason)| pause::Pause { until, reason }),
+                .map(|(until, reason)| transport::pause::Pause { until, reason }),
             needs_secret: r.needs_secret,
         })
         .collect())
@@ -336,22 +309,24 @@ pub async fn account(
         return Ok(None);
     };
     Ok(Some(Account {
-        address: r
-            .address
-            .parse()
-            .map_err(|e| sqlx::Error::Decode(Box::new(e)))?,
-        sender_name: r.sender_name,
-        smtp: Server {
-            host: Cow::Owned(r.smtp_host),
-            port: r.smtp_port,
-            security: r.smtp_security,
+        sender: Sender {
+            address: r
+                .address
+                .parse()
+                .map_err(|e| sqlx::Error::Decode(Box::new(e)))?,
+            sender_name: r.sender_name,
+            smtp: Server {
+                host: Cow::Owned(r.smtp_host),
+                port: r.smtp_port,
+                security: r.smtp_security,
+            },
+            secret: r.secret,
         },
         imap: Server {
             host: Cow::Owned(r.imap_host),
             port: r.imap_port,
             security: r.imap_security,
         },
-        secret: r.secret,
     }))
 }
 

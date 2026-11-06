@@ -15,11 +15,12 @@ use tokio::sync::Notify;
 use base64::Engine;
 use email::{Approval, Delivery};
 use fakemail::{ADDRESS, Inbox, SECRET};
-use mailbox::{MailboxForm, Security, Server};
+use mailbox::MailboxForm;
 use mentor::MentorFields;
 use net::Net;
 use send::Next;
 use sqlx::SqlitePool;
+use transport::{Security, Server};
 
 const T: i64 = 1_800_000_000_000;
 const MINUTE: i64 = 60_000;

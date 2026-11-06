@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::{Security, Server};
+use transport::{Security, Server};
 
 /// The provider id of a mailbox whose servers the user filled in.
 pub const CUSTOM: &str = "custom";

@@ -7,11 +7,12 @@ use std::borrow::Cow;
 
 use email::Delivery;
 use fakemail::{ADDRESS, SECRET, Store};
-use mailbox::{MailboxForm, Security, Server};
+use mailbox::MailboxForm;
 use mentor::{Contact, MentorFields};
 use net::Net;
 use receive::{Message, MessageKind, NewReply, Round};
 use sqlx::SqlitePool;
+use transport::{Security, Server};
 
 const T: i64 = 1_800_000_000_000;
 const MINUTE: i64 = 60_000;
@@ -264,7 +265,7 @@ async fn pause_after_bounce(
     received: i64,
     status: &str,
     diagnostic: &str,
-) -> Option<mailbox::pause::Pause> {
+) -> Option<transport::pause::Pause> {
     let (net, store) = mailbox(db, SECRET).await;
     let owner = mentor(db, "王伟", "wang@example.edu.cn").await;
     sent_email(db, owner, "sent", "<original@example.com>").await;

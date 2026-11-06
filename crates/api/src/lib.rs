@@ -1489,7 +1489,7 @@ async fn delete_mailbox(ctx: &Context, input: MailboxId) -> Result<(), CallError
 
 async fn test_sending(ctx: &Context, input: MailboxTest) -> Result<(), CallError> {
     let account = test_account(ctx, input).await?;
-    Ok(mailbox::check_sending(&ctx.net, &account).await?)
+    Ok(transport::check_sending(&ctx.net, &account.sender).await?)
 }
 
 async fn test_receiving(ctx: &Context, input: MailboxTest) -> Result<(), CallError> {
@@ -1525,7 +1525,7 @@ async fn send_test_mail(ctx: &Context, input: MailboxId) -> Result<(), CallError
     let account = mailbox::account(&ctx.db, input.id).await?.ok_or_else(|| {
         CallError::invalid("请先在“设置 › 邮件 › 邮箱”填写授权码或密码，再发测试信。".into())
     })?;
-    Ok(mailbox::send_test(&ctx.net, &account).await?)
+    Ok(transport::send_test(&ctx.net, &account.sender).await?)
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -1568,22 +1568,23 @@ async fn send_test_letter(ctx: &Context, input: SendTestLetter) -> Result<(), Ca
     let files = send::files(&ctx.materials, &attached)
         .await
         .map_err(CallError::invalid)?;
-    let message_id = mailbox::message_id(&account);
-    let outgoing = mailbox::compose(
-        &account,
-        &mailbox::Letter {
+    let sender = &account.sender;
+    let message_id = transport::message_id(sender);
+    let outgoing = transport::compose(
+        sender,
+        &transport::Letter {
             message_id: &message_id,
             in_reply_to: None,
             references: None,
-            to_name: &account.sender_name,
-            to: account.address.as_ref(),
+            to_name: &sender.sender_name,
+            to: sender.address.as_ref(),
             subject: &input.subject,
             html: &input.html,
             text: &input.text,
             attachments: &files,
         },
     )?;
-    mailbox::login(&ctx.net, &account)
+    transport::login(&ctx.net, sender)
         .await?
         .send(&outgoing, || false)
         .await
@@ -1608,8 +1609,8 @@ impl From<mailbox::SaveError> for CallError {
 }
 
 /// The details go to the log; the user reads what happened and what to do.
-impl From<mailbox::MailError> for CallError {
-    fn from(e: mailbox::MailError) -> Self {
+impl From<transport::MailError> for CallError {
+    fn from(e: transport::MailError) -> Self {
         tracing::warn!("{e}");
         CallError {
             code: ErrorCode::External,

@@ -13,8 +13,9 @@ use tokio_rustls::client::TlsStream;
 
 use net::Net;
 
-use crate::connect;
-use crate::{Account, MailError, Security, Server};
+use transport::{MailError, Security, Server, connect};
+
+use crate::Account;
 
 /// Logs in to the mailbox's IMAP server, opens the inbox and leaves.
 pub async fn check_receiving(net: &Net, account: &Account) -> Result<(), MailError> {
@@ -69,11 +70,11 @@ impl Imap {
     pub async fn open(net: &Net, account: &Account) -> Result<Imap, MailError> {
         let session = connect::within(&account.imap, login(net, account))
             .await
-            .map_err(|e| e.without(&account.secret))?;
+            .map_err(|e| e.without(&account.sender.secret))?;
         Ok(Imap {
             session,
             server: account.imap.clone(),
-            secret: account.secret.clone(),
+            secret: account.sender.secret.clone(),
         })
     }
 
@@ -345,7 +346,7 @@ async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStre
         }
     };
     let mut session = client
-        .login(account.address.to_string(), &account.secret)
+        .login(account.sender.address.to_string(), &account.sender.secret)
         .await
         .map_err(|(e, _)| refused(e).login())?;
     // Some servers, such as 163's, refuse to open folders for clients that do not say who they are.

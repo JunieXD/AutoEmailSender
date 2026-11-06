@@ -7,12 +7,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use email::SentCopy;
-use mailbox::{Imap, MailError};
+use mailbox::Imap;
 use net::Net;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use sqlx::types::Json;
 use tokio::sync::{Mutex, MutexGuard, Notify, watch};
+use transport::MailError;
 use ts_rs::TS;
 
 mod mail;
@@ -746,7 +747,7 @@ impl Session<'_> {
                 .fetch_one(&mut *tx)
                 .await?;
                 if let Some(mailbox) = mailbox {
-                    let mut pause = mailbox::pause::PauseKind::Throttled(throttle).at(sent_at);
+                    let mut pause = transport::pause::PauseKind::Throttled(throttle).at(sent_at);
                     pause.reason = format!("退信说明{}", pause.reason);
                     if pause.until > self.now {
                         mailbox::pause::apply(&mut tx, mailbox, &pause).await?;

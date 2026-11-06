@@ -6,12 +6,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mailbox::pause::{self, Failure};
-use mailbox::{Letter, SendError, SendStatus};
+use mailbox::pause::apply_for_account;
 use net::Net;
 use profile::Rotation;
 use sqlx::{Connection, SqlitePool};
 use tokio::sync::Notify;
+use transport::pause::{self, Failure};
+use transport::{Letter, SendError, SendStatus};
 
 const MINUTE: i64 = 60_000;
 const DAY: i64 = 24 * 60 * MINUTE;
@@ -320,7 +321,7 @@ async fn send<T: chrono::TimeZone>(
     let Some(account) = mailbox::account(db, mailbox_id).await? else {
         return Ok(());
     };
-    let smtp = match mailbox::login(net, &account).await {
+    let smtp = match transport::login(net, &account.sender).await {
         Ok(smtp) => smtp,
         Err(err) => {
             // What the reply was taken as: its codes alone may not tell.
@@ -332,13 +333,7 @@ async fn send<T: chrono::TimeZone>(
             return match failure {
                 Failure::Pause(kind) => {
                     let pause = kind.in_zone(now(), zone);
-                    pause::apply_for_account(
-                        &mut *db.acquire().await?,
-                        mailbox_id,
-                        &account,
-                        &pause,
-                    )
-                    .await
+                    apply_for_account(&mut *db.acquire().await?, mailbox_id, &account, &pause).await
                 }
                 Failure::Email => {
                     email::failed(&mut *db.acquire().await?, id, &err.message(), now()).await
@@ -404,7 +399,7 @@ async fn send<T: chrono::TimeZone>(
 pub async fn files(
     dir: &Path,
     attachments: &[email::Attached],
-) -> Result<Vec<mailbox::File>, String> {
+) -> Result<Vec<transport::File>, String> {
     let mut files = Vec::with_capacity(attachments.len());
     for a in attachments {
         let data = tokio::fs::read(material::file(dir, a.material_id)).await.map_err(|e| {
@@ -415,7 +410,7 @@ pub async fn files(
                 a.file_name
             )
         })?;
-        files.push(mailbox::File {
+        files.push(transport::File {
             name: a.file_name.clone(),
             data,
         });
@@ -425,7 +420,7 @@ pub async fn files(
 
 struct Marked {
     mentor_id: i64,
-    outgoing: mailbox::Outgoing,
+    outgoing: transport::Outgoing,
     before: BeforeHandover,
 }
 
@@ -514,7 +509,7 @@ async fn mark_sending(
     mailbox_id: i64,
     now: &impl Fn() -> i64,
     attached: &[email::Attached],
-    files: Result<Vec<mailbox::File>, String>,
+    files: Result<Vec<transport::File>, String>,
 ) -> Result<Option<Marked>, sqlx::Error> {
     let mut conn = db.acquire().await?.detach();
     // fullfsync, on macOS, gets the commit past the drive's own cache.
@@ -540,8 +535,8 @@ async fn mark_sending(
     else {
         return Ok(None);
     };
-    let message_id = mailbox::message_id(account);
-    let from: &str = account.address.as_ref();
+    let message_id = transport::message_id(&account.sender);
+    let from: &str = account.sender.address.as_ref();
     let Some(handover) =
         email::start_sending(&mut tx, id, mailbox_id, from, &message_id, at).await?
     else {
@@ -567,8 +562,8 @@ async fn mark_sending(
     };
     let outgoing = files.and_then(|files| {
         let to = handover.to_address.as_deref().ok_or(email::NO_ADDRESS)?;
-        mailbox::compose(
-            account,
+        transport::compose(
+            &account.sender,
             &Letter {
                 message_id: &handover.message_id,
                 in_reply_to: handover.reply_to.as_deref(),
@@ -625,7 +620,7 @@ async fn record(
         Outcome::Sent => email::sent(&mut tx, id, now).await?,
         Outcome::MaybeSent(error) => email::maybe_sent(&mut tx, id, error, now).await?,
         Outcome::Paused(pause) => {
-            pause::apply_for_account(&mut tx, mailbox_id, account, pause).await?;
+            apply_for_account(&mut tx, mailbox_id, account, pause).await?;
             marked.before.restore(&mut tx, id).await?;
             return tx.commit().await;
         }

@@ -15,6 +15,7 @@ db.workspace = true
 email.workspace = true
 fastrand = "2.5.0"
 mailbox.workspace = true
+transport.workspace = true
 material.workspace = true
 mentor.workspace = true
 net.workspace = true

@@ -111,7 +111,7 @@ impl std::error::Error for MailError {}
 
 impl MailError {
     /// A refusal taken as one of the login.
-    pub(crate) fn login(self) -> MailError {
+    pub fn login(self) -> MailError {
         match self {
             MailError::Refused { reply, smtp_code } => MailError::Login { reply, smtp_code },
             e => e,
@@ -120,7 +120,7 @@ impl MailError {
 
     /// Without the mailbox's secret, should the server quote it back: what the server says reaches
     /// the user, Agents and the mailbox's saved error.
-    pub(crate) fn without(self, secret: &str) -> MailError {
+    pub fn without(self, secret: &str) -> MailError {
         let hide = |words: String| words.replace(secret, "***");
         match self {
             MailError::Login { reply, smtp_code } => MailError::Login {

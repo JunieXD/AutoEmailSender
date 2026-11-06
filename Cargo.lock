@@ -215,6 +215,7 @@ dependencies = [
  "test-fixtures",
  "tokio",
  "tracing",
+ "transport",
  "ts-rs",
  "whoami",
  "writing",
@@ -3579,17 +3580,14 @@ dependencies = [
  "cloud-api",
  "db",
  "fakemail",
- "futures-util",
  "lettre",
  "net",
  "serde",
  "sqlx",
  "tokio",
  "tokio-rustls",
- "tokio-socks",
- "tracing",
+ "transport",
  "ts-rs",
- "uuid",
 ]
 
 [[package]]
@@ -5039,6 +5037,7 @@ dependencies = [
  "test-fixtures",
  "tokio",
  "tracing",
+ "transport",
  "ts-rs",
 ]
 
@@ -5675,6 +5674,7 @@ dependencies = [
  "test-fixtures",
  "tokio",
  "tracing",
+ "transport",
  "ts-rs",
  "uuid",
 ]
@@ -6627,6 +6627,7 @@ dependencies = [
  "test-fixtures",
  "tokio",
  "tracing",
+ "transport",
  "ts-rs",
  "writing",
 ]
@@ -7477,6 +7478,24 @@ dependencies = [
  "thread_local",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "transport"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "chrono",
+ "futures-util",
+ "lettre",
+ "net",
+ "serde",
+ "sqlx",
+ "tokio",
+ "tokio-rustls",
+ "tokio-socks",
+ "tracing",
+ "ts-rs",
+ "uuid",
 ]
 
 [[package]]

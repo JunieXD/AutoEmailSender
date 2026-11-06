@@ -6,9 +6,10 @@ use std::path::Path;
 use api::{Context, ErrorCode, call};
 use base64::prelude::{BASE64_STANDARD, Engine};
 use fakemail::{ADDRESS, Inbox, SECRET};
-use mailbox::{MailboxForm, Security, Server};
+use mailbox::MailboxForm;
 use serde_json::json;
 use sqlx::SqlitePool;
+use transport::{Security, Server};
 
 fn context(db: SqlitePool, data: &Path) -> Context {
     let ctx = Context::new(db, net::Net::new(Vec::new()).unwrap(), data);

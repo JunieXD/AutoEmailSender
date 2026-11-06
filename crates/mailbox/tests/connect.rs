@@ -6,8 +6,9 @@
 use std::borrow::Cow;
 
 use fakemail::{ADDRESS, Inbox, Pki, SECRET};
-use mailbox::{Account, MailError, Security, SendError, Server};
+use mailbox::Account;
 use net::Net;
+use transport::{MailError, Security, SendError, Sender, Server};
 
 /// A mailbox on fake servers of its own.
 async fn mailbox(pki: &Pki, security: Security, secret: &str) -> (Account, Inbox) {
@@ -20,11 +21,13 @@ async fn mailbox(pki: &Pki, security: Security, secret: &str) -> (Account, Inbox
         security,
     };
     let me = Account {
-        address: ADDRESS.parse().unwrap(),
-        sender_name: "林晓".into(),
-        smtp: server(smtp),
+        sender: Sender {
+            address: ADDRESS.parse().unwrap(),
+            sender_name: "林晓".into(),
+            smtp: server(smtp),
+            secret: secret.into(),
+        },
         imap: server(imap),
-        secret: secret.into(),
     };
     (me, inbox)
 }
@@ -35,7 +38,7 @@ async fn checks_pass_over_tls_and_starttls() {
     let net = Net::new(vec![pki.root.clone()]).unwrap();
     for security in [Security::Tls, Security::Starttls] {
         let (me, _) = mailbox(&pki, security, SECRET).await;
-        mailbox::check_sending(&net, &me).await.unwrap();
+        transport::check_sending(&net, &me.sender).await.unwrap();
         mailbox::check_receiving(&net, &me).await.unwrap();
     }
 }
@@ -45,7 +48,7 @@ async fn a_wrong_secret_is_a_refused_login() {
     let pki = fakemail::pki();
     let net = Net::new(vec![pki.root.clone()]).unwrap();
     let (me, _) = mailbox(&pki, Security::Tls, "wrong").await;
-    let sending = mailbox::check_sending(&net, &me).await;
+    let sending = transport::check_sending(&net, &me.sender).await;
     assert!(
         matches!(
             sending,
@@ -86,7 +89,7 @@ async fn replies_that_cannot_be_read_are_not_quoted() {
         .subject("申请硕士")
         .body(String::from("王老师：您好！"))
         .unwrap();
-    let sending = mailbox::login(&net, &me)
+    let sending = transport::login(&net, &me.sender)
         .await
         .unwrap()
         .send(&message.into(), || false)
@@ -147,7 +150,7 @@ async fn an_untrusted_certificate_is_refused() {
     for security in [Security::Tls, Security::Starttls] {
         let (me, _) = mailbox(&pki, security, SECRET).await;
         for result in [
-            mailbox::check_sending(&net, &me).await,
+            transport::check_sending(&net, &me.sender).await,
             mailbox::check_receiving(&net, &me).await,
         ] {
             let message = result.unwrap_err().message();
@@ -161,7 +164,7 @@ async fn the_test_email_goes_to_the_mailbox_itself() {
     let pki = fakemail::pki();
     let net = Net::new(vec![pki.root.clone()]).unwrap();
     let (me, inbox) = mailbox(&pki, Security::Starttls, SECRET).await;
-    mailbox::send_test(&net, &me).await.unwrap();
+    transport::send_test(&net, &me.sender).await.unwrap();
     let inbox = inbox.lock().unwrap();
     assert_eq!(inbox.len(), 1);
     let headers = inbox[0].split("\r\n\r\n").next().unwrap();
@@ -191,7 +194,7 @@ async fn a_throttled_login_says_to_wait_not_to_change_the_code() {
     let pki = fakemail::pki();
     let net = Net::new(vec![pki.root.clone()]).unwrap();
     let (me, _) = mailbox(&pki, Security::Tls, "throttled").await;
-    let message = mailbox::check_sending(&net, &me)
+    let message = transport::check_sending(&net, &me.sender)
         .await
         .unwrap_err()
         .message();

@@ -20,24 +20,24 @@ use tokio_rustls::client::TlsStream;
 use net::Net;
 
 use crate::connect;
-use crate::{Account, MailError, Security, Server};
+use crate::{MailError, Security, Sender, Server};
 
 /// Greets with an address rather than the computer's name, which in Chinese makes servers refuse
 /// the greeting (docs/design.md#桌面端).
 const HELLO: ClientId = ClientId::Ipv4(Ipv4Addr::LOCALHOST);
 
 /// Logs in to the mailbox's SMTP server and leaves.
-pub async fn check_sending(net: &Net, account: &Account) -> Result<(), MailError> {
-    login(net, account).await?.quit();
+pub async fn check_sending(net: &Net, sender: &Sender) -> Result<(), MailError> {
+    login(net, sender).await?.quit();
     Ok(())
 }
 
 /// Sends a short email from the mailbox to itself.
-pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
+pub async fn send_test(net: &Net, sender: &Sender) -> Result<(), MailError> {
     let me =
-        lettre::message::Mailbox::new(Some(account.sender_name.clone()), account.address.clone());
+        lettre::message::Mailbox::new(Some(sender.sender_name.clone()), sender.address.clone());
     let message = Message::builder()
-        .message_id(Some(message_id(account)))
+        .message_id(Some(message_id(sender)))
         .from(me.clone())
         .to(me)
         .subject("Auto Email Sender 测试信")
@@ -46,7 +46,7 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
             "这封信由 Auto Email Sender 发出，收到它说明这个邮箱能正常发信。",
         ))
         .map_err(|e| MailError::Broken(e.to_string()))?;
-    login(net, account)
+    login(net, sender)
         .await?
         .send(&Outgoing::from(message), || false)
         .await
@@ -56,8 +56,8 @@ pub async fn send_test(net: &Net, account: &Account) -> Result<(), MailError> {
 
 /// A new Message-ID for an email from this mailbox, named after its domain rather than the
 /// computer.
-pub fn message_id(account: &Account) -> String {
-    format!("<{}@{}>", uuid::Uuid::new_v4(), account.address.domain())
+pub fn message_id(sender: &Sender) -> String {
+    format!("<{}@{}>", uuid::Uuid::new_v4(), sender.address.domain())
 }
 
 /// What an email to a mentor is made of.
@@ -96,7 +96,7 @@ impl From<Message> for Outgoing {
 
 /// Puts an email from the mailbox together, with the letter as HTML and as plain text for mail apps
 /// that show no HTML, and its files after.
-pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError> {
+pub fn compose(sender: &Sender, letter: &Letter) -> Result<Outgoing, MailError> {
     let to = letter
         .to
         .parse()
@@ -123,8 +123,8 @@ pub fn compose(account: &Account, letter: &Letter) -> Result<Outgoing, MailError
     builder
         .message_id(Some(letter.message_id.to_owned()))
         .from(lettre::message::Mailbox::new(
-            Some(account.sender_name.clone()),
-            account.address.clone(),
+            Some(sender.sender_name.clone()),
+            sender.address.clone(),
         ))
         .to(lettre::message::Mailbox::new(
             Some(letter.to_name.to_owned()),
@@ -198,14 +198,14 @@ pub struct Smtp {
 }
 
 /// Connects to the mailbox's SMTP server and logs in; nothing is sent yet.
-pub async fn login(net: &Net, account: &Account) -> Result<Smtp, MailError> {
-    let conn = connect::within(&account.smtp, open(net, account))
+pub async fn login(net: &Net, sender: &Sender) -> Result<Smtp, MailError> {
+    let conn = connect::within(&sender.smtp, open(net, sender))
         .await
-        .map_err(|e| e.without(&account.secret))?;
+        .map_err(|e| e.without(&sender.secret))?;
     Ok(Smtp {
-        server: account.smtp.clone(),
+        server: sender.smtp.clone(),
         conn,
-        secret: account.secret.clone(),
+        secret: sender.secret.clone(),
     })
 }
 
@@ -280,8 +280,8 @@ impl Smtp {
     }
 }
 
-async fn open(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailError> {
-    let server = &account.smtp;
+async fn open(net: &Net, sender: &Sender) -> Result<AsyncSmtpConnection, MailError> {
+    let server = &sender.smtp;
     let tcp = connect::connect(&server.host, server.port).await?;
     let mut conn = match server.security {
         Security::Tls => {
@@ -310,7 +310,7 @@ async fn open(net: &Net, account: &Account) -> Result<AsyncSmtpConnection, MailE
             conn
         }
     };
-    let credentials = Credentials::new(account.address.to_string(), account.secret.clone());
+    let credentials = Credentials::new(sender.address.to_string(), sender.secret.clone());
     conn.auth(&[Mechanism::Plain, Mechanism::Login], &credentials)
         .await
         .map_err(|e| refused(e).login())?;

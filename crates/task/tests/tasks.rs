@@ -247,10 +247,10 @@ async fn follow_up_sends_in_the_original_thread_for_app_and_external_mail(db: Sq
     let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (port, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     mailbox::create(
         &db,
@@ -392,10 +392,10 @@ async fn receiving_reply_cancels_unsent_follow_ups_and_fences_inflight_generatio
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     mailbox::create(
         &db,
@@ -556,10 +556,10 @@ async fn resend_bounced_follow_up_respects_received_replies_in_both_orders(db: S
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     mailbox::create(
         &db,
@@ -662,10 +662,10 @@ async fn resend_bounced_follow_up_respects_parent_bounces_in_both_orders(db: Sql
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     mailbox::create(
         &db,
@@ -872,10 +872,10 @@ async fn missing_parent_mailbox_blocks_follow_up_in_plan_and_sender(db: SqlitePo
 async fn receiving_a_bounce_cancels_only_follow_ups_of_that_parent(db: SqlitePool) {
     let pki = fakemail::pki();
     let (port, store) = fakemail::imap(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     mailbox::create(
         &db,
@@ -1252,10 +1252,10 @@ async fn pause_blocks_both_selection_and_final_handover_then_resume_sends_once(d
     let writes = db::Writes::default();
     let pki = fakemail::pki();
     let (port, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     let mailbox = mailbox::MailboxForm {
         address: fakemail::ADDRESS.into(),
@@ -1351,10 +1351,10 @@ async fn review_expiry_restore_must_respect_stopping_during_envelope(db: SqliteP
         || std::future::ready(()),
     )
     .await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     let mailbox = mailbox::MailboxForm {
         address: fakemail::ADDRESS.into(),
@@ -1438,10 +1438,10 @@ async fn changing_task_time_defers_handover_and_retry_reserves_again(db: SqliteP
     use email::schedule::{Schedule, Window};
     let pki = fakemail::pki();
     let (port, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     let b = mailbox::MailboxForm {
         address: fakemail::ADDRESS.into(),
@@ -1984,10 +1984,10 @@ async fn detail_mail(db: &SqlitePool) -> (net::Net, fakemail::Store, fakemail::I
     let pki = fakemail::pki();
     let (imap, store) = fakemail::imap(&pki, false).await;
     let (smtp, inbox) = fakemail::smtp(&pki, false).await;
-    let server = |port| mailbox::Server {
+    let server = |port| transport::Server {
         host: "localhost".into(),
         port,
-        security: mailbox::Security::Tls,
+        security: transport::Security::Tls,
     };
     mailbox::create(
         db,

@@ -30,6 +30,7 @@ send = { path = "crates/send" }
 stats = { path = "crates/stats" }
 task = { path = "crates/task" }
 template = { path = "crates/template" }
+transport = { path = "crates/transport" }
 writing = { path = "crates/writing" }
 net = { path = "crates/net" }
 ocr = { path = "crates/ocr" }

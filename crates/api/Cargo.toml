@@ -18,6 +18,7 @@ base64 = "0.22"
 check.workspace = true
 email.workspace = true
 mailbox.workspace = true
+transport.workspace = true
 material.workspace = true
 model.workspace = true
 profile.workspace = true

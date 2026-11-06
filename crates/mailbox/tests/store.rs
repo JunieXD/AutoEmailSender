@@ -3,8 +3,9 @@
 
 use std::borrow::Cow;
 
-use mailbox::{MailboxForm, SaveError, Security, Server};
+use mailbox::{MailboxForm, SaveError};
 use sqlx::SqlitePool;
+use transport::{Security, Server};
 
 fn form(address: &str) -> MailboxForm {
     let server = |host: &'static str, port| Server {
@@ -55,7 +56,8 @@ async fn an_address_is_added_once_in_any_letter_case(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn pauses_expire_extend_and_clear_on_resume_or_edit(db: SqlitePool) {
-    use mailbox::pause::{self, Pause};
+    use mailbox::pause;
+    use transport::pause::Pause;
     let fields = form("me@qq.com").check().unwrap();
     let id = mailbox::create(&db, &fields, "secret", 0).await.unwrap();
     let apply = |until, reason: &str| Pause {
@@ -101,7 +103,8 @@ async fn pauses_expire_extend_and_clear_on_resume_or_edit(db: SqlitePool) {
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn a_request_failure_only_pauses_the_configuration_it_used(db: SqlitePool) {
-    use mailbox::pause::{self, Pause};
+    use mailbox::pause;
+    use transport::pause::Pause;
     let original = form("me@qq.com").check().unwrap();
     let id = mailbox::create(&db, &original, "secret", 0).await.unwrap();
     let account = mailbox::account(&db, id).await.unwrap().unwrap();

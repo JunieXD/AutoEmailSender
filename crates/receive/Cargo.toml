@@ -13,6 +13,7 @@ email.workspace = true
 html2text = "0.17.4"
 mail-parser = { version = "1.0.0", features = ["full_encoding"] }
 mailbox.workspace = true
+transport.workspace = true
 mentor.workspace = true
 net.workspace = true
 model.workspace = true

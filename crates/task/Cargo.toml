@@ -37,4 +37,5 @@ matching.workspace = true
 receive = { path = "../receive" }
 send.workspace = true
 test-fixtures = { path = "../test-fixtures" }
+transport.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "test-util"] }
