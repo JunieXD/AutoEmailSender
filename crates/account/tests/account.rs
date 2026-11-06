@@ -22,6 +22,7 @@ const BACKUP_KEY: [u8; 32] = [
 
 fn account_json(email: &str, terms: &str) -> serde_json::Value {
     json!({
+        "id": 1,
         "email": email,
         "plusUntil": null,
         "tracking": {"used": 0, "limit": 500, "packLeft": 0, "packExpiresAt": null},
@@ -349,6 +350,7 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         let body = serde_json::to_string(&Session {
             token: "test-session-token".into(),
             account: Account {
+                id: 1,
                 email: input.email,
                 plus_until: Some(1234),
                 tracking: QUOTA,
@@ -510,6 +512,7 @@ async fn deletion_rejects_an_account_replaced_while_waiting_for_login(db: Sqlite
             content: serde_json::to_string(&Session {
                 token: "second-token".into(),
                 account: Account {
+                    id: 2,
                     email: "second@example.invalid".into(),
                     plus_until: None,
                     tracking: QUOTA,
@@ -667,16 +670,22 @@ async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
     let net = net::Net::new(vec![]).unwrap();
     let client = Client::with_address(&net, server.address.strip_suffix("/v1").unwrap().into());
     sqlx::query(
-        r#"INSERT INTO account (terms, id, email, token, library_revision, library_checked_at)
-        VALUES ('9999-12-31', 1, 'first@example.invalid', 'old-token', 42, 100)"#,
+        r#"INSERT INTO account (terms, id, email, server_id, token)
+        VALUES ('9999-12-31', 1, 'first@example.invalid', 1, 'old-token')"#,
     )
     .execute(&db)
     .await
     .unwrap();
-    for (email, expected) in [
-        ("first@example.invalid", (42, Some(100))),
-        ("second@example.invalid", (0, None)),
+    // The second login is the same email registered again after the first account was deleted.
+    for (email, id, expected) in [
+        ("first@example.invalid", 1, (42, Some(100))),
+        ("first@example.invalid", 2, (0, None)),
+        ("second@example.invalid", 3, (0, None)),
     ] {
+        sqlx::query("UPDATE account SET library_revision = 42, library_checked_at = 100")
+            .execute(&db)
+            .await
+            .unwrap();
         let login = client.login(&db, email, "fixed-password-123".into(), false);
         let reply = async {
             let request = server.requests.recv().await.unwrap();
@@ -687,6 +696,7 @@ async fn logging_into_another_account_resets_library_progress(db: SqlitePool) {
                     content: serde_json::to_string(&Session {
                         token: "new-test-token".into(),
                         account: Account {
+                            id,
                             email: email.into(),
                             plus_until: None,
                             tracking: QUOTA,

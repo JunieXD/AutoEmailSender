@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_id AS \"cloud_id!\", cloud_at AS \"at!\" FROM email\n           WHERE state = 'cloud' AND cloud_account = ? AND cloud_account_id <> ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "cloud_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_id"
+          }
+        }
+      },
+      {
+        "name": "at!",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "2bd855786dc7748c5e51003c5bd6e241e1f89b151a0bf9490a9369724a5dcb86"
+}

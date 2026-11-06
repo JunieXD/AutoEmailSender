@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT email, token AS \"token!\", backup_key, terms\n        FROM account WHERE token IS NOT NULL",
+  "query": "SELECT email, server_id, token AS \"token!\", backup_key, terms\n        FROM account WHERE token IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -15,8 +15,19 @@
         }
       },
       {
-        "name": "token!",
+        "name": "server_id",
         "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "account",
+            "name": "server_id"
+          }
+        }
+      },
+      {
+        "name": "token!",
+        "ordinal": 2,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -27,7 +38,7 @@
       },
       {
         "name": "backup_key",
-        "ordinal": 2,
+        "ordinal": 3,
         "type_info": "Blob",
         "origin": {
           "Table": {
@@ -38,7 +49,7 @@
       },
       {
         "name": "terms",
-        "ordinal": 3,
+        "ordinal": 4,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -55,8 +66,9 @@
       false,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "eef217588c3d48ba2929322bca49c211b673201dd9e207a48a5287ee551367f9"
+  "hash": "1a6dad18e151d2b0ab491ecd7552456b8eb334f9a1c2fc5bc942ac7762610910"
 }

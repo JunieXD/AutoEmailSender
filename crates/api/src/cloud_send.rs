@@ -77,6 +77,7 @@ pub async fn sync(ctx: &Context, now: i64, changed: &mut bool) -> Result<(), acc
     };
     let db = &ctx.db;
     let account = &login.email;
+    *changed |= !settle_left(ctx, &login, now).await?.is_empty();
     for cloud_id in email::cloud::to_withdraw(&mut *db.acquire().await?, account, now).await? {
         *changed |= !matches!(
             take_back(ctx, &login, &cloud_id, now).await?,
@@ -147,6 +148,30 @@ async fn record(
     let handed = email::cloud::finished(conn, cloud_id, outcome, now).await?;
     contact_from(conn, handed).await?;
     email::cloud::to_acknowledge(conn, cloud_id, account).await
+}
+
+/// Settles what an earlier account with the login's email handed over before it was deleted,
+/// which the server no longer knows of; the ids of those settled. Nothing for a login from before
+/// accounts' numbers were kept, as no other account had this email since.
+async fn settle_left(
+    ctx: &Context,
+    login: &account::Login,
+    now: i64,
+) -> Result<Vec<String>, account::Error> {
+    let Some(account_id) = login.server_id else {
+        return Ok(Vec::new());
+    };
+    let mut tx = ctx.db.begin_with("BEGIN IMMEDIATE").await?;
+    same_login(&mut tx, login).await?;
+    let left =
+        email::cloud::left_by_deleted_account(&mut tx, &login.email, account_id, now).await?;
+    let mut settled = Vec::new();
+    for (cloud_id, handed) in left {
+        contact_from(&mut tx, handed).await?;
+        settled.push(cloud_id);
+    }
+    tx.commit().await?;
+    Ok(settled)
 }
 
 /// The mentor of an email that went out from the server, or may have, is contacted from its
@@ -338,7 +363,9 @@ pub(crate) async fn cloud_send_preview(
 }
 
 pub async fn preview(ctx: &Context, input: PreviewInput, now: i64) -> Result<Preview, CallError> {
-    let (login, plus_until) = match ready(ctx, now).await? {
+    let Ready {
+        login, plus_until, ..
+    } = match ready(ctx, now).await? {
         Ok(ready) => ready,
         Err(blocked) => {
             return Ok(Preview {
@@ -373,12 +400,17 @@ pub async fn preview(ctx: &Context, input: PreviewInput, now: i64) -> Result<Pre
     })
 }
 
-/// The saved login and when its Plus ends, as the server says now, when emails can be handed
+/// Who hands emails over, as the server says now.
+struct Ready {
+    login: account::Login,
+    /// The account's number on the server.
+    account_id: i64,
+    plus_until: i64,
+}
+
+/// The saved login, its number on the server and when its Plus ends, when emails can be handed
 /// over.
-async fn ready(
-    ctx: &Context,
-    now: i64,
-) -> Result<Result<(account::Login, i64), Blocked>, CallError> {
+async fn ready(ctx: &Context, now: i64) -> Result<Result<Ready, Blocked>, CallError> {
     let login = match account::saved_login(&ctx.db).await {
         Ok(login) => login,
         Err(account::Error::SignedOut) => return Ok(Err(Blocked::SignedOut)),
@@ -389,7 +421,11 @@ async fn ready(
     }
     let account = crate::tracking::read(ctx, &login).await?;
     Ok(match account.plus_until.filter(|until| *until > now) {
-        Some(until) => Ok((login, until)),
+        Some(plus_until) => Ok(Ready {
+            login,
+            account_id: account.id,
+            plus_until,
+        }),
         None => Err(Blocked::NoPlus),
     })
 }
@@ -585,7 +621,11 @@ pub(crate) async fn hand_off_to_cloud(
 
 pub async fn hand_off(ctx: &Context, input: HandOff, now: i64) -> Result<HandedOff, CallError> {
     let _busy = ctx.cloud_send.busy.lock().await;
-    let (login, plus_until) = ready(ctx, now).await?.map_err(|blocked| {
+    let Ready {
+        login,
+        account_id,
+        plus_until,
+    } = ready(ctx, now).await?.map_err(|blocked| {
         CallError::invalid(
             match blocked {
                 Blocked::SignedOut => "请先登录。",
@@ -643,6 +683,7 @@ pub async fn hand_off(ctx: &Context, input: HandOff, now: i64) -> Result<HandedO
             c.id,
             &cloud_id,
             &login.email,
+            account_id,
             c.mailbox_id,
             from,
             &message_id,
@@ -807,6 +848,11 @@ pub async fn withdraw(ctx: &Context, input: Withdraw, now: i64) -> Result<Withdr
         return Ok(result);
     }
     let login = account::saved_login(&ctx.db).await?;
+    let left = settle_left(ctx, &login, now).await?;
+    let emails: Vec<_> = emails
+        .into_iter()
+        .filter(|e| !left.contains(&e.cloud_id))
+        .collect();
     if let Some(other) = emails.iter().find(|e| e.account != login.email) {
         return Err(CallError::invalid(format!(
             "有邮件是账号 {} 交给云端的，登录这个账号后才能撤回。",

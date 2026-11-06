@@ -118,7 +118,7 @@ pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
 /// Read once by operations that must keep using one account throughout.
 pub async fn saved_login(db: &SqlitePool) -> Result<Login, Error> {
     let row = sqlx::query!(
-        r#"SELECT email, token AS "token!", backup_key, terms
+        r#"SELECT email, server_id, token AS "token!", backup_key, terms
         FROM account WHERE token IS NOT NULL"#
     )
     .fetch_optional(db)
@@ -126,6 +126,7 @@ pub async fn saved_login(db: &SqlitePool) -> Result<Login, Error> {
     .ok_or(Error::SignedOut)?;
     Ok(Login {
         email: row.email,
+        server_id: row.server_id,
         token: row.token,
         backup_key: row.backup_key.and_then(|key| key.try_into().ok()),
         terms_outdated: outdated(row.terms.as_deref()),
@@ -562,6 +563,9 @@ impl Client {
 /// A saved login. Without Debug, so that neither secret ends up in a log.
 pub struct Login {
     pub email: String,
+    /// The account's number on the server. Missing for logins from before it was kept; logging
+    /// in again sets it.
+    pub server_id: Option<i64>,
     token: String,
     /// Missing for logins from before cloud backup; logging in again derives it.
     pub backup_key: Option<[u8; 32]>,
@@ -662,7 +666,9 @@ async fn verified(
     ))
 }
 
-/// Another account's row goes first, taking its library progress and cloud backup state along.
+/// Another account's row goes first, taking its library progress and cloud backup state along:
+/// one with another email, or with this one but registered again since, or logged in before the
+/// accounts' numbers were kept.
 async fn save_session(
     db: &SqlitePool,
     session: Session,
@@ -671,16 +677,19 @@ async fn save_session(
     let backup_key = backup_key.as_slice();
     let mut tx = db.begin().await?;
     sqlx::query!(
-        "DELETE FROM account WHERE email <> ?",
-        session.account.email
+        "DELETE FROM account WHERE email <> ? OR server_id IS NOT ?",
+        session.account.email,
+        session.account.id
     )
     .execute(&mut *tx)
     .await?;
     sqlx::query!(
-        r#"INSERT INTO account (id, email, token, backup_key, terms) VALUES (1, ?, ?, ?, ?)
+        r#"INSERT INTO account (id, email, server_id, token, backup_key, terms)
+        VALUES (1, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET token = excluded.token, backup_key = excluded.backup_key,
             terms = excluded.terms"#,
         session.account.email,
+        session.account.id,
         session.token,
         backup_key,
         session.account.terms

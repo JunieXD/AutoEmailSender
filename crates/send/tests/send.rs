@@ -587,6 +587,7 @@ async fn room_the_cloud_takes_during_the_login_is_kept(db: SqlitePool) {
             &cloud_id,
             "student@example.invalid",
             1,
+            1,
             ADDRESS,
             "<cloud@example.com>",
             T,

@@ -120,6 +120,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
     let id = path.strip_prefix(EMAILS).and_then(|p| p.strip_prefix('/'));
     match (method, path, id) {
         ("GET", "/v1/account", _) => ok(serde_json::to_value(Account {
+            id: 1,
             email: state.email.clone(),
             plus_until: state.plus_until,
             tracking: Quota {

@@ -118,18 +118,22 @@ impl Setup {
         self.email(id).await.1.unwrap()
     }
 
-    /// Logs in on this computer as `email`.
-    async fn log_in(&self, email: &str) {
+    /// Logs in on this computer as `email`, numbered `server_id` on the server.
+    async fn log_in(&self, email: &str, server_id: i64) {
         sqlx::query("DELETE FROM account")
             .execute(&self.ctx.db)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO account (terms, id, email, token) VALUES ('9999-12-31', 1, ?, ?)")
-            .bind(email)
-            .bind(format!("{email}-token"))
-            .execute(&self.ctx.db)
-            .await
-            .unwrap();
+        sqlx::query(
+            r#"INSERT INTO account (terms, id, email, server_id, token)
+            VALUES ('9999-12-31', 1, ?, ?, ?)"#,
+        )
+        .bind(email)
+        .bind(server_id)
+        .bind(format!("{email}-token"))
+        .execute(&self.ctx.db)
+        .await
+        .unwrap();
     }
 
     /// Whether what the UI shows changed.
@@ -498,6 +502,24 @@ async fn one_whose_outcome_the_server_no_longer_has_may_have_gone(db: SqlitePool
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
+async fn what_a_deleted_account_handed_over_may_have_gone(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    let id = setup.scheduled("王伟", NOW + DAY).await;
+    setup.hand_off().await;
+    // Deleted on another computer with all it had on the server, then registered again with the
+    // same email: the server never had this email of the new account.
+    {
+        let mut server = setup.server();
+        server.emails.clear();
+        server.ids.clear();
+        server.mailboxes.clear();
+    }
+    setup.log_in("student@example.invalid", 2).await;
+    assert!(setup.sync().await);
+    assert_eq!(setup.email(id).await, ("maybe_sent".into(), None, true));
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
 async fn emails_wait_for_the_account_that_handed_them_over(db: SqlitePool) {
     let setup = Setup::new(db).await;
     let id = setup.scheduled("王伟", NOW + DAY).await;
@@ -506,7 +528,7 @@ async fn emails_wait_for_the_account_that_handed_them_over(db: SqlitePool) {
     setup
         .server()
         .finish(&cloud_id, Outcome::Sent { at: NOW + DAY });
-    setup.log_in("other@example.invalid").await;
+    setup.log_in("other@example.invalid", 2).await;
     assert!(!setup.sync().await);
     assert_eq!(setup.email(id).await.0, "cloud");
     // Its mailbox goes from the server for that account until then.
@@ -536,7 +558,7 @@ async fn emails_wait_for_the_account_that_handed_them_over(db: SqlitePool) {
             .is_err()
     );
 
-    setup.log_in("student@example.invalid").await;
+    setup.log_in("student@example.invalid", 1).await;
     assert!(setup.sync().await);
     assert_eq!(setup.email(id).await.0, "sent");
 }

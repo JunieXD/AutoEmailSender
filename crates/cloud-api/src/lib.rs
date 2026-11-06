@@ -113,6 +113,9 @@ pub struct Redeemed {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
+    /// Its number on the server: an account registered again with the same email, after this one
+    /// was deleted, has another.
+    pub id: i64,
     pub email: String,
     pub plus_until: Option<i64>,
     pub tracking: tracking::Quota,

@@ -2570,6 +2570,7 @@ async fn restart_selects_only_unsuccessful_and_reuses_saved_inputs(db: SqlitePoo
                 mailbox_id = CASE WHEN ?1 = 'cloud' THEN 1 END,
                 cloud_id = CASE WHEN ?1 = 'cloud' THEN 'cloud-' || ?5 END,
                 cloud_account = CASE WHEN ?1 = 'cloud' THEN 'me@example.com' END,
+                cloud_account_id = CASE WHEN ?1 = 'cloud' THEN 1 END,
                 cloud_at = CASE WHEN ?1 = 'cloud' THEN ?2 END,
                 html = '<p>草稿</p>', text = '草稿'
             WHERE task_id = ?4 AND mentor_id = ?5"#,
@@ -3150,7 +3151,7 @@ async fn background_work_only_includes_paused_generating_and_failed_tasks(db: Sq
                 r#"INSERT INTO email (task_id, mentor_id, kind, state, subject, body_md,
                     html, text, error, cancel_reason, planned_at, latest_at, message_id,
                     mailbox_id, from_address, to_address, sent_at, cloud_id, cloud_account,
-                    cloud_at, created_at, updated_at)
+                    cloud_account_id, cloud_at, created_at, updated_at)
                 VALUES (?1, ?2, 'first', ?3, '主题', '正文', '<p>正文</p>', '正文', ?4,
                     CASE WHEN ?3 = 'canceled' THEN '任务停止' END, 0,
                     CASE WHEN ?3 = 'cloud' THEN 3600000 END,
@@ -3161,6 +3162,7 @@ async fn background_work_only_includes_paused_generating_and_failed_tasks(db: Sq
                     CASE WHEN ?3 = 'sending' THEN ?5 END,
                     CASE WHEN ?3 = 'cloud' THEN 'cloud-' || ?1 END,
                     CASE WHEN ?3 = 'cloud' THEN 'me@example.com' END,
+                    CASE WHEN ?3 = 'cloud' THEN 1 END,
                     CASE WHEN ?3 = 'cloud' THEN 0 END, 0, 0)"#,
             )
             .bind(id)

@@ -31,10 +31,12 @@ CREATE TABLE email_new (
                                -- again) or accepted (sent/bounced)
   error TEXT,
   cancel_reason TEXT,
-  -- Handed to the official server: the id it knows the email by, the account it belongs to, and
-  -- when it is to go, from mailbox_id. Uploading until the server has it.
+  -- Handed to the official server: the id it knows the email by, the account it belongs to (its
+  -- email and number on the server), and when it is to go, from mailbox_id. Uploading until the
+  -- server has it.
   cloud_id TEXT UNIQUE,
   cloud_account TEXT,
+  cloud_account_id INTEGER,
   cloud_at INTEGER,
   cloud_uploading INTEGER NOT NULL DEFAULT 0 CHECK (cloud_uploading IN (0, 1)),
   -- The official server handed it to the mail server, or tried to.
@@ -72,10 +74,13 @@ CREATE TABLE email_new (
   -- A first letter that never went before, with what the server sends it as.
   CHECK ((state = 'cloud') = (cloud_id IS NOT NULL)),
   CHECK (state <> 'cloud'
-         OR (kind = 'first' AND cloud_account IS NOT NULL AND cloud_at IS NOT NULL
+         OR (kind = 'first' AND cloud_account IS NOT NULL AND cloud_account_id IS NOT NULL
+           AND cloud_at IS NOT NULL
            AND latest_at IS NOT NULL AND mailbox_id IS NOT NULL AND message_id IS NOT NULL
            AND from_address IS NOT NULL AND to_address IS NOT NULL AND sent_at IS NULL)),
-  CHECK (state = 'cloud' OR (cloud_account IS NULL AND cloud_at IS NULL AND cloud_uploading = 0)),
+  CHECK (state = 'cloud'
+         OR (cloud_account IS NULL AND cloud_account_id IS NULL AND cloud_at IS NULL
+           AND cloud_uploading = 0)),
   CHECK ((tracking_state IS NULL) = (tracking_id IS NULL)),
   CHECK ((tracking_account IS NULL) = (tracking_id IS NULL)),
   CHECK ((tracking_chosen_at IS NULL) = (tracking_id IS NULL)),
@@ -182,3 +187,7 @@ CREATE TABLE cloud_ack (
   account TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
+
+-- The account's number on the server: one registered again with the same email, after the first
+-- was deleted, has another. Missing for logins from before; logging in again sets it.
+ALTER TABLE account ADD COLUMN server_id INTEGER;

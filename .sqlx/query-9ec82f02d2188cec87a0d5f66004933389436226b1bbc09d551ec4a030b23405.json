@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM account WHERE email <> ? OR server_id IS NOT ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "9ec82f02d2188cec87a0d5f66004933389436226b1bbc09d551ec4a030b23405"
+}

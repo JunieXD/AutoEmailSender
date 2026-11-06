@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO account (id, email, server_id, token, backup_key, terms)\n        VALUES (1, ?, ?, ?, ?, ?)\n        ON CONFLICT (id) DO UPDATE SET token = excluded.token, backup_key = excluded.backup_key,\n            terms = excluded.terms",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "39631ea0d3d46b12da25fb6728cd733d9c64c598694f97d239aa701559af2458"
+}

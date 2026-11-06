@@ -91,6 +91,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
     let plus = state.plus_until.is_some_and(|until| until > state.now);
     match (method, path.split_once('?').unwrap_or((path, ""))) {
         ("GET", ("/v1/account", _)) => ok(serde_json::to_value(Account {
+            id: 1,
             email: state.email.clone(),
             plus_until: state.plus_until,
             tracking: state.quota(),

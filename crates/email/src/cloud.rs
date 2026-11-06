@@ -81,8 +81,8 @@ pub async fn candidates(
         .collect())
 }
 
-/// Hands an email to the official server as `cloud_id`, to go at `at` from `mailbox_id`: marked
-/// uploading until `uploaded`. False when it no longer can go, as when it was changed meanwhile.
+/// Hands an email to the official server as `cloud_id`, for `account` (`account_id` on the
+/// server), to go at `at` from `mailbox_id`: marked uploading until `uploaded`. False when it no longer can go, as when it was changed meanwhile.
 /// Its Message-ID is chosen now, or kept from a try turned down, so that replies and its copy in
 /// the sent folder are known.
 #[expect(
@@ -94,6 +94,7 @@ pub async fn hand_off(
     id: i64,
     cloud_id: &str,
     account: &str,
+    account_id: i64,
     mailbox_id: i64,
     from_address: &str,
     message_id: &str,
@@ -101,8 +102,9 @@ pub async fn hand_off(
     now: i64,
 ) -> Result<bool, sqlx::Error> {
     let done = sqlx::query!(
-        r#"UPDATE email SET state = 'cloud', cloud_id = ?1, cloud_account = ?2, cloud_at = ?3,
-             cloud_uploading = 1, mailbox_id = ?4, from_address = ?5,
+        r#"UPDATE email SET state = 'cloud', cloud_id = ?1, cloud_account = ?2,
+             cloud_account_id = ?9, cloud_at = ?3, cloud_uploading = 1, mailbox_id = ?4,
+             from_address = ?5,
              to_address = (SELECT address FROM mentor_email WHERE mentor_id = email.mentor_id
                ORDER BY position LIMIT 1),
              message_id = coalesce(message_id, ?6), error = NULL, updated_at = ?7
@@ -119,6 +121,7 @@ pub async fn hand_off(
         message_id,
         now,
         id,
+        account_id,
     )
     .execute(conn)
     .await?;
@@ -270,7 +273,7 @@ pub async fn withdrawn(
              state = CASE WHEN cancel_reason IS NULL THEN 'approved' ELSE 'canceled' END,
              planned_at = CASE WHEN cancel_reason IS NULL THEN planned_at END,
              latest_at = CASE WHEN cancel_reason IS NULL THEN latest_at END,
-             cloud_id = NULL, cloud_account = NULL, cloud_at = NULL, cloud_uploading = 0,
+             cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL, cloud_at = NULL, cloud_uploading = 0,
              sent_at = NULL, updated_at = ?1
            WHERE cloud_id = ?2"#,
         now,
@@ -302,6 +305,36 @@ pub async fn unknown(
     };
     let reason = GONE.into();
     finished(conn, cloud_id, &Outcome::MaybeSent { at, reason }, now).await
+}
+
+const ACCOUNT_GONE: &str =
+    "交出这封邮件的账号已经注销，没法确定是否发出，请到发件邮箱的“已发送”里核对。";
+
+/// The emails handed over as `account` by an earlier account with that email, deleted since with
+/// what became of them: written down as maybe sent at their time, as `unknown` does. Each one's id,
+/// and its mentor and mailbox.
+pub async fn left_by_deleted_account(
+    conn: &mut SqliteConnection,
+    account: &str,
+    account_id: i64,
+    now: i64,
+) -> Result<Vec<(String, Option<Handed>)>, sqlx::Error> {
+    let left = sqlx::query!(
+        r#"SELECT cloud_id AS "cloud_id!", cloud_at AS "at!" FROM email
+           WHERE state = 'cloud' AND cloud_account = ? AND cloud_account_id <> ?"#,
+        account,
+        account_id
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut settled = Vec::new();
+    for r in left {
+        let reason = ACCOUNT_GONE.into();
+        let outcome = Outcome::MaybeSent { at: r.at, reason };
+        let handed = finished(conn, &r.cloud_id, &outcome, now).await?;
+        settled.push((r.cloud_id, handed));
+    }
+    Ok(settled)
 }
 
 /// What became of an email the server had, written down; the mentor and mailbox of one that went
@@ -341,7 +374,7 @@ pub async fn finished(
              sent_at = CASE WHEN ?1 = 'failed' THEN NULL ELSE ?3 END,
              tracking_chosen_at = CASE WHEN tracking_state = 'pending' THEN ?3
                ELSE tracking_chosen_at END,
-             by_cloud = 1, cloud_id = NULL, cloud_account = NULL, cloud_at = NULL,
+             by_cloud = 1, cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL, cloud_at = NULL,
              cloud_uploading = 0, updated_at = ?4
            WHERE cloud_id = ?5
            RETURNING mentor_id, mailbox_id"#,

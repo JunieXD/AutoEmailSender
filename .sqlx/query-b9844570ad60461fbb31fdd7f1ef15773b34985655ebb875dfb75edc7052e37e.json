@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET\n             state = CASE WHEN ?1 = 'failed' AND cancel_reason IS NOT NULL THEN 'canceled'\n               ELSE ?1 END,\n             planned_at = CASE WHEN ?1 = 'failed' AND cancel_reason IS NOT NULL THEN NULL\n               ELSE planned_at END,\n             latest_at = NULL, error = CASE WHEN ?1 = 'failed' AND cancel_reason IS NOT NULL\n               THEN NULL ELSE ?2 END,\n             cancel_reason = CASE WHEN ?1 = 'sent' THEN NULL ELSE cancel_reason END,\n             sent_at = CASE WHEN ?1 = 'failed' THEN NULL ELSE ?3 END,\n             tracking_chosen_at = CASE WHEN tracking_state = 'pending' THEN ?3\n               ELSE tracking_chosen_at END,\n             by_cloud = 1, cloud_id = NULL, cloud_account = NULL, cloud_account_id = NULL, cloud_at = NULL,\n             cloud_uploading = 0, updated_at = ?4\n           WHERE cloud_id = ?5\n           RETURNING mentor_id, mailbox_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "mailbox_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mailbox_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "b9844570ad60461fbb31fdd7f1ef15773b34985655ebb875dfb75edc7052e37e"
+}
