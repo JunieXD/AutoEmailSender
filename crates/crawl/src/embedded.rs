@@ -1,10 +1,7 @@
 //! What the images and PDFs on a page read for one person say: pages often draw an address as a
 //! picture, or give a CV as a PDF.
-use std::sync::LazyLock;
-
 use base64::{Engine, engine::general_purpose::STANDARD};
 use model::background::Cooldown;
-use regex::Regex;
 
 use crate::{
     CrawlError, Material, PageUrl,
@@ -21,13 +18,6 @@ const IMAGES_CHECKED: usize = 20;
 const IMAGES_RECOGNIZED: usize = 6;
 const MAX_IMAGE_BYTES: usize = 1024 * 1024;
 const DOCUMENTS: usize = 2;
-
-/// An address's domain with spaces the recognizer put around its dots, as in `hust.edu. cn`. A
-/// capitalised word after a dot, as in `pku.edu.cn. Tel`, starts the next sentence instead.
-static SPACED_DOMAIN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@[a-z0-9-]+(?:[ \t]*\.[ \t]*[a-z0-9-]+)+")
-        .unwrap_or_else(|_| unreachable!("fixed domain pattern is valid"))
-});
 
 /// The size of a line of text, such as an address: not a photo or a banner.
 fn line_sized(width: usize, height: usize) -> bool {
@@ -153,11 +143,6 @@ impl Reader<'_> {
                         .filter(|line| !line.is_empty())
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let text = SPACED_DOMAIN
-                        .replace_all(&text, |c: &regex::Captures<'_>| {
-                            c[0].replace([' ', '\t'], "")
-                        })
-                        .into_owned();
                     if !text.is_empty() {
                         texts.extend(elements.into_iter().map(|e| (e, text.clone())));
                     }

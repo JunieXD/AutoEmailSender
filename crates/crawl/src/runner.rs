@@ -234,7 +234,9 @@ impl Pages {
                 self::browser(reason)
             )));
         }
-        if material.units.is_empty() {
+        let attached = material.images.as_ref().is_some_and(|i| !i.list.is_empty())
+            || !material.documents.is_empty();
+        if material.units.is_empty() && !(targeted(c.kind) && attached) {
             tracing::info!(reason = "empty_page", "browser content still unavailable");
             return Err(ReadError::Failed(
                 "浏览器读取后仍未取得页面内容，网站可能尚未通过验证".into(),
@@ -524,11 +526,7 @@ async fn read(
         chosen,
         cooldown,
     };
-    let targeted = matches!(
-        c.kind,
-        PageKind::Profile | PageKind::EnrichProfile | PageKind::EnrichChild
-    );
-    // A page read for a candidate may give everything in its images and PDFs.
+    let targeted = targeted(c.kind);
     if (m.units.is_empty() && !targeted)
         || matches!(
             m.needs_browser,
@@ -608,6 +606,15 @@ async fn read(
         own: kind == PageKind::Profile,
     })
 }
+
+/// Whether the page is read for one candidate, which it may give everything in its images and PDFs.
+fn targeted(kind: PageKind) -> bool {
+    matches!(
+        kind,
+        PageKind::Profile | PageKind::EnrichProfile | PageKind::EnrichChild
+    )
+}
+
 /// Settles once the claim is no longer this worker's, as after a pause; a long read stops then.
 async fn invalidated(db: &SqlitePool, c: &Claim) -> ReadError {
     loop {

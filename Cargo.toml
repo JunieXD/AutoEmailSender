@@ -77,8 +77,11 @@ opt-level = 3
 [profile.dev.package.argon2]
 opt-level = 3
 
-# Text recognition runs a neural network, seconds an image unoptimised; crawl tests and the
+# Text recognition runs a neural network, seconds an image unoptimised; its tests and the
 # development app read images with it.
+[profile.dev.package.ocr]
+opt-level = 3
+
 [profile.dev.package.rten]
 opt-level = 3
 

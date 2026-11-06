@@ -401,3 +401,45 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
         assert!(!log.contains(private));
     }
 }
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_profile_the_browser_shows_as_only_a_picture_is_read(db: SqlitePool) {
+    let site = Site::new().await;
+    site.pages
+        .lock()
+        .unwrap()
+        .insert("/p".into(), (412, "<script>challenge()</script>".into()));
+    site.file("/mail.png", "image/png", image(180, 20, "zs@example.edu"));
+    let browser = Arc::new(FakeBrowser::default());
+    browser.page(&site.url("/p"), "<title>张三</title><img src='/mail.png'>");
+    let mut provider = Provider::start().await.unwrap();
+    config(&db, &provider.address).await;
+    let (_, id) = enrichment::candidate(&db, &site, "/p").await;
+    crate::enrich::start(&db, &[id], 2).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let pages = Pages {
+        writes: db::Writes::default(),
+        http: Fetcher::local(site.port),
+        browser: Some(browser),
+        recognize: super::recognize,
+    };
+    let net = net::Net::new(vec![]).unwrap();
+    let limit = Limit::default();
+    let cooldown = Cooldown::new(Arc::default());
+    let read = process(&db, &net, &pages, &limit, &claim, &cooldown);
+    tokio::pin!(read);
+    let request = tokio::select! {
+        request = provider.requests.recv() => request.unwrap(),
+        result = &mut read => panic!("read without asking the model: {:?}", result.err()),
+    };
+    assert!(request.body.to_string().contains("zs@example.edu"));
+    let answer = targeted("zs@example.edu").to_string();
+    request
+        .respond
+        .send(Response::answer(&answer))
+        .ok()
+        .unwrap();
+    save(&db, &claim, &read.await.unwrap()).await.unwrap();
+    let d = review::detail(&db, id).await.unwrap().unwrap();
+    assert_eq!(d.candidate.fields.emails, vec!["zs@example.edu"]);
+}

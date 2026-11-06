@@ -5,7 +5,8 @@ text recognition model (Apache-2.0):
 
 The weights of convolutions and matrix products are stored as int8 per output channel and turned
 back into floats as the model runs, which keeps the model a quarter of its size and its results
-those of the original; computing in int8 as well made most addresses wrong.
+those of the original; computing in int8 as well made most addresses wrong. They are turned back
+by Cast and Mul: DequantizeLinear takes a channel axis only from opset 13, and the model is 11.
 """
 
 import io
@@ -57,16 +58,21 @@ for initializer in list(graph.initializer):
     graph.initializer.extend(
         [
             numpy_helper.from_array(quantized, f"{name}_q"),
-            numpy_helper.from_array(scale.astype(np.float32), f"{name}_scale"),
-            numpy_helper.from_array(np.zeros(scale.shape, np.int8), f"{name}_zero"),
+            numpy_helper.from_array(scale.reshape(shape).astype(np.float32), f"{name}_scale"),
         ]
     )
-    dequantize.append(
-        helper.make_node(
-            "DequantizeLinear", [f"{name}_q", f"{name}_scale", f"{name}_zero"], [name], axis=axis
-        )
-    )
+    dequantize += [
+        helper.make_node("Cast", [f"{name}_q"], [f"{name}_float"], to=onnx.TensorProto.FLOAT),
+        helper.make_node("Mul", [f"{name}_float", f"{name}_scale"], [name]),
+    ]
 nodes = dequantize + list(graph.node)
 del graph.node[:]
 graph.node.extend(nodes)
+# The notice Apache-2.0 asks a changed file to carry.
+model.doc_string = (
+    f"PaddleOCR PP-OCRv6 small text recognition (Apache-2.0), from {SOURCE}/inference.onnx; "
+    "changed for Auto Email Sender to store the weights of convolutions and matrix products as "
+    "int8 per output channel."
+)
+onnx.checker.check_model(model, full_check=True)
 onnx.save(model, HERE / "recognition.onnx")

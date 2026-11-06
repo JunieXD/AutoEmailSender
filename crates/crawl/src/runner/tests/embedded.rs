@@ -23,7 +23,7 @@ async fn addresses_drawn_as_pictures_are_read_in_place_and_marked(db: SqlitePool
         <img src='/photo.png'><img src='/banner.png' width='900' height='300'>",
     );
     site.file("/zs.png", "image/png", image(180, 20, "zs@example.edu"));
-    site.file("/ls.png", "image/png", image(180, 20, "ls@example. edu"));
+    site.file("/ls.png", "image/png", image(180, 20, "ls@example.edu"));
     site.file(
         "/photo.png",
         "image/png",
