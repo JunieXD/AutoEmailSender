@@ -28,7 +28,8 @@ pub const MAX_SIZE: usize = 50 * 1024 * 1024;
 pub const MAX_MESSAGE: usize = 96 * 1024 * 1024;
 /// How long before its time the app hands an email over, in milliseconds.
 pub const LEAD: i64 = 2 * 60 * 1000;
-/// How long the server keeps a result the app has not acknowledged, in milliseconds.
+/// How long the server keeps a result the app has not acknowledged, and an id withdrawn, in
+/// milliseconds.
 pub const RETENTION: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// A mailbox the server keeps the secret of, while it has emails waiting.
@@ -125,9 +126,11 @@ pub struct Results {
     rename_all_fields = "camelCase"
 )]
 pub enum Withdrawal {
-    /// Never there, or taken back now: from now on the id is refused, so that an upload still
-    /// on its way cannot bring it back.
+    /// Taken back unsent, now or when asked before.
     Withdrawn,
+    /// The server has no record of it: it never came, or its outcome was acknowledged or kept
+    /// past `RETENTION`. Either way, an upload of it still on its way is refused from now on.
+    Unknown,
     /// Being handed to the mail server; its outcome comes with the results.
     Sending,
     /// Too late: it has an outcome, which stays until acknowledged.

@@ -2,7 +2,7 @@
 
 use api::Context;
 use api::cloud_send::{self, Blocked, Choice, HandOff, PreviewInput, Reason, Withdraw};
-use cloud_api::cloud_send::Outcome;
+use cloud_api::cloud_send::{Outcome, RETENTION};
 use serde_json::json;
 use sqlx::SqlitePool;
 use test_fixtures::cloud_send::{Sending, Server, State};
@@ -461,6 +461,38 @@ async fn an_upload_cut_short_goes_back_without_being_sent_twice(db: SqlitePool) 
     assert_eq!(setup.email(up).await, ("approved".into(), None, false));
     assert_eq!(setup.email(never).await, ("approved".into(), None, false));
     assert!(setup.server().emails.is_empty());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn one_the_server_no_longer_knows_may_have_gone(db: SqlitePool) {
+    let setup = Setup::new(db).await;
+    let up = setup.scheduled("王伟", NOW + DAY).await;
+    let uploading = setup.scheduled("李娜", NOW + DAY).await;
+    setup.hand_off().await;
+    // Sent, and their outcomes kept until the server dropped them, while this computer was away.
+    for id in [up, uploading] {
+        let cloud_id = setup.cloud_id(id).await;
+        setup.server().emails.remove(&cloud_id);
+    }
+    sqlx::query("UPDATE email SET cloud_uploading = 1 WHERE id = ?")
+        .bind(uploading)
+        .execute(&setup.ctx.db)
+        .await
+        .unwrap();
+    // Past what the server keeps of either.
+    let later = NOW + 2 * DAY + RETENTION;
+    cloud_send::withdraw(&setup.ctx, Withdraw::Email(up), later)
+        .await
+        .unwrap();
+    assert_eq!(setup.email(up).await, ("maybe_sent".into(), None, true));
+    let mut changed = false;
+    cloud_send::sync(&setup.ctx, later, &mut changed)
+        .await
+        .unwrap();
+    assert_eq!(
+        setup.email(uploading).await,
+        ("maybe_sent".into(), None, true)
+    );
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

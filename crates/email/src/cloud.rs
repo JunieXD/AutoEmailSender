@@ -1,7 +1,7 @@
 //! Emails handed to the official server, which sends them at their time from the mailbox the app
 //! chose (docs/design.md#云端定时发送, docs/data-model.md#联系).
 
-use cloud_api::cloud_send::Outcome;
+use cloud_api::cloud_send::{Outcome, RETENTION};
 use sqlx::SqliteConnection;
 use sqlx::types::Json;
 
@@ -276,6 +276,40 @@ pub async fn withdrawn(
     .execute(conn)
     .await?;
     Ok(())
+}
+
+const GONE: &str = "官方服务器上已经没有这封邮件的记录，没法确定是否发出。";
+
+/// The server has no record of an email. Still being uploaded, and early enough that one sent
+/// would still have its outcome there, it never came: back here, as when withdrawn. Otherwise it
+/// may have gone out at its time, like `finished`.
+pub async fn unknown(
+    conn: &mut SqliteConnection,
+    cloud_id: &str,
+    now: i64,
+) -> Result<Option<Handed>, sqlx::Error> {
+    let Some(r) = sqlx::query!(
+        r#"SELECT cloud_uploading AS "uploading: bool", cloud_at AS "at!" FROM email
+           WHERE cloud_id = ?"#,
+        cloud_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    else {
+        return Ok(None);
+    };
+    if r.uploading && now < r.at + RETENTION {
+        withdrawn(conn, cloud_id, now).await?;
+        return Ok(None);
+    }
+    let reason = GONE.into();
+    finished(
+        conn,
+        cloud_id,
+        &Outcome::MaybeSent { at: r.at, reason },
+        now,
+    )
+    .await
 }
 
 /// What became of an email the server had, written down; the mentor and mailbox of one that went

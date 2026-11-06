@@ -10,8 +10,8 @@ use email::SentCopy;
 use mailbox::Imap;
 use net::Net;
 use serde::Serialize;
-use sqlx::SqlitePool;
 use sqlx::types::Json;
+use sqlx::{Connection, SqlitePool};
 use tokio::sync::{Mutex, MutexGuard, Notify, watch};
 use transport::MailError;
 use ts_rs::TS;
@@ -510,7 +510,8 @@ impl Session<'_> {
         }
         if role == Role::Sent {
             if let Some(id) = &headers.message_id {
-                let mut tx = self.db.begin().await?;
+                let mut conn = self.durable().await?;
+                let mut tx = conn.begin().await?;
                 let found =
                     email::sent_copy(&mut tx, id, &headers.recipients, sent_at, self.now).await?;
                 from_cloud(&mut tx, &found).await?;
@@ -559,6 +560,12 @@ impl Session<'_> {
         } else {
             Plan::Keep { kind, mentors }
         })
+    }
+
+    /// For writing what a copy in the sent folder or a bounce shows: the official server is then
+    /// told to delete the result of an email of its that this shows went out.
+    async fn durable(&self) -> Result<sqlx::SqliteConnection, Error> {
+        Ok(db::durable(self.db).await?)
     }
 
     async fn mentors_at(&self, addresses: &[String]) -> Result<Vec<i64>, Error> {
@@ -623,7 +630,8 @@ impl Session<'_> {
         }) else {
             return Ok(false);
         };
-        let mut tx = self.db.begin().await?;
+        let mut conn = self.durable().await?;
+        let mut tx = conn.begin().await?;
         let found = email::copied(
             &mut tx,
             c.id,
@@ -746,7 +754,8 @@ impl Session<'_> {
         let Some(bounce) = mail::bounce(raw) else {
             return Ok(());
         };
-        let mut tx = self.db.begin().await?;
+        let mut conn = self.durable().await?;
+        let mut tx = conn.begin().await?;
         let mut marked = false;
         // The app sends each email to one address: the first failure naming it, or naming no one,
         // says why it came back.

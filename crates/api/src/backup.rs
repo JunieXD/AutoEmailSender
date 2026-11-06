@@ -288,10 +288,7 @@ async fn inspect(dir: &Path, stage: &Path, manifest: &Manifest) -> Result<Restor
     )
     .await?;
     let result = async {
-        db::MIGRATOR
-            .run(&mut conn)
-            .await
-            .map_err(Error::Migration)?;
+        db::migrate(&mut conn).await.map_err(Error::Migration)?;
         inspect_schema(&mut conn).await?;
         inspect_database(&mut conn, dir, stage, manifest).await
     }

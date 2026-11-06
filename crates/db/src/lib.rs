@@ -57,6 +57,9 @@ unsafe extern "C" fn skip_sync(
     // SAFETY: SQLite supplies an open connection and an error output it frees after this call.
     // The SQL is a static C string; no callback or callback data is used.
     unsafe {
+        // SQLx sets its wait only after this runs, and the last connection to close locks the
+        // database while it folds the log back in, as a durable one does when it goes.
+        libsqlite3_sys::sqlite3_busy_timeout(db, BUSY.as_millis() as std::ffi::c_int);
         libsqlite3_sys::sqlite3_exec(
             db,
             c"PRAGMA synchronous = OFF".as_ptr(),
@@ -66,6 +69,9 @@ unsafe extern "C" fn skip_sync(
         )
     }
 }
+
+/// How long a connection waits for another's lock.
+const BUSY: Duration = Duration::from_secs(5);
 
 /// Copies taken before upgrades are named with this and a millisecond timestamp; the newest
 /// `BACKUPS_KEPT` are kept.
@@ -115,12 +121,9 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         // commits.
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
-        .busy_timeout(Duration::from_secs(5));
-    // Upgraded on a connection of its own with foreign keys off, as rebuilding a table takes
-    // (https://sqlite.org/lang_altertable.html#otheralter): dropping the old table then neither
-    // deletes nor clears what refers to it. Foreign keys cannot be turned off inside a
-    // transaction, and so each migration still runs in one with its record.
-    let mut conn = SqliteConnection::connect_with(&options.clone().foreign_keys(false))
+        .busy_timeout(BUSY);
+    // Upgraded on a connection of its own, as `migrate` leaves it outside a transaction.
+    let mut conn = SqliteConnection::connect_with(&options)
         .await
         .map_err(OpenError::Open)?;
     let upgrading = upgrading(&mut conn).await.map_err(OpenError::Open)?;
@@ -133,8 +136,7 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
     } else {
         None
     };
-    MIGRATOR
-        .run(&mut conn)
+    migrate(&mut conn)
         .await
         .map_err(|error| OpenError::Upgrade { error, backup })?;
     conn.close().await.map_err(OpenError::Open)?;
@@ -146,6 +148,22 @@ pub async fn open(path: &Path) -> Result<SqlitePool, OpenError> {
         .connect_with(options)
         .await
         .map_err(OpenError::Open)
+}
+
+/// Brings the schema up to date with foreign keys off, as rebuilding a table takes
+/// (https://sqlite.org/lang_altertable.html#otheralter): dropping the old table then neither
+/// deletes nor clears what refers to it. They cannot be turned off inside a transaction, so each
+/// migration still commits in one with its record. Every upgrade goes through here, including that
+/// of a backup being restored.
+pub async fn migrate(conn: &mut SqliteConnection) -> Result<(), MigrateError> {
+    sqlx::raw_sql("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await?;
+    MIGRATOR.run(&mut *conn).await?;
+    sqlx::raw_sql("PRAGMA foreign_keys = ON")
+        .execute(conn)
+        .await?;
+    Ok(())
 }
 
 /// A connection whose commits are synced to the disk itself, for a change that must not be lost

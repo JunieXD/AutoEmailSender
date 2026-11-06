@@ -336,6 +336,14 @@ async fn older_database_is_upgraded_during_prepare_and_starts_after_confirmation
             .unwrap(),
         "测试导师"
     );
+    // Upgrades rebuild the email table, which must not take its attachments with it.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM email_attachment")
+            .fetch_one(&restored.db)
+            .await
+            .unwrap(),
+        1
+    );
     assert_eq!(fs::read(dir.path().join("materials/1")).unwrap(), b"resume");
     assert!(!dir.path().join("restore.pending").exists());
     restored.db.close().await;

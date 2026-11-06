@@ -1,6 +1,6 @@
 //! An in-memory cloud sending server following the official server's rules (the server
 //! repository's docs/cloud-send.md), for one account. Tests decide what becomes of each email.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use base64::prelude::{BASE64_URL_SAFE_NO_PAD, Engine};
 use cloud_api::{
@@ -25,8 +25,8 @@ pub struct State {
     pub refused: BTreeMap<String, String>,
     /// By id.
     pub emails: BTreeMap<String, Email>,
-    /// Ids withdrawn, refused from then on.
-    pub withdrawn: BTreeSet<String>,
+    /// Ids withdrawn, refused from then on, with whether each was waiting then.
+    pub withdrawn: BTreeMap<String, bool>,
     /// Uploads are kept, then answered with an internal error, as when the answer to the commit
     /// was lost.
     pub fail_after_keeping: bool,
@@ -43,7 +43,7 @@ impl Default for State {
             mailboxes: BTreeMap::new(),
             refused: BTreeMap::new(),
             emails: BTreeMap::new(),
-            withdrawn: BTreeSet::new(),
+            withdrawn: BTreeMap::new(),
             fail_after_keeping: false,
             fail_ack: false,
         }
@@ -160,7 +160,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             if state.emails.contains_key(id) {
                 return ok(serde_json::to_value(Empty {}).unwrap());
             }
-            if state.withdrawn.contains(id) {
+            if state.withdrawn.contains_key(id) {
                 return error(400, "invalid_input");
             }
             if !state.plus()
@@ -193,14 +193,12 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
         }
         ("DELETE", _, Some(id)) => {
             let answer = match state.emails.get(id).map(|e| e.state.clone()) {
-                None => {
-                    state.withdrawn.insert(id.into());
-                    Withdrawal::Withdrawn
-                }
+                None if *state.withdrawn.entry(id.into()).or_insert(false) => Withdrawal::Withdrawn,
+                None => Withdrawal::Unknown,
                 Some(Sending::Waiting) => {
                     let email = state.emails.remove(id).unwrap();
                     state.release(&email.upload.mailbox);
-                    state.withdrawn.insert(id.into());
+                    state.withdrawn.insert(id.into(), true);
                     Withdrawal::Withdrawn
                 }
                 Some(Sending::Sending) => Withdrawal::Sending,

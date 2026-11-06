@@ -144,12 +144,23 @@ async fn record(
     account: &str,
     now: i64,
 ) -> Result<(), sqlx::Error> {
-    if let Some(handed) = email::cloud::finished(conn, cloud_id, outcome, now).await?
+    let handed = email::cloud::finished(conn, cloud_id, outcome, now).await?;
+    contact_from(conn, handed).await?;
+    email::cloud::to_acknowledge(conn, cloud_id, account).await
+}
+
+/// The mentor of an email that went out from the server, or may have, is contacted from its
+/// mailbox from then on.
+async fn contact_from(
+    conn: &mut SqliteConnection,
+    handed: Option<email::Handed>,
+) -> Result<(), sqlx::Error> {
+    if let Some(handed) = handed
         && let Some(mailbox) = handed.mailbox_id
     {
         mentor::assign_mailbox(conn, handed.mentor_id, mailbox).await?;
     }
-    email::cloud::to_acknowledge(conn, cloud_id, account).await
+    Ok(())
 }
 
 /// Asks the server to give an email back, and writes down what it answered, durably: an outcome
@@ -175,6 +186,10 @@ async fn take_back(
     same_login(&mut tx, login).await?;
     match &answer {
         Withdrawal::Withdrawn => email::cloud::withdrawn(&mut tx, cloud_id, now).await?,
+        Withdrawal::Unknown => {
+            let handed = email::cloud::unknown(&mut tx, cloud_id, now).await?;
+            contact_from(&mut tx, handed).await?;
+        }
         Withdrawal::Finished { outcome } => {
             record(&mut tx, cloud_id, outcome, &login.email, now).await?;
         }

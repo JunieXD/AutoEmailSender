@@ -549,6 +549,70 @@ async fn a_mailbox_edited_during_the_login_sends_as_edited(db: SqlitePool) {
     );
 }
 
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn room_the_cloud_takes_during_the_login_is_kept(db: SqlitePool) {
+    let writes = db::Writes::default();
+    let logging_in = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let (entered, proceed) = (logging_in.clone(), release.clone());
+    let (net, inbox) = mailbox_with_hooks(
+        &db,
+        SECRET,
+        move || {
+            let (entered, proceed) = (entered.clone(), proceed.clone());
+            async move {
+                entered.notify_one();
+                proceed.notified().await;
+            }
+        },
+        || std::future::ready(()),
+        || std::future::ready(()),
+        || std::future::ready(()),
+    )
+    .await;
+    let here = approve(&db, "wang@example.edu.cn", &[], T).await;
+    let there = approve(&db, "li@example.edu.cn", &[], T).await;
+    let cloud = first_email(&db, there).await.id;
+    email::schedule::reschedule(&db, cloud, T + DAY, T)
+        .await
+        .unwrap();
+    // Handed to the official server while the login goes on, to go from the same mailbox now.
+    let handing = async {
+        logging_in.notified().await;
+        let mut conn = db.acquire().await.unwrap();
+        let cloud_id = "1".repeat(32);
+        let handed = email::cloud::hand_off(
+            &mut conn,
+            cloud,
+            &cloud_id,
+            "student@example.invalid",
+            1,
+            ADDRESS,
+            "<cloud@example.com>",
+            T,
+            T,
+        );
+        assert!(handed.await.unwrap());
+        release.notify_one();
+    };
+    // Only catches a hang; no timeout arranges the business ordering.
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        tokio::join!(send::step(&db, &writes, &net, nowhere(), || T), handing)
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(first_email(&db, here).await.delivery, Delivery::Approved);
+    assert!(inbox.lock().unwrap().is_empty());
+    // It waits out the mailbox's interval after the cloud's email.
+    assert_eq!(
+        send::step(&db, &writes, &net, nowhere(), || T)
+            .await
+            .unwrap(),
+        Next::At(T + MINUTE)
+    );
+}
+
 async fn backup_mailbox(db: &SqlitePool) -> i64 {
     let primary = mailbox::list(db, T).await.unwrap().remove(0);
     let fields = MailboxForm {
@@ -791,6 +855,12 @@ async fn throttling_restores_prior_evidence_and_respects_cancellation(db: Sqlite
     send::step(&db, &writes, &net, nowhere(), || T)
         .await
         .unwrap();
+    // As though the official server had made that attempt.
+    sqlx::query("UPDATE email SET by_cloud = 1 WHERE id = ?")
+        .bind(id)
+        .execute(&db)
+        .await
+        .unwrap();
     assert!(email::retry(&db, id, T + MINUTE).await.unwrap());
     let evidence = || async {
         sqlx::query_as::<
@@ -801,9 +871,10 @@ async fn throttling_restores_prior_evidence_and_respects_cancellation(db: Sqlite
                 Option<String>,
                 Option<String>,
                 Option<i64>,
+                bool,
             ),
         >(
-            r#"SELECT mailbox_id, from_address, to_address, message_id, sent_at
+            r#"SELECT mailbox_id, from_address, to_address, message_id, sent_at, by_cloud
             FROM email
             WHERE id = ?"#,
         )

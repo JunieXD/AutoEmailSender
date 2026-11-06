@@ -617,6 +617,8 @@ struct BeforeHandover {
     message_id: Option<String>,
     copy_message_id: Option<String>,
     sent_at: Option<i64>,
+    /// The earlier attempt was the official server's.
+    by_cloud: bool,
     updated_at: i64,
 }
 
@@ -638,8 +640,8 @@ impl BeforeHandover {
                  latest_at = NULL, error = CASE WHEN cancel_reason IS NULL THEN ?1 END,
                  mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
                  from_address = ?3, to_address = ?4, message_id = coalesce(?5, message_id),
-                 copy_message_id = ?6, sent_at = ?7, updated_at = ?8
-               WHERE id = ?9 AND state = 'sending'"#,
+                 copy_message_id = ?6, sent_at = ?7, by_cloud = ?8, updated_at = ?9
+               WHERE id = ?10 AND state = 'sending'"#,
             error,
             self.mailbox_id,
             self.from_address,
@@ -647,6 +649,7 @@ impl BeforeHandover {
             self.message_id,
             self.copy_message_id,
             self.sent_at,
+            self.by_cloud,
             now,
             id,
         )
@@ -663,9 +666,9 @@ impl BeforeHandover {
                  latest_at = CASE WHEN cancel_reason IS NULL THEN ?1 END,
                  mailbox_id = (SELECT id FROM mailbox WHERE id = ?2),
                  from_address = ?3, to_address = ?4, message_id = ?5, copy_message_id = ?6,
-                 sent_at = ?7, error = NULL,
-                 updated_at = CASE WHEN cancel_reason IS NULL THEN ?8 ELSE updated_at END
-               WHERE id = ?9 AND state = 'sending'"#,
+                 sent_at = ?7, by_cloud = ?8, error = NULL,
+                 updated_at = CASE WHEN cancel_reason IS NULL THEN ?9 ELSE updated_at END
+               WHERE id = ?10 AND state = 'sending'"#,
             self.latest_at,
             self.mailbox_id,
             self.from_address,
@@ -673,6 +676,7 @@ impl BeforeHandover {
             self.message_id,
             self.copy_message_id,
             self.sent_at,
+            self.by_cloud,
             self.updated_at,
             id,
         )
@@ -713,7 +717,7 @@ async fn mark_sending(
     let Some(before) = sqlx::query_as!(
         BeforeHandover,
         r#"SELECT latest_at, mailbox_id, from_address, to_address, message_id, copy_message_id,
-             sent_at, updated_at
+             sent_at, by_cloud AS "by_cloud: bool", updated_at
            FROM email
            WHERE id = ?"#,
         id
