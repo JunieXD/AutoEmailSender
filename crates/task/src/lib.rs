@@ -594,14 +594,21 @@ pub async fn stop(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
 }
 pub async fn delete(db: &SqlitePool, id: i64, now: i64) -> Result<()> {
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
-    if sqlx::query_scalar!(
-        "SELECT id FROM email WHERE task_id = ? AND state IN ('sending','cloud') LIMIT 1",
+    let busy = sqlx::query!(
+        r#"SELECT count(*) FILTER (WHERE state = 'sending') AS "sending!: i64",
+             count(*) FILTER (WHERE state = 'cloud') AS "cloud!: i64"
+           FROM email WHERE task_id = ?"#,
         id
     )
-    .fetch_optional(&mut *tx)
-    .await?
-    .is_some()
-    {
+    .fetch_one(&mut *tx)
+    .await?;
+    if busy.cloud > 0 {
+        return Err(Error::Invalid(format!(
+            "有 {} 封邮件已交给云端，请先撤回到本地再删除。",
+            busy.cloud
+        )));
+    }
+    if busy.sending > 0 {
         return Err(Error::Invalid(
             "有正在发送的邮件，请发送结束后再删除。".into(),
         ));

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET tracking_state = 'expired'\n        WHERE tracking_state = 'pending' AND state NOT IN ('cloud', 'sending') AND tracking_chosen_at < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f32420d0fd1ef00d7b150831bd9fbe730f66e45db793e24f3dfc54db88cc0d6f"
+}

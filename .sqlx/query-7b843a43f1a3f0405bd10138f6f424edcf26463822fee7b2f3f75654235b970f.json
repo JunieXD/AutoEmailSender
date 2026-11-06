@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"count!: u32\", coalesce(sum(s.size), 0) AS \"size!: i64\"\n           FROM email e JOIN email_size s ON s.email_id = e.id\n           WHERE e.state = 'cloud' AND e.cloud_account = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: u32",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "size!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7b843a43f1a3f0405bd10138f6f424edcf26463822fee7b2f3f75654235b970f"
+}

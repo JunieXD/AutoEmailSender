@@ -17,6 +17,8 @@ pub mod backup;
 use accounts::*;
 mod cloud_backups;
 use cloud_backups::*;
+pub mod cloud_send;
+use cloud_send::{cloud_send_preview, hand_off_to_cloud, withdraw_from_cloud};
 mod crawling;
 mod fact_check;
 mod mail_domains;
@@ -63,6 +65,7 @@ pub struct Context {
     pub mail_domains: MailDomains,
     pub cloud_backup: backup::cloud::CloudBackup,
     pub tracking: tracking::Tracker,
+    pub cloud_send: cloud_send::CloudSend,
     /// Where material files are kept.
     pub materials: std::path::PathBuf,
 }
@@ -83,6 +86,7 @@ impl Context {
             net,
             cloud_backup: backup::cloud::CloudBackup::new(data),
             tracking: Default::default(),
+            cloud_send: Default::default(),
             materials: data.join("materials"),
             sender: Default::default(),
             receiver: Default::default(),
@@ -604,6 +608,21 @@ operations! {
         "sendingPlan" [none] => sending_plan(send::plan::PlanQuery) -> send::plan::PlanPage;
         /// 读取已排期邮件的后台进度。
         "scheduledWork" [none] => scheduled_work(Nothing) -> send::plan::ScheduledWork;
+        /// 预览交给云端发送：哪些定时的首封能交、各自排好的发件邮箱和时间，不能交的和原因，
+        /// 要用到的邮箱和其中哪些要先同意交出授权码，以及大约要上传多少。
+        /// emails 不填时预览全部还没发出的已批准定时邮件，填了 task 只看这个任务的；
+        /// 改了勾选后用勾选的再预览一次。
+        "cloudSendPreview" [none] => cloud_send_preview(cloud_send::PreviewInput)
+            -> cloud_send::Preview;
+        /// 把邮件交给官方服务器，到排好的时间从排好的邮箱发出，电脑关机也照发。
+        /// emails 照用同一批邮件预览的结果填；consents 填用户同意交出授权码的邮箱 id。
+        /// 会把这些邮件和用到的邮箱的授权码上传到官方服务器。
+        "handOffToCloud" [confirm] => hand_off_to_cloud(cloud_send::HandOff)
+            -> cloud_send::HandedOff;
+        /// 把交给云端、还没发出的邮件撤回到本地，变回已批准；云端已经发出的带回结果。
+        /// 填 email 撤回一封，填 task 撤回这个任务里的全部；返回正在发送、撤不回的封数。
+        "withdrawFromCloud" [none] => withdraw_from_cloud(cloud_send::Withdraw)
+            -> cloud_send::Withdrawn;
     }
     "任务" {
         /// 预览新任务的导师范围、草稿数量和模型用量。
@@ -1253,6 +1272,8 @@ async fn list_trash(
 async fn trash_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
     mentor::trash::trash(&ctx.db, &input.ids, now()).await?;
     ctx.todo_reminders.wake();
+    // Their emails with the official server are canceled once withdrawn.
+    ctx.cloud_send.wake();
     Ok(())
 }
 
@@ -1264,7 +1285,15 @@ async fn restore_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallErro
 }
 
 async fn delete_mentors(ctx: &Context, input: MentorIds) -> Result<(), CallError> {
-    mentor::trash::delete(&ctx.db, &input.ids).await?;
+    mentor::trash::delete(&ctx.db, &input.ids)
+        .await
+        .map_err(|e| match e {
+            // Canceled when trashed, they are withdrawn at the next sync.
+            mentor::trash::DeleteError::InCloud(count) => CallError::invalid(format!(
+                "有 {count} 封邮件已交给云端，正在撤回。撤回后才能永久删除，请稍后再试。"
+            )),
+            mentor::trash::DeleteError::Db(e) => e.into(),
+        })?;
     ctx.todo_reminders.wake();
     Ok(())
 }
@@ -1467,9 +1496,10 @@ async fn update_mailbox(ctx: &Context, input: MailboxEdit) -> Result<(), CallErr
     drop(held);
     require_applied(updated, NO_MAILBOX)?;
     // A higher limit or a shorter interval may let a waiting email go, and receiving that
-    // failed may work now.
+    // failed may work now. What changed goes up to the official server for its emails.
     ctx.sender.wake();
     ctx.receiver.wake();
+    ctx.cloud_send.wake();
     Ok(())
 }
 
@@ -1603,6 +1633,9 @@ impl From<mailbox::SaveError> for CallError {
     fn from(e: mailbox::SaveError) -> Self {
         match e {
             mailbox::SaveError::AddressTaken => CallError::invalid("这个邮箱已经添加过了".into()),
+            mailbox::SaveError::InCloud(count) => CallError::invalid(format!(
+                "这个邮箱还有 {count} 封邮件已交给云端，要改地址或删除邮箱，请先把它们撤回到本地。"
+            )),
             mailbox::SaveError::Db(e) => e.into(),
         }
     }
@@ -2752,6 +2785,7 @@ async fn list_correspondence(ctx: &Context, input: MentorId) -> Result<Vec<Entry
                 | email::Delivery::Sent { sent_at, .. }
                 | email::Delivery::Bounced { sent_at, .. } => sent_at,
                 email::Delivery::Approved
+                | email::Delivery::Cloud { .. }
                 | email::Delivery::Sending { .. }
                 | email::Delivery::Failed { .. }
                 | email::Delivery::Canceled { .. } => i64::MAX,

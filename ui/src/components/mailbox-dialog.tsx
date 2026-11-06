@@ -285,6 +285,13 @@ export function MailboxDialog({
               <TestResult label="收信" mutation={receiving} />
             </div>
           )}
+          {mailbox !== null && mailbox.cloudEmails > 0 && dirty && (
+            <p className="px-6 pt-3 text-sm text-muted-foreground phone:px-4">
+              {form.address.trim() === mailbox.address
+                ? `已交给云端的 ${mailbox.cloudEmails} 封将改用新的设置发出。`
+                : `有 ${mailbox.cloudEmails} 封已交给云端的邮件从这个邮箱发出，要改地址，请先把它们撤回到本地。`}
+            </p>
+          )}
           <DialogFooter>
             <p className="grow text-sm text-destructive" role="alert">
               {save.isError && errorMessage(save.error)}

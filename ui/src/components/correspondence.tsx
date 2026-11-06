@@ -6,6 +6,7 @@ import { call, errorMessage } from "@/api/call";
 import type { Email, Entry, MentorDetail, Message, FollowUpEntry, ReplyOutcome, Todo } from "@/api/types";
 import { Attachments } from "@/components/attachments";
 import { Confirm } from "@/components/batch-bar";
+import { WithdrawFromCloud } from "@/components/cloud-send";
 import { FollowUpLetter, ReplyLetter } from "@/components/reply-letter";
 import { FirstLetter } from "@/components/first-letter";
 import {
@@ -313,6 +314,7 @@ function Sent({
       {actions && (
         <div className="flex flex-wrap justify-end gap-1">
           {e.state === "approved" && <ScheduleActions id={e.id} initial={e.plannedAt ?? undefined} />}
+          {e.state === "cloud" && e.cancelReason === null && <WithdrawFromCloud withdraw={{ email: e.id }} />}
           {e.state === "failed" && (
             <Button variant="ghost" disabled={act.isPending} onClick={() => act.mutate("retryEmail")}>
               <RotateCcw strokeWidth={1.6} />
@@ -385,6 +387,13 @@ function status(e: Email, several: boolean): [string, string] {
       e.latestAt !== null && e.plannedAt !== null ? `定时 ${scheduledAt(e.plannedAt)}` : "待发送",
       "text-muted-foreground",
     ];
+  if (e.state === "cloud") {
+    const going = `${e.uploading ? "正在交给云端" : "已交给云端"}，${scheduledAt(e.at)} 从 ${e.fromAddress} 发出`;
+    return [
+      e.cancelReason === null ? going : `${going}；已取消：${e.cancelReason}，正在从云端撤回。`,
+      "text-muted-foreground",
+    ];
+  }
   if (e.state === "sending")
     return [
       e.cancelReason === null ? "发送中" : `发送中；已取消：${e.cancelReason}，等待发送结果。`,

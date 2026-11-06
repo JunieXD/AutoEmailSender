@@ -77,10 +77,21 @@ pub async fn restore<'c>(
 
 /// Deletes mentors in the trash for good. Their emails, todos and tags go with them through the
 /// foreign keys; mail seen in the mailbox goes too unless it also concerns a mentor who stays. The
-/// copies in the mailbox itself are untouched.
-pub async fn delete(db: &SqlitePool, ids: &[i64]) -> Result<(), sqlx::Error> {
+/// copies in the mailbox itself are untouched. None are deleted while their emails are still with
+/// the official server, being withdrawn: deleted here, those would go out.
+pub async fn delete(db: &SqlitePool, ids: &[i64]) -> Result<(), DeleteError> {
     let ids = Json(ids);
-    let mut tx = db.begin().await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let in_cloud = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: u32" FROM email
+           WHERE state = 'cloud' AND mentor_id IN (SELECT value FROM json_each(?))"#,
+        ids,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if in_cloud > 0 {
+        return Err(DeleteError::InCloud(in_cloud));
+    }
     sqlx::query!(
         "WITH doomed AS (SELECT id FROM mentor
                          WHERE id IN (SELECT value FROM json_each(?)) AND trashed_at IS NOT NULL)
@@ -113,5 +124,19 @@ pub async fn delete(db: &SqlitePool, ids: &[i64]) -> Result<(), sqlx::Error> {
     )
     .execute(&mut *tx)
     .await?;
-    tx.commit().await
+    tx.commit().await?;
+    Ok(())
+}
+
+#[derive(Debug)]
+pub enum DeleteError {
+    /// This many of their emails are with the official server.
+    InCloud(u32),
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for DeleteError {
+    fn from(e: sqlx::Error) -> Self {
+        DeleteError::Db(e)
+    }
 }

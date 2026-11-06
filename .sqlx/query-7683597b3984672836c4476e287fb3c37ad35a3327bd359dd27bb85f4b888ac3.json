@@ -1,0 +1,28 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) FILTER (WHERE state = 'sending') AS \"sending!: i64\",\n             count(*) FILTER (WHERE state = 'cloud') AS \"cloud!: i64\"\n           FROM email WHERE task_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "sending!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "cloud!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "7683597b3984672836c4476e287fb3c37ad35a3327bd359dd27bb85f4b888ac3"
+}

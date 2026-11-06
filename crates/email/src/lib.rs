@@ -1,5 +1,6 @@
 //! Emails the app writes and sends (docs/data-model.md#联系).
 
+pub mod cloud;
 pub mod fact_check;
 pub mod follow_up;
 pub mod outcome;
@@ -395,6 +396,13 @@ pub struct Attachment {
 )]
 pub enum Delivery {
     Approved,
+    /// With the official server, to go at `at` from `from_address`; uploading until it is up.
+    Cloud {
+        from_address: String,
+        at: i64,
+        uploading: bool,
+        cancel_reason: Option<String>,
+    },
     Sending {
         cancel_reason: Option<String>,
     },
@@ -429,6 +437,7 @@ pub enum Delivery {
 enum DeliveryColumn {
     Canceled,
     Approved,
+    Cloud,
     Sending,
     MaybeSent,
     Sent,
@@ -462,11 +471,12 @@ pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Em
             coalesce(subject, '') AS "subject!: String",
             coalesce(body_md, '') AS "body_md!: String", resend_of, EXISTS (SELECT 1
             FROM email r WHERE r.resend_of = email.id) AS "resent!: bool", planned_at,
-            latest_at, from_address, to_address, sent_at, error, cancel_reason,
+            latest_at, from_address, to_address, sent_at, error, cancel_reason, cloud_at,
+            cloud_uploading AS "cloud_uploading: bool",
             tracking_state AS "tracking_state: tracking::State",
             open_count AS "open_count: u32", first_opened_at, last_opened_at
         FROM email
-        WHERE mentor_id = ? AND (state IN ('approved', 'sending', 'maybe_sent', 'sent',
+        WHERE mentor_id = ? AND (state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'sent',
             'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'
         AND task_id IS NULL))
         ORDER BY id"#,
@@ -484,6 +494,14 @@ pub async fn list_in(db: &mut SqliteConnection, mentor_id: i64) -> Result<Vec<Em
                     .ok_or_else(|| sqlx::Error::Decode("canceled email has no reason".into()))?,
             },
             (C::Approved, ..) => Delivery::Approved,
+            (C::Cloud, Some(from_address), ..) => Delivery::Cloud {
+                from_address,
+                at: r.cloud_at.ok_or_else(|| {
+                    sqlx::Error::Decode(format!("cloud email {} has no time", r.id).into())
+                })?,
+                uploading: r.cloud_uploading,
+                cancel_reason: r.cancel_reason,
+            },
             (C::Sending, ..) => Delivery::Sending {
                 cancel_reason: r.cancel_reason,
             },
@@ -595,8 +613,9 @@ pub enum CancelScope<'a> {
     },
 }
 
-/// An uncertain attempt keeps its state and failure reason until delivery is settled. Keeping
-/// cancellation separately prevents a restart or SMTP uncertainty from losing the user's intent.
+/// An uncertain attempt keeps its state and failure reason until delivery is settled, and one with
+/// the official server stays there until withdrawn. Keeping cancellation separately prevents a
+/// restart or SMTP uncertainty from losing the user's intent.
 pub async fn cancel(
     conn: &mut SqliteConnection,
     scope: CancelScope<'_>,
@@ -610,9 +629,11 @@ pub async fn cancel(
     };
     Ok(sqlx::query!(
         r#"UPDATE email SET
-             state = CASE WHEN state IN ('sending', 'maybe_sent') THEN state ELSE 'canceled' END,
-             planned_at = CASE WHEN state IN ('sending', 'maybe_sent') THEN planned_at END,
-             latest_at = NULL, cancel_reason = coalesce(cancel_reason, ?1),
+             state = CASE WHEN state IN ('cloud', 'sending', 'maybe_sent') THEN state
+               ELSE 'canceled' END,
+             planned_at = CASE WHEN state IN ('cloud', 'sending', 'maybe_sent') THEN planned_at END,
+             latest_at = CASE WHEN state = 'cloud' THEN latest_at END,
+             cancel_reason = coalesce(cancel_reason, ?1),
              error = CASE WHEN state IN ('sending', 'maybe_sent') THEN error END,
              generation_claim = generation_claim + 1, generation_queued_at = NULL, updated_at = ?2
            WHERE ((task_id = ?3 AND (?4 IS NULL OR id = ?4))
@@ -624,8 +645,8 @@ pub async fn cancel(
                        AND (parent.message_id = ?7 OR parent.copy_message_id = ?7)
                        AND (parent.message_id = email.reply_to
                          OR parent.copy_message_id = email.reply_to)))))
-             AND state IN ('generating', 'generation_failed', 'review', 'approved', 'sending',
-               'maybe_sent', 'failed')"#,
+             AND state IN ('generating', 'generation_failed', 'review', 'approved', 'cloud',
+               'sending', 'maybe_sent', 'failed')"#,
         reason,
         now,
         task,
@@ -708,6 +729,7 @@ pub const INTERRUPTED: &str = "发送途中应用退出，无法确定是否已�
 pub const NO_ADDRESS: &str = "导师尚未填写邮箱。在导师资料里填写后重试。";
 
 /// An email that has been handed to SMTP, or may have been.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Handed {
     pub mentor_id: i64,
     /// None once the mailbox is deleted.
@@ -898,6 +920,8 @@ pub enum SentCopy {
     Own,
     /// An email not yet known to have gone out, which the copy proves did.
     Confirmed,
+    /// One with the official server, which the copy proves sent it before its result came.
+    FromCloud(Handed),
 }
 
 /// Looks up the email the app sent with this Message-ID, or whose copy had it, and marks it sent if
@@ -955,11 +979,12 @@ pub async fn copy_candidates(
               WHERE email_id = email.id) AS "attachments!: Json<Vec<(String, i64)>>"
            FROM email
            WHERE from_address = ?1 COLLATE NOCASE
-             AND (state IN ('approved', 'failed', 'sending', 'maybe_sent', 'sent', 'bounced')
+             AND (state IN ('approved', 'failed', 'cloud', 'sending', 'maybe_sent', 'sent',
+                 'bounced')
                OR (state = 'canceled' AND sent_at IS NOT NULL))
-             AND sent_at BETWEEN ?2 - ?3 AND ?2 + ?3 AND copy_message_id IS NULL
-             AND subject = ?4 AND to_address = ?5
-           ORDER BY abs(sent_at - ?2)"#,
+             AND coalesce(sent_at, cloud_at) BETWEEN ?2 - ?3 AND ?2 + ?3
+             AND copy_message_id IS NULL AND subject = ?4 AND to_address = ?5
+           ORDER BY abs(coalesce(sent_at, cloud_at) - ?2)"#,
         copy.from_address,
         copy.at,
         COPY_WINDOW,
@@ -998,6 +1023,10 @@ pub async fn copied(
     )
     .execute(&mut *tx)
     .await?;
+    if let Some(handed) = cloud::went_out(&mut tx, id, recipients, now).await? {
+        tx.commit().await?;
+        return Ok(SentCopy::FromCloud(handed));
+    }
     let confirmed = sqlx::query!(
         r#"UPDATE email
         SET state = 'sent', planned_at = coalesce(planned_at, sent_at),
@@ -1030,7 +1059,7 @@ pub async fn copied(
 /// reason, unless the bounce names `recipients` without the address it last went to: then it is of
 /// an earlier try, to an address since changed; one being sent to no address cannot bounce. One
 /// waiting to be sent again, or turned down when sent again, bounces like `copied` confirms it:
-/// only while it would go to the same address. False when it was marked already, or the app sent
+/// only while it would go to the same address. None when it was marked already, or the app sent
 /// no such email.
 pub async fn bounced(
     conn: &mut SqliteConnection,
@@ -1038,7 +1067,17 @@ pub async fn bounced(
     recipients: &[String],
     reason: &str,
     now: i64,
-) -> Result<bool, sqlx::Error> {
+) -> Result<Option<Bounced>, sqlx::Error> {
+    let cloud = sqlx::query_scalar!(
+        "SELECT id FROM email WHERE (message_id = ?1 OR copy_message_id = ?1) AND state = 'cloud'",
+        message_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    let from_cloud = match cloud {
+        Some(id) => cloud::went_out(conn, id, recipients, now).await?.is_some(),
+        None => false,
+    };
     let recipients = Json(recipients);
     // Sending too, as for a copy in the sent folder.
     let done = sqlx::query!(
@@ -1055,15 +1094,30 @@ pub async fn bounced(
                LIMIT 1
              )))
            AND to_address IS NOT NULL
-           AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))"#,
+           AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))
+         RETURNING mentor_id, mailbox_id"#,
         reason,
         now,
         message_id,
         recipients,
     )
-    .execute(conn)
+    .fetch_optional(conn)
     .await?;
-    Ok(done.rows_affected() == 1)
+    Ok(done.map(|r| Bounced {
+        mentor_id: r.mentor_id,
+        mailbox_id: r.mailbox_id,
+        from_cloud,
+    }))
+}
+
+/// An email marked bounced.
+pub struct Bounced {
+    pub mentor_id: i64,
+    /// The mailbox it went from; None once deleted.
+    pub mailbox_id: Option<i64>,
+    /// It was with the official server, which only the bounce showed had sent it: its mentor is
+    /// to be contacted from that mailbox, as after a result.
+    pub from_cloud: bool,
 }
 
 pub mod todos;

@@ -51,6 +51,23 @@ pub struct PlanEmail {
     pub error: Option<String>,
     pub cancel_reason: Option<String>,
     pub waiting: Option<Waiting>,
+    /// With the official server, which sends it from `from_address`.
+    pub cloud: Option<Cloud>,
+    /// The official server sent it, or tried to.
+    pub by_cloud: bool,
+}
+
+/// An email with the official server.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "PlanCloud")]
+pub struct Cloud {
+    /// When it is to go.
+    pub at: i64,
+    /// Still going up: withdrawn at the next sync if that was cut short.
+    pub uploading: bool,
+    /// Its mailbox's sending is paused there, as last synced.
+    pub pause: Option<pause::Pause>,
 }
 
 #[derive(Debug, Serialize, TS)]
@@ -83,9 +100,10 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
             sqlx::query_scalar!(
                 r#"SELECT count(*)
                    FROM email
-                   WHERE state = 'approved'
-                     AND planned_at IS NOT NULL
-                     AND (latest_at IS NULL OR latest_at > ?)"#,
+                   WHERE (state = 'approved'
+                       AND planned_at IS NOT NULL
+                       AND (latest_at IS NULL OR latest_at > ?))
+                     OR state = 'cloud'"#,
                 now
             )
             .fetch_one(&mut *tx)
@@ -120,10 +138,11 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
             sqlx::query_scalar!(
                 r#"SELECT id
                    FROM email
-                   WHERE state = 'approved'
-                     AND planned_at IS NOT NULL
-                     AND (latest_at IS NULL OR latest_at > ?1)
-                   ORDER BY planned_at, id
+                   WHERE (state = 'approved'
+                       AND planned_at IS NOT NULL
+                       AND (latest_at IS NULL OR latest_at > ?1))
+                     OR state = 'cloud'
+                   ORDER BY coalesce(cloud_at, planned_at), id
                    LIMIT ?2 OFFSET ?3"#,
                 now,
                 limit,
@@ -152,12 +171,15 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
             e.state AS "state: DraftState", e.planned_at, e.latest_at, e.sent_at,
             e.from_address, e.error, e.cancel_reason, e.resend_of,
             t.state AS task_state, t.generation_paused_at, own.mailbox_id AS own,
-            e.kind IN ('reply', 'follow_up') AS "reply!: bool"
+            e.kind IN ('reply', 'follow_up') AS "reply!: bool",
+            e.cloud_at, e.cloud_uploading AS "cloud_uploading: bool",
+            e.by_cloud AS "by_cloud: bool", b.cloud_paused_until, b.cloud_pause_reason
         FROM json_each(?1) j
         JOIN email e ON e.id = j.value
         JOIN mentor m ON m.id = e.mentor_id
         JOIN email_own_mailbox own ON own.email_id = e.id
         LEFT JOIN task t ON t.id = e.task_id
+        LEFT JOIN mailbox b ON b.id = e.mailbox_id AND e.state = 'cloud'
         ORDER BY j.key"#,
         sqlx::types::Json(ids)
     )
@@ -173,7 +195,16 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
     let emails = rows
         .into_iter()
         .map(|r| {
-            let waiting = if !matches!(query.column, PlanColumn::Upcoming) {
+            let cloud = r.cloud_at.map(|at| Cloud {
+                at,
+                uploading: r.cloud_uploading,
+                pause: r
+                    .cloud_paused_until
+                    .zip(r.cloud_pause_reason.clone())
+                    .filter(|(until, _)| *until > now)
+                    .map(|(until, reason)| pause::Pause { until, reason }),
+            });
+            let waiting = if !matches!(query.column, PlanColumn::Upcoming) || cloud.is_some() {
                 None
             } else if r.task_state.as_deref().is_some_and(|s| s != "active")
                 || r.generation_paused_at.is_some()
@@ -196,10 +227,7 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
                             .any(|m| m.id == id && m.paused_until.is_some_and(|t| t > now))
                         {
                             Waiting::MailboxPaused
-                        } else if mailboxes
-                            .iter()
-                            .any(|m| m.id == id && m.recent >= m.daily_limit)
-                        {
+                        } else if mailboxes.iter().any(|m| m.id == id && !m.has_room(now)) {
                             Waiting::MailboxLimit
                         } else {
                             Waiting::MailboxInterval
@@ -225,6 +253,8 @@ pub async fn list(db: &SqlitePool, query: &PlanQuery, now: i64) -> Result<PlanPa
                 error: r.error,
                 cancel_reason: r.cancel_reason,
                 waiting,
+                cloud,
+                by_cloud: r.by_cloud,
             }
         })
         .collect();

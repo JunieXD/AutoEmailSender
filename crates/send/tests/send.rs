@@ -1030,9 +1030,10 @@ async fn an_email_left_sending_to_no_address_failed(db: SqlitePool) {
         .unwrap();
     // A late bounce naming no one, of a try before the address was taken out, leaves it be.
     assert!(
-        !email::bounced(&mut conn, "<x@example.com>", &[], "邮件被退回", T)
+        email::bounced(&mut conn, "<x@example.com>", &[], "邮件被退回", T)
             .await
             .unwrap()
+            .is_none()
     );
     drop(conn);
 
@@ -2833,7 +2834,8 @@ async fn cancellation_accepts_late_delivery_evidence_after_retry(db: SqlitePool)
                 at + MINUTE,
             )
             .await
-            .unwrap(),
+            .unwrap()
+            .is_some(),
         };
         drop(conn);
         confirmed.push(found);
@@ -3558,9 +3560,10 @@ async fn cancellation_without_a_handover_cannot_gain_delivery_from_a_copy(db: Sq
                 email::SentCopy::Confirmed
             );
             assert!(
-                !email::bounced(&mut conn, &message_id, &recipients, "退信", at)
+                email::bounced(&mut conn, &message_id, &recipients, "退信", at)
                     .await
                     .unwrap()
+                    .is_none()
             );
         }
     }

@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT daily_limit AS \"daily_limit: u32\", min_interval_s AS \"min_interval_s: u32\"\n           FROM mailbox WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "daily_limit: u32",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "daily_limit"
+          }
+        }
+      },
+      {
+        "name": "min_interval_s: u32",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "min_interval_s"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "73304a2e9dd830bd762c90a1d7a7e34c23f6bc6d38a2d6641055a697301ba6ed"
+}

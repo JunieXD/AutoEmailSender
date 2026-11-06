@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT email, token IS NOT NULL AS \"logged_in!: bool\", terms\n        FROM account",
+  "query": "SELECT email, token IS NOT NULL AS \"logged_in!: bool\", terms,\n            (SELECT count(*) FROM email WHERE state = 'cloud' AND cloud_account = account.email)\n              AS \"cloud_emails!: u32\"\n        FROM account",
   "describe": {
     "columns": [
       {
@@ -30,6 +30,12 @@
             "name": "terms"
           }
         }
+      },
+      {
+        "name": "cloud_emails!: u32",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -38,8 +44,9 @@
     "nullable": [
       false,
       false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "29775367fba946c06321223eab5c26aa8dca64253b16286a315d05a2b5e8424c"
+  "hash": "0a1458c6ba43ad0bbc0be3639c6f75eec3d9e9329bf07803dc66d555d19efdb3"
 }

@@ -7,6 +7,7 @@ import { refreshTasks } from "@/components/task-cache";
 import type { DraftFilter, DraftState, PlanColumn, Progress, TaskSummary, NewTask } from "@/api/types";
 import { ModelAction } from "@/components/ai-writing";
 import { Confirm } from "@/components/batch-bar";
+import { CloudSendDialog } from "@/components/cloud-send";
 import { CreateTaskDialog } from "@/components/create-task";
 import { TaskLetter } from "@/components/task-letter";
 import { dropFactChecks } from "@/components/ai-writing";
@@ -207,6 +208,7 @@ export function TaskReviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [bulk, setBulk] = useState(false);
   const [changingSchedule, setChangingSchedule] = useState(false);
+  const [handingOff, setHandingOff] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [restarting, setRestarting] = useState<NewTask | null>(null);
   const restart = useQuery({
@@ -321,6 +323,10 @@ export function TaskReviewPage() {
     },
     onSuccess: () => refreshTasks(client),
   });
+  const withdrawCloud = useMutation({
+    mutationFn: () => call("withdrawFromCloud", { task: id }),
+    onSettled: () => refreshTasks(client),
+  });
   if (task.error) return <Notice title="任务未能加载" detail={errorMessage(task.error)} />;
   const t = task.data;
   if (!t) return null;
@@ -350,6 +356,14 @@ export function TaskReviewPage() {
               >
                 继续
               </ModelAction>
+            ) : t.state === "active" && t.progress.cloud > 0 ? (
+              <PauseWithCloud
+                count={t.progress.cloud}
+                disabled={action.isPending}
+                onPause={(withdraw) =>
+                  action.mutate("pauseTask", { onSuccess: () => withdraw && withdrawCloud.mutate() })
+                }
+              />
             ) : (
               <Button
                 variant="quiet"
@@ -388,10 +402,25 @@ export function TaskReviewPage() {
                   修改发送时间
                 </Button>
               )}
+              {t.state !== "stopped" && t.kind === "first" && t.schedule.kind === "window" && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setMoreOpen(false);
+                    setHandingOff(true);
+                  }}
+                >
+                  交给云端发送
+                </Button>
+              )}
               {t.state !== "stopped" && (
                 <Confirm
                   trigger={<Button variant="ghost">停止任务</Button>}
-                  message="停止后，未发出的邮件全部取消，任务无法继续。正在发送的邮件会完成发送。"
+                  message={`停止后，未发出的邮件全部取消，任务无法继续。正在发送的邮件会完成发送。${
+                    t.progress.cloud > 0
+                      ? `已交给云端的 ${t.progress.cloud} 封会去云端撤回；连不上服务器时，到点仍可能发出。`
+                      : ""
+                  }`}
                   action="停止任务"
                   onConfirm={() => action.mutate("stopTask")}
                 />
@@ -402,7 +431,11 @@ export function TaskReviewPage() {
                     删除任务
                   </Button>
                 }
-                message="删除任务和未发出的邮件？发出过的邮件保留在导师往来中。有正在发送的邮件时无法删除。"
+                message={
+                  t.progress.cloud > 0
+                    ? `有 ${t.progress.cloud} 封邮件已交给云端，请先把它们撤回到本地再删除任务。`
+                    : "删除任务和未发出的邮件？发出过的邮件保留在导师往来中。有正在发送的邮件时无法删除。"
+                }
                 action="删除任务"
                 onConfirm={() => action.mutate("deleteTask")}
               />
@@ -416,9 +449,14 @@ export function TaskReviewPage() {
             {t.pauseReason ?? "你已暂停任务。可以继续审核和批准，继续任务后才会发出。"}
           </p>
         )}
-        {(error || action.error) && (
+        {(error || action.error || withdrawCloud.error) && (
           <p role="alert" className="text-sm text-destructive">
-            {error ?? errorMessage(action.error)}
+            {error ?? errorMessage(action.error ?? withdrawCloud.error)}
+          </p>
+        )}
+        {withdrawCloud.data && withdrawCloud.data.sending > 0 && (
+          <p className="text-sm text-muted-foreground">
+            {withdrawCloud.data.sending} 封正在发送，撤不回了，稍后同步结果。
           </p>
         )}
       </header>
@@ -513,6 +551,7 @@ export function TaskReviewPage() {
         )}
       </div>
       {changingSchedule && <ChangeSchedule task={t} onClose={() => setChangingSchedule(false)} />}
+      {handingOff && <CloudSendDialog task={id} onClose={() => setHandingOff(false)} />}
       {bulk && <BulkApproval task={t} onClose={() => setBulk(false)} />}
     </div>
   );
@@ -811,5 +850,44 @@ function BulkApproval({ task, onClose }: { task: TaskSummary; onClose: () => voi
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Pausing a task some of whose emails the official server is to send: they still go, unless taken back too. */
+function PauseWithCloud({
+  count,
+  disabled,
+  onPause,
+}: {
+  count: number;
+  disabled: boolean;
+  onPause: (withdraw: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [withdraw, setWithdraw] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger render={<Button variant="quiet" disabled={disabled} />}>暂停</PopoverTrigger>
+      <PopoverContent align="end" className="w-80 p-3">
+        <p>其中 {count} 封已交给云端，会照常发出。</p>
+        <label className="mt-2 flex items-center gap-2">
+          <Checkbox checked={withdraw} onCheckedChange={setWithdraw} />
+          <span>一起撤回到本地</span>
+        </label>
+        <div className="mt-3 flex justify-end gap-2">
+          <Button variant="quiet" onClick={() => setOpen(false)}>
+            取消
+          </Button>
+          <Button
+            onClick={() => {
+              setOpen(false);
+              onPause(withdraw);
+            }}
+          >
+            暂停
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

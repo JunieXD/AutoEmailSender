@@ -45,6 +45,8 @@ const email: PlanEmail = {
   error: "发送途中应用退出，无法确定是否已发出。",
   cancelReason: "导师已移入回收站",
   waiting: null,
+  cloud: null,
+  byCloud: false,
 };
 const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 const container = document.createElement("div");

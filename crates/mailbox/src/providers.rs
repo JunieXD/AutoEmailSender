@@ -19,6 +19,9 @@ pub struct Provider {
     /// The address domains it serves. Empty for services that host an organisation's own domain,
     /// which the user picks by name.
     pub domains: &'static [&'static str],
+    /// Its servers are in mainland China, where the official server can reach them
+    /// (docs/design.md#云端定时发送).
+    pub domestic: bool,
     pub setup: Setup,
 }
 
@@ -48,6 +51,12 @@ pub fn find(id: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|p| p.id == id)
 }
 
+/// Whether the official server can send from a mailbox of this provider: a domestic one, or one
+/// whose servers the user filled in, such as a school's.
+pub fn cloudable(id: &str) -> bool {
+    id == CUSTOM || find(id).is_some_and(|p| p.domestic)
+}
+
 const fn tls(host: &'static str, port: u16) -> Server {
     Server {
         host: Cow::Borrowed(host),
@@ -73,6 +82,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "qq",
         name: "QQ 邮箱",
         domains: &["qq.com", "foxmail.com", "vip.qq.com"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.qq.com", 465),
             imap: tls("imap.qq.com", 993),
@@ -90,6 +100,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "163",
         name: "163 邮箱",
         domains: &["163.com"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.163.com", 465),
             imap: tls("imap.163.com", 993),
@@ -102,6 +113,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "126",
         name: "126 邮箱",
         domains: &["126.com"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.126.com", 465),
             imap: tls("imap.126.com", 993),
@@ -114,6 +126,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "yeah",
         name: "yeah.net 邮箱",
         domains: &["yeah.net"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.yeah.net", 465),
             imap: tls("imap.yeah.net", 993),
@@ -126,6 +139,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "sina",
         name: "新浪邮箱",
         domains: &["sina.com"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.sina.com", 465),
             imap: tls("imap.sina.com", 993),
@@ -138,6 +152,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "sohu",
         name: "搜狐邮箱",
         domains: &["sohu.com"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.sohu.com", 465),
             imap: tls("imap.sohu.com", 993),
@@ -150,6 +165,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "139",
         name: "139 邮箱",
         domains: &["139.com"],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.139.com", 465),
             imap: tls("imap.139.com", 993),
@@ -162,6 +178,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "gmail",
         name: "Gmail",
         domains: &["gmail.com", "googlemail.com"],
+        domestic: false,
         setup: Setup::Password {
             smtp: tls("smtp.gmail.com", 465),
             imap: tls("imap.gmail.com", 993),
@@ -178,6 +195,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "icloud",
         name: "iCloud 邮件",
         domains: &["icloud.com", "me.com", "mac.com"],
+        domestic: false,
         setup: Setup::Password {
             smtp: Server {
                 host: Cow::Borrowed("smtp.mail.me.com"),
@@ -198,6 +216,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "yahoo",
         name: "Yahoo 邮箱",
         domains: &["yahoo.com", "ymail.com", "rocketmail.com"],
+        domestic: false,
         setup: Setup::Password {
             smtp: tls("smtp.mail.yahoo.com", 465),
             imap: tls("imap.mail.yahoo.com", 993),
@@ -214,6 +233,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "aol",
         name: "AOL 邮箱",
         domains: &["aol.com"],
+        domestic: false,
         setup: Setup::Password {
             smtp: tls("smtp.aol.com", 465),
             imap: tls("imap.aol.com", 993),
@@ -230,6 +250,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "zoho",
         name: "Zoho Mail",
         domains: &["zoho.com", "zohomail.com"],
+        domestic: false,
         setup: Setup::Password {
             smtp: tls("smtp.zoho.com", 465),
             imap: tls("imap.zoho.com", 993),
@@ -246,6 +267,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "exmail",
         name: "腾讯企业邮",
         domains: &[],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.exmail.qq.com", 465),
             imap: tls("imap.exmail.qq.com", 993),
@@ -261,6 +283,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "qiye163",
         name: "网易企业邮",
         domains: &[],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.qiye.163.com", 465),
             imap: tls("imap.qiye.163.com", 993),
@@ -276,6 +299,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "aliyun",
         name: "阿里邮箱",
         domains: &[],
+        domestic: true,
         setup: Setup::Password {
             smtp: tls("smtp.qiye.aliyun.com", 465),
             imap: tls("imap.qiye.aliyun.com", 993),
@@ -291,6 +315,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "outlook",
         name: "Outlook 邮箱",
         domains: &["outlook.com", "hotmail.com", "live.com", "msn.com"],
+        domestic: false,
         setup: Setup::Unsupported {
             reason: "Outlook 邮箱要用微软账号授权登录，这个功能还在做，暂时不能添加。",
         },
@@ -299,6 +324,7 @@ pub static PROVIDERS: &[Provider] = &[
         id: "proton",
         name: "Proton Mail",
         domains: &["proton.me", "protonmail.com", "pm.me"],
+        domestic: false,
         setup: Setup::Unsupported {
             reason: "Proton Mail 要通过电脑上的 Proton Bridge 收发信，这个功能还在做，暂时不能添加。",
         },
@@ -314,6 +340,7 @@ pub static PROVIDERS: &[Provider] = &[
             "tuta.io",
             "keemail.me",
         ],
+        domestic: false,
         setup: Setup::Unsupported {
             reason: "Tuta 不提供 SMTP 和 IMAP，没法用来发信，请换一个邮箱。",
         },

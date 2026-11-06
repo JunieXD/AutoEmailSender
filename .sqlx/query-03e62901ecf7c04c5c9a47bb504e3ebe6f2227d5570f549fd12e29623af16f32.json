@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE mailbox\n        SET address = ?1, sender_name = ?2, provider = ?3, smtp_host = ?4, smtp_port = ?5,\n            smtp_security = ?6, imap_host = ?7, imap_port = ?8, imap_security = ?9,\n            secret = ?10, daily_limit = ?11, min_interval_s = ?12, receive_error = NULL,\n            receive_retry_at = NULL, paused_until = NULL, pause_reason = NULL,\n            cloud_stale = cloud_stale OR (\n              EXISTS (SELECT 1 FROM email WHERE mailbox_id = mailbox.id AND state = 'cloud')\n              AND (sender_name IS NOT ?2 OR smtp_host IS NOT ?4 OR smtp_port IS NOT ?5\n                OR smtp_security IS NOT ?6 OR secret IS NOT ?10 OR daily_limit IS NOT ?11\n                OR min_interval_s IS NOT ?12))\n        WHERE id = ?13",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 13
+    },
+    "nullable": []
+  },
+  "hash": "03e62901ecf7c04c5c9a47bb504e3ebe6f2227d5570f549fd12e29623af16f32"
+}

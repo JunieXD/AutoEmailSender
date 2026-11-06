@@ -292,7 +292,10 @@ async fn login_and_expiration_keep_email_but_never_expose_the_token(db: SqlitePo
         let public = serde_json::to_value(&state).unwrap();
         assert_eq!(
             public,
-            json!({"kind":"loggedIn", "email":"student@example.invalid", "termsOutdated":false})
+            json!({
+                "kind":"loggedIn", "email":"student@example.invalid", "termsOutdated":false,
+                "cloudEmails":0
+            })
         );
         assert!(matches!(
             account::state(&db).await.unwrap(),

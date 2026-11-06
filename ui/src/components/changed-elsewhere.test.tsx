@@ -82,7 +82,7 @@ const task: TaskSummary = {
   createdAt: 0,
   pauseReason: null,
   modelConfigId: null,
-  progress: { generating: 0, review: 1, generationFailed: 0, approved: 0, sent: 0, failed: 0, canceled: 0 },
+  progress: { generating: 0, review: 1, generationFailed: 0, approved: 0, cloud: 0, sent: 0, failed: 0, canceled: 0 },
   schedule: { kind: "now" },
 };
 

@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use sqlx::SqliteConnection;
 use ts_rs::TS;
 
 use crate::{CallError, Context, ErrorCode, Nothing};
@@ -179,5 +180,17 @@ impl From<account::Error> for CallError {
             code,
             message: error.message(),
         }
+    }
+}
+
+/// Answers that came for a login replaced meanwhile are dropped.
+pub(crate) async fn same_login(
+    conn: &mut SqliteConnection,
+    login: &account::Login,
+) -> Result<(), account::Error> {
+    if login.is_saved(conn).await? {
+        Ok(())
+    } else {
+        Err(account::Error::Invalid("登录的账号刚刚变了，请再试一次。"))
     }
 }

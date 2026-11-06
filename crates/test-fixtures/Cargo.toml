@@ -19,3 +19,5 @@ serde_json.workspace = true
 sqlx.workspace = true
 tempfile = "3"
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"] }
+transport.workspace = true
+zstd = "0.14"

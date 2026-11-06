@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { call, errorMessage } from "@/api/call";
 import type { Tier } from "@/api/types";
 import { AccountDialog, type AccountMode, TermsNotice, useAccount } from "@/components/account";
+import { Confirm } from "@/components/batch-bar";
 import { Field, formClose } from "@/components/form";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
@@ -39,7 +40,7 @@ export function AccountSection() {
       {state?.kind === "loggedOut" && (
         <>
           <p className="text-sm text-muted-foreground">
-            本机的功能无需登录。登录后还可使用导师库和手机远程，开通 Plus 还可使用邮件追踪和云端备份。
+            本机的功能无需登录。登录后还可使用导师库和手机远程，开通 Plus 还可使用邮件追踪、云端定时发送和云端备份。
           </p>
           <div className="flex gap-2">
             <Button onClick={() => setDialog("login")}>登录</Button>
@@ -68,9 +69,23 @@ export function AccountSection() {
           ) : (
             <div className="flex flex-col items-start gap-1.5">
               <div className="flex gap-2">
-                <Button variant="quiet" disabled={logout.isPending} onClick={() => logout.mutate()}>
-                  退出登录
-                </Button>
+                {state.cloudEmails > 0 ? (
+                  <Confirm
+                    trigger={
+                      <Button variant="quiet" disabled={logout.isPending}>
+                        退出登录
+                      </Button>
+                    }
+                    message={`有 ${state.cloudEmails} 封邮件已交给云端，退出后照常发出，重新登录这个账号后才能同步结果或撤回。`}
+                    action="退出登录"
+                    side="bottom"
+                    onConfirm={() => logout.mutate()}
+                  />
+                ) : (
+                  <Button variant="quiet" disabled={logout.isPending} onClick={() => logout.mutate()}>
+                    退出登录
+                  </Button>
+                )}
                 <Button variant="ghost" onClick={() => setDeleting(state.email)}>
                   注销账号
                 </Button>
@@ -127,7 +142,7 @@ function PlusRow({ email, outdated }: { email: string; outdated: boolean }) {
       )}
       {redeemed != null && <p className="text-sm text-success">兑换成功，Plus 增加 {redeemed} 天。</p>}
       <p className="text-sm text-muted-foreground">
-        本机的功能一直免费。Plus 可使用邮件追踪（每 30 天 500 封）和云端备份，费用用于支付服务器。
+        本机的功能一直免费。Plus 可使用邮件追踪（每 30 天 500 封）、云端定时发送和云端备份，费用用于支付服务器。
       </p>
       {outdated ? (
         <>

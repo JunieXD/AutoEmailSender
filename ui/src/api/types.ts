@@ -14,7 +14,11 @@ export type AccountState = { "kind": "loggedOut" } | { "kind": "loggedIn", email
 /**
  * The account agreed to older terms than this app's, as far as this computer knows.
  */
-termsOutdated: boolean, } | { "kind": "expired", email: string, };
+termsOutdated: boolean,
+/**
+ * Its emails with the official server, which keep going out when it logs out.
+ */
+cloudEmails: number, } | { "kind": "expired", email: string, };
 
 export type AccountVerification = { email: string, code: string, password: string, };
 
@@ -107,6 +111,90 @@ export type CloudBackupServer = { plusUntil: number | null,
 deleteAt: number | null, backup: CloudBackupCopy | null, };
 
 export type CloudBackupSummary = { deviceName: string | null, exportedAt: number, mentorCount: number, emailCount: number, };
+
+export type CloudHandOff = {
+/**
+ * As the preview of just these planned them.
+ */
+emails: Array<CloudSendChoice>,
+/**
+ * The mailboxes whose secret the user agreed to give the server.
+ */
+consents: Array<number>, };
+
+export type CloudHandedOff = {
+/**
+ * Now with the server.
+ */
+handed: Array<number>,
+/**
+ * Left here, with why.
+ */
+kept: Array<CloudKept>,
+/**
+ * The server could not log in to these, so their emails were left here.
+ */
+loginFailed: Array<CloudLoginFailed>, };
+
+export type CloudKept = { id: number, reason: string, };
+
+export type CloudLoginFailed = { mailboxId: number, address: string, error: string, };
+
+export type CloudSendBlocked = "signed_out" | "terms_outdated" | "no_plus";
+
+export type CloudSendChoice = { id: number, mailboxId: number, at: number, };
+
+export type CloudSendMailbox = { id: number, address: string,
+/**
+ * The server does not have its secret: it goes up with them, once the user agrees.
+ */
+needsConsent: boolean, };
+
+export type CloudSendPlanned = { mentorName: string, taskId: number | null, taskName: string | null,
+/**
+ * When it was to go from here.
+ */
+plannedAt: number, id: number, mailboxId: number, at: number, };
+
+export type CloudSendPreview = {
+/**
+ * What handing over needs first; nothing is planned then.
+ */
+blocked: CloudSendBlocked | null,
+/**
+ * Those that can go, in planned order, with the mailbox and time planned for each.
+ */
+emails: Array<CloudSendPlanned>, unfit: Array<CloudSendUnfit>,
+/**
+ * The mailboxes they go from.
+ */
+mailboxes: Array<CloudSendMailbox>,
+/**
+ * About how much goes up, in bytes: their letters and files.
+ */
+size: number, };
+
+export type CloudSendPreviewInput = {
+/**
+ * The emails to plan; when left out, every approved scheduled email still to go.
+ */
+emails?: Array<number>,
+/**
+ * Only the task's.
+ */
+task?: number, };
+
+export type CloudSendUnfit = { id: number, mentorName: string, taskName: string | null, reason: CloudSendUnfitReason, };
+
+export type CloudSendUnfitReason = "follow_up" | "tried" | "task_paused" | "no_address" | "too_soon" | "after_plus" | "foreign_mailbox" | "no_mailbox" | "too_late" | "too_large";
+
+export type CloudWithdraw = { "email": number } | { "task": number };
+
+export type CloudWithdrawn = {
+/**
+ * Being sent that moment, so not taken back: their outcome comes with the next sync.
+ */
+sending: number, };
 
 export type CodeRequest = { code: string, };
 
@@ -218,7 +306,7 @@ resent: boolean,
 /**
  * For one that went with a tracking image.
  */
-tracking: EmailTracking | null, } & ({ "state": "approved" } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, } | { "state": "canceled", cancelReason: string, });
+tracking: EmailTracking | null, } & ({ "state": "approved" } | { "state": "cloud", fromAddress: string, at: number, uploading: boolean, cancelReason: string | null, } | { "state": "sending", cancelReason: string | null, } | { "state": "maybe_sent", fromAddress: string, toAddress: string, sentAt: number, error: string, cancelReason: string | null, } | { "state": "sent", fromAddress: string, toAddress: string, sentAt: number, } | { "state": "bounced", fromAddress: string, toAddress: string, sentAt: number, error: string, } | { "state": "failed", error: string, } | { "state": "canceled", cancelReason: string, });
 
 export type EmailId = { id: number, };
 
@@ -404,7 +492,15 @@ minIntervalS: number,
 /**
  * Why the last round of receiving failed.
  */
-receiveError: string | null, pause: Pause | null, needsSecret: boolean, };
+receiveError: string | null, pause: Pause | null, needsSecret: boolean,
+/**
+ * Emails the official server is to send from it.
+ */
+cloudEmails: number,
+/**
+ * Its sending paused on the official server, as last synced.
+ */
+cloudPause: Pause | null, };
 
 export type MailboxEdit = { id: number,
 /**
@@ -739,9 +835,31 @@ export type PhoneId = { id: string, };
 
 export type PhonePairingAnswer = { allow: boolean, };
 
+export type PlanCloud = {
+/**
+ * When it is to go.
+ */
+at: number,
+/**
+ * Still going up: withdrawn at the next sync if that was cut short.
+ */
+uploading: boolean,
+/**
+ * Its mailbox's sending is paused there, as last synced.
+ */
+pause: Pause | null, };
+
 export type PlanColumn = "pending" | "upcoming" | "history";
 
-export type PlanEmail = { id: number, kind: DraftKind, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, cancelReason: string | null, waiting: Waiting | null, };
+export type PlanEmail = { id: number, kind: DraftKind, mentorId: number, name: string, subject: string | null, taskId: number | null, taskName: string | null, state: DraftState, resendOf: number | null, plannedAt: number | null, latestAt: number | null, sentAt: number | null, fromAddress: string | null, error: string | null, cancelReason: string | null, waiting: Waiting | null,
+/**
+ * With the official server, which sends it from `from_address`.
+ */
+cloud: PlanCloud | null,
+/**
+ * The official server sent it, or tried to.
+ */
+byCloud: boolean, };
 
 export type PlanPage = { emails: Array<PlanEmail>, total: number, };
 
@@ -773,14 +891,23 @@ export type Profile = { name: string | null, researchInterests: string | null, r
 
 export type ProfileForm = { name?: string, researchInterests?: string, rewritePreference?: string, };
 
-export type Progress = { generating: number, review: number, generationFailed: number, approved: number, sent: number, failed: number, canceled: number, };
+export type Progress = { generating: number, review: number, generationFailed: number, approved: number,
+/**
+ * Of `approved`, those with the official server.
+ */
+cloud: number, sent: number, failed: number, canceled: number, };
 
 export type Provider = { id: string, name: string,
 /**
  * The address domains it serves. Empty for services that host an organisation's own domain,
  * which the user picks by name.
  */
-domains: Array<string>, setup: Setup, };
+domains: Array<string>,
+/**
+ * Its servers are in mainland China, where the official server can reach them
+ * (docs/design.md#云端定时发送).
+ */
+domestic: boolean, setup: Setup, };
 
 export type Purpose = "matching" | "writing" | "attach_by_default";
 
@@ -1157,6 +1284,9 @@ export interface Operations {
   sendEmailNow: { input: EmailId; output: null };
   sendingPlan: { input: PlanQuery; output: PlanPage };
   scheduledWork: { input: Nothing; output: ScheduledWork };
+  cloudSendPreview: { input: CloudSendPreviewInput; output: CloudSendPreview };
+  handOffToCloud: { input: CloudHandOff; output: CloudHandedOff };
+  withdrawFromCloud: { input: CloudWithdraw; output: CloudWithdrawn };
   planTask: { input: NewTask; output: TaskPlan };
   createTask: { input: NewTask; output: TaskId };
   taskWork: { input: Nothing; output: Array<TaskWork> };

@@ -1,0 +1,128 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT e.id, m.name AS mentor_name, e.task_id, t.name AS \"task_name?\",\n             e.kind = 'follow_up' AS \"follow_up!: bool\", e.planned_at AS \"planned_at!\",\n             e.latest_at AS \"latest_at!\", e.sent_at IS NOT NULL AS \"tried!: bool\",\n             (t.state IS NOT NULL AND (t.state <> 'active' OR t.generation_paused_at IS NOT NULL))\n               AS \"task_paused!: bool\",\n             EXISTS (SELECT 1 FROM mentor_email a WHERE a.mentor_id = e.mentor_id)\n               AS \"has_address!: bool\",\n             own.mailbox_id AS own, s.size AS \"size!: i64\"\n           FROM email e\n           JOIN mentor m ON m.id = e.mentor_id\n           JOIN email_own_mailbox own ON own.email_id = e.id\n           JOIN email_size s ON s.email_id = e.id\n           LEFT JOIN task t ON t.id = e.task_id\n           WHERE e.state = 'approved' AND e.kind IN ('first', 'follow_up')\n             AND e.planned_at IS NOT NULL AND e.latest_at > ?1\n             AND (?2 IS NULL OR e.id IN (SELECT value FROM json_each(?2)))\n             AND (?3 IS NULL OR e.task_id = ?3)\n           ORDER BY e.planned_at, e.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "mentor_name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mentor",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "task_id",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "task_id"
+          }
+        }
+      },
+      {
+        "name": "task_name?",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "task",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "follow_up!: bool",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "planned_at!",
+        "ordinal": 5,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "planned_at"
+          }
+        }
+      },
+      {
+        "name": "latest_at!",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "latest_at"
+          }
+        }
+      },
+      {
+        "name": "tried!: bool",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "task_paused!: bool",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "has_address!: bool",
+        "ordinal": 9,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "own",
+        "ordinal": 10,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "size!: i64",
+        "ordinal": 11,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "a3ed30c747d204bb98443d3a92869f8e8dc69f68ca81505cb83901c5b289d6ad"
+}

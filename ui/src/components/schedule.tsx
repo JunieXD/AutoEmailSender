@@ -188,7 +188,9 @@ export function ChangeSchedule({ task, onClose }: { task: TaskSummary; onClose: 
             }}
           />
           <p className="text-sm text-muted-foreground">
-            保存后，{task.progress.approved} 封已批准且尚未发出的邮件会按批准顺序重新排期；排不进的留待处理。
+            保存后，{task.progress.approved - task.progress.cloud}{" "}
+            封已批准且尚未发出的邮件会按批准顺序重新排期；排不进的留待处理。
+            {task.progress.cloud > 0 && `已交给云端的 ${task.progress.cloud} 封不改，要改先撤回到本地。`}
           </p>
           {saved !== null && (
             <p role="status" className="text-sm text-success">

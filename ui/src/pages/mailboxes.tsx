@@ -119,6 +119,11 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
           </p>
           {m.needsSecret && <p className="text-sm text-warning">恢复后需要重新填写授权码，填好之前不收发信。</p>}
           {m.receiveError && <p className="text-sm text-destructive">收信失败：{m.receiveError}</p>}
+          {m.cloudPause && (
+            <p className="text-sm text-warning">
+              云端发信暂停到 {scheduledAt(m.cloudPause.until)}，{m.cloudEmails} 封在等：{m.cloudPause.reason}
+            </p>
+          )}
           {m.pause && (
             <p className="text-sm text-warning">
               发信暂停到 {scheduledAt(m.pause.until)}：{m.pause.reason}
@@ -141,17 +146,27 @@ function MailboxRow({ mailbox: m, providers }: { mailbox: Mailbox; providers: Pr
           <Button variant="ghost" onClick={() => setEditing(true)}>
             编辑
           </Button>
-          <Confirm
-            trigger={
-              <Button variant="ghost" disabled={remove.isPending}>
-                删除
-              </Button>
-            }
-            message="删除这个邮箱？应用不再用它发信和收信，从它收到的来往邮件也从应用里删除；邮箱里的邮件不受影响。"
-            action="删除"
-            side="bottom"
-            onConfirm={() => remove.mutate()}
-          />
+          {m.cloudEmails > 0 ? (
+            <Confirm
+              trigger={<Button variant="ghost">删除</Button>}
+              message={`有 ${m.cloudEmails} 封已交给云端的邮件从这个邮箱发出，请先在发送计划里把它们撤回到本地，再删除邮箱。`}
+              action="知道了"
+              side="bottom"
+              onConfirm={() => undefined}
+            />
+          ) : (
+            <Confirm
+              trigger={
+                <Button variant="ghost" disabled={remove.isPending}>
+                  删除
+                </Button>
+              }
+              message="删除这个邮箱？应用不再用它发信和收信，从它收到的来往邮件也从应用里删除；邮箱里的邮件不受影响。"
+              action="删除"
+              side="bottom"
+              onConfirm={() => remove.mutate()}
+            />
+          )}
         </div>
       </div>
       <p className="text-sm empty:hidden" aria-live="polite">

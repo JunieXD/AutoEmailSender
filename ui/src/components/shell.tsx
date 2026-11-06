@@ -76,7 +76,11 @@ export function Shell() {
       setCompleted(`匹配度分析完成：分析了 ${p.analyzed} 位${p.failed > 0 ? `，失败 ${p.failed} 位` : ""}`);
     });
     // A sent email changes its mentor's correspondence and contact status as well as its task.
-    const sendingChanged = listen("sending-changed", () => refreshMentors(queryClient));
+    const sendingChanged = listen("sending-changed", () => {
+      refreshMentors(queryClient);
+      // The official server's pauses come back with what it sent.
+      void queryClient.invalidateQueries({ queryKey: ["listMailboxes"] });
+    });
     // Opens and registrations show on letters, in the contact column and in the filters.
     const trackingChanged = listen("tracking-changed", () => {
       refreshMentors(queryClient);
@@ -297,6 +301,11 @@ function useBackground() {
     // Failed and unsendable letters, whichever task they are in, wait together in the sending plan.
     emails: scheduled.data?.pending ?? 0,
     mailboxes: mailboxes.data?.flatMap(({ id, address, pause }) => (pause ? [{ id, address, pause }] : [])) ?? [],
+    // Only waiting for its time, or for the secret to be fixed here.
+    cloudPaused:
+      mailboxes.data?.flatMap(({ id, address, cloudPause, cloudEmails }) =>
+        cloudPause ? [{ id, address, pause: cloudPause, count: cloudEmails }] : [],
+      ) ?? [],
     // A round that could not reach a mailbox still counts as received; the reason stays on the mailbox.
     unreceived:
       mailboxes.data?.flatMap(({ id, address, receiveError }) =>
@@ -346,6 +355,7 @@ function useBackground() {
       (work.storage ? 1 : 0) +
       (work.emails > 0 ? 1 : 0) +
       work.mailboxes.length +
+      work.cloudPaused.length +
       work.unreceived.length +
       work.paused.length +
       work.crawlsPending.length +
@@ -449,6 +459,14 @@ function Background({ className }: { className?: string }) {
                   恢复
                 </Button>
               </div>
+            ))}
+            {work.cloudPaused.map((m) => (
+              <Link key={m.id} to="/settings/mailboxes" className={ITEM}>
+                <Entry
+                  title={m.address}
+                  detail={`云端发信暂停到 ${scheduledAt(m.pause.until)}，${m.count} 封在等：${m.pause.reason}`}
+                />
+              </Link>
             ))}
             {work.unreceived.map((m) => (
               <Link key={m.id} to="/settings/mailboxes" className={ITEM}>

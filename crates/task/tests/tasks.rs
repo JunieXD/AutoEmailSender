@@ -2560,20 +2560,23 @@ async fn restart_selects_only_unsuccessful_and_reuses_saved_inputs(db: SqlitePoo
     ]) {
         sqlx::query(
             r#"UPDATE email
-            SET state = ?,
-                cancel_reason = CASE WHEN ? = 'canceled' THEN '停止任务' END, error =
-                CASE WHEN ? IN ('failed', 'generation_failed', 'bounced', 'maybe_sent')
-                THEN 'failure' END, planned_at = ?, from_address = 'me@example.com',
-                to_address = 'mentor@example.com', message_id = ?, sent_at = ?,
+            SET state = ?1,
+                cancel_reason = CASE WHEN ?1 = 'canceled' THEN '停止任务' END, error =
+                CASE WHEN ?1 IN ('failed', 'generation_failed', 'bounced', 'maybe_sent')
+                THEN 'failure' END, planned_at = ?2, from_address = 'me@example.com',
+                to_address = 'mentor@example.com', message_id = ?3,
+                sent_at = CASE WHEN ?1 <> 'cloud' THEN ?2 END,
+                latest_at = CASE WHEN ?1 = 'cloud' THEN ?2 + 3600000 END,
+                mailbox_id = CASE WHEN ?1 = 'cloud' THEN 1 END,
+                cloud_id = CASE WHEN ?1 = 'cloud' THEN 'cloud-' || ?5 END,
+                cloud_account = CASE WHEN ?1 = 'cloud' THEN 'me@example.com' END,
+                cloud_at = CASE WHEN ?1 = 'cloud' THEN ?2 END,
                 html = '<p>草稿</p>', text = '草稿'
-            WHERE task_id = ? AND mentor_id = ?"#,
+            WHERE task_id = ?4 AND mentor_id = ?5"#,
         )
-        .bind(state)
-        .bind(state)
         .bind(state)
         .bind(T)
         .bind(format!("<restart-{m}@example.com>"))
-        .bind(T)
         .bind(t)
         .bind(m)
         .execute(&db)
@@ -3109,6 +3112,9 @@ async fn background_work_only_includes_paused_generating_and_failed_tasks(db: Sq
     .await
     .unwrap();
     let mentor = mentor(&db, 1, true).await;
+    test_fixtures::mail::mailbox(&mut db.acquire().await.unwrap())
+        .await
+        .unwrap();
     for (id, task_state, paused, email_state, count) in [
         (1001, "paused", false, "review", 1),
         (1002, "active", true, "generating", 2),
@@ -3142,13 +3148,20 @@ async fn background_work_only_includes_paused_generating_and_failed_tasks(db: Sq
             };
             sqlx::query(
                 r#"INSERT INTO email (task_id, mentor_id, kind, state, subject, body_md,
-                    html, text, error, cancel_reason, planned_at, message_id,
-                    from_address, sent_at, created_at, updated_at)
+                    html, text, error, cancel_reason, planned_at, latest_at, message_id,
+                    mailbox_id, from_address, to_address, sent_at, cloud_id, cloud_account,
+                    cloud_at, created_at, updated_at)
                 VALUES (?1, ?2, 'first', ?3, '主题', '正文', '<p>正文</p>', '正文', ?4,
                     CASE WHEN ?3 = 'canceled' THEN '任务停止' END, 0,
-                    CASE WHEN ?3 = 'sending' THEN '<work-' || ?1 || '@example.com>' END,
-                    CASE WHEN ?3 = 'sending' THEN 'me@example.com' END,
-                    CASE WHEN ?3 = 'sending' THEN ?5 END, 0, 0)"#,
+                    CASE WHEN ?3 = 'cloud' THEN 3600000 END,
+                    CASE WHEN ?3 IN ('sending', 'cloud') THEN '<work-' || ?1 || '@example.com>' END,
+                    CASE WHEN ?3 = 'cloud' THEN 1 END,
+                    CASE WHEN ?3 IN ('sending', 'cloud') THEN 'me@example.com' END,
+                    CASE WHEN ?3 = 'cloud' THEN 'mentor@example.com' END,
+                    CASE WHEN ?3 = 'sending' THEN ?5 END,
+                    CASE WHEN ?3 = 'cloud' THEN 'cloud-' || ?1 END,
+                    CASE WHEN ?3 = 'cloud' THEN 'me@example.com' END,
+                    CASE WHEN ?3 = 'cloud' THEN 0 END, 0, 0)"#,
             )
             .bind(id)
             .bind(member)

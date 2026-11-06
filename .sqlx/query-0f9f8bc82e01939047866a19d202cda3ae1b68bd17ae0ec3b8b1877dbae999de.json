@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT e.id, e.kind AS \"kind: email::DraftKind\", e.mentor_id, m.name,\n            e.subject, e.task_id, t.name AS task_name,\n            e.state AS \"state: DraftState\", e.planned_at, e.latest_at, e.sent_at,\n            e.from_address, e.error, e.cancel_reason, e.resend_of,\n            t.state AS task_state, t.generation_paused_at, own.mailbox_id AS own,\n            e.kind IN ('reply', 'follow_up') AS \"reply!: bool\"\n        FROM json_each(?1) j\n        JOIN email e ON e.id = j.value\n        JOIN mentor m ON m.id = e.mentor_id\n        JOIN email_own_mailbox own ON own.email_id = e.id\n        LEFT JOIN task t ON t.id = e.task_id\n        ORDER BY j.key",
+  "query": "SELECT e.id, e.kind AS \"kind: email::DraftKind\", e.mentor_id, m.name,\n            e.subject, e.task_id, t.name AS task_name,\n            e.state AS \"state: DraftState\", e.planned_at, e.latest_at, e.sent_at,\n            e.from_address, e.error, e.cancel_reason, e.resend_of,\n            t.state AS task_state, t.generation_paused_at, own.mailbox_id AS own,\n            e.kind IN ('reply', 'follow_up') AS \"reply!: bool\",\n            e.cloud_at, e.cloud_uploading AS \"cloud_uploading: bool\",\n            e.by_cloud AS \"by_cloud: bool\", b.cloud_paused_until, b.cloud_pause_reason\n        FROM json_each(?1) j\n        JOIN email e ON e.id = j.value\n        JOIN mentor m ON m.id = e.mentor_id\n        JOIN email_own_mailbox own ON own.email_id = e.id\n        LEFT JOIN task t ON t.id = e.task_id\n        LEFT JOIN mailbox b ON b.id = e.mailbox_id AND e.state = 'cloud'\n        ORDER BY j.key",
   "describe": {
     "columns": [
       {
@@ -201,6 +201,61 @@
         "ordinal": 18,
         "type_info": "Integer",
         "origin": "Expression"
+      },
+      {
+        "name": "cloud_at",
+        "ordinal": 19,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_at"
+          }
+        }
+      },
+      {
+        "name": "cloud_uploading: bool",
+        "ordinal": 20,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_uploading"
+          }
+        }
+      },
+      {
+        "name": "by_cloud: bool",
+        "ordinal": 21,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "by_cloud"
+          }
+        }
+      },
+      {
+        "name": "cloud_paused_until",
+        "ordinal": 22,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "cloud_paused_until"
+          }
+        }
+      },
+      {
+        "name": "cloud_pause_reason",
+        "ordinal": 23,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "cloud_pause_reason"
+          }
+        }
       }
     ],
     "parameters": {
@@ -225,8 +280,13 @@
       true,
       true,
       true,
-      false
+      false,
+      true,
+      false,
+      false,
+      true,
+      true
     ]
   },
-  "hash": "2aedc96e1bc72349294eb26b8fce23ba9143c31e0fbf657b768d6d2c480561aa"
+  "hash": "0f9f8bc82e01939047866a19d202cda3ae1b68bd17ae0ec3b8b1877dbae999de"
 }

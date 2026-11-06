@@ -41,6 +41,8 @@ pub enum State {
         email: String,
         /// The account agreed to older terms than this app's, as far as this computer knows.
         terms_outdated: bool,
+        /// Its emails with the official server, which keep going out when it logs out.
+        cloud_emails: u32,
     },
     Expired {
         email: String,
@@ -95,7 +97,9 @@ pub fn tracking_image(id: &str) -> String {
 
 pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
     let row = sqlx::query!(
-        r#"SELECT email, token IS NOT NULL AS "logged_in!: bool", terms
+        r#"SELECT email, token IS NOT NULL AS "logged_in!: bool", terms,
+            (SELECT count(*) FROM email WHERE state = 'cloud' AND cloud_account = account.email)
+              AS "cloud_emails!: u32"
         FROM account"#,
     )
     .fetch_optional(db)
@@ -105,6 +109,7 @@ pub async fn state(db: &SqlitePool) -> Result<State, sqlx::Error> {
         Some(row) if row.logged_in => State::LoggedIn {
             email: row.email,
             terms_outdated: outdated(row.terms.as_deref()),
+            cloud_emails: row.cloud_emails,
         },
         Some(row) => State::Expired { email: row.email },
     })
@@ -565,8 +570,10 @@ pub struct Login {
 }
 
 /// What an account that has not agreed to the current terms may still do: read itself, agree,
-/// log out, be deleted, and restore its cloud backup.
+/// log out, be deleted, restore its cloud backup, and get back the emails it handed to the cloud
+/// and what became of them.
 fn without_terms(method: &Method, path: &str) -> bool {
+    use cloud_api::cloud_send;
     match *method {
         Method::GET => {
             path == path::ACCOUNT
@@ -575,8 +582,18 @@ fn without_terms(method: &Method, path: &str) -> bool {
                     .strip_prefix(path::BACKUP_OBJECTS)
                     .is_some_and(|id| id.starts_with('/'))
         }
-        Method::POST => path == path::ACCOUNT_TERMS || path == path::LOGOUT,
-        Method::DELETE => path == path::ACCOUNT,
+        Method::POST => {
+            path == path::ACCOUNT_TERMS
+                || path == path::LOGOUT
+                || path == cloud_send::RESULTS
+                || path == cloud_send::RESULTS_ACK
+        }
+        Method::DELETE => {
+            path == path::ACCOUNT
+                || path
+                    .strip_prefix(cloud_send::EMAILS)
+                    .is_some_and(|id| id.starts_with('/'))
+        }
         _ => false,
     }
 }
@@ -671,10 +688,7 @@ async fn save_session(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(State::LoggedIn {
-        email: session.account.email,
-        terms_outdated: outdated(session.account.terms.as_deref()),
-    })
+    Ok(state(db).await?)
 }
 
 #[derive(Debug)]

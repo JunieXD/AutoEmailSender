@@ -182,6 +182,8 @@ pub async fn resume_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
 pub async fn stop_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
     task::stop(&ctx.db, key.id, now()).await?;
     ctx.generator.wake();
+    // Its emails with the official server are canceled once withdrawn.
+    ctx.cloud_send.wake();
     Ok(())
 }
 pub async fn delete_task(ctx: &Context, key: TaskId) -> Result<(), CallError> {
@@ -193,6 +195,7 @@ pub async fn remove_task_email(ctx: &Context, key: task::TaskEmail) -> Result<()
     task::remove(&ctx.db, &key, now()).await?;
     ctx.generator.wake();
     ctx.sender.wake();
+    ctx.cloud_send.wake();
     Ok(())
 }
 pub async fn regenerate_task_email(ctx: &Context, key: task::TaskEmail) -> Result<u64, CallError> {

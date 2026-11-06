@@ -259,6 +259,8 @@ it.each([
       fromAddress: null,
       cancelReason: null,
       waiting: null,
+      cloud: null,
+      byCloud: false,
     };
     remote.draft = {
       factCheck: null,
@@ -318,6 +320,8 @@ it.each(["correspondence", "sending plan"])(
       fromAddress: null,
       cancelReason: null,
       waiting: null,
+      cloud: null,
+      byCloud: false,
     };
     remote.withdrawnDraft = {
       factCheck: null,

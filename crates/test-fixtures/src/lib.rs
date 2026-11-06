@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod cloud_send;
 pub mod contact;
 pub mod db;
 pub mod http;

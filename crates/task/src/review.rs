@@ -9,6 +9,8 @@ pub struct Progress {
     pub review: i64,
     pub generation_failed: i64,
     pub approved: i64,
+    /// Of `approved`, those with the official server.
+    pub cloud: i64,
     pub sent: i64,
     pub failed: i64,
     pub canceled: i64,
@@ -233,7 +235,11 @@ async fn counts(
             DraftState::Generating => p.generating += r.count,
             DraftState::Review => p.review += r.count,
             DraftState::GenerationFailed => p.generation_failed += r.count,
-            DraftState::Approved | DraftState::Sending | DraftState::Cloud => p.approved += r.count,
+            DraftState::Approved | DraftState::Sending => p.approved += r.count,
+            DraftState::Cloud => {
+                p.approved += r.count;
+                p.cloud += r.count;
+            }
             DraftState::MaybeSent | DraftState::Sent | DraftState::Bounced => p.sent += r.count,
             DraftState::Failed => p.failed += r.count,
             DraftState::Canceled => p.canceled += r.count,

@@ -69,7 +69,7 @@ pub async fn assign(
 pub async fn expire(conn: &mut SqliteConnection, before: i64) -> Result<bool, sqlx::Error> {
     let expired = sqlx::query!(
         r#"UPDATE email SET tracking_state = 'expired'
-        WHERE tracking_state = 'pending' AND state <> 'sending' AND tracking_chosen_at < ?"#,
+        WHERE tracking_state = 'pending' AND state NOT IN ('cloud', 'sending') AND tracking_chosen_at < ?"#,
         before
     )
     .execute(conn)
@@ -78,7 +78,8 @@ pub async fn expire(conn: &mut SqliteConnection, before: i64) -> Result<bool, sq
 }
 
 /// Up to `limit` ids of `account`'s emails that may be out and are not registered yet, oldest
-/// first. One being handed over waits: it may yet turn out to have reached nobody.
+/// first. One being handed over, or with the official server, waits: it may yet turn out to have
+/// reached nobody.
 pub async fn pending(
     conn: &mut SqliteConnection,
     account: &str,
@@ -86,7 +87,7 @@ pub async fn pending(
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT tracking_id AS "tracking_id!" FROM email
-        WHERE tracking_state = 'pending' AND state <> 'sending' AND tracking_account = ?
+        WHERE tracking_state = 'pending' AND state NOT IN ('cloud', 'sending') AND tracking_account = ?
         ORDER BY id LIMIT ?"#,
         account,
         limit
@@ -168,7 +169,7 @@ pub async fn wanted(
         r#"SELECT (SELECT email_tracking FROM profile) = 1
             OR EXISTS (SELECT 1 FROM email WHERE tracking_account = ?1 AND tracked_at >= ?2)
             OR EXISTS (SELECT 1 FROM email WHERE tracking_account = ?1
-                AND tracking_state = 'pending' AND state <> 'sending')
+                AND tracking_state = 'pending' AND state NOT IN ('cloud', 'sending'))
             AS "wanted!: bool""#,
         account,
         since

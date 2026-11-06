@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_id AS \"cloud_id!\", cloud_account AS \"account!\", cloud_at AS \"at!\"\n           FROM email\n           WHERE id = ?1 AND state = 'cloud'\n             AND (json_array_length(?2) = 0 OR to_address IN (SELECT value FROM json_each(?2)))",
+  "describe": {
+    "columns": [
+      {
+        "name": "cloud_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_id"
+          }
+        }
+      },
+      {
+        "name": "account!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_account"
+          }
+        }
+      },
+      {
+        "name": "at!",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "ff662af84298ea09e799f1a7331019f102ffce9080ced2ceca7dc33b01fccc27"
+}

@@ -1,16 +1,16 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id FROM email WHERE task_id = ? AND state IN ('sending','cloud') LIMIT 1",
+  "query": "SELECT cloud_stale AS \"stale!: bool\" FROM mailbox WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "stale!: bool",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": {
           "Table": {
-            "table": "email",
-            "name": "id"
+            "table": "mailbox",
+            "name": "cloud_stale"
           }
         }
       }
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "261e2bf6ce44dd81e21eb7998824cd44c41c68d6af73ad8a50fe3ba7522f3b45"
+  "hash": "b64b1c81239a438a3682a636a75d73df6cc532b38bfa084ce8047f16a2b36fd9"
 }

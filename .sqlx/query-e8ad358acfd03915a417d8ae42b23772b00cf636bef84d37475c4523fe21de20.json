@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET cloud_uploading = 0 WHERE cloud_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e8ad358acfd03915a417d8ae42b23772b00cf636bef84d37475c4523fe21de20"
+}

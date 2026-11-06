@@ -207,6 +207,48 @@ async fn sending(
     Ok(Description::new(action, targets))
 }
 
+/// Each email as it is to go from the official server, and each secret the server gets.
+async fn cloud_hand_off(
+    conn: &mut SqliteConnection,
+    input: &crate::cloud_send::HandOff,
+) -> Result<Description, CallError> {
+    let mut targets = Vec::new();
+    for c in &input.emails {
+        let row = sqlx::query!(
+            r#"SELECT m.name, e.subject, (SELECT address FROM mentor_email
+                WHERE mentor_id = m.id ORDER BY position LIMIT 1) AS "address?: String"
+            FROM email e JOIN mentor m ON m.id = e.mentor_id WHERE e.id = ?"#,
+            c.id
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or_else(|| CallError::not_found("有一封邮件找不到了，可能已被删除。"))?;
+        targets.push(format!(
+            "{}：{}；主题：{}；{}从 {} 发出",
+            row.name,
+            row.address.as_deref().unwrap_or("未填写邮箱"),
+            row.subject.as_deref().unwrap_or(""),
+            display_time(c.at),
+            mailbox_target(conn, c.mailbox_id).await?
+        ));
+    }
+    for &id in &input.consents {
+        targets.push(format!(
+            "交出 {} 的地址、服务器设置和授权码",
+            mailbox_target(conn, id).await?
+        ));
+    }
+    Ok(Description::new(
+        format!(
+            "交给云端发送 {} 封邮件：把它们的收件人、主题、正文和附件上传到官方服务器（上海），\
+            到排好的时间从排好的邮箱发出，电脑关机也照发；同意交出的邮箱授权码也一起上传。\
+            邮件和授权码加密保存，但服务器发信时要解开，不是端到端加密",
+            input.emails.len()
+        ),
+        targets,
+    ))
+}
+
 fn display_time(at: i64) -> String {
     display(at, "%Y年%-m月%-d日 %H:%M")
 }
@@ -697,6 +739,10 @@ async fn describe(
                 ),
                 mailbox_target(conn, input.id).await?,
             )
+        }
+        "handOffToCloud" => {
+            let input: crate::cloud_send::HandOff = parse(input)?;
+            cloud_hand_off(conn, &input).await?
         }
         "rescheduleEmail" => {
             let input: crate::RescheduleEmail = parse(input)?;
@@ -1190,6 +1236,7 @@ mod tests {
                 "deleteTemplate",
                 "deleteTodo",
                 "enableCloudBackup",
+                "handOffToCloud",
                 "mergeMentors",
                 "rescheduleEmail",
                 "resendEmail",

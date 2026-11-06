@@ -142,7 +142,7 @@ pub enum Rotation {
     PerEmail,
 }
 
-pub async fn rotation(db: &SqlitePool) -> Result<Rotation, sqlx::Error> {
+pub async fn rotation(db: impl sqlx::SqliteExecutor<'_>) -> Result<Rotation, sqlx::Error> {
     sqlx::query_scalar!(r#"SELECT rotation AS "rotation: Rotation" FROM profile"#)
         .fetch_one(db)
         .await

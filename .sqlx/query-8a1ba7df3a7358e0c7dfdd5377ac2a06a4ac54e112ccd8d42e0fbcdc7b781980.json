@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tracking_id AS \"tracking_id!\" FROM email\n        WHERE tracking_state = 'pending' AND state <> 'sending' AND tracking_account = ?\n        ORDER BY id LIMIT ?",
+  "query": "SELECT tracking_id AS \"tracking_id!\" FROM email\n        WHERE tracking_state = 'pending' AND state NOT IN ('cloud', 'sending') AND tracking_account = ?\n        ORDER BY id LIMIT ?",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "977ba558b8c3a69c69a0225f02f529cd7c5c6f9b601e746d9a760f24059f8d81"
+  "hash": "8a1ba7df3a7358e0c7dfdd5377ac2a06a4ac54e112ccd8d42e0fbcdc7b781980"
 }

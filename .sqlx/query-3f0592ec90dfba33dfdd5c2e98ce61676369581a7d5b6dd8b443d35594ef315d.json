@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE email SET state = 'bounced', planned_at = coalesce(planned_at, sent_at),\n           latest_at = NULL, error = ?1, cancel_reason = NULL, updated_at = ?2\n         WHERE (message_id = ?3 OR copy_message_id = ?3)\n           AND (state IN ('sending', 'maybe_sent', 'sent')\n             OR (state = 'canceled' AND sent_at IS NOT NULL)\n             OR (state IN ('approved', 'failed') AND sent_at IS NOT NULL AND to_address = (\n               SELECT address\n               FROM mentor_email\n               WHERE mentor_id = email.mentor_id\n               ORDER BY position\n               LIMIT 1\n             )))\n           AND to_address IS NOT NULL\n           AND (json_array_length(?4) = 0 OR to_address IN (SELECT value FROM json_each(?4)))\n         RETURNING mentor_id, mailbox_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "mentor_id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mentor_id"
+          }
+        }
+      },
+      {
+        "name": "mailbox_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mailbox_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "3f0592ec90dfba33dfdd5c2e98ce61676369581a7d5b6dd8b443d35594ef315d"
+}

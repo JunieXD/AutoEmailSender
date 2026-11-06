@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import type { PlanColumn, PlanEmail, Waiting } from "@/api/types";
+import type { PlanCloud, PlanColumn, PlanEmail, Waiting } from "@/api/types";
 import { call, errorMessage } from "@/api/call";
 import { Button } from "@/components/ui/button";
 import { Confirm } from "@/components/batch-bar";
+import { CloudSendButton, WithdrawFromCloud } from "@/components/cloud-send";
 import { Pager } from "@/components/mentor-table";
 import { ScheduleActions, refreshSchedule, scheduledAt } from "@/components/schedule";
 import { dropDrafts } from "@/components/mentor";
@@ -67,10 +68,20 @@ function PlanList({ column, label, hidden }: { column: PlanColumn; label: string
         {label}
         {query.data && <span className="ml-2 text-sm text-muted-foreground">{query.data.total}</span>}
       </h2>
+      {column === "upcoming" && (
+        <div className="flex items-center gap-2 px-3 pb-2">
+          <CloudSendButton />
+          <span className="text-xs text-muted-foreground">电脑关机也按时发出</span>
+        </div>
+      )}
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
-        {query.data?.emails.map((e) => (
-          <PlanRow key={e.id} email={e} column={column} />
-        ))}
+        {query.data?.emails.map((e) =>
+          e.cloud ? (
+            <CloudRow key={e.id} email={e} cloud={e.cloud} />
+          ) : (
+            <PlanRow key={e.id} email={e} column={column} />
+          ),
+        )}
         {query.data?.total === 0 && (
           <p className="p-3 text-sm text-muted-foreground">
             {column === "pending"
@@ -129,7 +140,7 @@ function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn })
       )}
       {link}
       <p className="truncate text-xs text-muted-foreground">
-        {column === "history" ? e.fromAddress : (e.taskName ?? "单独首封")}
+        {column === "history" ? `${e.fromAddress ?? ""}${e.byCloud ? "（云端）" : ""}` : (e.taskName ?? "单独首封")}
       </p>
       {e.waiting !== null && <p className="text-xs text-muted-foreground">{WAITING[e.waiting]}</p>}
       {column === "pending" && (
@@ -193,6 +204,36 @@ function PlanRow({ email: e, column }: { email: PlanEmail; column: PlanColumn })
         </div>
       )}
       {action.error && <p className="text-xs text-destructive">{errorMessage(action.error)}</p>}
+    </article>
+  );
+}
+
+/** An email with the official server: it can only be withdrawn. */
+function CloudRow({ email: e, cloud }: { email: PlanEmail; cloud: PlanCloud }) {
+  return (
+    <article className="min-w-0 space-y-2 rounded-md bg-background p-3">
+      <p className="text-sm font-medium tabular-nums">
+        {day(cloud.at) === "今天" ? time(cloud.at) : scheduledAt(cloud.at)}
+      </p>
+      <Link to="/mentors/$mentorId" params={{ mentorId: e.mentorId }} className="block min-w-0">
+        <p className="truncate font-medium">{e.name}</p>
+        <p className="truncate text-sm">{e.subject}</p>
+      </Link>
+      <p className="truncate text-xs text-muted-foreground">{e.taskName ?? "单独首封"}</p>
+      <p className="text-xs text-muted-foreground">
+        {cloud.uploading ? "正在交给云端" : "已交给云端"}，从 {e.fromAddress} 发出
+        {e.cancelReason !== null && `；已取消：${e.cancelReason}，正在从云端撤回`}
+      </p>
+      {cloud.pause && (
+        <p className="text-xs text-warning">
+          云端暂停到 {scheduledAt(cloud.pause.until)}：{cloud.pause.reason}
+        </p>
+      )}
+      {e.cancelReason === null && (
+        <div className="flex flex-wrap gap-1">
+          <WithdrawFromCloud withdraw={{ email: e.id }} />
+        </div>
+      )}
     </article>
   );
 }

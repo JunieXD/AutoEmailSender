@@ -209,67 +209,129 @@ pub async fn step_in_zone<T: chrono::TimeZone>(
     Ok(next.map_or(Next::Idle, Next::At))
 }
 
-/// What a mailbox has sent lately.
-#[derive(Debug)]
+/// What a mailbox has sent lately, and is to send from the official server.
+#[derive(Debug, Clone)]
 struct Usage {
     id: i64,
     needs_secret: bool,
+    /// The official server can log in to it (docs/design.md#云端定时发送).
+    cloud: bool,
     daily_limit: i64,
     min_interval_ms: i64,
     paused_until: Option<i64>,
-    /// Sent in the last 24 hours, and the earliest of those.
-    recent: i64,
-    earliest_recent: Option<i64>,
-    last: Option<i64>,
+    cloud_paused_until: Option<i64>,
+    /// In order: when it sent in the last 24 hours, or last before them, and when the official
+    /// server is to send from it.
+    times: Vec<i64>,
 }
 
 impl Usage {
     /// Neither paused nor at its daily limit.
     fn open(&self, now: i64) -> bool {
-        self.paused_until.is_none_or(|t| t <= now) && self.recent < self.daily_limit
+        self.paused_until.is_none_or(|t| t <= now) && self.has_room(now)
     }
 
-    /// When it may send next: after its pause and the minimum interval, and at its limit, once the
-    /// earliest of the last 24 hours' emails is a day old.
+    /// One more email at `at` keeps every 24 hours around it within the daily limit: the day up
+    /// to `at`, and each day that starts later and so reaches one more email after it.
+    fn has_room(&self, at: i64) -> bool {
+        let after = self.times.partition_point(|&t| t <= at);
+        let ahead = self.times.partition_point(|&t| t < at + DAY);
+        std::iter::once(at - DAY + 1)
+            .chain(self.times[after..ahead].iter().map(|t| t - DAY + 1))
+            .all(|start| {
+                let sent = self.times.partition_point(|&t| t < start + DAY)
+                    - self.times.partition_point(|&t| t < start);
+                (sent as i64) < self.daily_limit
+            })
+    }
+
+    /// At least the minimum interval from every other email.
+    fn spaced(&self, at: i64) -> bool {
+        let next = self.times.partition_point(|&t| t < at);
+        let near = self.times[next.saturating_sub(1)..].iter().take(2);
+        near.into_iter()
+            .all(|t| (t - at).abs() >= self.min_interval_ms)
+    }
+
+    /// The latest it sent, or is to send, by `at`.
+    fn last(&self, at: i64) -> Option<i64> {
+        self.times[..self.times.partition_point(|&t| t <= at)]
+            .last()
+            .copied()
+    }
+
+    /// When it may send next from `now`: after its pause, spaced from the others and within its
+    /// daily limit. That is `now` or the end of an interval or day after one of its emails, the
+    /// last of which always does.
     fn ready_at(&self, now: i64) -> i64 {
-        let mut at = now.max(self.paused_until.unwrap_or(now));
-        if let Some(last) = self.last {
-            at = at.max(last + self.min_interval_ms);
-        }
-        if self.recent >= self.daily_limit {
-            at = at.max(self.earliest_recent.unwrap_or(now) + DAY);
-        }
-        at
+        let from = now.max(self.paused_until.unwrap_or(now));
+        let mut ends: Vec<i64> = self
+            .times
+            .iter()
+            .flat_map(|t| [t + self.min_interval_ms, t + DAY])
+            .filter(|&t| t > from)
+            .collect();
+        ends.sort_unstable();
+        std::iter::once(from)
+            .chain(ends)
+            .find(|&at| self.spaced(at) && self.has_room(at))
+            .unwrap_or_else(|| {
+                unreachable!("a day and an interval after its last email it can send")
+            })
+    }
+
+    /// Sends `at`, as planned for the official server.
+    fn add(&mut self, at: i64) {
+        let i = self.times.partition_point(|&t| t <= at);
+        self.times.insert(i, at);
     }
 }
 
-/// The mailboxes in rotation order, with what each has sent lately.
+/// The mailboxes in rotation order, with what each has sent lately and is to send from the
+/// official server.
 async fn usage_on(conn: &mut sqlx::SqliteConnection, now: i64) -> Result<Vec<Usage>, sqlx::Error> {
-    sqlx::query_as!(
-        Usage,
-        r#"SELECT b.id, b.secret IS NULL AS "needs_secret!: bool", b.daily_limit,
-            b.min_interval_s * 1000 AS "min_interval_ms!: i64", b.paused_until, (
-            SELECT count(*)
-            FROM email e
-            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',
-                'bounced') AND e.sent_at > ?1
-        ) AS "recent!: i64", (
-            SELECT min(e.sent_at)
-            FROM email e
-            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',
-                'bounced') AND e.sent_at > ?1
-        ) AS "earliest_recent: i64", (
-            SELECT max(e.sent_at)
-            FROM email e
-            WHERE e.mailbox_id = b.id AND e.state IN ('sending', 'maybe_sent', 'sent',
-                'bounced')
-        ) AS "last: i64"
-        FROM mailbox b
-        ORDER BY b.rotation_order, b.id"#,
+    let mut mailboxes: Vec<Usage> = sqlx::query!(
+        r#"SELECT id, provider, secret IS NULL AS "needs_secret!: bool", daily_limit,
+            min_interval_s * 1000 AS "min_interval_ms!: i64", paused_until, cloud_paused_until
+        FROM mailbox
+        ORDER BY rotation_order, id"#
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| Usage {
+        id: r.id,
+        needs_secret: r.needs_secret,
+        cloud: mailbox::providers::cloudable(&r.provider),
+        daily_limit: r.daily_limit,
+        min_interval_ms: r.min_interval_ms,
+        paused_until: r.paused_until,
+        cloud_paused_until: r.cloud_paused_until,
+        times: Vec::new(),
+    })
+    .collect();
+    let times = sqlx::query!(
+        r#"SELECT mailbox_id AS "mailbox!: i64", sent_at AS "at!: i64" FROM email
+           WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced') AND sent_at > ?1
+             AND mailbox_id IS NOT NULL
+         UNION ALL
+         SELECT mailbox_id, max(sent_at) FROM email
+           WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced') AND sent_at <= ?1
+             AND mailbox_id IS NOT NULL
+           GROUP BY mailbox_id
+         UNION ALL
+         SELECT mailbox_id, cloud_at FROM email WHERE state = 'cloud' AND mailbox_id IS NOT NULL
+         ORDER BY 2"#,
         now - DAY
     )
     .fetch_all(conn)
-    .await
+    .await?;
+    for t in times {
+        if let Some(m) = mailboxes.iter_mut().find(|m| m.id == t.mailbox) {
+            m.times.push(t.at);
+        }
+    }
+    Ok(mailboxes)
 }
 
 /// The mailbox to send an email from and when it can go: the mentor's own mailbox, or one by
@@ -289,7 +351,7 @@ fn choose(
             let soonest = mailboxes
                 .iter()
                 .filter(|m| !m.needs_secret)
-                .min_by_key(|m| (m.ready_at(now), m.last));
+                .min_by_key(|m| (m.ready_at(now), m.last(now)));
             match rotation {
                 Rotation::Failover => mailboxes
                     .iter()
@@ -300,6 +362,61 @@ fn choose(
         }
     };
     chosen.map(|m| (m.id, m.ready_at(now)))
+}
+
+/// An email to plan for the official server: its mentor's own mailbox, and the times it may go
+/// between.
+pub struct Wanted {
+    pub own: Option<i64>,
+    pub from: i64,
+    pub latest_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unplanned {
+    /// The mentor's own mailbox is one the server cannot use.
+    OwnMailbox,
+    /// There is no mailbox the server can use.
+    NoMailbox,
+    /// Its mailbox has no room before its latest time.
+    TooLate,
+}
+
+/// The mailbox and time the official server is to send each email from, planned in the order
+/// given by the rules of sending here (docs/design.md#云端定时发送): what went out lately and
+/// what the server is already to send count, and only mailboxes it can use take part.
+pub async fn plan_cloud(
+    conn: &mut sqlx::SqliteConnection,
+    emails: &[Wanted],
+    now: i64,
+) -> Result<Vec<Result<(i64, i64), Unplanned>>, sqlx::Error> {
+    let rotation = profile::rotation(&mut *conn).await?;
+    let mut mailboxes: Vec<Usage> = usage_on(conn, now)
+        .await?
+        .into_iter()
+        .filter(|m| m.cloud && !m.needs_secret)
+        .map(|m| Usage {
+            paused_until: m.cloud_paused_until,
+            ..m
+        })
+        .collect();
+    Ok(emails
+        .iter()
+        .map(|e| {
+            if e.own.is_some_and(|id| mailboxes.iter().all(|m| m.id != id)) {
+                return Err(Unplanned::OwnMailbox);
+            }
+            let (id, at) =
+                choose(rotation, e.own, false, &mailboxes, e.from).ok_or(Unplanned::NoMailbox)?;
+            if at >= e.latest_at {
+                return Err(Unplanned::TooLate);
+            }
+            if let Some(m) = mailboxes.iter_mut().find(|m| m.id == id) {
+                m.add(at);
+            }
+            Ok((id, at))
+        })
+        .collect())
 }
 
 /// Logs in, marks the email as being handed over, and hands it over (docs/design.md#桌面端).
@@ -393,6 +510,54 @@ async fn send<T: chrono::TimeZone>(
         })
         .await;
     Ok(())
+}
+
+/// The letter as it goes out with the tracking image `id`. Only what goes out has it: the app shows
+/// the letter without it, so that reading one's own letter there is no open.
+pub fn tracked(html: &str, id: &str) -> String {
+    format!(
+        r#"{html}<img src="{}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">"#,
+        account::tracking_image(id)
+    )
+}
+
+/// The whole message of an email handed to the official server as `cloud_id`, undated, as it is
+/// to go out; with what it is made of. The error says why it cannot be put together, as when a
+/// file is gone.
+pub async fn cloud_message(
+    db: &SqlitePool,
+    materials: &Path,
+    cloud_id: &str,
+) -> Result<Result<(email::cloud::Letter, Vec<u8>), String>, sqlx::Error> {
+    let letter = email::cloud::letter(&mut *db.acquire().await?, cloud_id).await?;
+    let Some(account) = mailbox::account(db, letter.mailbox_id).await? else {
+        return Ok(Err(
+            "发件邮箱的授权码不在这台电脑上了，请在邮箱设置里重新填写。".into(),
+        ));
+    };
+    let files = match files(materials, &letter.attachments).await {
+        Ok(files) => files,
+        Err(error) => return Ok(Err(error)),
+    };
+    let html = match &letter.tracking_id {
+        Some(id) => tracked(&letter.html, id),
+        None => letter.html.clone(),
+    };
+    let message = transport::compose_undated(
+        &account.sender,
+        &Letter {
+            message_id: &letter.message_id,
+            in_reply_to: None,
+            references: None,
+            to_name: &letter.to_name,
+            to: &letter.to,
+            subject: &letter.subject,
+            html: &html,
+            text: &letter.text,
+            attachments: &files,
+        },
+    );
+    Ok(message.map(|m| (letter, m)).map_err(|e| e.message()))
 }
 
 /// The files to attach, read now: a material may be attached to emails for days before they go.
@@ -550,14 +715,8 @@ async fn mark_sending(
         .fetch_one(&mut *tx)
         .await?;
     let fresh = uuid::Uuid::new_v4().simple().to_string();
-    // Only what goes out has the image: the app shows the letter without it, so that reading
-    // one's own letter there is no open.
     let html = match email::tracking::assign(&mut tx, id, &fresh, account::terms(), at).await? {
-        Some(tracking) => format!(
-            r#"{}<img src="{}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0">"#,
-            handover.html,
-            account::tracking_image(&tracking)
-        ),
+        Some(tracking) => tracked(&handover.html, &tracking),
         None => handover.html,
     };
     let outgoing = files.and_then(|files| {
@@ -647,17 +806,17 @@ mod tests {
 
     const NOW: i64 = 100 * DAY;
 
-    /// A mailbox allowed two emails a day, a minute apart, that last sent at `last`.
-    fn mailbox(id: i64, recent: i64, last: Option<i64>) -> Usage {
+    /// A mailbox allowed two emails a day, a minute apart, that sent or is to send at `times`.
+    fn mailbox(id: i64, times: &[i64]) -> Usage {
         Usage {
             id,
             needs_secret: false,
+            cloud: true,
             daily_limit: 2,
             min_interval_ms: MINUTE,
             paused_until: None,
-            recent,
-            earliest_recent: last,
-            last,
+            cloud_paused_until: None,
+            times: times.to_vec(),
         }
     }
 
@@ -666,9 +825,9 @@ mod tests {
         let mailboxes = [
             Usage {
                 needs_secret: true,
-                ..mailbox(1, 0, None)
+                ..mailbox(1, &[])
             },
-            mailbox(2, 0, None),
+            mailbox(2, &[]),
         ];
         for rotation in [Rotation::Failover, Rotation::PerEmail] {
             assert_eq!(
@@ -682,12 +841,12 @@ mod tests {
 
     #[test]
     fn failover_keeps_to_the_first_open_mailbox() {
-        let waiting = [mailbox(1, 1, Some(NOW - 1000)), mailbox(2, 0, None)];
+        let waiting = [mailbox(1, &[NOW - 1000]), mailbox(2, &[])];
         assert_eq!(
             choose(Rotation::Failover, None, false, &waiting, NOW),
             Some((1, NOW - 1000 + MINUTE))
         );
-        let full = [mailbox(1, 2, Some(NOW - 1000)), mailbox(2, 0, None)];
+        let full = [mailbox(1, &[NOW - 1000, NOW - 1000]), mailbox(2, &[])];
         assert_eq!(
             choose(Rotation::Failover, None, false, &full, NOW),
             Some((2, NOW))
@@ -695,23 +854,17 @@ mod tests {
         let paused = [
             Usage {
                 paused_until: Some(NOW + MINUTE),
-                ..mailbox(1, 0, None)
+                ..mailbox(1, &[])
             },
-            mailbox(2, 0, None),
+            mailbox(2, &[]),
         ];
         assert_eq!(
             choose(Rotation::Failover, None, false, &paused, NOW),
             Some((2, NOW))
         );
         let all_full = [
-            Usage {
-                earliest_recent: Some(NOW - 5 * MINUTE),
-                ..mailbox(1, 2, Some(NOW - 1000))
-            },
-            Usage {
-                earliest_recent: Some(NOW - 9 * MINUTE),
-                ..mailbox(2, 2, Some(NOW - 2000))
-            },
+            mailbox(1, &[NOW - 5 * MINUTE, NOW - 1000]),
+            mailbox(2, &[NOW - 9 * MINUTE, NOW - 2000]),
         ];
         assert_eq!(
             choose(Rotation::Failover, None, false, &all_full, NOW),
@@ -721,23 +874,20 @@ mod tests {
 
     #[test]
     fn per_email_takes_the_mailbox_that_has_waited_longest() {
-        let unused = [mailbox(1, 1, Some(NOW - 2 * MINUTE)), mailbox(2, 0, None)];
+        let unused = [mailbox(1, &[NOW - 2 * MINUTE]), mailbox(2, &[])];
         assert_eq!(
             choose(Rotation::PerEmail, None, false, &unused, NOW),
             Some((2, NOW))
         );
         let used = [
-            mailbox(1, 1, Some(NOW - 2 * MINUTE)),
-            mailbox(2, 1, Some(NOW - 3 * MINUTE)),
+            mailbox(1, &[NOW - 2 * MINUTE]),
+            mailbox(2, &[NOW - 3 * MINUTE]),
         ];
         assert_eq!(
             choose(Rotation::PerEmail, None, false, &used, NOW),
             Some((2, NOW))
         );
-        let busy = [
-            mailbox(1, 1, Some(NOW - 1000)),
-            mailbox(2, 1, Some(NOW - 2000)),
-        ];
+        let busy = [mailbox(1, &[NOW - 1000]), mailbox(2, &[NOW - 2000])];
         assert_eq!(
             choose(Rotation::PerEmail, None, false, &busy, NOW),
             Some((2, NOW - 2000 + MINUTE))
@@ -746,7 +896,7 @@ mod tests {
 
     #[test]
     fn a_mentors_own_mailbox_is_waited_for() {
-        let mailboxes = [mailbox(1, 2, Some(NOW - 1000)), mailbox(2, 0, None)];
+        let mailboxes = [mailbox(1, &[NOW - 1000, NOW - 1000]), mailbox(2, &[])];
         for rotation in [Rotation::Failover, Rotation::PerEmail] {
             assert_eq!(
                 choose(rotation, Some(1), false, &mailboxes, NOW),
@@ -754,5 +904,18 @@ mod tests {
             );
         }
         assert_eq!(choose(Rotation::Failover, None, false, &[], NOW), None);
+    }
+
+    #[test]
+    fn what_the_official_server_is_to_send_counts_against_the_mailbox() {
+        // Two planned within the next day leave no room now, only once the first is a day old.
+        let planned = mailbox(1, &[NOW + 10 * MINUTE, NOW + 20 * MINUTE]);
+        assert!(!planned.open(NOW));
+        assert_eq!(planned.ready_at(NOW), NOW + 10 * MINUTE + DAY);
+        // One planned soon is kept apart by the interval, on either side.
+        let soon = mailbox(1, &[NOW + MINUTE / 2]);
+        assert_eq!(soon.ready_at(NOW), NOW + MINUTE / 2 + MINUTE);
+        let later = mailbox(1, &[NOW + 2 * MINUTE]);
+        assert_eq!(later.ready_at(NOW), NOW);
     }
 }

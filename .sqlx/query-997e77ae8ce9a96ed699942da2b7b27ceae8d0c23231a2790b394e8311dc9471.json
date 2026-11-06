@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_id AS \"cloud_id!\" FROM email WHERE state = 'cloud' AND cloud_account = ?\n           ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "cloud_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "997e77ae8ce9a96ed699942da2b7b27ceae8d0c23231a2790b394e8311dc9471"
+}

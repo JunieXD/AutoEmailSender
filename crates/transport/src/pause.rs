@@ -1,7 +1,7 @@
 //! Classifies server failures shared by sending and delivery reports.
 
 use chrono::TimeZone;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::MailError;
 
@@ -26,8 +26,9 @@ pub enum Throttle {
     Daily,
 }
 
-/// An active pause as shown to the user; no server credentials are included.
-#[derive(Debug, Serialize)]
+/// An active pause as shown to the user, and as the official server reports one of its own; no
+/// server credentials are included.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
 pub struct Pause {
     pub until: i64,

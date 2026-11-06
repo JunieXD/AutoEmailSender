@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, kind AS \"kind: DraftKind\", state AS \"state: DeliveryColumn\",\n            coalesce(subject, '') AS \"subject!: String\",\n            coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1\n            FROM email r WHERE r.resend_of = email.id) AS \"resent!: bool\", planned_at,\n            latest_at, from_address, to_address, sent_at, error, cancel_reason,\n            tracking_state AS \"tracking_state: tracking::State\",\n            open_count AS \"open_count: u32\", first_opened_at, last_opened_at\n        FROM email\n        WHERE mentor_id = ? AND (state IN ('approved', 'sending', 'maybe_sent', 'sent',\n            'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'\n        AND task_id IS NULL))\n        ORDER BY id",
+  "query": "SELECT id, kind AS \"kind: DraftKind\", state AS \"state: DeliveryColumn\",\n            coalesce(subject, '') AS \"subject!: String\",\n            coalesce(body_md, '') AS \"body_md!: String\", resend_of, EXISTS (SELECT 1\n            FROM email r WHERE r.resend_of = email.id) AS \"resent!: bool\", planned_at,\n            latest_at, from_address, to_address, sent_at, error, cancel_reason, cloud_at,\n            cloud_uploading AS \"cloud_uploading: bool\",\n            tracking_state AS \"tracking_state: tracking::State\",\n            open_count AS \"open_count: u32\", first_opened_at, last_opened_at\n        FROM email\n        WHERE mentor_id = ? AND (state IN ('approved', 'cloud', 'sending', 'maybe_sent', 'sent',\n            'bounced', 'failed') OR (state = 'canceled' AND kind = 'follow_up'\n        AND task_id IS NULL))\n        ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -143,8 +143,30 @@
         }
       },
       {
-        "name": "tracking_state: tracking::State",
+        "name": "cloud_at",
         "ordinal": 14,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_at"
+          }
+        }
+      },
+      {
+        "name": "cloud_uploading: bool",
+        "ordinal": 15,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_uploading"
+          }
+        }
+      },
+      {
+        "name": "tracking_state: tracking::State",
+        "ordinal": 16,
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -155,7 +177,7 @@
       },
       {
         "name": "open_count: u32",
-        "ordinal": 15,
+        "ordinal": 17,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -166,7 +188,7 @@
       },
       {
         "name": "first_opened_at",
-        "ordinal": 16,
+        "ordinal": 18,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -177,7 +199,7 @@
       },
       {
         "name": "last_opened_at",
-        "ordinal": 17,
+        "ordinal": 19,
         "type_info": "Integer",
         "origin": {
           "Table": {
@@ -206,10 +228,12 @@
       true,
       true,
       true,
+      false,
+      true,
       true,
       true,
       true
     ]
   },
-  "hash": "3f46c93d6921c511ebc4be20739e87bde4f6068d94bbdf779dbc9e492b4f9c6c"
+  "hash": "d26cb11b80a141ac5054334c6b33396175a5703b8bc7d7a7bbc472966409c0c4"
 }

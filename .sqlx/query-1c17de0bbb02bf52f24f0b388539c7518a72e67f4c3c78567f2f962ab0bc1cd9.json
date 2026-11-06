@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_id FROM cloud_ack WHERE account = ? ORDER BY cloud_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "cloud_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "cloud_ack",
+            "name": "cloud_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1c17de0bbb02bf52f24f0b388539c7518a72e67f4c3c78567f2f962ab0bc1cd9"
+}

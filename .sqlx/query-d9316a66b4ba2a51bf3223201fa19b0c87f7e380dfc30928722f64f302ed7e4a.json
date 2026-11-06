@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id\n                   FROM email\n                   WHERE (state = 'approved'\n                       AND planned_at IS NOT NULL\n                       AND (latest_at IS NULL OR latest_at > ?1))\n                     OR state = 'cloud'\n                   ORDER BY coalesce(cloud_at, planned_at), id\n                   LIMIT ?2 OFFSET ?3",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d9316a66b4ba2a51bf3223201fa19b0c87f7e380dfc30928722f64f302ed7e4a"
+}

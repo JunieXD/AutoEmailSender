@@ -11,10 +11,10 @@ use cloud_api::{
 use email::tracking::Rejected;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use sqlx::SqliteConnection;
 use tokio::sync::Notify;
 use ts_rs::TS;
 
+use crate::accounts::same_login;
 use crate::{CallError, Context, Nothing};
 
 const EVERY: Duration = Duration::from_secs(15 * 60);
@@ -204,18 +204,6 @@ async fn exchange(
             return Ok(changed);
         }
         after = page.revision;
-    }
-}
-
-/// Answers that came for a login replaced meanwhile are dropped.
-async fn same_login(
-    conn: &mut SqliteConnection,
-    login: &account::Login,
-) -> Result<(), account::Error> {
-    if login.is_saved(conn).await? {
-        Ok(())
-    } else {
-        Err(account::Error::Invalid("登录的账号刚刚变了，请再试一次。"))
     }
 }
 

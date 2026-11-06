@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT mailbox_id AS \"mailbox!: i64\", sent_at AS \"at!: i64\" FROM email\n           WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced') AND sent_at > ?1\n             AND mailbox_id IS NOT NULL\n         UNION ALL\n         SELECT mailbox_id, max(sent_at) FROM email\n           WHERE state IN ('sending', 'maybe_sent', 'sent', 'bounced') AND sent_at <= ?1\n             AND mailbox_id IS NOT NULL\n           GROUP BY mailbox_id\n         UNION ALL\n         SELECT mailbox_id, cloud_at FROM email WHERE state = 'cloud' AND mailbox_id IS NOT NULL\n         ORDER BY 2",
+  "describe": {
+    "columns": [
+      {
+        "name": "mailbox!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "mailbox_id"
+          }
+        }
+      },
+      {
+        "name": "at!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "sent_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "077c7fd5b66d2a122e6fdc3c0e11bf5b7b8dadc53f9ef59bb2d2ae3263530da5"
+}

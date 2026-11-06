@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use ts_rs::TS;
 
+pub mod cloud;
 mod imap;
 pub mod pause;
 pub mod providers;
@@ -32,6 +33,10 @@ pub struct Mailbox {
     pub receive_error: Option<String>,
     pub pause: Option<transport::pause::Pause>,
     pub needs_secret: bool,
+    /// Emails the official server is to send from it.
+    pub cloud_emails: u32,
+    /// Its sending paused on the official server, as last synced.
+    pub cloud_pause: Option<transport::pause::Pause>,
 }
 
 /// A mailbox as the user entered it, without its secret; `check` validates it.
@@ -134,9 +139,12 @@ impl MailboxFields {
     }
 }
 
+/// Why a mailbox could not be saved or deleted.
 #[derive(Debug)]
 pub enum SaveError {
     AddressTaken,
+    /// This many emails are to go from it on the official server, which knows it by its address.
+    InCloud(u32),
     Db(sqlx::Error),
 }
 
@@ -159,7 +167,10 @@ pub async fn list(db: &SqlitePool, now: i64) -> Result<Vec<Mailbox>, sqlx::Error
             imap_security AS "imap_security: Security",
             daily_limit AS "daily_limit: u32", min_interval_s AS "min_interval_s: u32",
             receive_error, paused_until, pause_reason,
-            secret IS NULL AS "needs_secret!: bool"
+            secret IS NULL AS "needs_secret!: bool",
+            (SELECT count(*) FROM email WHERE mailbox_id = mailbox.id AND state = 'cloud')
+              AS "cloud_emails!: u32",
+            cloud_paused_until, cloud_pause_reason
         FROM mailbox
         ORDER BY rotation_order, id"#
     )
@@ -191,6 +202,12 @@ pub async fn list(db: &SqlitePool, now: i64) -> Result<Vec<Mailbox>, sqlx::Error
                 .filter(|(until, _)| *until > now)
                 .map(|(until, reason)| transport::pause::Pause { until, reason }),
             needs_secret: r.needs_secret,
+            cloud_emails: r.cloud_emails,
+            cloud_pause: r
+                .cloud_paused_until
+                .zip(r.cloud_pause_reason)
+                .filter(|(until, _)| *until > now)
+                .map(|(until, reason)| transport::pause::Pause { until, reason }),
         })
         .collect())
 }
@@ -229,7 +246,8 @@ pub async fn create(
 }
 
 /// False when there is no such mailbox. Receiving is tried again at once, as the change may have
-/// fixed what failed.
+/// fixed what failed. With emails on the official server, its address stays, and what changed of
+/// what the server has is marked to go up.
 pub async fn update(
     db: &SqlitePool,
     id: i64,
@@ -237,13 +255,30 @@ pub async fn update(
     secret: &str,
 ) -> Result<bool, SaveError> {
     let address: &str = fields.address.as_ref();
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let in_cloud = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: u32" FROM email e JOIN mailbox m ON m.id = e.mailbox_id
+           WHERE m.id = ? AND e.state = 'cloud' AND m.address <> ?"#,
+        id,
+        address,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if in_cloud > 0 {
+        return Err(SaveError::InCloud(in_cloud));
+    }
     let row = sqlx::query!(
         r#"UPDATE mailbox
-        SET address = ?, sender_name = ?, provider = ?, smtp_host = ?, smtp_port = ?,
-            smtp_security = ?, imap_host = ?, imap_port = ?, imap_security = ?,
-            secret = ?, daily_limit = ?, min_interval_s = ?, receive_error = NULL,
-            receive_retry_at = NULL, paused_until = NULL, pause_reason = NULL
-        WHERE id = ?"#,
+        SET address = ?1, sender_name = ?2, provider = ?3, smtp_host = ?4, smtp_port = ?5,
+            smtp_security = ?6, imap_host = ?7, imap_port = ?8, imap_security = ?9,
+            secret = ?10, daily_limit = ?11, min_interval_s = ?12, receive_error = NULL,
+            receive_retry_at = NULL, paused_until = NULL, pause_reason = NULL,
+            cloud_stale = cloud_stale OR (
+              EXISTS (SELECT 1 FROM email WHERE mailbox_id = mailbox.id AND state = 'cloud')
+              AND (sender_name IS NOT ?2 OR smtp_host IS NOT ?4 OR smtp_port IS NOT ?5
+                OR smtp_security IS NOT ?6 OR secret IS NOT ?10 OR daily_limit IS NOT ?11
+                OR min_interval_s IS NOT ?12))
+        WHERE id = ?13"#,
         address,
         fields.sender_name,
         fields.provider,
@@ -258,17 +293,30 @@ pub async fn update(
         fields.min_interval_s,
         id,
     )
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(row.rows_affected() > 0)
 }
 
 /// Deletes a mailbox with its folders' progress and the messages seen in it; emails sent from it
-/// keep their sender address, and its mentors are left without one (docs/data-model.md#删除).
-pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+/// keep their sender address, and its mentors are left without one (docs/data-model.md#删除). Not
+/// while emails are to go from it on the official server: the schema refuses that too.
+pub async fn delete(db: &SqlitePool, id: i64) -> Result<(), SaveError> {
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let in_cloud = sqlx::query_scalar!(
+        r#"SELECT count(*) AS "count!: u32" FROM email WHERE mailbox_id = ? AND state = 'cloud'"#,
+        id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if in_cloud > 0 {
+        return Err(SaveError::InCloud(in_cloud));
+    }
     sqlx::query!("DELETE FROM mailbox WHERE id = ?", id)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 

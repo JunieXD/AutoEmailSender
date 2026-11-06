@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*) AS \"count!: u32\" FROM email e JOIN mailbox m ON m.id = e.mailbox_id\n           WHERE m.id = ? AND e.state = 'cloud' AND m.address <> ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: u32",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d64564e2092c0a888b42d68d8510d446c5366159fde0932c77fcc33ccdf1450e"
+}

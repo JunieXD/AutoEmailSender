@@ -517,6 +517,13 @@ impl Session<'_> {
                         self.round.changed = true;
                         return Ok(Plan::Skip);
                     }
+                    SentCopy::FromCloud(handed) => {
+                        if let Some(mailbox) = handed.mailbox_id {
+                            mentor::assign_mailbox(&mut conn, handed.mentor_id, mailbox).await?;
+                        }
+                        self.round.changed = true;
+                        return Ok(Plan::Skip);
+                    }
                 }
             }
             let mentors = self.mentors_at(&headers.recipients).await?;
@@ -624,6 +631,13 @@ impl Session<'_> {
                 SentCopy::Foreign => false,
                 SentCopy::Own => true,
                 SentCopy::Confirmed => {
+                    self.round.changed = true;
+                    true
+                }
+                SentCopy::FromCloud(handed) => {
+                    if let Some(mailbox) = handed.mailbox_id {
+                        mentor::assign_mailbox(&mut conn, handed.mentor_id, mailbox).await?;
+                    }
                     self.round.changed = true;
                     true
                 }
@@ -738,23 +752,25 @@ impl Session<'_> {
         // says why it came back.
         for failure in &bounce.failures {
             let (to, reason) = (&failure.recipients, &failure.reason);
-            let bounced = email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?;
-            if bounced && let Some(throttle) = failure.throttle {
-                let mailbox = sqlx::query_scalar!(
-                    "SELECT mailbox_id FROM email WHERE message_id = ?1 OR copy_message_id = ?1",
-                    bounce.original,
-                )
-                .fetch_one(&mut *tx)
-                .await?;
-                if let Some(mailbox) = mailbox {
-                    let mut pause = transport::pause::PauseKind::Throttled(throttle).at(sent_at);
-                    pause.reason = format!("退信说明{}", pause.reason);
-                    if pause.until > self.now {
-                        mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
-                    }
+            let Some(bounced) =
+                email::bounced(&mut tx, &bounce.original, to, reason, self.now).await?
+            else {
+                continue;
+            };
+            marked = true;
+            let Some(mailbox) = bounced.mailbox_id else {
+                continue;
+            };
+            if bounced.from_cloud {
+                mentor::assign_mailbox(&mut tx, bounced.mentor_id, mailbox).await?;
+            }
+            if let Some(throttle) = failure.throttle {
+                let mut pause = transport::pause::PauseKind::Throttled(throttle).at(sent_at);
+                pause.reason = format!("退信说明{}", pause.reason);
+                if pause.until > self.now {
+                    mailbox::pause::apply(&mut tx, mailbox, &pause).await?;
                 }
             }
-            marked |= bounced;
         }
         for failure in &bounce.failures {
             // Mail sent elsewhere to several mentors bounces for those the bounce names, or for

@@ -16,7 +16,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("@/api/call", () => ({
   call: async (op: string) => {
-    if (op === "getAccount") return { kind: "loggedIn", email: "lisi@163.com", termsOutdated: false };
+    if (op === "getAccount") return { kind: "loggedIn", email: "lisi@163.com", termsOutdated: false, cloudEmails: 0 };
     if (op === "getPlus") return remote.getPlus();
     if (op === "getPlusItems") return { tiers: [], packs: [], latest: AFTER, refunded: false };
     if (op === "getInvite") return { status: "ineligible" };

@@ -306,6 +306,12 @@ async fn start(app: &AppHandle) -> Result<(Arc<api::Context>, bool), StartupErro
     tauri::async_runtime::spawn(api::libraries::run(ctx.clone()));
     tauri::async_runtime::spawn(api::backup::cloud::run(ctx.clone()));
     let ui = app.clone();
+    tauri::async_runtime::spawn(api::cloud_send::run(ctx.clone(), move || {
+        if let Err(e) = ui.emit("sending-changed", ()) {
+            tracing::warn!("refresh sending: {e}");
+        }
+    }));
+    let ui = app.clone();
     tauri::async_runtime::spawn(api::tracking::run(ctx.clone(), move || {
         if let Err(e) = ui.emit("tracking-changed", ()) {
             tracing::warn!("refresh tracking: {e}");

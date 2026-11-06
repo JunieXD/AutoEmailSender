@@ -217,6 +217,7 @@ dependencies = [
  "tracing",
  "transport",
  "ts-rs",
+ "uuid",
  "whoami",
  "writing",
  "zip",
@@ -1804,6 +1805,7 @@ version = "3.0.0-alpha.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "cloud-api",
  "db",
  "fastrand",
  "mentor",
@@ -7078,6 +7080,8 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "transport",
+ "zstd",
 ]
 
 [[package]]

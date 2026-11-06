@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id AS \"id!\" FROM mailbox\n           WHERE cloud_stale = 1 AND id IN (SELECT mailbox_id FROM email\n             WHERE state = 'cloud' AND cloud_account = ?)\n           ORDER BY id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "mailbox",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "38a3a020eb7c61190eef99fec752981d92812f156c0bb2fd9671546a49307109"
+}

@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT count(*)\n                   FROM email\n                   WHERE (state = 'approved'\n                       AND planned_at IS NOT NULL\n                       AND (latest_at IS NULL OR latest_at > ?))\n                     OR state = 'cloud'",
+  "describe": {
+    "columns": [
+      {
+        "name": "count(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4a1ce87b9bda71a1a9b44af429966892efcc076f783ecfecf06b79bb15cef344"
+}

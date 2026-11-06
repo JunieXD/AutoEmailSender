@@ -37,14 +37,7 @@ pub const RETENTION: i64 = 30 * 24 * 60 * 60 * 1000;
 pub struct Mailbox {
     pub address: String,
     /// Its sending is paused on the server, after its mail server limited or refused it.
-    pub pause: Option<Pause>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Pause {
-    pub until: i64,
-    pub reason: String,
+    pub pause: Option<transport::pause::Pause>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
