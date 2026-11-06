@@ -111,7 +111,7 @@ async fn browser_extracts_people_and_replays_each_list_page(db: SqlitePool) {
         writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser.clone()),
-        recognize: Some(super::recognize),
+        recognize: super::recognize,
     };
     let net = net::Net::new(vec![]).unwrap();
     let limit = Limit::default();
@@ -182,7 +182,7 @@ async fn browser_failures_preserve_http_text_and_preview_still_needs_browser(db:
         writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser.clone()),
-        recognize: Some(super::recognize),
+        recognize: super::recognize,
     };
     let target = Scope::new(&claim.scope).page(claim.url.clone()).unwrap();
     for (result, reason) in [
@@ -280,7 +280,7 @@ async fn pause_and_cancel_drop_browser_and_reject_late_results(db: SqlitePool) {
             writes: db::Writes::default(),
             http: Fetcher::local(site.port),
             browser: Some(browser.clone()),
-            recognize: Some(super::recognize),
+            recognize: super::recognize,
         };
         let target = Scope::new(&claim.scope).page(claim.url.clone()).unwrap();
         let cooldown = Cooldown::new(Arc::default());
@@ -352,7 +352,7 @@ async fn page_failures_and_browser_takeover_log_the_crawl_without_private_conten
         writes: db::Writes::default(),
         http: Fetcher::local(site.port),
         browser: Some(browser),
-        recognize: Some(super::recognize),
+        recognize: super::recognize,
     };
     let net = net::Net::new(vec![]).unwrap();
     let limit = Limit::default();

@@ -3,8 +3,12 @@
 const MOST: usize = 8000;
 const BEGINNING: usize = 6000;
 
+/// Readers accept the header anywhere in the first 1024 bytes, after stray bytes such as blank
+/// lines a server put first.
 pub(crate) fn is_pdf(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"%PDF-")
+    bytes[..bytes.len().min(1024)]
+        .windows(5)
+        .any(|w| w == b"%PDF-")
 }
 
 /// The text layer of a PDF, read as a material is; empty for a scan, which has none.

@@ -19,7 +19,7 @@ type Files = Arc<Mutex<HashMap<String, (u16, &'static str, Vec<u8>)>>>;
 struct Site {
     port: u16,
     pages: Arc<Mutex<HashMap<String, (u16, String)>>>,
-    /// By path, with their status and content type.
+    /// By path, with their status and content type; status 0 is never answered.
     files: Files,
     visits: Arc<Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
@@ -119,6 +119,9 @@ impl Site {
         });
         let file = files.lock().unwrap().get(&path).cloned();
         if let Some((status, kind, body)) = file {
+            if status == 0 {
+                std::future::pending::<()>().await;
+            }
             let head = format!(
                 "HTTP/1.1 {status} Reply\r\nConnection: close\r\nContent-Type: {kind}\r\n\
                 Content-Length: {}\r\n\r\n",
@@ -3724,7 +3727,7 @@ impl Pages {
             writes: db::Writes::default(),
             http: Fetcher::local(port),
             browser: None,
-            recognize: Some(recognize),
+            recognize,
         }
     }
 }

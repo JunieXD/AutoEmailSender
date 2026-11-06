@@ -59,8 +59,7 @@ struct Pages {
     writes: db::Writes,
     http: Fetcher,
     browser: Option<Arc<dyn Browser>>,
-    /// None when the system has no text recognition, and images are not read.
-    recognize: Option<embedded::Recognize>,
+    recognize: embedded::Recognize,
 }
 
 async fn save_material(
@@ -185,22 +184,6 @@ impl Pages {
         relaxed_certificate: bool,
     ) -> Result<Material, ReadError> {
         let render = browser.render(target, &c.steps);
-        let invalidated = async {
-            loop {
-                let mut conn = db
-                    .acquire()
-                    .await
-                    .map_err(database("acquire browser claim connection", READ_FAILED))?;
-                if !queue::valid(&mut conn, c)
-                    .await
-                    .map_err(database("check browser claim", READ_FAILED))?
-                {
-                    return Err(ReadError::Gone);
-                }
-                drop(conn);
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        };
         let rendered = tokio::select! {
             result = render => result.map_err(|e| {
                 let category = match &e {
@@ -216,7 +199,7 @@ impl Pages {
                     e => e.message(),
                 })
             })?,
-            result = invalidated => return result,
+            error = invalidated(db, c) => return Err(error),
         };
         let url = target.redirect(target.url(), &rendered.url).map_err(|e| {
             tracing::info!(
@@ -545,7 +528,8 @@ async fn read(
         c.kind,
         PageKind::Profile | PageKind::EnrichProfile | PageKind::EnrichChild
     );
-    if m.units.is_empty()
+    // A page read for a candidate may give everything in its images and PDFs.
+    if (m.units.is_empty() && !targeted)
         || matches!(
             m.needs_browser,
             Some(crate::BrowserReason::Challenge | crate::BrowserReason::JavaScript)
@@ -624,6 +608,26 @@ async fn read(
         own: kind == PageKind::Profile,
     })
 }
+/// Settles once the claim is no longer this worker's, as after a pause; a long read stops then.
+async fn invalidated(db: &SqlitePool, c: &Claim) -> ReadError {
+    loop {
+        let valid = async {
+            let mut conn = db
+                .acquire()
+                .await
+                .map_err(database("acquire claim check connection", READ_FAILED))?;
+            queue::valid(&mut conn, c)
+                .await
+                .map_err(database("check claim", READ_FAILED))
+        };
+        match valid.await {
+            Ok(true) => tokio::time::sleep(Duration::from_millis(500)).await,
+            Ok(false) => return ReadError::Gone,
+            Err(error) => return error,
+        }
+    }
+}
+
 /// Reads a profile page or enrichment page for the one candidate it was queued for.
 async fn read_for_candidate(
     reader: &Reader<'_>,
@@ -656,19 +660,31 @@ async fn read_for_candidate(
     }
     drop(conn);
     let target = candidate.fields;
-    let m = embedded::Reader {
+    let files = embedded::Reader {
         fetcher: &pages.http,
         recognize: pages.recognize,
         cooldown: reader.cooldown,
         crawl: c.crawl,
-    }
-    .read(
+    };
+    let read = files.read(
         m,
         target.emails.is_empty(),
         target.emails.is_empty() || target.research.is_none(),
-    )
-    .await
-    .map_err(|e| ReadError::Failed(e.message()))?;
+    );
+    // Its images and PDFs can take minutes, which a pause or cancellation does not wait out.
+    let m = tokio::select! {
+        m = read => m.map_err(|e| ReadError::Failed(e.message()))?,
+        error = invalidated(reader.db, c) => return Err(error),
+    };
+    if m.units.is_empty() {
+        return Ok(Page {
+            material: m,
+            kind: c.kind,
+            people: vec![],
+            next: vec![],
+            own: false,
+        });
+    }
     let mut data = extract::data(&m, 0..m.units.len());
     data["target"] = serde_json::json!({
         "name": target.name,
@@ -1149,10 +1165,6 @@ pub async fn run(
     changed: impl Fn() + Send + 'static,
     finished: impl Fn(CrawlFinished) + Send + 'static,
 ) {
-    let recognize = ocr::available().then_some(ocr::recognize as embedded::Recognize);
-    if recognize.is_none() {
-        tracing::warn!("no text recognition language installed; images are not read");
-    }
     let fetcher = loop {
         match Fetcher::new(&net) {
             Ok(f) => {
@@ -1160,7 +1172,7 @@ pub async fn run(
                     writes: crawler.writes.clone(),
                     http: f,
                     browser,
-                    recognize,
+                    recognize: ocr::recognize,
                 });
             }
             Err(e) => {

@@ -1,7 +1,10 @@
 //! What the images and PDFs on a page read for one person say: pages often draw an address as a
 //! picture, or give a CV as a PDF.
+use std::sync::LazyLock;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use model::background::Cooldown;
+use regex::Regex;
 
 use crate::{
     CrawlError, Material, PageUrl,
@@ -19,6 +22,13 @@ const IMAGES_RECOGNIZED: usize = 6;
 const MAX_IMAGE_BYTES: usize = 1024 * 1024;
 const DOCUMENTS: usize = 2;
 
+/// An address's domain with spaces the recognizer put around its dots, as in `hust.edu. cn`. A
+/// capitalised word after a dot, as in `pku.edu.cn. Tel`, starts the next sentence instead.
+static SPACED_DOMAIN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@[a-z0-9-]+(?:[ \t]*\.[ \t]*[a-z0-9-]+)+")
+        .unwrap_or_else(|_| unreachable!("fixed domain pattern is valid"))
+});
+
 /// The size of a line of text, such as an address: not a photo or a banner.
 fn line_sized(width: usize, height: usize) -> bool {
     (32..=1600).contains(&width) && (8..=240).contains(&height) && width * 5 >= height * 7
@@ -26,14 +36,14 @@ fn line_sized(width: usize, height: usize) -> bool {
 
 pub(crate) struct Reader<'a> {
     pub fetcher: &'a Fetcher,
-    pub recognize: Option<Recognize>,
+    pub recognize: Recognize,
     pub cooldown: &'a Cooldown<i64>,
     pub crawl: i64,
 }
 
 impl Reader<'_> {
-    /// The page with the text recognized in its images, when `images` and the system can, and its
-    /// PDFs' text after its own, when `documents`. A file that cannot be had is skipped; so are the rest once a
+    /// The page with the text recognized in its images, when `images`, and its PDFs' text after
+    /// its own, when `documents`. A file that cannot be had is skipped; so are the rest once a
     /// limit holds the crawl back.
     pub async fn read(
         &self,
@@ -42,11 +52,8 @@ impl Reader<'_> {
         documents: bool,
     ) -> Result<Material, CrawlError> {
         let mut recognized = 0;
-        if images
-            && let Some(recognize) = self.recognize
-            && let Some(found) = m.images.clone()
-        {
-            let (texts, count) = self.read_images(recognize, &found.list).await;
+        if images && let Some(found) = m.images.clone() {
+            let (texts, count) = self.read_images(&found.list).await;
             recognized = count;
             if !texts.is_empty() {
                 let url = m.url.clone();
@@ -96,11 +103,7 @@ impl Reader<'_> {
 
     /// The text in the images most likely to give an address, by their element, and how many
     /// were recognized.
-    async fn read_images(
-        &self,
-        recognize: Recognize,
-        images: &[Image],
-    ) -> (Vec<(usize, String)>, usize) {
+    async fn read_images(&self, images: &[Image]) -> (Vec<(usize, String)>, usize) {
         let mut ranked: Vec<_> = images.iter().collect();
         ranked.sort_by_key(|image| !image.contact);
         // An image shown more than once, such as an icon, is read once.
@@ -141,6 +144,7 @@ impl Reader<'_> {
                 continue;
             }
             recognized += 1;
+            let recognize = self.recognize;
             match blocking(move || recognize(&bytes)).await {
                 Ok(text) => {
                     let text = text
@@ -149,6 +153,11 @@ impl Reader<'_> {
                         .filter(|line| !line.is_empty())
                         .collect::<Vec<_>>()
                         .join("\n");
+                    let text = SPACED_DOMAIN
+                        .replace_all(&text, |c: &regex::Captures<'_>| {
+                            c[0].replace([' ', '\t'], "")
+                        })
+                        .into_owned();
                     if !text.is_empty() {
                         texts.extend(elements.into_iter().map(|e| (e, text.clone())));
                     }

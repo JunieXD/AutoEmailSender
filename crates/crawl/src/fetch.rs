@@ -217,10 +217,11 @@ impl Fetcher {
         limit: usize,
         redirect: impl Fn(&PageUrl, &str) -> Result<PageUrl, CrawlError>,
     ) -> Result<Response, CrawlError> {
-        let site = self.site(target).await;
         let mut url = target.clone();
         let mut relaxed_certificate = false;
         for redirects in 0..=MAX_REDIRECTS {
+            // A file can move to another website, such as a CDN, whose limit it then counts against.
+            let site = self.site(&url).await;
             let (response, slot) = match self.send(&self.trusted, &url, &site, accept).await {
                 Err(CrawlError::Http(error)) if net::untrusted(&error) => {
                     tracing::info!(

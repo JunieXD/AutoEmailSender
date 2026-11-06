@@ -106,6 +106,7 @@ impl Server {
                 .no_proxy()
                 .resolve("cs.pku.edu.cn", address)
                 .resolve("www.pku.edu.cn", address)
+                .resolve("files.example.org", address)
                 .build()
                 .unwrap()
         };
@@ -394,4 +395,24 @@ async fn unrelated_http_failures_are_reported() {
         Err(CrawlError::Status(404))
     ));
     responder.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_file_moved_to_another_website_takes_one_of_its_request_slots() {
+    let mut server = Server::start(false).await;
+    let port = server.port;
+    let fetcher = server.fetcher();
+    let url = PageUrl::parse(&format!("http://cs.pku.edu.cn:{port}/a.png")).unwrap();
+    let file = fetcher.file(&url, 1024, "image/*");
+    let answer = async {
+        let moved = format!("Location: http://files.example.org:{port}/a.png\r\n");
+        let first = server.requests.recv().await.unwrap();
+        first.respond.send(reply(302, &moved, "")).unwrap();
+        let second = server.requests.recv().await.unwrap();
+        let cdn = PageUrl::parse("http://files.example.org/b.png").unwrap();
+        assert_eq!(fetcher.site(&cdn).await.slots.available_permits(), 1);
+        second.respond.send(reply(200, "", "image")).unwrap();
+    };
+    let (file, ()) = tokio::join!(file, answer);
+    assert_eq!(file.unwrap(), b"image");
 }

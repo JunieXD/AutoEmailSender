@@ -23,7 +23,7 @@ async fn addresses_drawn_as_pictures_are_read_in_place_and_marked(db: SqlitePool
         <img src='/photo.png'><img src='/banner.png' width='900' height='300'>",
     );
     site.file("/zs.png", "image/png", image(180, 20, "zs@example.edu"));
-    site.file("/ls.png", "image/png", image(180, 20, "ls@example.edu"));
+    site.file("/ls.png", "image/png", image(180, 20, "ls@example. edu"));
     site.file(
         "/photo.png",
         "image/png",
@@ -65,10 +65,12 @@ async fn pdfs_are_read_while_research_is_missing_and_pictures_while_the_address_
     site.page(
         "/p",
         "<title>张三</title><p>张三 教授 <img src='/mail.png'></p>\
-        <iframe src='/pdfjs/web/viewer.html?file=%2Ffiles%2Fcv.pdf'></iframe>",
+        <iframe src='/pdfjs/web/viewer.html?file=%2Ffiles%2Fcv.pdf'></iframe>\
+        <iframe src='/pdfjs/web/viewer.html?file=%252Ffiles%252Fpapers.pdf'></iframe>",
     );
     site.file("/mail.png", "image/png", image(180, 20, "zs@example.edu"));
     site.file("/files/cv.pdf", "application/pdf", CV.to_vec());
+    site.file("/files/papers.pdf", "application/pdf", CV.to_vec());
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let (_, id) = enrichment::candidate(&db, &site, "/p").await;
@@ -89,6 +91,10 @@ async fn pdfs_are_read_while_research_is_missing_and_pictures_while_the_address_
     .await;
     save(&db, &claim, &result).await.unwrap();
     assert!(visited(&site, "/mail.png").is_empty());
+    assert_eq!(
+        visited(&site, ".pdf"),
+        ["/files/cv.pdf", "/files/papers.pdf"]
+    );
     // The radicals a PDF made on macOS gives for 士 and 生 are read as the characters.
     assert!(given.contains("博士生导师") && given.contains("zhangsan@cs.example.edu.cn"));
     let text = sqlx::query_scalar::<_, String>("SELECT text FROM crawl_page WHERE id = ?")
@@ -194,7 +200,7 @@ async fn a_website_asking_to_slow_down_holds_back_the_rest_of_its_pictures() {
     let cooldown = Cooldown::new(Arc::default());
     let read = crate::embedded::Reader {
         fetcher: &fetcher,
-        recognize: Some(recognize),
+        recognize,
         cooldown: &cooldown,
         crawl: 1,
     }
@@ -206,4 +212,95 @@ async fn a_website_asking_to_slow_down_holds_back_the_rest_of_its_pictures() {
     assert!(!read.text().contains("later@"));
     assert_eq!(visited(&site, ".png"), ["/slow.png"]);
     assert!(cooldown.until().is_some());
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_page_that_is_only_a_picture_and_a_pdf_is_read(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page(
+        "/p",
+        "<title>张三</title><img src='/mail.png'><iframe src='/cv.pdf'></iframe>",
+    );
+    site.file("/mail.png", "image/png", image(180, 20, "zs@example.edu"));
+    // A server that puts a blank line before the file.
+    site.file("/cv.pdf", "application/pdf", [b"\r\n", CV].concat());
+    let mut provider = Provider::start().await.unwrap();
+    config(&db, &provider.address).await;
+    let (_, id) = enrichment::candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let (result, given) = enrichment::answered(
+        &db,
+        &site,
+        &mut provider,
+        &claim,
+        targeted("zs@example.edu"),
+    )
+    .await;
+    save(&db, &claim, &result).await.unwrap();
+    assert!(given.contains("知识图谱"));
+    let d = review::detail(&db, id).await.unwrap().unwrap();
+    assert_eq!(d.candidate.fields.emails, vec!["zs@example.edu"]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn each_line_of_a_picture_is_a_line_of_the_page(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page("/p", "<title>团队</title><p><img src='/team.png'></p>");
+    let lines = "李四 ls@example.edu\n张三 zs@example.edu";
+    site.file("/team.png", "image/png", image(200, 40, lines));
+    let mut provider = Provider::start().await.unwrap();
+    config(&db, &provider.address).await;
+    let (_, id) = enrichment::candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let mut answer = targeted("zs@example.edu");
+    answer["relation"] = json!("uncertain");
+    answer["emails"] = json!(["zs@example.edu", "ls@example.edu"]);
+    answer["names"] = json!(["张三", "李四"]);
+    let (result, _) = enrichment::answered(&db, &site, &mut provider, &claim, answer).await;
+    save(&db, &claim, &result).await.unwrap();
+    // The address on 张三's own line is his, as it would be after a <br>.
+    let d = review::detail(&db, id).await.unwrap().unwrap();
+    assert_eq!(d.candidate.fields.emails, vec!["zs@example.edu"]);
+}
+
+#[sqlx::test(migrator = "db::MIGRATOR")]
+async fn a_pause_stops_the_pictures_still_to_be_read(db: SqlitePool) {
+    let site = Site::new().await;
+    site.page(
+        "/p",
+        "<title>张三</title><p>张三 <img src='/1.png'></p><p><img src='/2.png'></p>",
+    );
+    // A website that never answers.
+    site.files
+        .lock()
+        .unwrap()
+        .insert("/1.png".into(), (0, "image/png", vec![]));
+    site.file("/2.png", "image/png", image(120, 16, "zs@example.edu"));
+    let provider = Provider::start().await.unwrap();
+    config(&db, &provider.address).await;
+    let (crawl, id) = enrichment::candidate(&db, &site, "/p").await;
+    enrich::start(&db, &[id], 2).await.unwrap();
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    let net = net::Net::new(vec![]).unwrap();
+    let pages = Pages::local(site.port);
+    let limit = Limit::default();
+    let cooldown = Cooldown::new(Arc::default());
+    let read = process(&db, &net, &pages, &limit, &claim, &cooldown);
+    let pause = async {
+        tokio::time::timeout(GUARD_TIMEOUT, async {
+            while visited(&site, "/1.png").is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(queue::control(&db, crawl, "pause", 2).await.unwrap());
+    };
+    let (outcome, ()) = tokio::time::timeout(GUARD_TIMEOUT, async { tokio::join!(read, pause) })
+        .await
+        .unwrap();
+    assert!(matches!(outcome.unwrap(), Outcome::Gone));
+    assert!(visited(&site, "/2.png").is_empty());
 }

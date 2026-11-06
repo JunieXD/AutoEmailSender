@@ -213,6 +213,14 @@ fn image(element: ElementRef<'_>, ordinal: usize, base: &PageUrl, before: &str) 
 fn embedded_pdf(address: &str, kind: Option<&str>, base: &PageUrl) -> Option<PageUrl> {
     let url = base.join(address.trim()).ok()?;
     if let Some((_, file)) = url.parsed().query_pairs().find(|(name, _)| name == "file") {
+        // Some sites encode the address twice, as in `file=%252Fupload%252Fcv.pdf`.
+        let file = if file.contains('/') {
+            file
+        } else {
+            percent_encoding::percent_decode_str(&file)
+                .decode_utf8()
+                .ok()?
+        };
         return url.join(&file).ok();
     }
     (kind.is_some_and(|k| k.trim().eq_ignore_ascii_case("application/pdf"))
@@ -562,7 +570,12 @@ fn parse_page(
                     images.extend(image(element, element_index, base, before));
                     if let Some((_, text)) = recognized.iter().find(|(e, _)| *e == element_index) {
                         current.text.push(' ');
-                        drawn.push((current.text.len(), current.text.len() + text.len()));
+                        let start = current.text.len();
+                        drawn.push((start, start + text.len()));
+                        // Its lines are lines of the block, as with `<br>`.
+                        current
+                            .line_starts
+                            .extend(text.match_indices('\n').map(|(at, _)| start + at + 1));
                         current.text.push_str(text);
                         current.text.push(' ');
                     }

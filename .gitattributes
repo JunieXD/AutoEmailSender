@@ -6,4 +6,5 @@
 *.gif binary
 *.ico binary
 *.pdf binary
+*.onnx binary
 *.xlsx binary
