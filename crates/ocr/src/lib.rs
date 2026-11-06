@@ -76,33 +76,6 @@ fn on_white(image: image::DynamicImage) -> RgbImage {
     })
 }
 
-/// A run of rows with ink, and which columns have ink in them.
-struct Band {
-    top: u32,
-    bottom: u32,
-    columns: Vec<bool>,
-}
-
-impl Band {
-    fn height(&self) -> u32 {
-        self.bottom - self.top
-    }
-
-    /// How many columns have ink.
-    fn width(&self) -> usize {
-        self.columns.iter().filter(|&&ink| ink).count()
-    }
-
-    fn join(&mut self, other: Band) {
-        self.top = self.top.min(other.top);
-        self.bottom = self.bottom.max(other.bottom);
-        self.columns
-            .iter_mut()
-            .zip(other.columns)
-            .for_each(|(c, ink)| *c |= ink);
-    }
-}
-
 /// The rows of each line of text, split where a whole row is background; the model reads one line
 /// at a time. The whole image when no row stands out.
 fn lines(gray: &GrayImage) -> Vec<(u32, u32)> {
@@ -117,50 +90,47 @@ fn lines(gray: &GrayImage) -> Vec<(u32, u32)> {
             most
         }
     });
-    let mut bands: Vec<Band> = Vec::new();
-    for (y, row) in (0..).zip(gray.rows()) {
-        let columns: Vec<bool> = row.map(|p| p.0[0].abs_diff(background) > INK).collect();
-        if !columns.contains(&true) {
-            continue;
-        }
-        let row = Band {
-            top: y,
-            bottom: y + 1,
-            columns,
-        };
-        match bands.last_mut() {
-            Some(band) if band.bottom == y => band.join(row),
-            _ => bands.push(row),
+    let ink = |x, y| gray.get_pixel(x, y).0[0].abs_diff(background) > INK;
+    let mut bands: Vec<(u32, u32)> = Vec::new();
+    for y in 0..gray.height() {
+        if (0..gray.width()).any(|x| ink(x, y)) {
+            match bands.last_mut() {
+                Some((_, bottom)) if *bottom == y => *bottom = y + 1,
+                _ => bands.push((y, y + 1)),
+            }
         }
     }
     if bands.is_empty() {
         return vec![(0, gray.height())];
     }
-    // A band much shorter and narrower than the nearer band beside it and close to it, such as the
-    // dots over i and j or an underscore, belongs to it. A line of small text under a large title
-    // is short, and may be narrow, but stands apart from it.
+    // Marks of one stroke down every column close to the nearer line beside them, such as the dots
+    // over i and j or an underscore, belong to that line. A line of text, such as an address, has
+    // letters of more than one stroke down some columns, as e, a and @; a short line of only
+    // one-stroke characters, such as 111, joins the line beside it.
+    let marks = |(top, bottom): (u32, u32)| {
+        (0..gray.width()).all(|x| {
+            (top..bottom)
+                .filter(|&y| ink(x, y) && (y == top || !ink(x, y - 1)))
+                .count()
+                <= 1
+        })
+    };
     while let Some((short, into)) = (0..bands.len()).find_map(|i| {
-        let above = i
-            .checked_sub(1)
-            .map(|j| (j, bands[i].top - bands[j].bottom));
-        let below = bands
-            .get(i + 1)
-            .map(|next| (i + 1, next.top - bands[i].bottom));
+        let (top, bottom) = bands[i];
+        let above = i.checked_sub(1).map(|j| (j, top - bands[j].1));
+        let below = bands.get(i + 1).map(|next| (i + 1, next.0 - bottom));
         let (j, gap) = above.into_iter().chain(below).min_by_key(|&(_, gap)| gap)?;
-        let line = &bands[j];
-        (bands[i].height() * 3 < line.height()
-            && bands[i].width() * 3 < line.width()
-            && gap * 2 < line.height())
-        .then_some((i, j))
+        (gap * 2 < bands[j].1 - bands[j].0 && marks(bands[i])).then_some((i, j))
     }) {
-        let band = bands.remove(short);
-        bands[if into > short { into - 1 } else { into }].join(band);
+        let (top, bottom) = bands.remove(short);
+        let line = &mut bands[if into > short { into - 1 } else { into }];
+        *line = (line.0.min(top), line.1.max(bottom));
     }
-    bands.retain(|band| band.height() >= THINNEST);
-    // Room around each line, as the model was trained with.
+    // Room around each line, as the model was trained with; a rule is no line of text.
     bands
         .into_iter()
-        .map(|Band { top, bottom, .. }| {
+        .filter(|(top, bottom)| bottom - top >= THINNEST)
+        .map(|(top, bottom)| {
             let margin = (bottom - top) / 4 + 1;
             (
                 top.saturating_sub(margin),
