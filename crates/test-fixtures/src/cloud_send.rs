@@ -25,8 +25,8 @@ pub struct State {
     pub refused: BTreeMap<String, String>,
     /// By id.
     pub emails: BTreeMap<String, Email>,
-    /// Ids withdrawn, refused from then on, with whether each was waiting then.
-    pub withdrawn: BTreeMap<String, bool>,
+    /// Every id handed over or withdrawn, with whether it was withdrawn.
+    pub ids: BTreeMap<String, bool>,
     /// Uploads are kept, then answered with an internal error, as when the answer to the commit
     /// was lost.
     pub fail_after_keeping: bool,
@@ -43,7 +43,7 @@ impl Default for State {
             mailboxes: BTreeMap::new(),
             refused: BTreeMap::new(),
             emails: BTreeMap::new(),
-            withdrawn: BTreeMap::new(),
+            ids: BTreeMap::new(),
             fail_after_keeping: false,
             fail_ack: false,
         }
@@ -157,11 +157,10 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
         }
         ("PUT", _, Some(id)) => {
             let upload: EmailUpload = serde_json::from_slice(&body).unwrap();
-            if state.emails.contains_key(id) {
-                return ok(serde_json::to_value(Empty {}).unwrap());
-            }
-            if state.withdrawn.contains_key(id) {
-                return error(400, "invalid_input");
+            match state.ids.get(id) {
+                Some(true) => return error(400, "invalid_input"),
+                Some(false) => return ok(serde_json::to_value(Empty {}).unwrap()),
+                None => {}
             }
             if !state.plus()
                 || state
@@ -178,6 +177,7 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
             }
             let compressed = BASE64_URL_SAFE_NO_PAD.decode(&upload.message).unwrap();
             let message = String::from_utf8(zstd::decode_all(&compressed[..]).unwrap()).unwrap();
+            state.ids.insert(id.into(), false);
             state.emails.insert(
                 id.into(),
                 Email {
@@ -193,12 +193,12 @@ fn respond(state: &mut State, method: &str, path: &str, body: Vec<u8>) -> Reply 
         }
         ("DELETE", _, Some(id)) => {
             let answer = match state.emails.get(id).map(|e| e.state.clone()) {
-                None if *state.withdrawn.entry(id.into()).or_insert(false) => Withdrawal::Withdrawn,
+                None if *state.ids.entry(id.into()).or_insert(true) => Withdrawal::Withdrawn,
                 None => Withdrawal::Unknown,
                 Some(Sending::Waiting) => {
                     let email = state.emails.remove(id).unwrap();
                     state.release(&email.upload.mailbox);
-                    state.withdrawn.insert(id.into(), true);
+                    state.ids.insert(id.into(), true);
                     Withdrawal::Withdrawn
                 }
                 Some(Sending::Sending) => Withdrawal::Sending,

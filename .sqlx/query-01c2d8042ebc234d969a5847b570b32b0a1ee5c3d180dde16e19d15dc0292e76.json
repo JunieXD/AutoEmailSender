@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT cloud_at AS \"at!\" FROM email WHERE cloud_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "at!",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "email",
+            "name": "cloud_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "01c2d8042ebc234d969a5847b570b32b0a1ee5c3d180dde16e19d15dc0292e76"
+}

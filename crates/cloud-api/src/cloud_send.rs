@@ -11,7 +11,7 @@ pub const RESULTS: &str = "/v1/cloud/results";
 pub const RESULTS_ACK: &str = "/v1/cloud/results/ack";
 
 /// Ids are UUID v4s chosen by the app, as 32 lowercase hex digits; uploading or withdrawing the
-/// same id again changes nothing.
+/// same id again changes nothing. The server keeps every id it was given until the account goes.
 pub fn valid_id(value: &str) -> bool {
     crate::backup::valid_id(value)
 }
@@ -28,8 +28,7 @@ pub const MAX_SIZE: usize = 50 * 1024 * 1024;
 pub const MAX_MESSAGE: usize = 96 * 1024 * 1024;
 /// How long before its time the app hands an email over, in milliseconds.
 pub const LEAD: i64 = 2 * 60 * 1000;
-/// How long the server keeps a result the app has not acknowledged, and an id withdrawn, in
-/// milliseconds.
+/// How long the server keeps a result the app has not acknowledged, in milliseconds.
 pub const RETENTION: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// A mailbox the server keeps the secret of, while it has emails waiting.
@@ -126,10 +125,10 @@ pub struct Results {
     rename_all_fields = "camelCase"
 )]
 pub enum Withdrawal {
-    /// Taken back unsent, now or when asked before.
+    /// Taken back unsent, now or when asked before, or it never came: an upload of it still on
+    /// its way is refused from now on.
     Withdrawn,
-    /// The server has no record of it: it never came, or its outcome was acknowledged or kept
-    /// past `RETENTION`. Either way, an upload of it still on its way is refused from now on.
+    /// It came, and its outcome is gone: acknowledged, or kept past `RETENTION`.
     Unknown,
     /// Being handed to the mail server; its outcome comes with the results.
     Sending,

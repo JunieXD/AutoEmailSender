@@ -2,9 +2,9 @@
 
 use api::Context;
 use api::cloud_send::{self, Blocked, Choice, HandOff, PreviewInput, Reason, Withdraw};
-use cloud_api::cloud_send::{Outcome, RETENTION};
+use cloud_api::cloud_send::Outcome;
 use serde_json::json;
-use sqlx::{Connection, SqlitePool};
+use sqlx::SqlitePool;
 use test_fixtures::cloud_send::{Sending, Server, State};
 
 const NOW: i64 = 1_800_000_000_000;
@@ -14,7 +14,7 @@ const DAY: i64 = 24 * HOUR;
 const QQ: &str = "me@qq.com";
 
 struct Setup {
-    dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
     ctx: Context,
     server: Server,
 }
@@ -47,7 +47,11 @@ impl Setup {
         .execute(&ctx.db)
         .await
         .unwrap();
-        Self { dir, ctx, server }
+        Self {
+            _dir: dir,
+            ctx,
+            server,
+        }
     }
 
     /// An approved first letter to a new mentor, to go at `at` or within the hour after.
@@ -448,6 +452,7 @@ async fn an_upload_cut_short_goes_back_without_being_sent_twice(db: SqlitePool) 
     setup.hand_off().await;
     let never_id = setup.cloud_id(never).await;
     setup.server().emails.remove(&never_id);
+    setup.server().ids.remove(&never_id);
     sqlx::query("UPDATE email SET cloud_uploading = 1")
         .execute(&setup.ctx.db)
         .await
@@ -460,82 +465,36 @@ async fn an_upload_cut_short_goes_back_without_being_sent_twice(db: SqlitePool) 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn one_the_server_no_longer_knows_may_have_gone(db: SqlitePool) {
+async fn one_whose_outcome_the_server_no_longer_has_may_have_gone(db: SqlitePool) {
     let setup = Setup::new(db).await;
-    let up = setup.scheduled("王伟", NOW + DAY).await;
-    let cut_short = setup.scheduled("李娜", NOW + DAY).await;
-    let late = setup.scheduled("张敏", NOW + DAY).await;
+    let away = setup.scheduled("王伟", NOW + DAY).await;
+    let restored = setup.scheduled("李娜", NOW + DAY).await;
     setup.hand_off().await;
-    // None is on the server: sent and dropped while this computer was away, or never there.
-    for id in [up, cut_short, late] {
+    // Both came and their outcomes are gone: kept past what the server keeps while this computer
+    // was away, or written down, acknowledged and then lost to a backup restored from before.
+    for id in [away, restored] {
         let cloud_id = setup.cloud_id(id).await;
         setup.server().emails.remove(&cloud_id);
     }
-    sqlx::query("UPDATE email SET cloud_uploading = 1 WHERE id IN (?, ?)")
-        .bind(cut_short)
-        .bind(late)
+    // The backup was taken while it was being uploaded.
+    sqlx::query("UPDATE email SET cloud_uploading = 1 WHERE id = ?")
+        .bind(restored)
         .execute(&setup.ctx.db)
         .await
         .unwrap();
-    // Asked about within a day of when the server could have dropped it, allowing for the
-    // clocks: it may have come and gone.
-    let cloud_at: i64 = sqlx::query_scalar("SELECT cloud_at FROM email WHERE id = ?")
-        .bind(late)
-        .fetch_one(&setup.ctx.db)
-        .await
-        .unwrap();
-    cloud_send::withdraw(
-        &setup.ctx,
-        Withdraw::Email(late),
-        cloud_at + RETENTION - DAY,
-    )
-    .await
-    .unwrap();
-    assert_eq!(setup.email(late).await, ("maybe_sent".into(), None, true));
+    assert!(setup.sync().await);
+    assert_eq!(
+        setup.email(restored).await,
+        ("maybe_sent".into(), None, true)
+    );
+    assert_eq!(setup.email(away).await.0, "cloud");
 
-    // Past its latest time, one the server got is asked about too; one cut short never came.
+    // Past its latest time it is asked about too.
     let mut changed = false;
     cloud_send::sync(&setup.ctx, NOW + 2 * DAY, &mut changed)
         .await
         .unwrap();
-    assert_eq!(setup.email(up).await, ("maybe_sent".into(), None, true));
-    assert_eq!(
-        setup.email(cut_short).await,
-        ("approved".into(), None, false)
-    );
-}
-
-#[sqlx::test(migrator = "db::MIGRATOR")]
-async fn a_backup_takes_an_upload_cut_short_for_one_that_got_through(db: SqlitePool) {
-    let setup = Setup::new(db).await;
-    let id = setup.scheduled("王伟", NOW + DAY).await;
-    setup.hand_off().await;
-    sqlx::query("UPDATE email SET cloud_uploading = 1")
-        .execute(&setup.ctx.db)
-        .await
-        .unwrap();
-    // Its outcome may be written down and acknowledged after the backup: restored, an answer of
-    // no record must not bring it back to go again.
-    let dir = setup.dir.path();
-    let target = dir.join("backup.zip");
-    api::backup::export(&setup.ctx.db, dir, &target, NOW)
-        .await
-        .unwrap();
-    api::backup::prepare(dir, &target).await.unwrap();
-    let mut staged = sqlx::SqliteConnection::connect(&format!(
-        "sqlite:{}?mode=ro",
-        dir.join("restore/app.db").display()
-    ))
-    .await
-    .unwrap();
-    let restored: (String, bool) =
-        sqlx::query_as("SELECT state, cloud_uploading FROM email WHERE id = ?")
-            .bind(id)
-            .fetch_one(&mut staged)
-            .await
-            .unwrap();
-    assert_eq!(restored, ("cloud".into(), false));
-    staged.close().await.unwrap();
+    assert_eq!(setup.email(away).await, ("maybe_sent".into(), None, true));
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]

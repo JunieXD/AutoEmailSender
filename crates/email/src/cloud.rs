@@ -1,7 +1,7 @@
 //! Emails handed to the official server, which sends them at their time from the mailbox the app
 //! chose (docs/design.md#云端定时发送, docs/data-model.md#联系).
 
-use cloud_api::cloud_send::{Outcome, RETENTION};
+use cloud_api::cloud_send::Outcome;
 use sqlx::SqliteConnection;
 use sqlx::types::Json;
 
@@ -226,7 +226,7 @@ pub async fn waiting(
 
 /// The emails of `account` the server may have but was never told to keep or give up: uploads cut
 /// short, and those canceled since. Also those past their latest time, which by then have an
-/// outcome there, unless it was dropped or the server never had them.
+/// outcome there, unless it was dropped after this computer was away that long.
 pub async fn to_withdraw(
     conn: &mut SqliteConnection,
     account: &str,
@@ -281,24 +281,18 @@ pub async fn withdrawn(
     Ok(())
 }
 
-const GONE: &str = "官方服务器上已经没有这封邮件的记录，没法确定是否发出。";
+const GONE: &str = "官方服务器收到过这封邮件，但结果已经不在了（比如超过 30 天没有同步），没法确定是否发出，请到发件邮箱的“已发送”里核对。";
 
-/// For this computer's clock and the server's to differ, and for the request to take.
-const LEEWAY: i64 = 24 * 60 * 60 * 1000;
-
-/// The server has no record of an email. The server sends nothing before its planned time and
-/// keeps an outcome `RETENTION` unless told it was written down here, which clears the upload
-/// mark: one still marked uploading, asked about early enough, never came, and is back here as
-/// when withdrawn. Otherwise it may have gone out at its time, like `finished`. A backup keeps no
-/// upload mark (`api::backup`), as the outcome may have been written down here since.
+/// The server had an email and its outcome is gone, as when this computer was away longer than
+/// the server keeps outcomes, or a backup from before it came was restored: it may have gone out
+/// at its time, like `finished`.
 pub async fn unknown(
     conn: &mut SqliteConnection,
     cloud_id: &str,
     now: i64,
 ) -> Result<Option<Handed>, sqlx::Error> {
-    let Some(r) = sqlx::query!(
-        r#"SELECT cloud_uploading AS "uploading: bool", cloud_at AS "at!" FROM email
-           WHERE cloud_id = ?"#,
+    let Some(at) = sqlx::query_scalar!(
+        r#"SELECT cloud_at AS "at!" FROM email WHERE cloud_id = ?"#,
         cloud_id
     )
     .fetch_optional(&mut *conn)
@@ -306,18 +300,8 @@ pub async fn unknown(
     else {
         return Ok(None);
     };
-    if r.uploading && now < r.at + RETENTION - LEEWAY {
-        withdrawn(conn, cloud_id, now).await?;
-        return Ok(None);
-    }
     let reason = GONE.into();
-    finished(
-        conn,
-        cloud_id,
-        &Outcome::MaybeSent { at: r.at, reason },
-        now,
-    )
-    .await
+    finished(conn, cloud_id, &Outcome::MaybeSent { at, reason }, now).await
 }
 
 /// What became of an email the server had, written down; the mentor and mailbox of one that went
