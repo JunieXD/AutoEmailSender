@@ -118,19 +118,20 @@ pub fn farewell(
 }
 
 /// A plain connection to `host:port`, through the system proxy unless the host is this computer.
-pub async fn connect(host: &str, port: u16) -> Result<TcpStream, MailError> {
-    let proxy = proxy::for_host(host);
-    match &proxy {
-        Some(p) => tracing::info!("connecting to {host}:{port} through {}", p.endpoint()),
-        None => tracing::info!("connecting to {host}:{port}"),
+pub async fn connect(net: &Net, host: &str, port: u16) -> Result<TcpStream, MailError> {
+    match proxy::for_host(host) {
+        Some(proxy) => {
+            tracing::info!("connecting to {host}:{port} through {}", proxy.endpoint());
+            tunnel(&proxy, host, port).await
+        }
+        None => {
+            tracing::info!("connecting to {host}:{port}");
+            direct(net, host, port).await
+        }
     }
-    tunnel(proxy.as_ref(), host, port).await
 }
 
-async fn tunnel(proxy: Option<&Proxy>, host: &str, port: u16) -> Result<TcpStream, MailError> {
-    let Some(proxy) = proxy else {
-        return direct(host, port).await;
-    };
+async fn tunnel(proxy: &Proxy, host: &str, port: u16) -> Result<TcpStream, MailError> {
     let endpoint = proxy.endpoint();
     let down = |source| MailError::ProxyDown {
         proxy: endpoint.to_string(),
@@ -157,13 +158,14 @@ async fn tunnel(proxy: Option<&Proxy>, host: &str, port: u16) -> Result<TcpStrea
     }
 }
 
-async fn direct(host: &str, port: u16) -> Result<TcpStream, MailError> {
+async fn direct(net: &Net, host: &str, port: u16) -> Result<TcpStream, MailError> {
     let addrs: Vec<_> = tokio::net::lookup_host((host, port))
         .await
         .map_err(|source| MailError::Resolve {
             host: host.into(),
             source,
         })?
+        .filter(|addr| net.reaches(addr.ip()))
         .collect();
     first_to_answer(&addrs)
         .await
@@ -319,7 +321,7 @@ mod tests {
             Proxy::Socks5(at(socks5().await)),
             Proxy::Http(at(http().await)),
         ] {
-            let mut stream = tunnel(Some(&proxy), "localhost", echo).await.unwrap();
+            let mut stream = tunnel(&proxy, "localhost", echo).await.unwrap();
             stream.write_all(b"EHLO").await.unwrap();
             let mut back = [0; 4];
             stream.read_exact(&mut back).await.unwrap();
@@ -334,10 +336,10 @@ mod tests {
             listener.local_addr().unwrap().port()
         };
         for proxy in [Proxy::Socks5(at(closed)), Proxy::Http(at(closed))] {
-            let down = tunnel(Some(&proxy), "localhost", 465).await;
+            let down = tunnel(&proxy, "localhost", 465).await;
             assert!(matches!(down, Err(MailError::ProxyDown { .. })), "{down:?}");
         }
-        let refused = tunnel(Some(&Proxy::Http(at(http().await))), "localhost", 25).await;
+        let refused = tunnel(&Proxy::Http(at(http().await)), "localhost", 25).await;
         assert!(
             matches!(
                 refused,

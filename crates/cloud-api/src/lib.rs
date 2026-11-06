@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod account;
 pub mod backup;
+pub mod cloud_send;
 pub mod library;
 pub mod plus;
 pub mod relay;
@@ -173,6 +174,12 @@ pub enum ErrorCode {
     BackupTooLarge,
     /// The relay's room belongs to another account.
     RoomTaken,
+    /// The server has no key to keep emails for cloud sending with.
+    CloudUnavailable,
+    /// The email, or the account's waiting emails with it, would be over the limit.
+    CloudTooLarge,
+    /// The email's mailbox has not been uploaded.
+    UnknownMailbox,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

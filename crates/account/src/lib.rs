@@ -798,6 +798,13 @@ impl Error {
                 ErrorCode::BackupTooLarge => {
                     "云端备份的空间暂时满了：没传完的数据一天内会清掉，之后再试。".into()
                 }
+                ErrorCode::CloudUnavailable => "云端定时发送暂时不可用，请稍后重试。".into(),
+                ErrorCode::CloudTooLarge => {
+                    "交给云端的邮件超过上限：一封最大 50 MB，合计最多 500 封、200 MB。".into()
+                }
+                ErrorCode::UnknownMailbox => {
+                    "云端还没有这个发件邮箱，请重新打开“交给云端发送”再交一次。".into()
+                }
                 // Logging in to another account gives the computer a new room, so this is not
                 // expected to happen.
                 ErrorCode::RoomTaken => {

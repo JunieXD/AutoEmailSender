@@ -1084,6 +1084,7 @@ name = "cloud-api"
 version = "3.0.0-alpha.0"
 dependencies = [
  "serde",
+ "transport",
  "ts-rs",
  "url",
 ]

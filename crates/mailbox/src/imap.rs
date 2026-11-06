@@ -328,7 +328,7 @@ impl Imap {
 
 async fn login(net: &Net, account: &Account) -> Result<Session<TlsStream<TcpStream>>, MailError> {
     let server = &account.imap;
-    let tcp = connect::connect(&server.host, server.port).await?;
+    let tcp = connect::connect(net, &server.host, server.port).await?;
     let client = match server.security {
         Security::Tls => {
             let mut client = Client::new(connect::encrypt(net, &server.host, tcp).await?);

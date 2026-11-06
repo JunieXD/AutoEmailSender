@@ -13,8 +13,8 @@ mod smtp;
 
 pub use error::MailError;
 pub use smtp::{
-    File, Letter, Outgoing, SendError, SendStatus, Smtp, check_sending, compose, login, message_id,
-    send_test,
+    File, Letter, Outgoing, SendError, SendStatus, Smtp, check_sending, compose, compose_undated,
+    login, message_id, send_test,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

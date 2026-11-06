@@ -2,6 +2,7 @@
 //! system trusts (docs/design.md#桌面端).
 
 use std::error::Error;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -19,6 +20,7 @@ pub struct Net {
     tls: Arc<ClientConfig>,
     roots: Vec<CertificateDer<'static>>,
     http: reqwest::Client,
+    public_only: bool,
 }
 
 impl Net {
@@ -38,7 +40,22 @@ impl Net {
             tls: Arc::new(tls),
             roots,
             http,
+            public_only: false,
         })
+    }
+
+    /// For the official server, which connects to the mail servers users name: those connections
+    /// only go to public addresses, never into the server's own network.
+    pub fn public_only(self) -> Net {
+        Net {
+            public_only: true,
+            ..self
+        }
+    }
+
+    /// Whether a mail server at `addr` may be connected to.
+    pub fn reaches(&self, addr: IpAddr) -> bool {
+        !self.public_only || public(addr.to_canonical())
     }
 
     pub fn tls(&self) -> Arc<ClientConfig> {
@@ -75,6 +92,35 @@ impl Net {
         http_builder(reqwest::Client::builder())
             .redirect(reqwest::redirect::Policy::none())
             .tls_backend_preconfigured(tls)
+    }
+}
+
+/// Not this computer, its networks or addresses reserved for special uses.
+fn public(addr: IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(ip) => {
+            let [a, b, ..] = ip.octets();
+            !(ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_multicast()
+                || ip.is_documentation()
+                || a == 0
+                || a >= 240
+                // Shared by carriers' NAT (RFC 6598).
+                || (a == 100 && b & 0xc0 == 64))
+        }
+        IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
+            !(ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                // Unique local and link-local.
+                || first & 0xfe00 == 0xfc00
+                || first & 0xffc0 == 0xfe80)
+        }
     }
 }
 
@@ -171,4 +217,36 @@ pub fn untrusted(e: &(dyn Error + 'static)) -> bool {
         };
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_official_server_reaches_only_public_addresses() {
+        let addr = |a: &str| a.parse::<IpAddr>().unwrap();
+        let server = Net::new(Vec::new()).unwrap().public_only();
+        for a in ["220.181.12.12", "2408:8000::1", "::ffff:220.181.12.12"] {
+            assert!(server.reaches(addr(a)), "{a}");
+        }
+        for a in [
+            "127.0.0.1",
+            "10.0.0.5",
+            "172.17.0.1",
+            "192.168.1.1",
+            "169.254.169.254",
+            "100.100.100.200",
+            "0.0.0.0",
+            "255.255.255.255",
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+        ] {
+            assert!(!server.reaches(addr(a)), "{a}");
+        }
+        // The app connects to mail bridges on the computer itself.
+        assert!(Net::new(Vec::new()).unwrap().reaches(addr("127.0.0.1")));
+    }
 }

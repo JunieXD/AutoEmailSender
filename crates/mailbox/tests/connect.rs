@@ -44,6 +44,18 @@ async fn checks_pass_over_tls_and_starttls() {
 }
 
 #[tokio::test]
+async fn the_official_server_does_not_connect_into_its_own_network() {
+    let pki = fakemail::pki();
+    let net = Net::new(vec![pki.root.clone()]).unwrap().public_only();
+    let (me, _) = mailbox(&pki, Security::Tls, SECRET).await;
+    let sending = transport::check_sending(&net, &me.sender).await;
+    assert!(
+        matches!(sending, Err(MailError::Connect { .. })),
+        "{sending:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_wrong_secret_is_a_refused_login() {
     let pki = fakemail::pki();
     let net = Net::new(vec![pki.root.clone()]).unwrap();

@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 serde.workspace = true
+transport.workspace = true
 ts-rs = { workspace = true, optional = true }
 url = "2.5.8"
 

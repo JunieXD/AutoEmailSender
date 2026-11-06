@@ -4,10 +4,11 @@ use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::SystemTime;
 
 use lettre::Message;
 use lettre::address::Envelope;
-use lettre::message::header::ContentType;
+use lettre::message::header::{self, ContentType, Headers};
 use lettre::message::{Attachment, MultiPart};
 use lettre::transport::smtp::authentication::{Credentials, Mechanism};
 use lettre::transport::smtp::client::{AsyncSmtpConnection, AsyncTokioStream};
@@ -94,9 +95,39 @@ impl From<Message> for Outgoing {
     }
 }
 
+impl Outgoing {
+    /// An email from `compose_undated`, dated `at` as it goes out.
+    pub fn dated(
+        from: lettre::Address,
+        to: lettre::Address,
+        undated: &[u8],
+        at: SystemTime,
+    ) -> Result<Outgoing, MailError> {
+        let mut date = Headers::new();
+        date.set(header::Date::new(at));
+        Ok(Self {
+            envelope: Envelope::new(Some(from), vec![to])
+                .map_err(|e| MailError::Broken(e.to_string()))?,
+            message: [date.to_string().as_bytes(), undated].concat(),
+        })
+    }
+}
+
 /// Puts an email from the mailbox together, with the letter as HTML and as plain text for mail apps
 /// that show no HTML, and its files after.
 pub fn compose(sender: &Sender, letter: &Letter) -> Result<Outgoing, MailError> {
+    message(sender, letter).map(Outgoing::from)
+}
+
+/// An email for the official server to send later: without the Date header, which
+/// `Outgoing::dated` adds when it goes out.
+pub fn compose_undated(sender: &Sender, letter: &Letter) -> Result<Vec<u8>, MailError> {
+    let mut message = message(sender, letter)?;
+    message.headers_mut().remove::<header::Date>();
+    Ok(message.formatted())
+}
+
+fn message(sender: &Sender, letter: &Letter) -> Result<Message, MailError> {
     let to = letter
         .to
         .parse()
@@ -132,7 +163,6 @@ pub fn compose(sender: &Sender, letter: &Letter) -> Result<Outgoing, MailError> 
         ))
         .subject(letter.subject)
         .multipart(body)
-        .map(Outgoing::from)
         .map_err(|e| MailError::Broken(e.to_string()))
 }
 
@@ -282,7 +312,7 @@ impl Smtp {
 
 async fn open(net: &Net, sender: &Sender) -> Result<AsyncSmtpConnection, MailError> {
     let server = &sender.smtp;
-    let tcp = connect::connect(&server.host, server.port).await?;
+    let tcp = connect::connect(net, &server.host, server.port).await?;
     let mut conn = match server.security {
         Security::Tls => {
             let tls = connect::encrypt(net, &server.host, tcp).await?;
@@ -375,5 +405,50 @@ impl AsyncWrite for Tls {
 impl AsyncTokioStream for Tls {
     fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.0.get_ref().0.peer_addr()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_email_sent_later_is_dated_when_it_goes_out() {
+        let address: lettre::Address = "me@example.edu".parse().unwrap();
+        let sender = Sender {
+            address: address.clone(),
+            sender_name: "林晓".into(),
+            smtp: Server {
+                host: "smtp.example.edu".into(),
+                port: 465,
+                security: Security::Tls,
+            },
+            secret: "secret".into(),
+        };
+        let letter = Letter {
+            message_id: "<id@example.edu>",
+            in_reply_to: None,
+            references: None,
+            to_name: "王老师",
+            to: "wang@example.edu",
+            subject: "申请",
+            html: "<p>您好</p>",
+            text: "您好",
+            attachments: &[],
+        };
+        let undated = compose_undated(&sender, &letter).unwrap();
+        let head = String::from_utf8_lossy(&undated);
+        let head = head.split("\r\n\r\n").next().unwrap();
+        assert!(head.contains("Subject:") && !head.contains("Date:"));
+
+        let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000);
+        let to = "wang@example.edu".parse().unwrap();
+        let email = Outgoing::dated(address, to, &undated, at).unwrap();
+        assert!(
+            email
+                .message
+                .starts_with(b"Date: Fri, 15 Jan 2027 08:00:00 +0000\r\n")
+        );
+        assert!(email.message.ends_with(&undated));
     }
 }
