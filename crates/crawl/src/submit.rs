@@ -130,6 +130,7 @@ fn check(candidates: Vec<SubmittedCandidate>) -> Result<Vec<Checked>, SubmitErro
                     fields,
                     papers: c.papers,
                     profile,
+                    recognized: vec![],
                 },
                 source,
                 note: c.note.filter(|s| !s.trim().is_empty()),

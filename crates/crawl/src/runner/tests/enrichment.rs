@@ -44,24 +44,38 @@ async fn process_answer(
     claim: &Claim,
     answer: Value,
 ) -> Outcome {
+    answered(db, site, provider, claim, answer).await.0
+}
+/// Reads the claimed page with the model answering `answer`, and what the model was given.
+pub(super) async fn answered(
+    db: &SqlitePool,
+    site: &Site,
+    provider: &mut Provider,
+    claim: &Claim,
+    answer: Value,
+) -> (Outcome, String) {
     let net = net::Net::new(vec![]).unwrap();
     let fetcher = Pages::local(site.port);
     let limit = Limit::default();
     let cooldown = Cooldown::new(Arc::default());
     let read = process(db, &net, &fetcher, &limit, claim, &cooldown);
+    tokio::pin!(read);
     let respond = async {
-        provider
-            .requests
-            .recv()
-            .await
-            .unwrap()
+        let request = provider.requests.recv().await.unwrap();
+        let given = request.body.to_string();
+        request
             .respond
             .send(Response::answer(&answer.to_string()))
             .ok()
             .unwrap();
+        given
     };
-    let (result, ()) = tokio::join!(read, respond);
-    result.unwrap()
+    // A page that fails before it asks the model fails the test instead of leaving it waiting.
+    let given = tokio::select! {
+        given = respond => given,
+        result = &mut read => panic!("read without asking the model: {:?}", result.err()),
+    };
+    (read.await.unwrap(), given)
 }
 async fn detail(db: &SqlitePool, id: i64) -> review::CandidateDetail {
     review::detail(db, id).await.unwrap().unwrap()
@@ -908,6 +922,7 @@ async fn enrichment_redirect_checks_identity_and_merged_candidate_discards_resul
             },
             papers: vec![],
             profile: Some(site.url("/merged")),
+            recognized: vec![],
         },
     )
     .await
@@ -990,6 +1005,7 @@ async fn enrichment_merge_invalidates_results_even_when_active_candidate_is_reta
             },
             papers: vec![],
             profile: Some(site.url("/active")),
+            recognized: vec![],
         },
     )
     .await

@@ -15,9 +15,12 @@ use tokio::{
 };
 // Signals and database state determine progress; this only bounds hangs under load.
 const GUARD_TIMEOUT: Duration = Duration::from_secs(60);
+type Files = Arc<Mutex<HashMap<String, (u16, &'static str, Vec<u8>)>>>;
 struct Site {
     port: u16,
     pages: Arc<Mutex<HashMap<String, (u16, String)>>>,
+    /// By path, with their status and content type.
+    files: Files,
     visits: Arc<Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -34,6 +37,7 @@ impl Site {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let pages = Arc::new(Mutex::new(HashMap::<String, (u16, String)>::new()));
+        let files = Files::default();
         let visits = Arc::new(Mutex::new(Vec::new()));
         let acceptor = tls.then(|| {
             let cert =
@@ -51,10 +55,10 @@ impl Site {
             .unwrap();
             tokio_rustls::TlsAcceptor::from(Arc::new(config))
         });
-        let (p, v) = (pages.clone(), visits.clone());
+        let (p, f, v) = (pages.clone(), files.clone(), visits.clone());
         let task = tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                let (p, v) = (p.clone(), v.clone());
+                let (p, f, v) = (p.clone(), f.clone(), v.clone());
                 let acceptor = acceptor.clone();
                 tokio::spawn(async move {
                     if let Some(acceptor) = acceptor {
@@ -65,18 +69,19 @@ impl Site {
                         if first[0] == 22 {
                             // The trusted client rejects the fixture certificate before retrying.
                             if let Ok(stream) = acceptor.accept(stream).await {
-                                Self::serve(stream, p, v, true).await;
+                                Self::serve(stream, p, f, v, true).await;
                             }
                             return;
                         }
                     }
-                    Self::serve(stream, p, v, false).await;
+                    Self::serve(stream, p, f, v, false).await;
                 });
             }
         });
         Self {
             port,
             pages,
+            files,
             visits,
             task,
         }
@@ -84,6 +89,7 @@ impl Site {
     async fn serve<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
         stream: S,
         pages: Arc<Mutex<HashMap<String, (u16, String)>>>,
+        files: Files,
         visits: Arc<Mutex<Vec<String>>>,
         tls: bool,
     ) {
@@ -111,6 +117,16 @@ impl Site {
         } else {
             path.clone()
         });
+        let file = files.lock().unwrap().get(&path).cloned();
+        if let Some((status, kind, body)) = file {
+            let head = format!(
+                "HTTP/1.1 {status} Reply\r\nConnection: close\r\nContent-Type: {kind}\r\n\
+                Content-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = io.write_all(&[head.as_bytes(), &body].concat()).await;
+            return;
+        }
         let (status, body) = {
             let pages = pages.lock().unwrap();
             pages
@@ -138,6 +154,12 @@ impl Site {
     }
     fn url(&self, path: &str) -> PageUrl {
         PageUrl::parse(&format!("http://school.example.edu:{}{path}", self.port)).unwrap()
+    }
+    fn file(&self, path: &str, kind: &'static str, body: Vec<u8>) {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(path.into(), (200, kind, body));
     }
     fn redirect(&self, path: &str, to: &str) {
         self.pages
@@ -625,6 +647,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
                 },
                 papers: vec!["论文".into()],
                 profile: profile.map(|p| site.url(p)),
+                recognized: vec![],
             },
         )
         .await
@@ -693,6 +716,7 @@ async fn candidate_identity_person_limit_and_review_transactions(db: SqlitePool)
                 },
                 papers: vec![],
                 profile: Some(site.url(&format!("/limit/{n}"))),
+                recognized: vec![],
             },
         )
         .await
@@ -1135,6 +1159,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
                 },
                 papers: vec![],
                 profile: None,
+                recognized: vec![],
             },
         )
         .await
@@ -1201,6 +1226,7 @@ async fn review_explicit_targets_differences_and_trash_follow_the_shared_rules(d
                 },
                 papers: vec![],
                 profile: Some(site.url(&format!("/same/{n}"))),
+                recognized: vec![],
             },
         )
         .await
@@ -1281,6 +1307,7 @@ async fn later_profile_facts_need_review_and_keep_the_user_approved_identity(db:
         fields: fields.clone(),
         papers,
         profile: Some(url.clone()),
+        recognized: vec![],
     };
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
     review::save(
@@ -1378,6 +1405,7 @@ async fn combining_duplicate_pages_keeps_an_already_accepted_candidate(db: Sqlit
         },
         papers: vec![],
         profile: Some(url),
+        recognized: vec![],
     };
     let mut tx = db.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for u in [&url, &two] {
@@ -1526,6 +1554,7 @@ async fn observation(
             fields,
             papers: vec![],
             profile: Some(site.url(path)),
+            recognized: vec![],
         },
     )
     .await
@@ -1642,6 +1671,7 @@ async fn bare_line(db: &SqlitePool, c: &Claim, site: &Site, name: &str, emails: 
             fields: observed(name, emails, None),
             papers: vec![],
             profile: None,
+            recognized: vec![],
         },
     )
     .await
@@ -1982,6 +2012,7 @@ async fn a_page_found_as_a_profile_by_itself_is_read_again_for_whom_a_list_gives
             fields: observed("张三", &["zhang@example.edu"], None),
             papers: vec![],
             profile: Some(link.clone()),
+            recognized: vec![],
         },
     )
     .await
@@ -2060,6 +2091,7 @@ async fn a_profile_reached_from_another_confirmed_candidates_page_is_still_read_
             fields: observed("李四", &[], None),
             papers: vec![],
             profile: Some(site.url("/li")),
+            recognized: vec![],
         },
     )
     .await
@@ -2815,6 +2847,7 @@ async fn redirected_profile_preserves_distinct_confirmed_targets(db: SqlitePool)
             fields: observed("张三", &[], None),
             papers: vec![],
             profile: Some(site.url("/old")),
+            recognized: vec![],
         },
     )
     .await
@@ -3691,11 +3724,32 @@ impl Pages {
             writes: db::Writes::default(),
             http: Fetcher::local(port),
             browser: None,
+            recognize: Some(recognize),
         }
     }
 }
 
+/// Reads what an image made by `image` says.
+fn recognize(image: &[u8]) -> Result<String, String> {
+    let at = image
+        .windows(5)
+        .position(|w| w == b"TEXT:")
+        .ok_or("no text in the image")?;
+    Ok(String::from_utf8_lossy(&image[at + 5..]).into())
+}
+
+/// A PNG this size, as far as its header goes, that says `text`.
+fn image(width: u32, height: u32, text: &str) -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    png.extend(width.to_be_bytes());
+    png.extend(height.to_be_bytes());
+    png.extend(b"\x08\x02\0\0\0TEXT:");
+    png.extend(text.as_bytes());
+    png
+}
+
 mod browser;
+mod embedded;
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn deleting_a_crawl_removes_pages_and_pending_candidates_but_keeps_reviewed_data(

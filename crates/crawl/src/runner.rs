@@ -2,7 +2,7 @@
 use crate::{
     Material, PageTarget, PageUrl, Scope,
     browser::{Browser, BrowserError},
-    enrich,
+    embedded, enrich,
     extract::{self, Kind, Person},
     fetch::Fetcher,
     now,
@@ -59,6 +59,8 @@ struct Pages {
     writes: db::Writes,
     http: Fetcher,
     browser: Option<Arc<dyn Browser>>,
+    /// None when the system has no text recognition, and images are not read.
+    recognize: Option<embedded::Recognize>,
 }
 
 async fn save_material(
@@ -113,24 +115,29 @@ impl Pages {
             return Err(ReadError::Wait);
         }
         let round = cooldown.round(&c.crawl);
-        let fetched = self.http.fetch(target).await.map_err(|e| match e {
-            // Like a model's rate limit: no new pages start until then, and this one goes again.
-            crate::CrawlError::SlowDown(wait) => {
-                tracing::info!(wait_ms = wait.as_millis(), "website rate limited");
-                ReadError::RateLimit(
-                    RateLimit {
-                        wait,
-                        lasting: format!(
-                            "网站要求放慢访问已超过 {} 分钟，页面一直没能打开。\
+        let documents = c.kind == PageKind::EnrichChild;
+        let fetched = self
+            .http
+            .fetch(target, documents)
+            .await
+            .map_err(|e| match e {
+                // Like a model's rate limit: no new pages start until then, and this one goes again.
+                crate::CrawlError::SlowDown(wait) => {
+                    tracing::info!(wait_ms = wait.as_millis(), "website rate limited");
+                    ReadError::RateLimit(
+                        RateLimit {
+                            wait,
+                            lasting: format!(
+                                "网站要求放慢访问已超过 {} 分钟，页面一直没能打开。\
                             可能是网站限制了你的网络，过一阵再继续，或换个网络后继续。",
-                            LASTING.as_secs() / 60
-                        ),
-                    },
-                    round,
-                )
-            }
-            e => ReadError::Failed(e.message()),
-        })?;
+                                LASTING.as_secs() / 60
+                            ),
+                        },
+                        round,
+                    )
+                }
+                e => ReadError::Failed(e.message()),
+            })?;
         let mut m = fetched.material;
         if !c.steps.is_empty() && m.needs_browser.is_none() {
             m.needs_browser = Some(crate::BrowserReason::Pagination);
@@ -553,7 +560,7 @@ async fn read(
         });
     }
     if targeted {
-        return read_for_candidate(&reader, &scope, m).await;
+        return read_for_candidate(&reader, fetcher, &scope, m).await;
     }
     let route = reader
         .ask::<extract::Route>("route", extract::ROUTE, extract::routing(&m, &scope))
@@ -620,6 +627,7 @@ async fn read(
 /// Reads a profile page or enrichment page for the one candidate it was queued for.
 async fn read_for_candidate(
     reader: &Reader<'_>,
+    pages: &Pages,
     scope: &Scope,
     m: Material,
 ) -> Result<Page, ReadError> {
@@ -648,6 +656,19 @@ async fn read_for_candidate(
     }
     drop(conn);
     let target = candidate.fields;
+    let m = embedded::Reader {
+        fetcher: &pages.http,
+        recognize: pages.recognize,
+        cooldown: reader.cooldown,
+        crawl: c.crawl,
+    }
+    .read(
+        m,
+        target.emails.is_empty(),
+        target.emails.is_empty() || target.research.is_none(),
+    )
+    .await
+    .map_err(|e| ReadError::Failed(e.message()))?;
     let mut data = extract::data(&m, 0..m.units.len());
     data["target"] = serde_json::json!({
         "name": target.name,
@@ -736,6 +757,13 @@ async fn read_for_candidate(
             .retain(|email| trusted && owned.contains(email));
         person.fields.homepages.retain(|url| url != m.url.as_str());
     }
+    person.recognized = person
+        .fields
+        .emails
+        .iter()
+        .filter(|address| m.only_from_image(address))
+        .cloned()
+        .collect();
     Ok(Page {
         material: m,
         kind: c.kind,
@@ -906,6 +934,7 @@ async fn save(db: &SqlitePool, c: &Claim, outcome: &Outcome) -> Result<bool, sql
                             fields: person.fields.clone(),
                             papers: person.papers.clone(),
                             profile: person.profile.clone(),
+                            recognized: person.recognized.clone(),
                         },
                     )
                     .await?;
@@ -1120,6 +1149,10 @@ pub async fn run(
     changed: impl Fn() + Send + 'static,
     finished: impl Fn(CrawlFinished) + Send + 'static,
 ) {
+    let recognize = ocr::available().then_some(ocr::recognize as embedded::Recognize);
+    if recognize.is_none() {
+        tracing::warn!("no text recognition language installed; images are not read");
+    }
     let fetcher = loop {
         match Fetcher::new(&net) {
             Ok(f) => {
@@ -1127,6 +1160,7 @@ pub async fn run(
                     writes: crawler.writes.clone(),
                     http: f,
                     browser,
+                    recognize,
                 });
             }
             Err(e) => {

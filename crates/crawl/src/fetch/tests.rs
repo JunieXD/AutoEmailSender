@@ -179,7 +179,7 @@ async fn redirects_are_checked_at_every_hop_and_preserve_the_final_source() {
             .send(reply(200, "", "<p>张老师 alice@pku.edu.cn</p>"))
             .unwrap();
     });
-    let page = fetcher.fetch(&target).await.unwrap();
+    let page = fetcher.fetch(&target, false).await.unwrap();
     assert!(page.material.url.as_str().contains("www.pku.edu.cn"));
     assert_eq!(page.material.units[0].emails[0].address, "alice@pku.edu.cn");
     assert!(!page.relaxed_certificate);
@@ -206,7 +206,7 @@ async fn slow_down_answers_say_how_long_to_wait() {
             let request = server.requests.recv().await.unwrap();
             request.respond.send(reply(status, extra, body)).unwrap();
         };
-        let (page, ()) = tokio::join!(fetcher.fetch(&target), respond);
+        let (page, ()) = tokio::join!(fetcher.fetch(&target, false), respond);
         match (page, wait) {
             (Err(CrawlError::SlowDown(got)), Some(secs)) => {
                 assert_eq!(got, Duration::from_secs(secs));
@@ -232,7 +232,7 @@ async fn a_redirect_keeps_the_front_end_route() {
         let second = server.requests.recv().await.unwrap();
         second.respond.send(reply(200, "", "<p>App</p>")).unwrap();
     });
-    let page = fetcher.fetch(&target).await.unwrap();
+    let page = fetcher.fetch(&target, false).await.unwrap();
     assert!(
         page.material
             .url
@@ -263,7 +263,7 @@ async fn redirects_cannot_leave_the_site_or_reach_a_private_address() {
                 .unwrap();
         });
         assert!(matches!(
-            fetcher.fetch(&target).await,
+            fetcher.fetch(&target, false).await,
             Err(CrawlError::OutsideSite | CrawlError::Url)
         ));
         responder.await.unwrap();
@@ -287,7 +287,7 @@ async fn linked_profiles_cannot_request_a_private_host_hidden_by_trailing_dots()
     let visit = async {
         for link in material.units.iter().flat_map(|unit| &unit.links) {
             let target = scope.linked_profile(&material, &link.url).unwrap();
-            let page = fetcher.fetch(&target).await.unwrap();
+            let page = fetcher.fetch(&target, false).await.unwrap();
             assert_eq!(page.material.text(), "private API");
         }
     };
@@ -333,7 +333,7 @@ async fn bodies_are_limited_even_without_a_content_length() {
                 .unwrap();
         });
         assert!(matches!(
-            fetcher.fetch(&target).await,
+            fetcher.fetch(&target, false).await,
             Err(CrawlError::TooLarge)
         ));
         responder.await.unwrap();
@@ -355,7 +355,7 @@ async fn certificate_errors_retry_once_using_the_relaxed_net_client() {
             .send(reply(200, "", "<p>可读取的个人资料</p>"))
             .unwrap();
     });
-    let page = fetcher.fetch(&target).await.unwrap();
+    let page = fetcher.fetch(&target, false).await.unwrap();
     assert!(page.relaxed_certificate);
     assert!(page.material.text().contains("可读取的个人资料"));
     responder.await.unwrap();
@@ -366,7 +366,7 @@ async fn hanging_responses_have_a_deadline() {
     let mut server = Server::start(false).await;
     let fetcher = server.fetcher();
     let target = server.target("/hang", false);
-    let fetch = tokio::spawn(async move { fetcher.fetch(&target).await });
+    let fetch = tokio::spawn(async move { fetcher.fetch(&target, false).await });
     let request = server.requests.recv().await.unwrap();
     tokio::time::pause();
     tokio::time::advance(PAGE_TIMEOUT).await;
@@ -390,7 +390,7 @@ async fn unrelated_http_failures_are_reported() {
             .unwrap();
     });
     assert!(matches!(
-        fetcher.fetch(&target).await,
+        fetcher.fetch(&target, false).await,
         Err(CrawlError::Status(404))
     ));
     responder.await.unwrap();

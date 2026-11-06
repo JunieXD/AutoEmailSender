@@ -16,6 +16,7 @@ sqlx.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "rt"] }
 tracing.workspace = true
 ts-rs.workspace = true
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 db = { workspace = true, features = ["testing"] }

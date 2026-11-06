@@ -11,6 +11,8 @@ use tokio::{
 use crate::{BrowserReason, CrawlError, Material, PageTarget, PageUrl};
 
 pub const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
+/// A PDF read as a person's subpage or embedded in their page.
+pub(crate) const MAX_DOCUMENT_BYTES: usize = 10 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const PAGE_TIMEOUT: Duration = Duration::from_secs(40);
 const REQUEST_INTERVAL: Duration = Duration::from_millis(300);
@@ -82,9 +84,14 @@ impl Fetcher {
         site.clone()
     }
 
-    pub async fn fetch(&self, target: &PageTarget) -> Result<FetchedPage, CrawlError> {
+    /// `documents` also reads a PDF, as its text alone.
+    pub async fn fetch(
+        &self,
+        target: &PageTarget,
+        documents: bool,
+    ) -> Result<FetchedPage, CrawlError> {
         let started = Instant::now();
-        let result = timeout(PAGE_TIMEOUT, self.read(target))
+        let result = timeout(PAGE_TIMEOUT, self.read(target, documents))
             .await
             .unwrap_or_else(|_| Err(CrawlError::TimedOut));
         match &result {
@@ -108,19 +115,120 @@ impl Fetcher {
         result
     }
 
-    async fn read(&self, target: &PageTarget) -> Result<FetchedPage, CrawlError> {
-        let site = self.site(target.url()).await;
-        let mut url = target.url.clone();
+    /// A file a page shows, such as an image, within `limit` bytes.
+    pub(crate) async fn file(
+        &self,
+        url: &PageUrl,
+        limit: usize,
+        accept: &'static str,
+    ) -> Result<Vec<u8>, CrawlError> {
+        let response = timeout(
+            PAGE_TIMEOUT,
+            self.get(url, accept, limit, |current, location| {
+                current.join(location)
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| Err(CrawlError::TimedOut))?;
+        if let Some(wait) = slow_down(response.status, response.retry_after) {
+            return Err(CrawlError::SlowDown(wait));
+        }
+        if !response.status.is_success() {
+            return Err(CrawlError::Status(response.status.as_u16()));
+        }
+        response.body
+    }
+
+    async fn read(&self, target: &PageTarget, documents: bool) -> Result<FetchedPage, CrawlError> {
+        let (accept, limit) = if documents {
+            (
+                "text/html, application/xhtml+xml, text/plain, application/pdf",
+                MAX_DOCUMENT_BYTES,
+            )
+        } else {
+            (
+                "text/html, application/xhtml+xml, text/plain",
+                MAX_PAGE_BYTES,
+            )
+        };
+        let Response {
+            url,
+            status,
+            content_type,
+            retry_after,
+            body,
+            relaxed_certificate,
+        } = self
+            .get(target.url(), accept, limit, |url, location| {
+                // A location without a fragment keeps the requested one (RFC 9110), so a
+                // front-end route survives the redirect.
+                match url.parsed().fragment() {
+                    Some(route) if !location.contains('#') => {
+                        target.redirect(url, &format!("{location}#{route}"))
+                    }
+                    _ => target.redirect(url, location),
+                }
+            })
+            .await?;
+        let material = match body {
+            Ok(bytes) => {
+                let span = tracing::Span::current();
+                tokio::task::spawn_blocking(move || {
+                    span.in_scope(|| {
+                        if documents && status.is_success() && crate::pdf::is_pdf(&bytes) {
+                            crate::pdf::text(&bytes)
+                                .map(|text| Material::document(url, &text))
+                                .map_err(CrawlError::Document)
+                        } else {
+                            response_material(
+                                &url,
+                                status.as_u16(),
+                                content_type.as_deref(),
+                                &bytes,
+                            )
+                        }
+                    })
+                })
+                .await
+                .map_err(CrawlError::Worker)?
+            }
+            Err(error) => Err(error),
+        };
+        // Asked to slow down, rather than to pass a challenge, also when the refusal itself
+        // cannot be read.
+        let material = match material {
+            Err(_) if let Some(wait) = slow_down(status, retry_after) => {
+                Err(CrawlError::SlowDown(wait))
+            }
+            material => material,
+        }?;
+        Ok(FetchedPage {
+            material,
+            status: status.as_u16(),
+            relaxed_certificate,
+        })
+    }
+
+    /// Follows redirects through `redirect`, which checks where each leads.
+    async fn get(
+        &self,
+        target: &PageUrl,
+        accept: &'static str,
+        limit: usize,
+        redirect: impl Fn(&PageUrl, &str) -> Result<PageUrl, CrawlError>,
+    ) -> Result<Response, CrawlError> {
+        let site = self.site(target).await;
+        let mut url = target.clone();
         let mut relaxed_certificate = false;
         for redirects in 0..=MAX_REDIRECTS {
-            let (response, slot) = match self.send(&self.trusted, &url, &site).await {
+            let (response, slot) = match self.send(&self.trusted, &url, &site, accept).await {
                 Err(CrawlError::Http(error)) if net::untrusted(&error) => {
                     tracing::info!(
                         url = url.as_str(),
                         "retry public page with relaxed certificate checks"
                     );
                     relaxed_certificate = true;
-                    self.send(&self.untrusted, &url, &site).await?
+                    self.send(&self.untrusted, &url, &site, accept).await?
                 }
                 result => result?,
             };
@@ -134,14 +242,7 @@ impl Fetcher {
                     .get(header::LOCATION)
                     .and_then(|h| h.to_str().ok())
                     .ok_or(CrawlError::Redirect)?;
-                // A location without a fragment keeps the requested one (RFC 9110), so a
-                // front-end route survives the redirect.
-                let next = match url.parsed().fragment() {
-                    Some(route) if !location.contains('#') => {
-                        target.redirect(&url, &format!("{location}#{route}"))
-                    }
-                    _ => target.redirect(&url, location),
-                };
+                let next = redirect(&url, location);
                 let destination = match &next {
                     Ok(url) => Some(url.as_str()),
                     Err(_) => None,
@@ -162,44 +263,14 @@ impl Fetcher {
                 .and_then(|h| h.to_str().ok())
                 .map(str::to_owned);
             let retry_after = net::retry_after(&response);
-            let body = body(response).await;
+            let body = body(response, limit).await;
             drop(slot);
-            let material = match body {
-                Ok(bytes) => {
-                    let url = url.clone();
-                    let span = tracing::Span::current();
-                    tokio::task::spawn_blocking(move || {
-                        span.in_scope(|| {
-                            response_material(
-                                &url,
-                                status.as_u16(),
-                                content_type.as_deref(),
-                                &bytes,
-                            )
-                        })
-                    })
-                    .await
-                    .map_err(CrawlError::Worker)?
-                }
-                Err(error) => Err(error),
-            };
-            // Asked to slow down, rather than to pass a challenge, also when the refusal itself
-            // cannot be read; 503 alone is a broken server.
-            let material = match material {
-                Err(_)
-                    if status == StatusCode::TOO_MANY_REQUESTS
-                        || (status == StatusCode::SERVICE_UNAVAILABLE && retry_after.is_some()) =>
-                {
-                    let (least, most) = SLOW_DOWN_LIMITS;
-                    Err(CrawlError::SlowDown(
-                        retry_after.unwrap_or(SLOW_DOWN).clamp(least, most),
-                    ))
-                }
-                material => material,
-            }?;
-            return Ok(FetchedPage {
-                material,
-                status: status.as_u16(),
+            return Ok(Response {
+                url,
+                status,
+                content_type,
+                retry_after,
+                body,
                 relaxed_certificate,
             });
         }
@@ -211,14 +282,12 @@ impl Fetcher {
         client: &Client,
         url: &PageUrl,
         site: &'a SiteLimit,
+        accept: &'static str,
     ) -> Result<(reqwest::Response, SemaphorePermit<'a>), CrawlError> {
         let slot = site.start().await;
         let response = client
             .get(url.as_str())
-            .header(
-                header::ACCEPT,
-                "text/html, application/xhtml+xml, text/plain",
-            )
+            .header(header::ACCEPT, accept)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
@@ -231,6 +300,26 @@ impl Fetcher {
             })?;
         Ok((response, slot))
     }
+}
+
+struct Response {
+    url: PageUrl,
+    status: StatusCode,
+    content_type: Option<String>,
+    retry_after: Option<Duration>,
+    body: Result<Vec<u8>, CrawlError>,
+    relaxed_certificate: bool,
+}
+
+/// How long a website that asked to be left alone is.
+fn slow_down(status: StatusCode, retry_after: Option<Duration>) -> Option<Duration> {
+    // 503 alone is a broken server.
+    (status == StatusCode::TOO_MANY_REQUESTS
+        || (status == StatusCode::SERVICE_UNAVAILABLE && retry_after.is_some()))
+    .then(|| {
+        let (least, most) = SLOW_DOWN_LIMITS;
+        retry_after.unwrap_or(SLOW_DOWN).clamp(least, most)
+    })
 }
 
 #[cfg(test)]
@@ -282,16 +371,13 @@ pub fn decode(bytes: &[u8], content_type: Option<&str>) -> Result<String, CrawlE
     }
 }
 
-async fn body(mut response: reqwest::Response) -> Result<Vec<u8>, CrawlError> {
-    if response
-        .content_length()
-        .is_some_and(|n| n > MAX_PAGE_BYTES as u64)
-    {
+async fn body(mut response: reqwest::Response, limit: usize) -> Result<Vec<u8>, CrawlError> {
+    if response.content_length().is_some_and(|n| n > limit as u64) {
         return Err(CrawlError::TooLarge);
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(CrawlError::Http)? {
-        if bytes.len() + chunk.len() > MAX_PAGE_BYTES {
+        if bytes.len() + chunk.len() > limit {
             return Err(CrawlError::TooLarge);
         }
         bytes.extend_from_slice(&chunk);

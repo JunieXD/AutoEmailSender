@@ -111,6 +111,8 @@ pub struct Person {
     pub fields: MentorFields,
     pub papers: Vec<String>,
     pub profile: Option<PageUrl>,
+    /// Addresses the page gives only in images, whose recognition can get a letter wrong.
+    pub recognized: Vec<String>,
 }
 
 pub trait Output: serde::de::DeserializeOwned {
@@ -296,6 +298,7 @@ pub fn listed(m: &Material, people: Vec<Listed>, scope: &Scope) -> Result<Vec<Pe
                 fields,
                 papers: vec![],
                 profile,
+                recognized: vec![],
             })
         })
         .collect()
@@ -345,6 +348,7 @@ pub fn profile(m: &Material, name: String, p: Details) -> Result<Person, String>
             .filter(|s| !s.is_empty())
             .collect(),
         profile: Some(m.url.clone()),
+        recognized: vec![],
     })
 }
 

@@ -9,13 +9,17 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64 = "0.22"
 cloud-api.workspace = true
 db.workspace = true
 ego-tree = "0.11.1"
 encoding_rs = { version = "0.8.42", default-features = false, features = ["alloc"] }
+imagesize = "0.15"
+material.workspace = true
 mentor.workspace = true
 model.workspace = true
 net.workspace = true
+ocr.workspace = true
 percent-encoding = { version = "2.3.2", default-features = false, features = ["alloc"] }
 psl = { version = "2.1.245", default-features = false, features = ["helpers"] }
 regex = { version = "1.13.1", default-features = false, features = ["perf", "std", "unicode"] }

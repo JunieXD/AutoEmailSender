@@ -1245,15 +1245,19 @@ dependencies = [
 name = "crawl"
 version = "3.0.0-alpha.0"
 dependencies = [
+ "base64 0.22.1",
  "cloud-api",
  "db",
  "ego-tree",
  "email",
  "encoding_rs",
+ "imagesize",
  "matching",
+ "material",
  "mentor",
  "model",
  "net",
+ "ocr",
  "percent-encoding",
  "psl",
  "rcgen",
@@ -3018,6 +3022,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "imagesize"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
+
+[[package]]
 name = "imap-proto"
 version = "0.16.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3615,6 +3625,7 @@ dependencies = [
  "tokio",
  "tracing",
  "ts-rs",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -4166,6 +4177,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-vision"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bfc194758a2d5d7540b1ad283bfb9ca318ec608991892326e95b428230b2689b"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
+]
+
+[[package]]
 name = "objc2-web-kit"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4177,6 +4198,16 @@ dependencies = [
  "objc2-app-kit",
  "objc2-core-foundation",
  "objc2-foundation",
+]
+
+[[package]]
+name = "ocr"
+version = "3.0.0-alpha.0"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
+ "objc2-vision",
+ "windows",
 ]
 
 [[package]]

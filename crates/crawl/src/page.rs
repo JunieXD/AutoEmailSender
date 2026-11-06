@@ -2,7 +2,7 @@ use ego_tree::iter::Edge;
 use regex::Regex;
 use scraper::{ElementRef, Html, Node, Selector};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use crate::{
     PageUrl,
@@ -43,6 +43,8 @@ pub enum EmailLocation {
 pub struct EmailEvidence {
     pub address: String,
     pub location: EmailLocation,
+    /// Read from an image by text recognition, which can get a letter wrong.
+    pub from_image: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -50,7 +52,7 @@ pub struct Unit {
     pub text: String,
     pub links: Vec<Link>,
     pub emails: Vec<EmailEvidence>,
-    /// Original DOM element ordinals from the root through the owning block.
+    /// Original DOM element ordinals from the root through the owning block; none for a PDF's text.
     pub path: Vec<usize>,
     /// UTF-8 positions after rendered line breaks; the block itself starts at zero.
     pub line_starts: Vec<usize>,
@@ -81,6 +83,10 @@ pub struct Material {
     pub units: Vec<Unit>,
     pub pagination: Pagination,
     pub needs_browser: Option<BrowserReason>,
+    /// None for a PDF, which shows none.
+    pub(crate) images: Option<Images>,
+    /// The PDFs the page embeds, in page order.
+    pub(crate) documents: Vec<PageUrl>,
 }
 
 impl Material {
@@ -90,6 +96,138 @@ impl Material {
             .map(|u| u.text.as_str())
             .collect::<Vec<_>>()
             .join("\n\n")
+    }
+
+    /// A PDF read as a page: its text alone.
+    pub(crate) fn document(url: PageUrl, text: &str) -> Self {
+        let unit = document_unit(text);
+        Self {
+            url,
+            title: None,
+            units: if unit.text.is_empty() {
+                vec![]
+            } else {
+                vec![unit]
+            },
+            pagination: Pagination::default(),
+            needs_browser: None,
+            images: None,
+            documents: vec![],
+        }
+    }
+
+    /// Whether the page gives this address only in text recognized in its images.
+    pub(crate) fn only_from_image(&self, address: &str) -> bool {
+        let mut found = self
+            .units
+            .iter()
+            .flat_map(|u| &u.emails)
+            .filter(|e| e.address == address)
+            .peekable();
+        found.peek().is_some() && found.all(|e| e.from_image)
+    }
+}
+
+/// The images in a page's blocks, which may be text drawn as a picture, such as an address, and
+/// the HTML to read the page again with what they say.
+#[derive(Clone)]
+pub(crate) struct Images {
+    pub list: Vec<Image>,
+    html: Arc<str>,
+    rendered: bool,
+}
+
+impl std::fmt::Debug for Images {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(&self.list).finish()
+    }
+}
+
+impl Images {
+    /// The page again, with the text recognized in images, by their element, in their places.
+    pub fn read(&self, url: &PageUrl, recognized: &[(usize, String)]) -> Material {
+        parse_page(url, self.html.clone(), self.rendered, recognized)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Image {
+    /// Element ordinal in the original document.
+    pub element: usize,
+    pub source: ImageSource,
+    /// Its `width` and `height` attributes, when it gives both.
+    pub size: Option<(usize, usize)>,
+    /// Its caption, its file name or the text just before it speaks of contacting someone.
+    pub contact: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ImageSource {
+    Url(PageUrl),
+    /// The base64 contents of a `data:` URL.
+    Data(String),
+}
+
+/// Words that tell an image may be an address, as in "邮箱：" before it or `email.png`.
+const CONTACT: [&str; 5] = ["邮箱", "邮件", "mail", "联系", "contact"];
+
+fn image(element: ElementRef<'_>, ordinal: usize, base: &PageUrl, before: &str) -> Option<Image> {
+    // Pages that load images as they scroll show a placeholder in `src` until then.
+    let value = ["data-src", "data-original", "src"]
+        .iter()
+        .filter_map(|a| element.value().attr(a))
+        .map(str::trim)
+        .find(|s| !s.is_empty())?;
+    let source = match value.get(..5) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("data:") => {
+            ImageSource::Data(value.split_once(";base64,")?.1.into())
+        }
+        _ => ImageSource::Url(base.join(value).ok()?),
+    };
+    let dimension = |name| {
+        element
+            .value()
+            .attr(name)?
+            .trim()
+            .trim_end_matches("px")
+            .parse()
+            .ok()
+    };
+    let file = match &source {
+        ImageSource::Url(url) => url.parsed().path().rsplit('/').next().unwrap_or_default(),
+        ImageSource::Data(_) => "",
+    };
+    let caption = alternative_text(element).unwrap_or_default();
+    Some(Image {
+        element: ordinal,
+        size: dimension("width").zip(dimension("height")),
+        contact: [caption.as_str(), file, before].iter().any(|text| {
+            let text = text.to_lowercase();
+            CONTACT.iter().any(|cue| text.contains(cue))
+        }),
+        source,
+    })
+}
+
+/// The PDF an embedding element shows: its own address, or the file a PDF viewer there opens.
+fn embedded_pdf(address: &str, kind: Option<&str>, base: &PageUrl) -> Option<PageUrl> {
+    let url = base.join(address.trim()).ok()?;
+    if let Some((_, file)) = url.parsed().query_pairs().find(|(name, _)| name == "file") {
+        return url.join(&file).ok();
+    }
+    (kind.is_some_and(|k| k.trim().eq_ignore_ascii_case("application/pdf"))
+        || url.parsed().path().to_ascii_lowercase().ends_with(".pdf"))
+    .then_some(url)
+}
+
+/// A PDF's text as a block of its own, its lines as lines.
+pub(crate) fn document_unit(text: &str) -> Unit {
+    let (text, _) = normalize_text(text);
+    Unit {
+        emails: EMAILS.text(&text),
+        line_starts: text.match_indices('\n').map(|(at, _)| at + 1).collect(),
+        text,
+        ..Unit::default()
     }
 }
 
@@ -300,11 +438,17 @@ static PUNCTUATION: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Extracts data only; no scripts or event handlers are ever executed.
 pub fn parse(url: &PageUrl, html: &str) -> Material {
-    parse_page(url, html, false)
+    parse_page(url, html.into(), false, &[])
 }
 
-fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
-    let document = Html::parse_document(html);
+/// `recognized` is the text read from images, by their element.
+fn parse_page(
+    url: &PageUrl,
+    html: Arc<str>,
+    rendered: bool,
+    recognized: &[(usize, String)],
+) -> Material {
+    let document = Html::parse_document(&html);
     // Relative links resolve against the first `<base href>`, as in a browser.
     let base = document
         .select(&SELECTORS.base)
@@ -330,6 +474,10 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
     let mut controls = Vec::new();
     let mut encrypted = false;
     let mut regions = Vec::new();
+    let mut images = Vec::new();
+    let mut documents = Vec::new();
+    // Where in the current block's text recognized text was put.
+    let mut drawn = Vec::new();
     for edge in document.root_element().traverse() {
         match edge {
             Edge::Open(node) => {
@@ -364,7 +512,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                     continue;
                 }
                 if block(element.value().name()) {
-                    finish(&mut current, &mut units, emails);
+                    finish(&mut current, &mut drawn, &mut units, emails);
                     blocks.push(path.clone());
                     current.path = path.clone();
                 } else if element.value().name() == "br" {
@@ -388,6 +536,7 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                             raw: encoded.into(),
                             offset: current.text.len(),
                         },
+                        from_image: false,
                     });
                     current.text.push_str(&format!(" {address} "));
                 }
@@ -401,6 +550,33 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                     && let Some(text) = alternative_text(element)
                 {
                     current.text.push_str(&text);
+                }
+                if element.value().name() == "img" {
+                    let before = if current.text.trim().is_empty() {
+                        units.last().map_or("", |u: &Unit| u.text.as_str())
+                    } else {
+                        current.text.as_str()
+                    };
+                    let before =
+                        &before[before.char_indices().rev().nth(19).map_or(0, |(at, _)| at)..];
+                    images.extend(image(element, element_index, base, before));
+                    if let Some((_, text)) = recognized.iter().find(|(e, _)| *e == element_index) {
+                        current.text.push(' ');
+                        drawn.push((current.text.len(), current.text.len() + text.len()));
+                        current.text.push_str(text);
+                        current.text.push(' ');
+                    }
+                }
+                let embedded = match element.value().name() {
+                    "iframe" | "embed" => element.value().attr("src"),
+                    "object" => element.value().attr("data"),
+                    _ => None,
+                };
+                if let Some(document) =
+                    embedded.and_then(|a| embedded_pdf(a, element.value().attr("type"), base))
+                    && !documents.contains(&document)
+                {
+                    documents.push(document);
                 }
                 let direct = href.and_then(|h| linked(h, base, url));
                 let link = direct
@@ -461,14 +637,14 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
                     continue;
                 }
                 if block(element.value().name()) {
-                    finish(&mut current, &mut units, emails);
+                    finish(&mut current, &mut drawn, &mut units, emails);
                     blocks.pop();
                     current.path = blocks.last().cloned().unwrap_or_default();
                 }
             }
         }
     }
-    finish(&mut current, &mut units, emails);
+    finish(&mut current, &mut drawn, &mut units, emails);
     for unit in &mut units {
         unit.footer_or_nav = unit
             .path
@@ -552,12 +728,27 @@ fn parse_page(url: &PageUrl, html: &str, rendered: bool) -> Material {
         units,
         pagination,
         needs_browser,
+        images: Some(Images {
+            list: images,
+            html,
+            rendered,
+        }),
+        documents,
     }
 }
 
-fn finish(current: &mut Unit, units: &mut Vec<Unit>, emails: &Emails) {
+fn finish(
+    current: &mut Unit,
+    drawn: &mut Vec<(usize, usize)>,
+    units: &mut Vec<Unit>,
+    emails: &Emails,
+) {
     let mut unit = std::mem::take(current);
     let (text, positions) = normalize_text(&unit.text);
+    let drawn: Vec<_> = drawn
+        .drain(..)
+        .map(|(start, end)| (positions[start], positions[end]))
+        .collect();
     for start in &mut unit.line_starts {
         *start = positions[*start];
     }
@@ -568,7 +759,13 @@ fn finish(current: &mut Unit, units: &mut Vec<Unit>, emails: &Emails) {
             *offset = positions[*offset];
         }
     }
-    unit.emails.extend(emails.text(&unit.text));
+    unit.emails
+        .extend(emails.text(&unit.text).into_iter().map(|mut evidence| {
+            if let EmailLocation::Text { start, end } = evidence.location {
+                evidence.from_image = drawn.iter().any(|&(from, to)| start < to && from < end);
+            }
+            evidence
+        }));
     if !unit.text.is_empty() || !unit.links.is_empty() || !unit.emails.is_empty() {
         units.push(unit);
     }
@@ -639,5 +836,5 @@ fn loading_placeholder(text: &str, punctuation: &Regex) -> bool {
 
 /// Parse the DOM after browser scripts have run.
 pub fn parse_rendered(url: &PageUrl, html: &str) -> Material {
-    parse_page(url, html, true)
+    parse_page(url, html.into(), true, &[])
 }

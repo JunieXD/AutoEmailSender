@@ -87,6 +87,7 @@ impl Emails {
                         start: positions[start].0,
                         end: positions[end - 1].1,
                     },
+                    from_image: false,
                 })
             })
             .collect()
@@ -101,6 +102,7 @@ impl Emails {
                 raw: href.into(),
                 offset,
             },
+            from_image: false,
         };
         // Cloudflare's email protection replaces a mailto link with this one.
         if let Some((_, encoded)) = href.split_once("/cdn-cgi/l/email-protection#") {

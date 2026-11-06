@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
+use unicode_normalization::UnicodeNormalization;
 
 /// The most Unicode characters AI reads from each material.
 pub const AI_TEXT_LIMIT: usize = 10_000;
@@ -315,12 +316,20 @@ fn retain_body_inline(content: &mut Vec<InlineContent>) -> bool {
     !inline_to_text(content).trim().is_empty()
 }
 
+/// The text of a PDF, or None when it has none, such as a scan.
+pub fn pdf_text(data: &[u8]) -> Result<Option<String>, String> {
+    extract_text(true, data)
+}
+
 /// The text of a PDF or Word file, or None when it has none, such as a scan.
 fn extract_text(pdf: bool, data: &[u8]) -> Result<Option<String>, String> {
     let mut text = if pdf {
-        pdf_oxide::PdfDocument::from_bytes(data.to_vec())
+        let text = pdf_oxide::PdfDocument::from_bytes(data.to_vec())
             .and_then(|d| d.extract_all_text())
-            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        // PDFs made on macOS give characters such as 士 and 生 as the Kangxi radicals that look
+        // the same.
+        text.nfkc().collect()
     } else {
         let document = open_word(data).map_err(|e| e.to_string())?;
         if document.plain_text().trim().is_empty() {

@@ -16,6 +16,9 @@ pub struct Evidence {
     pub url: String,
     pub name: String,
     pub emails: Vec<String>,
+    /// Of `emails`, those the page gives only in images, whose recognition can get a letter wrong.
+    #[serde(default)]
+    pub recognized: Vec<String>,
     pub research: Option<String>,
 }
 #[derive(Debug, Serialize, TS)]
@@ -500,6 +503,7 @@ pub(crate) async fn save(
         url: url.into(),
         name: f.name.clone(),
         emails: f.emails.clone(),
+        recognized: person.recognized.clone(),
         research: f.research.clone(),
     };
     let mut sources: Vec<Evidence> = sqlx::query_scalar!(

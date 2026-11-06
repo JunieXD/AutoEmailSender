@@ -320,6 +320,7 @@ pub(crate) async fn apply(
         url: url.into(),
         name: incoming.name.clone(),
         emails: incoming.emails.clone(),
+        recognized: person.recognized.clone(),
         research: incoming.research.clone(),
     };
     if !evidence.contains(&source) {

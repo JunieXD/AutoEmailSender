@@ -2,11 +2,13 @@
 
 pub mod browser;
 mod email;
+mod embedded;
 mod extract;
 pub mod fetch;
 mod ownership;
 mod page;
 mod pagination;
+mod pdf;
 pub mod queue;
 pub mod review;
 pub mod runner;
@@ -36,6 +38,8 @@ pub enum CrawlError {
     /// The website asked to be left alone for this long.
     SlowDown(std::time::Duration),
     ContentType,
+    /// A PDF whose text cannot be read, with why.
+    Document(String),
     Http(reqwest::Error),
     Worker(tokio::task::JoinError),
 }
@@ -51,6 +55,7 @@ impl std::fmt::Display for CrawlError {
             Self::Status(code) => write!(f, "page returned HTTP {code}"),
             Self::SlowDown(wait) => write!(f, "website asked to wait {}s", wait.as_secs()),
             Self::ContentType => f.write_str("response is not an HTML or text page"),
+            Self::Document(reason) => write!(f, "read PDF: {reason}"),
             Self::Http(error) => write!(f, "fetch page: {error}"),
             Self::Worker(error) => write!(f, "page worker: {error}"),
         }
@@ -80,6 +85,7 @@ impl CrawlError {
             }
             Self::SlowDown(_) => "网站要求放慢访问，请稍后重试。".into(),
             Self::ContentType => "这个地址返回的不是网页，请改用名单页或导师个人页。".into(),
+            Self::Document(_) => "这个 PDF 文件读不出文字，可能已损坏或加密。".into(),
             Self::Http(_) => "连不上网页。请检查网络和系统代理，稍后重试。".into(),
             Self::Worker(_) => "读取网页内容失败，请重试；一直失败时请导出日志。".into(),
         }

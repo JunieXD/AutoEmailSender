@@ -14,6 +14,7 @@
 | `crates/library` | 导师库：浏览、本机标记、添加、资料更新和同步 |
 | `crates/sheet` | CSV、XLSX、XLS 表格的读写 |
 | `crates/crawl` | 整理基础：网址边界、HTTP、页面材料、邮箱证据和归属核对、翻页和页面存取 |
+| `crates/ocr` | 图片里的文字：调用系统自带的文字识别 |
 | `crates/mailbox` | 邮箱：服务商表、收发信的连接和测试、限流与暂停分类 |
 | `crates/stats` | 统计：联系进度、导师概览、Token 用量的本地查询 |
 | `crates/model` | 模型：服务商表、调用和测试、Token 用量 |
@@ -301,12 +302,12 @@
 
 ### 图片和 PDF
 
-- 只在为一位候选读的页面上做（`read_for_candidate`），在交给模型之前补进材料：图片在候选没有邮箱时，PDF 在缺邮箱或研究方向时。名单页不做。
-- 图片：块里的 `img`（`src`、`data-src`、`data-original`，`data:` 网址直接解码）按说明文字、文件名和所在块的文字是否像邮箱或联系方式排序，前 20 个里先取文件头判断尺寸（`imagesize`，有 `width`、`height` 属性的先用属性筛），合格的最多识别 6 张。识别文字插回 `img` 在块里的位置，按普通文字参与邮箱识别和归属核对；这样来的邮箱证据记 `from_image`，候选来源据此标出。
-- 识别在阻塞线程里调用系统接口：macOS 用 `objc2-vision` 的 `VNRecognizeTextRequest`（精确模式，简体中文和英文），Windows 用 `windows` crate 的 `Windows.Media.Ocr`（`OcrEngine::TryCreateFromUserProfileLanguages`，图片经 `BitmapDecoder` 解码）。系统里没有可用的识别语言时跳过图片，记日志，不算页面失败。不打包额外的程序。
-- PDF：`iframe`、`object`、`embed` 的地址和查看器链接里的 `file` 参数，按出现顺序最多 2 个，读文字层接在材料末尾，成为单独的块；每份最多取 8000 字，超过的取开头 6000 字和最后 2000 字。补全选子页时，指向 PDF 的链接可以入选，读成只有文字层的材料。PDF 用 `pdf-extract`（MIT）读文字层，结果做 NFKC 规范化：macOS 生成的 PDF 里常把"士""生"这类字映射成康熙部首（⼠、⽣），规范化后恢复。选型实验用了 3 份学校网站上的中文简历和 2 份用苹方、宋体生成的 PDF：`pdf-extract` 和 `pdf_oxide` 都取全了中文和邮箱，速度相近（几十页的简历一百多毫秒）；`pdf-extract` 对 Word 导出的 PDF 按行输出，`pdf_oxide` 会把一行拆成很多段（"研究方⏎向"），而且开 LTO 后体积多 5.6 MB，`pdf-extract` 只多 1.2 MB。`pdf-extract` 遇到坏文件可能 panic，它在阻塞线程里运行，panic 当作这份 PDF 读不了，跳过并记日志。
-- 下载和页面共用 `Fetcher` 的网站请求上限、公开地址检查和超时；图片 1 MB、PDF 10 MB 之外的不读。图片或 PDF 下载、解码、识别或解析失败时只跳过这一份并记日志，页面照常用已有的材料，不算页面失败；网站要求放慢时和读页面一样延长冷却，这一份同样跳过。
-- 测试用 `test-fixtures` 里的假识别（按图片字节返回固定文字）测补进材料、排序上限和归属；系统识别只在 macOS 和 Windows 上各有一个用样本图片的测试，CI 上没有识别语言时跳过并写明原因。
+- 只在为一位候选读的页面上做（`read_for_candidate` 调 `embedded::Reader`），在交给模型之前补进材料：图片在候选没有邮箱时，PDF 在缺邮箱或研究方向时。名单页不做。
+- 图片：解析页面时记下块里的 `img`（依次取 `data-src`、`data-original`、`src`，`data:` 网址直接解码 base64）。说明文字、文件名或图片前面 20 个字里有"邮箱""邮件""mail""联系""contact"的排在前面；同一张图出现几次只读一次。有 `width`、`height` 属性的先按属性筛，前 20 张下载后用 `imagesize` 读文件头判断尺寸，合格的最多识别 6 张。识别出的文字插回 `img` 在块里的位置，重新解析页面，按普通文字参与邮箱识别和归属核对；落在识别文字里的邮箱证据记 `from_image`，只这样出现的邮箱存进候选证据的 `recognized`，界面据此标出。
+- 识别在 `crates/ocr`，在阻塞线程里调用系统接口：macOS 用 `objc2-vision` 的 `VNRecognizeTextRequest`（精确模式，简体中文和英文；关掉语言校正，它会把地址改成长得像的单词），Windows 用 `windows` crate 的 `Windows.Media.Ocr`（`OcrEngine::TryCreateFromUserProfileLanguages`，图片经 `BitmapDecoder` 解码）。整理任务启动时用 `ocr::available` 查一次，系统里没有可用的识别语言时不读图片，记一条日志。不打包额外的程序。
+- PDF：`iframe`、`embed` 的 `src`，`object` 的 `data`，以及查看器链接里的 `file` 参数，按出现顺序最多 2 个，读文字层接在材料末尾，成为单独的块；每份最多取 8000 字，超过的取开头 6000 字和最后 2000 字。补全选子页时，指向 PDF 的链接可以入选，读成只有文字层的材料，读不出时是 `CrawlError::Document`。文字层和材料用同一个函数 `material::pdf_text`（`pdf_oxide`），结果做 NFKC 规范化：macOS 生成的 PDF 里常把"士""生"这类字映射成康熙部首（⼠、⽣），规范化后恢复，全角冒号这类符号也变成半角。选型实验用了 3 份学校网站上的中文简历和 2 份用苹方、宋体生成的 PDF：`pdf-extract` 和 `pdf_oxide` 都取全了中文和邮箱，速度相近；`pdf_oxide` 对 Word 导出的 PDF 有时把一行拆成几段（"研究方⏎向"），模型照样读得懂，邮箱没有拆开。一件事只用一个库，所以和材料共用 `pdf_oxide`。解析库遇到坏文件可能 panic，它在阻塞线程里运行，panic 当作这份 PDF 读不了。
+- 下载和页面共用 `Fetcher` 的网站请求上限、公开地址检查和超时；图片 1 MB、PDF 10 MB 之外的不读。图片或 PDF 下载、解码、识别或解析失败时只跳过这一份并记日志，页面照常用已有的材料，不算页面失败；网站要求放慢时和读页面一样延长冷却，这一页剩下的图片和 PDF 都不再读。
+- 测试用 `runner/tests.rs` 里的假识别（读出假 PNG 里 `TEXT:` 后面的字节）测补进材料、排序、上限和归属；系统识别只在 `crates/ocr` 里有一个用样本图片的测试，macOS 和 Windows 上都跑，系统里没有识别语言时跳过，测试里写明原因。
 
 ### 隐藏浏览器读取
 

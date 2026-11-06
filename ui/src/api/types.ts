@@ -250,7 +250,11 @@ export type Entry = { "email": Email } | { "message": Message } | { "todo": Todo
 
 export type ErrorCode = "bad_input" | "not_found" | "invalid" | "external" | "signed_out" | "needs_agreement" | "account_deleting" | "internal";
 
-export type Evidence = { url: string, name: string, emails: Array<string>, research: string | null, };
+export type Evidence = { url: string, name: string, emails: Array<string>,
+/**
+ * Of `emails`, those the page gives only in images, whose recognition can get a letter wrong.
+ */
+recognized: Array<string>, research: string | null, };
 
 export type ExportMentors = { scope: Scope, format: TableFormat, note: boolean, };
 

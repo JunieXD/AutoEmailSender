@@ -6,6 +6,7 @@ import { useState } from "react";
 import { exportCrawlLog } from "@/api/app";
 import { call, errorMessage } from "@/api/call";
 import type {
+  CandidateDetail,
   CandidateFilter,
   CandidateRow,
   CrawlStage,
@@ -756,6 +757,7 @@ function CandidateDetails({
     queryFn: () => call("previewCandidates", { ids: [c.id], decisions }),
     enabled: c.review === "pending",
   });
+  const recognized = detail.data ? onlyRecognized(detail.data) : [];
   return (
     <div className="mt-4 space-y-3 border-t border-border pt-3 text-sm">
       <ErrorText error={detail.error ?? preview.error} />
@@ -766,6 +768,9 @@ function CandidateDetails({
       {detail.data && (
         <>
           <ProfileDetails profile={detail.data.fields} />
+          {recognized.length > 0 && (
+            <p className="text-warning">{recognized.join("、")} 是从图片识别的，可能认错字母，请打开来源页核对</p>
+          )}
           {detail.data.papers.length > 0 && (
             <div>
               <h3 className="font-medium">代表论文</h3>
@@ -784,7 +789,9 @@ function CandidateDetails({
               <div key={n} className="mt-2 break-words text-muted-foreground">
                 <SourceLink url={e.url} />
                 <p>
-                  {e.name} · {e.emails.join("、") || "未找到可确认归属的邮箱"}
+                  {e.name} ·{" "}
+                  {e.emails.map((m) => (e.recognized.includes(m) ? `${m}（从图片识别）` : m)).join("、") ||
+                    "未找到可确认归属的邮箱"}
                 </p>
                 {e.research && <p>{e.research}</p>}
               </div>
@@ -885,6 +892,14 @@ function ErrorText({ error }: { error: unknown }) {
       {errorMessage(error)}
     </p>
   ) : null;
+}
+/** The candidate's emails that its pages give only in images. */
+function onlyRecognized({ fields, evidence }: CandidateDetail) {
+  return fields.emails.filter(
+    (m) =>
+      evidence.some((e) => e.recognized.includes(m)) &&
+      !evidence.some((e) => e.emails.includes(m) && !e.recognized.includes(m)),
+  );
 }
 function SourceLink({ url }: { url: string }) {
   return (
