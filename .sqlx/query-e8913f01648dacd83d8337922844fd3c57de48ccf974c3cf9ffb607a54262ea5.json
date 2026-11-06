@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT cloud_id AS \"cloud_id!\" FROM email\n           WHERE state = 'cloud' AND cloud_account = ?\n             AND (cloud_uploading = 1 OR cancel_reason IS NOT NULL)\n           ORDER BY id",
+  "query": "SELECT cloud_id AS \"cloud_id!\" FROM email\n           WHERE state = 'cloud' AND cloud_account = ?1\n             AND (cloud_uploading = 1 OR cancel_reason IS NOT NULL OR latest_at <= ?2)\n           ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -16,11 +16,11 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 2
     },
     "nullable": [
       true
     ]
   },
-  "hash": "04deec38c186f8cda2f79ace6fc1ada1edca3e1ff4b0dd5d37298f10e47a834f"
+  "hash": "e8913f01648dacd83d8337922844fd3c57de48ccf974c3cf9ffb607a54262ea5"
 }

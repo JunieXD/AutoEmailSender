@@ -225,17 +225,20 @@ pub async fn waiting(
 }
 
 /// The emails of `account` the server may have but was never told to keep or give up: uploads cut
-/// short, and those canceled since.
+/// short, and those canceled since. Also those past their latest time, which by then have an
+/// outcome there, unless it was dropped or the server never had them.
 pub async fn to_withdraw(
     conn: &mut SqliteConnection,
     account: &str,
+    now: i64,
 ) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar!(
         r#"SELECT cloud_id AS "cloud_id!" FROM email
-           WHERE state = 'cloud' AND cloud_account = ?
-             AND (cloud_uploading = 1 OR cancel_reason IS NOT NULL)
+           WHERE state = 'cloud' AND cloud_account = ?1
+             AND (cloud_uploading = 1 OR cancel_reason IS NOT NULL OR latest_at <= ?2)
            ORDER BY id"#,
-        account
+        account,
+        now
     )
     .fetch_all(conn)
     .await
@@ -280,9 +283,14 @@ pub async fn withdrawn(
 
 const GONE: &str = "官方服务器上已经没有这封邮件的记录，没法确定是否发出。";
 
-/// The server has no record of an email. Still being uploaded, and early enough that one sent
-/// would still have its outcome there, it never came: back here, as when withdrawn. Otherwise it
-/// may have gone out at its time, like `finished`.
+/// For this computer's clock and the server's to differ, and for the request to take.
+const LEEWAY: i64 = 24 * 60 * 60 * 1000;
+
+/// The server has no record of an email. The server sends nothing before its planned time and
+/// keeps an outcome `RETENTION` unless told it was written down here, which clears the upload
+/// mark: one still marked uploading, asked about early enough, never came, and is back here as
+/// when withdrawn. Otherwise it may have gone out at its time, like `finished`. A backup keeps no
+/// upload mark (`api::backup`), as the outcome may have been written down here since.
 pub async fn unknown(
     conn: &mut SqliteConnection,
     cloud_id: &str,
@@ -298,7 +306,7 @@ pub async fn unknown(
     else {
         return Ok(None);
     };
-    if r.uploading && now < r.at + RETENTION {
+    if r.uploading && now < r.at + RETENTION - LEEWAY {
         withdrawn(conn, cloud_id, now).await?;
         return Ok(None);
     }

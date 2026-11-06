@@ -511,7 +511,7 @@ impl Session<'_> {
         if role == Role::Sent {
             if let Some(id) = &headers.message_id {
                 let mut conn = self.durable().await?;
-                let mut tx = conn.begin().await?;
+                let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
                 let found =
                     email::sent_copy(&mut tx, id, &headers.recipients, sent_at, self.now).await?;
                 from_cloud(&mut tx, &found).await?;
@@ -631,7 +631,7 @@ impl Session<'_> {
             return Ok(false);
         };
         let mut conn = self.durable().await?;
-        let mut tx = conn.begin().await?;
+        let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
         let found = email::copied(
             &mut tx,
             c.id,
@@ -755,7 +755,7 @@ impl Session<'_> {
             return Ok(());
         };
         let mut conn = self.durable().await?;
-        let mut tx = conn.begin().await?;
+        let mut tx = conn.begin_with("BEGIN IMMEDIATE").await?;
         let mut marked = false;
         // The app sends each email to one address: the first failure naming it, or naming no one,
         // says why it came back.

@@ -207,6 +207,9 @@ async fn scrub(conn: &mut SqliteConnection) -> Result<()> {
         UPDATE profile SET phone_access = 0, phone_room = NULL, phone_room_account = NULL;
         UPDATE crawl_page
         SET text = CASE WHEN status = 'success' THEN '' END;
+        -- An upload cut short may have got through, and its outcome been written down and
+        -- acknowledged since: restored, it is taken for one that did (email::cloud::unknown).
+        UPDATE email SET cloud_uploading = 0;
         VACUUM;"#,
     )
     .execute(conn)

@@ -77,7 +77,7 @@ pub async fn sync(ctx: &Context, now: i64, changed: &mut bool) -> Result<(), acc
     };
     let db = &ctx.db;
     let account = &login.email;
-    for cloud_id in email::cloud::to_withdraw(&mut *db.acquire().await?, account).await? {
+    for cloud_id in email::cloud::to_withdraw(&mut *db.acquire().await?, account, now).await? {
         *changed |= !matches!(
             take_back(ctx, &login, &cloud_id, now).await?,
             Withdrawal::Sending
