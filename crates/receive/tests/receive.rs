@@ -1608,12 +1608,9 @@ async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePoo
 async fn todo_extraction_enqueues_new_replies_and_recent_found_ones_after_enabling(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
     let m = mentor(&db, "李明", "li@pku.edu.cn").await;
-    store.deliver("INBOX", T, REPLY);
+    store.deliver("INBOX", T - 30 * DAY, REPLY);
     round(&db, &net, T + MINUTE).await;
-    // Turned on as if weeks later, so that only receiving queues these replies: looking back on
-    // turning on is tested with the queue.
-    let switched = T + 30 * DAY;
-    email::todos::set_enabled(&db, true, switched)
+    email::todos::set_enabled(&db, true, T + MINUTE)
         .await
         .unwrap();
     assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 0);
@@ -1651,17 +1648,14 @@ async fn todo_extraction_enqueues_new_replies_and_recent_found_ones_after_enabli
     .await
     .unwrap();
     assert_eq!(queued, ["<r2@pku.edu.cn>", "<recent@edu>"]);
-    email::todos::set_enabled(&db, false, switched)
+    email::todos::set_enabled(&db, false, T + 8 * MINUTE)
         .await
         .unwrap();
     store.deliver(
         "INBOX",
-        T + 8 * MINUTE,
+        T + 9 * MINUTE,
         &REPLY.replace("r1@pku.edu.cn", "r3@pku.edu.cn"),
     );
-    round(&db, &net, T + 9 * MINUTE).await;
-    email::todos::set_enabled(&db, true, switched)
-        .await
-        .unwrap();
+    round(&db, &net, T + 10 * MINUTE).await;
     assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 0);
 }
