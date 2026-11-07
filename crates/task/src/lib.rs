@@ -133,9 +133,10 @@ async fn candidates(
                 AND status IN ('retired', 'departed', 'deceased')
                 ORDER BY CASE status WHEN 'deceased' THEN 0 WHEN 'departed' THEN 1 ELSE 2 END,
                     library_id LIMIT 1) AS "library_status?: Json<cloud_api::library::Status>"
-           FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
-           WHERE m.id IN (SELECT value FROM json_each(?1))
-           ORDER BY (SELECT min(key) FROM json_each(?1) WHERE value = m.id)"#,
+           FROM (SELECT value AS id, min(key) AS position FROM json_each(?1) GROUP BY value) picked
+             JOIN mentor m ON m.id = picked.id
+             LEFT JOIN mentor_contact c ON c.mentor_id = m.id
+           ORDER BY picked.position"#,
         Json(ids),
         source_task,
     )
