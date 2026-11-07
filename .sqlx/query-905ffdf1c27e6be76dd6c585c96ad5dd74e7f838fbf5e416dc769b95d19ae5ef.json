@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO reply_processing(message_id, action, state)\n        SELECT id, 'todos', 'queued' FROM message\n        WHERE id = ?1 AND kind = 'reply' AND (?2 OR sent_at >= ?3)\n          AND (SELECT ai_reply_todos FROM profile)\n        ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "905ffdf1c27e6be76dd6c585c96ad5dd74e7f838fbf5e416dc769b95d19ae5ef"
+}

@@ -169,14 +169,25 @@ pub async fn set_enabled(db: &SqlitePool, enabled: bool, now: i64) -> Result<(),
     tx.commit().await
 }
 
-/// Only called for a newly inserted reply from the incremental receive pass.
-pub async fn enqueue(db: &mut SqliteConnection, id: i64) -> Result<(), sqlx::Error> {
+/// Called for a newly stored message: a reply that just arrived is queued, one the history fetch
+/// found only as far back as turning the switch on looks, so that the order of the two does not
+/// matter.
+pub async fn enqueue(
+    db: &mut SqliteConnection,
+    id: i64,
+    arrived: bool,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    let since = now - LOOK_BACK;
     sqlx::query!(
         r#"INSERT INTO reply_processing(message_id, action, state)
         SELECT id, 'todos', 'queued' FROM message
-        WHERE id = ? AND kind = 'reply' AND (SELECT ai_reply_todos FROM profile)
+        WHERE id = ?1 AND kind = 'reply' AND (?2 OR sent_at >= ?3)
+          AND (SELECT ai_reply_todos FROM profile)
         ON CONFLICT DO NOTHING"#,
-        id
+        id,
+        arrived,
+        since
     )
     .execute(db)
     .await?;

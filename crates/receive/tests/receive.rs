@@ -1605,7 +1605,7 @@ async fn received_and_backfilled_replies_enqueue_only_when_enabled(db: SqlitePoo
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn todo_extraction_only_enqueues_new_incremental_replies_after_enabling(db: SqlitePool) {
+async fn todo_extraction_enqueues_new_replies_and_recent_found_ones_after_enabling(db: SqlitePool) {
     let (net, store) = mailbox(&db, SECRET).await;
     let m = mentor(&db, "李明", "li@pku.edu.cn").await;
     store.deliver("INBOX", T, REPLY);
@@ -1630,21 +1630,27 @@ async fn todo_extraction_only_enqueues_new_incremental_replies_after_enabling(db
     store.deliver(
         "INBOX",
         T - 10 * DAY,
+        "From: old@pku.edu.cn\nMessage-ID: <recent@edu>\n\n请发材料",
+    );
+    store.deliver(
+        "INBOX",
+        T - 15 * DAY,
         "From: old@pku.edu.cn\nMessage-ID: <old@edu>\n\n请发材料",
     );
     round(&db, &net, T + 5 * MINUTE).await;
     mentor::add_email(&db, m, "old@pku.edu.cn", T + 6 * MINUTE)
         .await
         .unwrap();
+    // The history fetch finds both: only the one as recent as turning on looks back is queued.
     round(&db, &net, T + 7 * MINUTE).await;
-    assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 1);
-    let queued: String = sqlx::query_scalar(
-        "SELECT m.message_id FROM reply_processing q JOIN message m ON m.id=q.message_id",
+    let queued: Vec<String> = sqlx::query_scalar(
+        "SELECT m.message_id FROM reply_processing q JOIN message m ON m.id=q.message_id
+         ORDER BY m.message_id",
     )
-    .fetch_one(&db)
+    .fetch_all(&db)
     .await
     .unwrap();
-    assert_eq!(queued, "<r2@pku.edu.cn>");
+    assert_eq!(queued, ["<r2@pku.edu.cn>", "<recent@edu>"]);
     email::todos::set_enabled(&db, false, switched)
         .await
         .unwrap();

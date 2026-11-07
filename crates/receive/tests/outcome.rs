@@ -881,7 +881,7 @@ async fn storage_rejects_half_pauses_and_failed_work_without_a_reason(db: Sqlite
 async fn todo_message(db: &SqlitePool, mentor: i64, at: i64, body: &str) -> i64 {
     let id = message(db, mentor, "reply", at, body).await;
     let mut tx = db.begin().await.unwrap();
-    email::todos::enqueue(&mut tx, id).await.unwrap();
+    email::todos::enqueue(&mut tx, id, true, at).await.unwrap();
     tx.commit().await.unwrap();
     id
 }

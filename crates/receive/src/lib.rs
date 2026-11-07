@@ -713,8 +713,8 @@ impl Session<'_> {
         } else {
             None
         };
-        if reply.is_some() {
-            email::todos::enqueue(&mut tx, id).await?;
+        if inserted.is_some() {
+            email::todos::enqueue(&mut tx, id, new, self.now).await?;
         }
         tx.commit().await?;
         if let Some(reply) = reply {
