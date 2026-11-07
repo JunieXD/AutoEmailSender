@@ -32,7 +32,18 @@ pub async fn run() -> crate::Result {
         store,
         dir: dir.join("mail"),
     };
-    mailbox.load()?;
+    let mut mentors = Mentors::default();
+    // Who plays which mentor follows from the letters already sent, so that it outlasts a restart.
+    for raw in mailbox.load()? {
+        let Some(message) = MessageParser::new().parse(raw.as_bytes()) else {
+            continue;
+        };
+        for (address, _) in recipients(&message) {
+            if address != fakemail::ADDRESS {
+                mentors.letter(&address);
+            }
+        }
+    }
     let router = Router::new()
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat));
@@ -49,7 +60,6 @@ pub async fn run() -> crate::Result {
         secret = fakemail::SECRET,
         kinds = MENTORS.map(|m| m.describe()).join("、"),
     );
-    let mut mentors: HashMap<String, (Mentor, u32)> = HashMap::new();
     loop {
         tokio::select! {
             result = tokio::signal::ctrl_c() => return Ok(result?),
@@ -62,28 +72,18 @@ pub async fn run() -> crate::Result {
             let Some(message) = MessageParser::new().parse(raw.as_bytes()) else {
                 continue;
             };
-            let recipients: Vec<(String, Option<String>)> = message
-                .to()
-                .iter()
-                .flat_map(|list| list.mailboxes())
-                .filter_map(|m| Some((m.address()?.to_lowercase(), m.name().map(str::to_owned))))
-                .collect();
-            for (address, name) in recipients {
+            for (address, name) in recipients(&message) {
                 if address == fakemail::ADDRESS {
                     mailbox.deliver(INBOX, &raw)?;
                     continue;
                 }
-                let count = mentors.len();
-                let (mentor, letters) = mentors
-                    .entry(address.clone())
-                    .or_insert((MENTORS[count % MENTORS.len()], 0));
-                *letters += 1;
+                let (mentor, letters) = mentors.letter(&address);
                 let name = name.unwrap_or_else(|| address.clone());
                 println!(
                     "收到给 {name} 的第 {letters} 封信，这位导师{}",
                     mentor.describe()
                 );
-                if let Some(answer) = mentor.answer(*letters, &raw, &message, &address, &name) {
+                if let Some(answer) = mentor.answer(letters, &raw, &message, &address, &name) {
                     let mailbox = mailbox.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(ANSWER_AFTER).await;
@@ -95,6 +95,16 @@ pub async fn run() -> crate::Result {
             }
         }
     }
+}
+
+/// The letter's recipients, with their addresses in lower case.
+fn recipients(letter: &Message) -> Vec<(String, Option<String>)> {
+    letter
+        .to()
+        .iter()
+        .flat_map(|list| list.mailboxes())
+        .filter_map(|m| Some((m.address()?.to_lowercase(), m.name().map(str::to_owned))))
+        .collect()
 }
 
 /// What the SMTP server took after DATA, as the message itself: without the ending dot line,
@@ -121,15 +131,23 @@ impl Mailbox {
             .join(if folder == INBOX { "inbox" } else { "sent" })
     }
 
-    fn load(&self) -> std::io::Result<()> {
+    /// Puts the saved mail back into the folders, and returns the letters sent in the order they
+    /// were.
+    fn load(&self) -> std::io::Result<Vec<String>> {
+        let mut sent = Vec::new();
         for folder in [INBOX, SENT] {
             let dir = self.folder_dir(folder);
             if !dir.exists() {
                 continue;
             }
-            let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)?
-                .map(|entry| entry.map(|e| e.path()))
-                .collect::<Result<_, _>>()?;
+            let mut files = Vec::new();
+            for entry in std::fs::read_dir(&dir)? {
+                let path = entry?.path();
+                // Finder and the like leave files of their own here.
+                if path.extension().is_some_and(|e| e == "eml") {
+                    files.push(path);
+                }
+            }
             // Named by order of arrival, so that the UIDs come out the same.
             files.sort();
             for path in files {
@@ -139,11 +157,14 @@ impl Mailbox {
                     .ok_or_else(|| {
                         std::io::Error::other(format!("{} 不是假邮箱存的信", path.display()))
                     })?;
-                self.store
-                    .deliver(folder, at, &std::fs::read_to_string(&path)?);
+                let raw = std::fs::read_to_string(&path)?;
+                self.store.deliver(folder, at, &raw);
+                if folder == SENT {
+                    sent.push(raw);
+                }
             }
         }
-        Ok(())
+        Ok(sent)
     }
 
     fn deliver(&self, folder: &str, raw: &str) -> std::io::Result<()> {
@@ -177,6 +198,20 @@ const MENTORS: [Mentor; 7] = [
     Mentor::Silent,
 ];
 
+/// The kind of mentor each recipient plays, handed out in order of their first letter, and how
+/// many letters they had.
+#[derive(Default)]
+struct Mentors(HashMap<String, (Mentor, u32)>);
+
+impl Mentors {
+    fn letter(&mut self, address: &str) -> (Mentor, u32) {
+        let next = MENTORS[self.0.len() % MENTORS.len()];
+        let (mentor, letters) = self.0.entry(address.to_owned()).or_insert((next, 0));
+        *letters += 1;
+        (*mentor, *letters)
+    }
+}
+
 impl Mentor {
     fn describe(self) -> &'static str {
         match self {
@@ -202,7 +237,7 @@ impl Mentor {
         let say = |text: &str| Some(reply(letter, address, name, "Re: ", text, ""));
         match (self, nth) {
             (Self::Interested, 1) => say(
-                "你好，邮件和简历都看了，欢迎报考。请在下周五前把本科成绩单发给我，\
+                "你好，邮件和简历都看了，欢迎报考。请在一周内把本科成绩单发给我，\
                 我们再约个时间电话聊聊。",
             ),
             (Self::Interested, _) => {
