@@ -1,25 +1,27 @@
-//! Small SMTP and IMAP servers for tests, with a certificate from a test authority that only the
-//! `Net` the test builds is told to trust (docs/development.md#测试).
+//! Small SMTP and IMAP servers for tests and for trying out the development build, with a
+//! certificate from an authority that only the `Net` told to trust it does
+//! (docs/development.md#测试, docs/development.md#假邮箱和假模型).
 
-// A test server has nobody to report errors to but the test, which fails on them.
+// A fake server has nobody to report errors to but the one using it, which fails on them.
 #![expect(
     clippy::unwrap_used,
     clippy::panic,
-    reason = "fails the test using the server"
+    reason = "fails the test or the command using the server"
 )]
 
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use base64::Engine;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
+    Issuer, KeyPair, KeyUsagePurpose,
 };
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 mod imap;
 
-pub use imap::{Store, imap};
+pub use imap::{Store, imap, imap_on};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -36,27 +38,54 @@ pub const SECRET: &str = "right secret";
 /// another
 /// test's authority by name and fails to verify the signature.
 pub fn pki() -> Pki {
-    let now = time::OffsetDateTime::now_utc();
-    let valid = |params: &mut CertificateParams| {
-        params.not_before = now - time::Duration::days(1);
-        params.not_after = now + time::Duration::days(30);
-    };
+    let ca = authority(&format!("test {}", uuid::Uuid::new_v4()), 30);
+    let ca = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
+    let root = ca.der().clone();
+    signed(&*ca, root)
+}
+
+/// An authority kept in `dir` across runs, so that what trusts its `root.der` keeps doing so when
+/// the servers start again with a new certificate.
+pub fn lasting_pki(dir: &Path) -> std::io::Result<Pki> {
+    let ca = authority("Auto Email Sender fake mail", 3650);
+    let (key_path, root_path) = (dir.join("ca.key"), dir.join("root.der"));
+    if !root_path.exists() {
+        std::fs::create_dir_all(dir)?;
+        let key = KeyPair::generate().unwrap();
+        std::fs::write(&key_path, key.serialize_der())?;
+        std::fs::write(&root_path, ca.self_signed(&key).unwrap().der())?;
+    }
+    let key = KeyPair::try_from(std::fs::read(key_path)?).unwrap();
+    let root = CertificateDer::from(std::fs::read(root_path)?);
+    Ok(signed(&Issuer::new(ca, key), root))
+}
+
+fn authority(name: &str, days: i64) -> CertificateParams {
     let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca.distinguished_name
-        .push(DnType::CommonName, format!("test {}", uuid::Uuid::new_v4()));
+    ca.distinguished_name.push(DnType::CommonName, name);
     ca.key_usages = vec![
         KeyUsagePurpose::KeyCertSign,
         KeyUsagePurpose::DigitalSignature,
     ];
-    valid(&mut ca);
-    let ca = CertifiedIssuer::self_signed(ca, KeyPair::generate().unwrap()).unwrap();
+    valid(&mut ca, days);
+    ca
+}
+
+fn valid(params: &mut CertificateParams, days: i64) {
+    let now = time::OffsetDateTime::now_utc();
+    params.not_before = now - time::Duration::days(1);
+    params.not_after = now + time::Duration::days(days);
+}
+
+/// A `localhost` certificate from `ca`, whose own certificate is `root`.
+fn signed(ca: &Issuer<'_, impl rcgen::SigningKey>, root: CertificateDer<'static>) -> Pki {
     let mut leaf = CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
     leaf.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     leaf.use_authority_key_identifier_extension = true;
-    valid(&mut leaf);
+    valid(&mut leaf, 30);
     let key = KeyPair::generate().unwrap();
-    let cert = leaf.signed_by(&key, &ca).unwrap();
+    let cert = leaf.signed_by(&key, ca).unwrap();
     let config =
         ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
             .with_safe_default_protocol_versions()
@@ -68,7 +97,7 @@ pub fn pki() -> Pki {
             )
             .unwrap();
     Pki {
-        root: ca.der().clone(),
+        root,
         tls: TlsAcceptor::from(Arc::new(config)),
     }
 }
@@ -82,15 +111,15 @@ pub struct Pki {
 trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 
-/// Starts a fake server on a free port and returns the port. Each connection is served by `serve`
-/// on a task of its own, given a stream that is already encrypted unless the server speaks
-/// STARTTLS.
-async fn listen<F, Fut>(tls: &TlsAcceptor, starttls: bool, serve: F) -> u16
+/// Starts a fake server on `port`, or a free one for 0, and returns the port. Each connection is
+/// served by `serve` on a task of its own, given a stream that is already encrypted unless the
+/// server speaks STARTTLS.
+async fn listen<F, Fut>(port: u16, tls: &TlsAcceptor, starttls: bool, serve: F) -> u16
 where
     F: Fn(BufReader<Box<dyn Stream>>) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = std::io::Result<()>> + Send + 'static,
 {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let tls = tls.clone();
     let serve = Arc::new(serve);
@@ -123,7 +152,13 @@ pub type Inbox = Arc<Mutex<Vec<String>>>;
 /// answers one named `garbled` with a line that is not SMTP, and hangs up without answering once
 /// it has the mail for one named `hangup`.
 pub async fn smtp(pki: &Pki, starttls: bool) -> (u16, Inbox) {
-    smtp_with_hooks(
+    smtp_on(pki, starttls, 0).await
+}
+
+/// [`smtp`] on `port`.
+pub async fn smtp_on(pki: &Pki, starttls: bool, port: u16) -> (u16, Inbox) {
+    smtp_at(
+        port,
         pki,
         starttls,
         || std::future::ready(()),
@@ -150,6 +185,24 @@ where
     B: Future<Output = ()> + Send + 'static,
     E: Future<Output = ()> + Send + 'static,
 {
+    smtp_at(0, pki, starttls, on_auth, on_rcpt, on_body, on_reject).await
+}
+
+async fn smtp_at<A, R, B, E>(
+    port: u16,
+    pki: &Pki,
+    starttls: bool,
+    on_auth: impl Fn() -> A + Send + Sync + 'static,
+    on_rcpt: impl Fn() -> R + Send + Sync + 'static,
+    on_body: impl Fn() -> B + Send + Sync + 'static,
+    on_reject: impl Fn() -> E + Send + Sync + 'static,
+) -> (u16, Inbox)
+where
+    A: Future<Output = ()> + Send + 'static,
+    R: Future<Output = ()> + Send + 'static,
+    B: Future<Output = ()> + Send + 'static,
+    E: Future<Output = ()> + Send + 'static,
+{
     let tls = &pki.tls;
     let inbox = Inbox::default();
     let received = inbox.clone();
@@ -158,7 +211,7 @@ where
     let on_rcpt = Arc::new(on_rcpt);
     let on_body = Arc::new(on_body);
     let on_reject = Arc::new(on_reject);
-    let port = listen(tls, starttls, move |io| {
+    let port = listen(port, tls, starttls, move |io| {
         smtp_session(
             io,
             acceptor.clone(),

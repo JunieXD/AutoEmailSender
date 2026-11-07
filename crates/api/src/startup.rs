@@ -40,8 +40,23 @@ pub async fn open(dir: &Path) -> Result<(Context, bool), Error> {
     let db = db::open(&dir.join("app.db"))
         .await
         .map_err(Error::Database)?;
-    let net = net::Net::new(Vec::new()).map_err(Error::Net)?;
+    let net = net::Net::new(fake_mail_root(dir).map_err(Error::DataDir)?).map_err(Error::Net)?;
     Ok((Context::new(db, net, dir), restored))
+}
+
+/// The authority of `cargo xtask fake`'s mail servers, which a development build trusts once the
+/// command has run (docs/development.md#假邮箱和假模型).
+fn fake_mail_root(
+    dir: &Path,
+) -> std::io::Result<Vec<net::rustls::pki_types::CertificateDer<'static>>> {
+    if !cfg!(debug_assertions) {
+        return Ok(Vec::new());
+    }
+    match std::fs::read(dir.join("fake-mail").join("root.der")) {
+        Ok(der) => Ok(vec![der.into()]),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
 }
 
 #[derive(Debug)]

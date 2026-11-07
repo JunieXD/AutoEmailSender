@@ -26,6 +26,8 @@ axum = { version = "0.8.9", default-features = false, features = ["http1", "json
 uuid = { version = "1.29.0", features = ["v4"] }
 serde.workspace = true
 email.workspace = true
+fakemail.workspace = true
+mail-parser = "1.0.0"
 library.workspace = true
 cloud-api.workspace = true
 

@@ -116,6 +116,11 @@ impl Store {
 
 /// An IMAP server with an empty INBOX. Like 163's, it opens no folder before the client sends ID.
 pub async fn imap(pki: &Pki, starttls: bool) -> (u16, Store) {
+    imap_on(pki, starttls, 0).await
+}
+
+/// [`imap`] on `port`.
+pub async fn imap_on(pki: &Pki, starttls: bool, port: u16) -> (u16, Store) {
     let store = Store(Arc::new(Mutex::new(State {
         folders: Vec::new(),
         commands: Vec::new(),
@@ -125,7 +130,7 @@ pub async fn imap(pki: &Pki, starttls: bool) -> (u16, Store) {
     store.create("INBOX", false);
     let tls = pki.tls.clone();
     let served = store.clone();
-    let port = listen(&pki.tls, starttls, move |io| {
+    let port = listen(port, &pki.tls, starttls, move |io| {
         session(io, tls.clone(), served.clone())
     })
     .await;

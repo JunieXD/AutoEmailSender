@@ -1,6 +1,7 @@
 //! Repository commands: `cargo xtask <command>`.
 
 mod bench;
+mod fake;
 mod phone;
 mod sample;
 mod web;
@@ -13,6 +14,7 @@ const USAGE: &str = "用法：cargo xtask <命令>\n\
     types            生成界面用的 TypeScript 类型（ui/src/api/types.ts）\n  \
     seed             给开发版（.dev-data）填上示例数据\n  \
     web              启动浏览器预览（真实核心，不运行后台工作）\n  \
+    fake             启动本机的假邮箱和假模型，给开发版从头试用\n  \
     bench            按 docs/data-model.md 的规模生成数据，测首页查询和写邮件状态的耗时\n  \
     phone <目录>     构建手机页面到这个目录，给开发用的服务端（PHONE_DIR）\n  \
     publish-phone <主机>:<目录>  构建手机页面并经 ssh 发布到服务器";
@@ -25,6 +27,7 @@ async fn main() -> ExitCode {
         ["types"] => types(false),
         ["seed"] => seed().await,
         ["web"] => web::run().await,
+        ["fake"] => fake::run().await,
         ["bench"] => bench::run(&root().join("target/bench.db")).await,
         ["phone", dir] => phone::build(Path::new(dir)).await,
         ["publish-phone", target] => phone::publish(target).await,
