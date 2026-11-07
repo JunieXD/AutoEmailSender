@@ -49,7 +49,7 @@ pub async fn set_ai_reply_todos(ctx: &Context, input: AiReplyTodos) -> Result<()
             });
         }
     }
-    email::todos::set_enabled(&ctx.db, input.enabled).await?;
+    email::todos::set_enabled(&ctx.db, input.enabled, now()).await?;
     ctx.reply_processor.restart();
     Ok(())
 }

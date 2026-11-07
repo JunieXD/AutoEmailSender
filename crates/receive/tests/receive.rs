@@ -1610,7 +1610,12 @@ async fn todo_extraction_only_enqueues_new_incremental_replies_after_enabling(db
     let m = mentor(&db, "李明", "li@pku.edu.cn").await;
     store.deliver("INBOX", T, REPLY);
     round(&db, &net, T + MINUTE).await;
-    email::todos::set_enabled(&db, true).await.unwrap();
+    // Turned on as if weeks later, so that only receiving queues these replies: looking back on
+    // turning on is tested with the queue.
+    let switched = T + 30 * DAY;
+    email::todos::set_enabled(&db, true, switched)
+        .await
+        .unwrap();
     assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 0);
     let new_reply = REPLY.replace("r1@pku.edu.cn", "r2@pku.edu.cn");
     store.deliver("INBOX", T + 2 * MINUTE, &new_reply);
@@ -1640,13 +1645,17 @@ async fn todo_extraction_only_enqueues_new_incremental_replies_after_enabling(db
     .await
     .unwrap();
     assert_eq!(queued, "<r2@pku.edu.cn>");
-    email::todos::set_enabled(&db, false).await.unwrap();
+    email::todos::set_enabled(&db, false, switched)
+        .await
+        .unwrap();
     store.deliver(
         "INBOX",
         T + 8 * MINUTE,
         &REPLY.replace("r1@pku.edu.cn", "r3@pku.edu.cn"),
     );
     round(&db, &net, T + 9 * MINUTE).await;
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, switched)
+        .await
+        .unwrap();
     assert_eq!(email::outcome::progress(&db).await.unwrap().remaining, 0);
 }

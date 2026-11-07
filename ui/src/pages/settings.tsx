@@ -356,7 +356,7 @@ export function ReplyProcessingSection() {
         get="getAiReplyTodos"
         set="setAiReplyTodos"
         label="回信待办"
-        description="开启后，新收到的导师回信会发给默认模型的服务商，找出导师要你做的事和截止时间，列进待办；以前收到的不找。不开也可以在往来里自己添加待办。"
+        description="开启后，导师的回信会发给默认模型的服务商，找出导师要你做的事和截止时间，列进待办；已经收到的只找最近 14 天的。不开也可以在往来里自己添加待办。"
       />
     </Section>
   );

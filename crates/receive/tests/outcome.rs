@@ -14,6 +14,10 @@ use tokio::{
 };
 
 const VALID: &str = r#"{"outcome":"interested"}"#;
+const DAY: i64 = 24 * 60 * 60 * 1000;
+/// When the tests turn todos on: over two weeks after the replies most of them make at small
+/// times, so that turning on looks back at none of those.
+const SWITCHED: i64 = 15 * DAY;
 
 struct Runner {
     processor: Processor,
@@ -883,22 +887,50 @@ async fn todo_message(db: &SqlitePool, mentor: i64, at: i64, body: &str) -> i64 
 }
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
-async fn todos_switch_never_backfills_and_invalidates_old_claims(db: SqlitePool) {
+async fn todos_switch_looks_back_two_weeks_once_and_invalidates_old_claims(db: SqlitePool) {
     let m = setup(&db).await;
-    let old = message(&db, m, "reply", 1, "旧回信").await;
-    email::todos::set_enabled(&db, true).await.unwrap();
-    assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
-    let id = todo_message(&db, m, 2, "新回信").await;
+    let older = message(&db, m, "reply", SWITCHED - 14 * DAY - 1, "更早的回信").await;
+    let recent = message(&db, m, "reply", SWITCHED - 14 * DAY, "最近的回信").await;
+    message(&db, m, "auto_reply", SWITCHED - DAY, "自动回复").await;
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     let claim = queue::next(&db).await.unwrap().unwrap();
-    assert_eq!(claim.action, queue::Action::Todos);
-    assert_eq!(claim.id, id);
-    email::todos::set_enabled(&db, false).await.unwrap();
-    email::todos::set_enabled(&db, true).await.unwrap();
-    assert!(!queue::running(&db, claim).await.unwrap());
-    assert!(!email::todos::complete(&db, claim, &[], 3).await.unwrap());
-    assert!(!queue::fail(&db, claim, "旧错误").await.unwrap());
+    assert_eq!((claim.action, claim.id), (queue::Action::Todos, recent));
+    assert_eq!(queue::next(&db).await.unwrap(), None);
+    assert!(
+        email::todos::complete(&db, claim, &[], SWITCHED + 1)
+            .await
+            .unwrap()
+    );
+    // Looked at once, though it held no todo.
+    email::todos::set_enabled(&db, false, SWITCHED + 2)
+        .await
+        .unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED + 3)
+        .await
+        .unwrap();
     assert_eq!(queue::progress(&db).await.unwrap().remaining, 0);
-    assert_eq!(outcome(&db, old).await, None);
+
+    let id = todo_message(&db, m, SWITCHED + 4, "新回信").await;
+    let claim = queue::next(&db).await.unwrap().unwrap();
+    assert_eq!(claim.id, id);
+    email::todos::set_enabled(&db, false, SWITCHED + 5)
+        .await
+        .unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED + 6)
+        .await
+        .unwrap();
+    assert!(!queue::running(&db, claim).await.unwrap());
+    assert!(
+        !email::todos::complete(&db, claim, &[], SWITCHED + 7)
+            .await
+            .unwrap()
+    );
+    assert!(!queue::fail(&db, claim, "旧错误").await.unwrap());
+    // Never looked at, so it is queued afresh.
+    assert_eq!(queue::next(&db).await.unwrap().map(|c| c.id), Some(id));
+    assert_eq!(outcome(&db, older).await, None);
     assert!(email::todos::for_mentor(&db, m).await.unwrap().is_empty());
 }
 
@@ -915,7 +947,9 @@ async fn todos_share_limited_material_include_reply_date_and_record_separate_usa
     .execute(&db)
     .await
     .unwrap();
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     let id = todo_message(
         &db,
         m,
@@ -975,7 +1009,9 @@ async fn todos_share_limited_material_include_reply_date_and_record_separate_usa
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn todos_validate_dates_times_and_deduplicate_trimmed_text(db: SqlitePool) {
     let m = setup(&db).await;
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     let id = todo_message(&db, m, 1_792_972_800_000, "做几件事").await;
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
@@ -1014,7 +1050,9 @@ async fn todos_bad_text_and_format_retry_once_fail_then_retry_without_duplicate_
     db: SqlitePool,
 ) {
     let m = setup(&db).await;
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     let id = todo_message(&db, m, 1, "发材料").await;
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
@@ -1078,7 +1116,9 @@ async fn shared_reply_todos_choose_the_sender_address_then_lowest_mentor_id(db: 
     )
     .await
     .unwrap();
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     for (at, owner) in [(1, high), (2, low)] {
         let id = todo_message(&db, low, at, "发材料").await;
         sqlx::query("INSERT INTO message_mentor(mentor_id,message_id) VALUES(?,?)")
@@ -1131,14 +1171,20 @@ async fn shared_reply_todos_choose_the_sender_address_then_lowest_mentor_id(db: 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn todos_disabling_while_model_is_answering_discards_results_but_keeps_usage(db: SqlitePool) {
     let m = setup(&db).await;
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     todo_message(&db, m, 1, "发材料").await;
     let mut provider = Provider::start().await.unwrap();
     config(&db, &provider.address).await;
     let mut runner = Runner::start(&db, Default::default());
     let req = request(&mut provider).await;
-    email::todos::set_enabled(&db, false).await.unwrap();
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, false, SWITCHED)
+        .await
+        .unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     req.respond
         .send(Response::answer(
             r#"{"todos":[{"text":"发材料","dueDate":null,"dueTime":null}]}"#,
@@ -1169,7 +1215,9 @@ async fn todo_queue_recovers_trash_and_atomic_storage_failure_without_partial_to
     db: SqlitePool,
 ) {
     let m = setup(&db).await;
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     todo_message(&db, m, 1, "发材料和报名").await;
     let old = queue::next(&db).await.unwrap().unwrap();
     queue::recover(&db).await.unwrap();
@@ -1211,7 +1259,9 @@ async fn todo_queue_recovers_trash_and_atomic_storage_failure_without_partial_to
 
 #[sqlx::test(migrator = "db::MIGRATOR")]
 async fn disabling_one_reply_action_preserves_the_other_actions_pause(db: SqlitePool) {
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     queue::set_enabled(&db, true).await.unwrap();
     let mut conn = db.acquire().await.unwrap();
     queue::pause_if_unpaused(&mut conn, 2, "模型配置需要修正")
@@ -1220,16 +1270,22 @@ async fn disabling_one_reply_action_preserves_the_other_actions_pause(db: Sqlite
     drop(conn);
     queue::set_enabled(&db, false).await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_some());
-    email::todos::set_enabled(&db, false).await.unwrap();
+    email::todos::set_enabled(&db, false, SWITCHED)
+        .await
+        .unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_none());
     queue::set_enabled(&db, true).await.unwrap();
-    email::todos::set_enabled(&db, true).await.unwrap();
+    email::todos::set_enabled(&db, true, SWITCHED)
+        .await
+        .unwrap();
     let mut conn = db.acquire().await.unwrap();
     queue::pause_if_unpaused(&mut conn, 5, "模型配置需要修正")
         .await
         .unwrap();
     drop(conn);
-    email::todos::set_enabled(&db, false).await.unwrap();
+    email::todos::set_enabled(&db, false, SWITCHED)
+        .await
+        .unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_some());
     queue::set_enabled(&db, false).await.unwrap();
     assert!(queue::progress(&db).await.unwrap().pause.is_none());

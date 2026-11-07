@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO reply_processing (message_id, action, state)\n            SELECT id, 'todos', 'queued' FROM message\n            WHERE kind = 'reply' AND todos_extracted_at IS NULL AND sent_at >= ?\n            ON CONFLICT DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "c8c84efdfb2f72416a98e30639938842fe77da80babfc9366bb5ac9148583987"
+}

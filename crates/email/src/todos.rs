@@ -133,12 +133,27 @@ pub async fn enabled(db: &SqlitePool) -> Result<bool, sqlx::Error> {
         .await
 }
 
-pub async fn set_enabled(db: &SqlitePool, enabled: bool) -> Result<(), sqlx::Error> {
+/// How far back turning the switch on looks: students often find it only once replies arrive,
+/// while older todos are mostly done or past.
+const LOOK_BACK: i64 = 14 * 24 * 60 * 60 * 1000;
+
+pub async fn set_enabled(db: &SqlitePool, enabled: bool, now: i64) -> Result<(), sqlx::Error> {
     let mut tx = db.begin().await?;
     sqlx::query!("UPDATE profile SET ai_reply_todos = ?", enabled)
         .execute(&mut *tx)
         .await?;
-    if !enabled {
+    if enabled {
+        let since = now - LOOK_BACK;
+        sqlx::query!(
+            r#"INSERT INTO reply_processing (message_id, action, state)
+            SELECT id, 'todos', 'queued' FROM message
+            WHERE kind = 'reply' AND todos_extracted_at IS NULL AND sent_at >= ?
+            ON CONFLICT DO NOTHING"#,
+            since
+        )
+        .execute(&mut *tx)
+        .await?;
+    } else {
         sqlx::query!("DELETE FROM reply_processing WHERE action = 'todos'")
             .execute(&mut *tx)
             .await?;
@@ -321,6 +336,13 @@ pub async fn complete(
         tx.commit().await?;
         return Ok(false);
     }
+    sqlx::query!(
+        "UPDATE message SET todos_extracted_at = ? WHERE id = ?",
+        now,
+        claim.id
+    )
+    .execute(&mut *tx)
+    .await?;
     let mentor = sqlx::query_scalar!(
         r#"SELECT mm.mentor_id FROM message_mentor mm
         JOIN message msg ON msg.id = mm.message_id WHERE mm.message_id = ?

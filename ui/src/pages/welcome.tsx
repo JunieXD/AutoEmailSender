@@ -93,7 +93,8 @@ export function WelcomePage() {
       title: "AI 模型",
       done: models.data.length > 0,
       result: models.data.map((m) => m.name ?? m.model).join("、"),
-      intro: "分析匹配度、起草和改写邮件要用它。不用 AI 也能套模板写信，可以先跳过。",
+      intro:
+        "分析匹配度、起草和改写邮件要用它；收到回信后，还可以在“设置 › 邮件 › 回信处理”里让它标出回信结果、找出导师要你做的事。不用 AI 也能套模板写信，可以先跳过。",
       action: <AddModel />,
     },
     {
