@@ -34,15 +34,21 @@ export function MatchingDialog({ ids, onClose }: { ids: number[]; onClose: () =>
           {data && (
             <>
               <p className="text-base font-medium">将分析 {data.plan.analyze} 位导师</p>
-              <div className="space-y-2 rounded-lg bg-muted p-4">
-                <label className="flex items-center gap-2">
-                  <Checkbox checked={redo} onCheckedChange={setRedo} disabled={start.isPending} />
-                  已有结果 {data.plan.existing} 位，也重新分析
-                </label>
-                {data.plan.changed > 0 && <p>依据有变化 {data.plan.changed} 位，已列入分析</p>}
-                <p>跳过资料不足 {data.plan.insufficient} 位：可以先补充研究方向或代表论文</p>
-                <p>跳过已经在排队或分析中 {data.plan.queued} 位</p>
-              </div>
+              {data.plan.existing + data.plan.changed + data.plan.insufficient + data.plan.queued > 0 && (
+                <div className="space-y-2 rounded-lg bg-muted p-4">
+                  {data.plan.existing > 0 && (
+                    <label className="flex items-center gap-2">
+                      <Checkbox checked={redo} onCheckedChange={setRedo} disabled={start.isPending} />
+                      已有结果 {data.plan.existing} 位，也重新分析
+                    </label>
+                  )}
+                  {data.plan.changed > 0 && <p>依据有变化 {data.plan.changed} 位，已列入分析</p>}
+                  {data.plan.insufficient > 0 && (
+                    <p>跳过资料不足 {data.plan.insufficient} 位：可以先补充研究方向或代表论文</p>
+                  )}
+                  {data.plan.queued > 0 && <p>跳过已经在排队或分析中 {data.plan.queued} 位</p>}
+                </div>
+              )}
               <p>
                 模型：{data.model ?? "尚未添加模型"}{" "}
                 <Link to="/settings/models" className="ml-2 text-brand-text">

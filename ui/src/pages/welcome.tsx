@@ -15,6 +15,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { letterHtml, letterText } from "@/letter";
 import { uploadMaterial } from "@/material";
 import { findSearch } from "./find";
+import { MaterialRow } from "./materials";
 import { ProfileFields } from "./profile";
 
 /** What 写模板 starts from when there is no template yet (docs/ui.md#交互). */
@@ -99,7 +100,14 @@ export function WelcomePage() {
       title: "材料",
       done: materials.data.length > 0,
       result: `${materials.data.length} 份：${materials.data.map((m) => m.fileName).join("、")}`,
-      intro: "简历、成绩单这类材料。AI 写信和分析匹配度会参考其中的文字，也可以作为附件随信发出。",
+      intro: "简历、成绩单这类材料。AI 写信和分析匹配度会参考其中的文字；勾选了“默认附件”的随信发出。",
+      body: materials.data.length > 0 && (
+        <ul className="flex flex-col divide-y divide-border">
+          {materials.data.map((m) => (
+            <MaterialRow key={m.id} material={m} />
+          ))}
+        </ul>
+      ),
       action: <AddMaterial />,
     },
     {
@@ -127,7 +135,7 @@ export function WelcomePage() {
       title: "第一个任务",
       done: tasks.data.total > 0,
       result: `${tasks.data.total} 个任务`,
-      intro: "在导师列表勾选要联系的导师，点“新建任务”，为每位导师写好首封邮件，审核后发出。",
+      intro: "在导师列表勾选要联系的导师，点“写信”新建任务，为每位导师写好首封邮件，审核后发出。",
       action: (
         <Link to="/mentors" className={buttonVariants()}>
           去导师列表
@@ -300,9 +308,6 @@ function AddMaterial() {
       <Button disabled={add.isPending} onClick={() => picker.current?.click()}>
         {add.isPending ? "正在提取文字…" : "添加材料"}
       </Button>
-      <Link to="/settings/materials" className={buttonVariants({ variant: "ghost" })}>
-        设置用途
-      </Link>
       {add.error && <p className="w-full text-sm text-destructive">{errorMessage(add.error)}</p>}
     </>
   );
@@ -379,7 +384,11 @@ function TestLetterPreview({ mailbox, materials }: { mailbox: Mailbox; materials
         <h3 className="mb-3 font-semibold break-words">{l.subject || "（无主题）"}</h3>
         <div onClick={openLinks} dangerouslySetInnerHTML={{ __html: letterHtml(l.bodyMd, style.data) }} />
       </article>
-      <Attachments files={materials.filter((m) => l.attachments.includes(m.id))} />
+      {l.attachments.length > 0 ? (
+        <Attachments files={materials.filter((m) => l.attachments.includes(m.id))} />
+      ) : (
+        <p className="text-sm">没有附件：材料勾选了“默认附件”才随信发出。</p>
+      )}
       <p className="text-sm text-muted-foreground">
         用的是模板“{l.templateName}”，示例导师是示例大学计算机学院的张明教授。
       </p>

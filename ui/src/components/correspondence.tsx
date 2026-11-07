@@ -23,7 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ScheduleActions, refreshSchedule, scheduledAt } from "@/components/schedule";
 import { AddTodo, TodoItem } from "@/components/todos";
 import { TrackingNote } from "@/components/tracking";
-import { day, time } from "@/format";
+import { day, sentFor, time } from "@/format";
 import { LETTER_BODY } from "@/letter";
 import { toHtml } from "@/markdown";
 import { useNow } from "@/now";
@@ -31,9 +31,7 @@ import { useNow } from "@/now";
 /** Pending mail hides both entry buttons, while a blocked thread still explains why. */
 export function followUpActions(entry: FollowUpEntry, now: number) {
   return {
-    message:
-      entry.reason ??
-      `已发出 ${Math.max(0, Math.floor((now - (entry.previous?.sentAt ?? now)) / 86_400_000))} 天，还没回复`,
+    message: entry.reason ?? `${sentFor(entry.previous?.sentAt ?? now, now)}，还没回复`,
     followUp: !entry.pending && entry.reason === null,
     newLetter: !entry.pending,
   };

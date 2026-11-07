@@ -12,7 +12,7 @@ import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader } from "@
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { ScheduleFields, scheduleValid, useScheduleCapacity } from "@/components/schedule";
-import { day, fileSize } from "@/format";
+import { day, fileSize, sentFor } from "@/format";
 
 export function CreateTaskDialog({
   ids,
@@ -201,8 +201,7 @@ function TaskSteps({
                       <p>{m.name}</p>
                       {m.previous && (
                         <p className="text-xs text-muted-foreground">
-                          {m.previous.subject ?? "（无主题）"} · 发出{" "}
-                          {Math.max(0, Math.floor((openedAt - m.previous.sentAt) / 86_400_000))} 天
+                          {m.previous.subject ?? "（无主题）"} · {sentFor(m.previous.sentAt, openedAt)}
                           {m.previous.opened !== null && (m.previous.opened ? " · 已打开" : " · 没打开过")}
                         </p>
                       )}
@@ -288,7 +287,7 @@ function TaskSteps({
               </fieldset>
               <fieldset className="space-y-2">
                 <legend className="mb-2 text-muted-foreground">
-                  附件 · {fileSize(attached.reduce((n, m) => n + m.size, 0))}
+                  附件{attached.length > 0 && ` · ${fileSize(attached.reduce((n, m) => n + m.size, 0))}`}
                 </legend>
                 {materials.map((m) => (
                   <label className="flex items-center gap-2" key={m.id}>

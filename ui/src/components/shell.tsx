@@ -624,7 +624,7 @@ function Background({ className }: { className?: string }) {
             ))}
             {work.drafted.map((t) => (
               <Link key={t.id} to="/tasks/$id" params={{ id: t.id }} className={ITEM}>
-                <Entry title={t.name} detail={`写好 ${t.generated} 封草稿，去审核`} />
+                <Entry title={t.name} detail={`写好 ${t.generated} 封草稿，去任务`} />
               </Link>
             ))}
             {work.matched > 0 && (

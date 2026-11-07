@@ -9,6 +9,12 @@ export function day(ms: number): string {
   return date.getFullYear() === today.getFullYear() ? md : `${date.getFullYear()}年${md}`;
 }
 
+/** "今天发出", "昨天发出" or "已发出 3 天", for a letter still waiting on a reply. */
+export function sentFor(sentAt: number, now: number): string {
+  const days = Math.max(0, Math.floor((now - sentAt) / 86_400_000));
+  return days === 0 ? `${day(sentAt)}发出` : `已发出 ${days} 天`;
+}
+
 /** "320 KB", "1.2 MB". */
 export function fileSize(bytes: number): string {
   const kb = bytes / 1024;

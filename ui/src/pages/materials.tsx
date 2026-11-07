@@ -60,7 +60,7 @@ const PURPOSES: [Purpose, string][] = [
   ["attach_by_default", "默认附件"],
 ];
 
-function MaterialRow({ material: m }: { material: Material }) {
+export function MaterialRow({ material: m }: { material: Material }) {
   const queryClient = useQueryClient();
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["listMaterials"] });
   const purpose = useMutation({

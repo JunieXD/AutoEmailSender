@@ -135,7 +135,7 @@ async fn candidates(
                     library_id LIMIT 1) AS "library_status?: Json<cloud_api::library::Status>"
            FROM mentor m LEFT JOIN mentor_contact c ON c.mentor_id = m.id
            WHERE m.id IN (SELECT value FROM json_each(?1))
-           ORDER BY m.name, m.id"#,
+           ORDER BY (SELECT min(key) FROM json_each(?1) WHERE value = m.id)"#,
         Json(ids),
         source_task,
     )
